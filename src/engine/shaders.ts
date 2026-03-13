@@ -9,6 +9,8 @@
 export const vertexShaderSource = /* wgsl */ `
 struct Uniforms {
   rotation : mat3x3<f32>,
+  flipX : u32,
+  flipY : u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms : Uniforms;
@@ -32,8 +34,17 @@ fn main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
 
   let clipPos = positions[vertexIndex];
 
-  // Apply mat3 rotation (z-rotation) to the clip-space position
-  let rotated = uniforms.rotation * vec3<f32>(clipPos, 1.0);
+  // Apply flip transforms first
+  var flipped = clipPos;
+  if (uniforms.flipX != 0u) {
+    flipped.x *= -1.0;
+  }
+  if (uniforms.flipY != 0u) {
+    flipped.y *= -1.0;
+  }
+
+  // Apply mat3 rotation (z-rotation) to the flipped position
+  let rotated = uniforms.rotation * vec3<f32>(flipped, 1.0);
 
   var out : VertexOutput;
   out.position = vec4<f32>(rotated.xy, 0.0, 1.0);

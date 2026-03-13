@@ -24,6 +24,10 @@ import {
 export interface LayerState {
   /** Rotation angle in degrees */
   angleDeg: number;
+  /** Horizontal flip (scaleX) */
+  flipX?: boolean;
+  /** Vertical flip (scaleY) */
+  flipY?: boolean;
 }
 
 export interface RendererState {
@@ -145,9 +149,9 @@ export class WebGPURenderer {
       primitive: { topology: 'triangle-list' },
     });
 
-    // Rotation uniform: mat3x3 = 12 floats × 4 bytes = 48 bytes
+    // Rotation uniform: mat3x3 (48 bytes) + flipX (4 bytes) + flipY (4 bytes) + padding = 64 bytes
     const rotationBuffer = device.createBuffer({
-      size: 48,
+      size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -176,9 +180,17 @@ export class WebGPURenderer {
       const lp = this.layerPipelines[i];
       const layer = state.layers[i];
 
-      // Upload rotation matrix
+      // Upload rotation matrix + flip flags
       const rotMat = buildRotationMat3(layer.angleDeg);
-      this.device.queue.writeBuffer(lp.rotationBuffer, 0, rotMat.buffer, 0, rotMat.byteLength);
+      const flipX = layer.flipX ? 1 : 0;
+      const flipY = layer.flipY ? 1 : 0;
+
+      // Create combined buffer: mat3x3 (48 bytes) + flipX (4 bytes) + flipY (4 bytes) + padding (8 bytes)
+      const combinedData = new ArrayBuffer(64);
+      new Float32Array(combinedData).set(rotMat);
+      new Uint32Array(combinedData, 48).set([flipX, flipY]);
+
+      this.device.queue.writeBuffer(lp.rotationBuffer, 0, combinedData);
 
       // Upload fragment uniforms (avg luminance + padding)
       const fragData = new Float32Array([state.avgLuminance, 0, 0, 0]);
