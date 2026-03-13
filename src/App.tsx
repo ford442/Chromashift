@@ -36,6 +36,7 @@ export default function App() {
   const [avgLuminance, setAvgLuminance] = useState(128);
   const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
+  const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>([130, 230, 330]);
 
   // Resize canvas to match container
   useEffect(() => {
@@ -204,6 +205,14 @@ export default function App() {
     });
   }, []);
 
+  const handleExtensionChange = useCallback((layer: 0 | 1 | 2, extension: number) => {
+    setLayerExtensions((prev) => {
+      const next: LayerTriple<number> = [...prev] as LayerTriple<number>;
+      next[layer] = extension;
+      return next;
+    });
+  }, []);
+
   const handleReset = useCallback(() => {
     setLayerAngles([...DEFAULT_ANGLES] as LayerTriple<number>);
     setRotationRates([...DEFAULT_RATES] as LayerTriple<number>);
@@ -274,9 +283,11 @@ export default function App() {
       <NunifOverlay
         layerAngles={layerAngles}
         rotationRates={rotationRates}
+        layerExtensions={layerExtensions}
         frameRate={frameRate}
         onAngleChange={handleAngleChange}
         onRateChange={handleRateChange}
+        onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
         onReset={handleReset}
         isAutoPlayActive={isAutoPlayActive}

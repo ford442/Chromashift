@@ -8,9 +8,11 @@
 interface Props {
   layerAngles: [number, number, number];
   rotationRates: [number, number, number];
+  layerExtensions: [number, number, number];
   frameRate: number;
   onAngleChange: (layer: 0 | 1 | 2, angle: number) => void;
   onRateChange: (layer: 0 | 1 | 2, rate: number) => void;
+  onExtensionChange: (layer: 0 | 1 | 2, extension: number) => void;
   onFrameRateChange: (fps: number) => void;
   onReset: () => void;
   isAutoPlayActive: boolean;
@@ -25,9 +27,11 @@ const LAYER_COLORS: [string, string, string] = ['text-red-400', 'text-violet-400
 export function NunifOverlay({
   layerAngles,
   rotationRates,
+  layerExtensions,
   frameRate,
   onAngleChange,
   onRateChange,
+  onExtensionChange,
   onFrameRateChange,
   onReset,
   isAutoPlayActive,
@@ -114,6 +118,21 @@ export function NunifOverlay({
                   step={0.5}
                   value={rotationRates[i]}
                   onChange={(e) => onRateChange(i, Number(e.target.value))}
+                  className="w-full accent-current h-1"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-400 w-16 shrink-0">
+                  Extend&nbsp;
+                  <span className="tabular-nums">{layerExtensions[i]}°</span>
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={360}
+                  value={layerExtensions[i]}
+                  onChange={(e) => onExtensionChange(i, Number(e.target.value))}
                   className="w-full accent-current h-1"
                 />
               </div>
