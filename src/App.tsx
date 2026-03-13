@@ -23,6 +23,7 @@ export default function App() {
   const rendererRef = useRef<WebGPURenderer | null>(null);
   const textureManagerRef = useRef<TextureManager | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const [gpuReady, setGpuReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +34,33 @@ export default function App() {
   const [rotationRates, setRotationRates] = useState<LayerTriple<number>>(DEFAULT_RATES);
   const [frameRate, setFrameRate] = useState(DEFAULT_FPS);
   const [avgLuminance, setAvgLuminance] = useState(128);
+
+  // Resize canvas to match container
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    function resizeCanvas() {
+      const container = containerRef.current;
+      const canvas = canvasRef.current;
+      if (!canvas || !container) return;
+
+      const rect = container.getBoundingClientRect();
+      canvas.width = rect.width * window.devicePixelRatio;
+      canvas.height = rect.height * window.devicePixelRatio;
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
+    }
+
+    resizeCanvas();
+    const observer = new ResizeObserver(resizeCanvas);
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   // Initialise WebGPU
   useEffect(() => {
@@ -170,12 +198,20 @@ export default function App() {
   }, []);
 
   return (
-    <div className="relative w-screen h-screen bg-black overflow-hidden" id="chromashift-container">
+    <div
+      ref={containerRef}
+      className="relative w-screen h-screen bg-black overflow-hidden"
+      id="chromashift-container"
+    >
       {/* WebGPU canvas */}
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full"
-        style={{ imageRendering: 'pixelated' }}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          imageRendering: 'pixelated',
+          display: 'block',
+        }}
       />
 
       {/* Image switcher */}
