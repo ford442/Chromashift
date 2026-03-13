@@ -10,17 +10,22 @@ Current rendering is broken — only showing a thin colored line preview instead
 
 ## Fix Priority
 
-### Phase 1: Canvas Sizing (CRITICAL)
-- [ ] Add dynamic `width`/`height` attributes to `<canvas>` element
-- [ ] Implement resize observer to sync canvas size with container
-- [ ] Verify WebGPU context is properly configured with correct dimensions
-- [ ] Test: Canvas should fill entire viewport
+### Phase 1: Canvas Sizing (CRITICAL) ✅ DONE
+- [x] Add dynamic `width`/`height` attributes to `<canvas>` element
+- [x] Implement resize observer to sync canvas size with container
+- [x] Verify WebGPU context is properly configured with correct dimensions
+- [x] Test: Canvas should fill entire viewport
+- **Commit:** 58bb27e "Fix WebGPU canvas sizing for full-screen rendering"
 
-### Phase 2: Validate Rendering Pipeline
+### Phase 2: Validate Rendering Pipeline (IN PROGRESS)
 - [ ] Verify full-screen quad vertex positions are correct
 - [ ] Check texture is loading (use debug output or DevTools texture inspection)
 - [ ] Validate UV coordinate mapping (should be [0,1] for full texture)
-- [ ] Test: Should see full image with color layers separated
+- [ ] **VISUAL TEST REQUIRED:** Open http://localhost:5173 after `npm run dev`
+  - Should see full crop circle image filling viewport
+  - Not just a thin colored line
+  - All three color layers (red/orange, violet/blue, green/yellow) visible
+- [ ] Check if rotation is clipping geometry (may need UV rotation fix)
 
 ### Phase 3: Performance & Visual Correctness
 - [ ] Verify three-layer blending order (layers 0, 1, 2)
