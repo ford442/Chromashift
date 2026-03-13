@@ -34,6 +34,8 @@ export default function App() {
   const [rotationRates, setRotationRates] = useState<LayerTriple<number>>(DEFAULT_RATES);
   const [frameRate, setFrameRate] = useState(DEFAULT_FPS);
   const [avgLuminance, setAvgLuminance] = useState(128);
+  const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
+  const [imageChangeInterval, setImageChangeInterval] = useState(5);
 
   // Resize canvas to match container
   useEffect(() => {
@@ -130,6 +132,17 @@ export default function App() {
       rendererRef.current?.setTexture(tex);
     });
   }, [gpuReady, imageList, currentImageIndex]);
+
+  // Auto-play image rotation
+  useEffect(() => {
+    if (!isAutoPlayActive || imageList.length === 0) return;
+
+    const interval = setInterval(() => {
+      setCurrentImageIndex((prev) => (prev + 1) % imageList.length);
+    }, imageChangeInterval * 1000);
+
+    return () => clearInterval(interval);
+  }, [isAutoPlayActive, imageChangeInterval, imageList.length]);
 
   // Animation loop
   useEffect(() => {
@@ -266,6 +279,10 @@ export default function App() {
         onRateChange={handleRateChange}
         onFrameRateChange={setFrameRate}
         onReset={handleReset}
+        isAutoPlayActive={isAutoPlayActive}
+        onAutoPlayToggle={setIsAutoPlayActive}
+        imageChangeInterval={imageChangeInterval}
+        onImageChangeIntervalChange={setImageChangeInterval}
       />
     </div>
   );
