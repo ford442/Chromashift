@@ -8,15 +8,21 @@
 interface Props {
   layerAngles: [number, number, number];
   rotationRates: [number, number, number];
+  layerExtensions: [number, number, number];
   frameRate: number;
   onAngleChange: (layer: 0 | 1 | 2, angle: number) => void;
   onRateChange: (layer: 0 | 1 | 2, rate: number) => void;
+  onExtensionChange: (layer: 0 | 1 | 2, extension: number) => void;
   onFrameRateChange: (fps: number) => void;
   onReset: () => void;
   isAutoPlayActive: boolean;
   onAutoPlayToggle: (active: boolean) => void;
   imageChangeInterval: number;
   onImageChangeIntervalChange: (seconds: number) => void;
+  flipH: boolean;
+  onFlipHToggle: (flip: boolean) => void;
+  flipV: boolean;
+  onFlipVToggle: (flip: boolean) => void;
 }
 
 const LAYER_LABELS: [string, string, string] = ['Red/Orange', 'Violet/Blue', 'Green/Yellow'];
@@ -25,15 +31,21 @@ const LAYER_COLORS: [string, string, string] = ['text-red-400', 'text-violet-400
 export function NunifOverlay({
   layerAngles,
   rotationRates,
+  layerExtensions,
   frameRate,
   onAngleChange,
   onRateChange,
+  onExtensionChange,
   onFrameRateChange,
   onReset,
   isAutoPlayActive,
   onAutoPlayToggle,
   imageChangeInterval,
   onImageChangeIntervalChange,
+  flipH,
+  onFlipHToggle,
+  flipV,
+  onFlipVToggle,
 }: Props) {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 bg-black/70 backdrop-blur-sm text-white p-3 select-none">
@@ -53,6 +65,28 @@ export function NunifOverlay({
               title={isAutoPlayActive ? 'Pause image rotation' : 'Resume image rotation'}
             >
               {isAutoPlayActive ? '⏸ Pause' : '▶ Play'}
+            </button>
+            <button
+              onClick={() => onFlipHToggle(!flipH)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                flipH
+                  ? 'bg-blue-700 hover:bg-blue-600 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600'
+              }`}
+              title="Flip horizontally"
+            >
+              ↔ Flip H
+            </button>
+            <button
+              onClick={() => onFlipVToggle(!flipV)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                flipV
+                  ? 'bg-blue-700 hover:bg-blue-600 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600'
+              }`}
+              title="Flip vertically"
+            >
+              ↕ Flip V
             </button>
             <button
               onClick={onReset}
@@ -114,6 +148,21 @@ export function NunifOverlay({
                   step={0.5}
                   value={rotationRates[i]}
                   onChange={(e) => onRateChange(i, Number(e.target.value))}
+                  className="w-full accent-current h-1"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-gray-400 w-16 shrink-0">
+                  Extend&nbsp;
+                  <span className="tabular-nums">{layerExtensions[i]}°</span>
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={360}
+                  value={layerExtensions[i]}
+                  onChange={(e) => onExtensionChange(i, Number(e.target.value))}
                   className="w-full accent-current h-1"
                 />
               </div>

@@ -36,6 +36,9 @@ export default function App() {
   const [avgLuminance, setAvgLuminance] = useState(128);
   const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
+  const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>([130, 230, 330]);
+  const [flipH, setFlipH] = useState(false);
+  const [flipV, setFlipV] = useState(false);
 
   // Resize canvas to match container
   useEffect(() => {
@@ -204,6 +207,14 @@ export default function App() {
     });
   }, []);
 
+  const handleExtensionChange = useCallback((layer: 0 | 1 | 2, extension: number) => {
+    setLayerExtensions((prev) => {
+      const next: LayerTriple<number> = [...prev] as LayerTriple<number>;
+      next[layer] = extension;
+      return next;
+    });
+  }, []);
+
   const handleReset = useCallback(() => {
     setLayerAngles([...DEFAULT_ANGLES] as LayerTriple<number>);
     setRotationRates([...DEFAULT_RATES] as LayerTriple<number>);
@@ -224,6 +235,7 @@ export default function App() {
           inset: 0,
           imageRendering: 'pixelated',
           display: 'block',
+          transform: `scaleX(${flipH ? -1 : 1}) scaleY(${flipV ? -1 : 1})`,
         }}
       />
 
@@ -274,15 +286,21 @@ export default function App() {
       <NunifOverlay
         layerAngles={layerAngles}
         rotationRates={rotationRates}
+        layerExtensions={layerExtensions}
         frameRate={frameRate}
         onAngleChange={handleAngleChange}
         onRateChange={handleRateChange}
+        onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
         onReset={handleReset}
         isAutoPlayActive={isAutoPlayActive}
         onAutoPlayToggle={setIsAutoPlayActive}
         imageChangeInterval={imageChangeInterval}
         onImageChangeIntervalChange={setImageChangeInterval}
+        flipH={flipH}
+        onFlipHToggle={setFlipH}
+        flipV={flipV}
+        onFlipVToggle={setFlipV}
       />
     </div>
   );
