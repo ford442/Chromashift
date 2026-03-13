@@ -10,7 +10,7 @@ import { WebGPURenderer, type RendererState } from './engine/WebGPURenderer';
 import { TextureManager } from './engine/TextureManager';
 import { NunifOverlay } from './components/NunifOverlay';
 
-const IMAGES_ENDPOINT = '/images.json';
+const IMAGES_ENDPOINT = './images.json';
 
 type LayerTriple<T> = [T, T, T];
 
