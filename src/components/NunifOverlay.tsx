@@ -19,10 +19,6 @@ interface Props {
   onAutoPlayToggle: (active: boolean) => void;
   imageChangeInterval: number;
   onImageChangeIntervalChange: (seconds: number) => void;
-  flipH: boolean;
-  onFlipHToggle: (flip: boolean) => void;
-  flipV: boolean;
-  onFlipVToggle: (flip: boolean) => void;
 }
 
 const LAYER_LABELS: [string, string, string] = ['Red/Orange', 'Violet/Blue', 'Green/Yellow'];
@@ -42,10 +38,6 @@ export function NunifOverlay({
   onAutoPlayToggle,
   imageChangeInterval,
   onImageChangeIntervalChange,
-  flipH,
-  onFlipHToggle,
-  flipV,
-  onFlipVToggle,
 }: Props) {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 bg-black/70 backdrop-blur-sm text-white p-3 select-none">
@@ -65,28 +57,6 @@ export function NunifOverlay({
               title={isAutoPlayActive ? 'Pause image rotation' : 'Resume image rotation'}
             >
               {isAutoPlayActive ? '⏸ Pause' : '▶ Play'}
-            </button>
-            <button
-              onClick={() => onFlipHToggle(!flipH)}
-              className={`text-xs px-2 py-0.5 rounded transition-colors ${
-                flipH
-                  ? 'bg-blue-700 hover:bg-blue-600 text-white'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-              title="Flip horizontally"
-            >
-              ↔ Flip H
-            </button>
-            <button
-              onClick={() => onFlipVToggle(!flipV)}
-              className={`text-xs px-2 py-0.5 rounded transition-colors ${
-                flipV
-                  ? 'bg-blue-700 hover:bg-blue-600 text-white'
-                  : 'bg-gray-700 hover:bg-gray-600'
-              }`}
-              title="Flip vertically"
-            >
-              ↕ Flip V
             </button>
             <button
               onClick={onReset}
