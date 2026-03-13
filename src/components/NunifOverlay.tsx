@@ -13,6 +13,10 @@ interface Props {
   onRateChange: (layer: 0 | 1 | 2, rate: number) => void;
   onFrameRateChange: (fps: number) => void;
   onReset: () => void;
+  isAutoPlayActive: boolean;
+  onAutoPlayToggle: (active: boolean) => void;
+  imageChangeInterval: number;
+  onImageChangeIntervalChange: (seconds: number) => void;
 }
 
 const LAYER_LABELS: [string, string, string] = ['Red/Orange', 'Violet/Blue', 'Green/Yellow'];
@@ -26,6 +30,10 @@ export function NunifOverlay({
   onRateChange,
   onFrameRateChange,
   onReset,
+  isAutoPlayActive,
+  onAutoPlayToggle,
+  imageChangeInterval,
+  onImageChangeIntervalChange,
 }: Props) {
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 bg-black/70 backdrop-blur-sm text-white p-3 select-none">
@@ -34,12 +42,42 @@ export function NunifOverlay({
           <span className="text-xs font-mono font-bold tracking-widest text-gray-400 uppercase">
             NUNIF Controls
           </span>
-          <button
-            onClick={onReset}
-            className="text-xs px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 transition-colors"
-          >
-            Reset
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => onAutoPlayToggle(!isAutoPlayActive)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors ${
+                isAutoPlayActive
+                  ? 'bg-green-700 hover:bg-green-600 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600'
+              }`}
+              title={isAutoPlayActive ? 'Pause image rotation' : 'Resume image rotation'}
+            >
+              {isAutoPlayActive ? '⏸ Pause' : '▶ Play'}
+            </button>
+            <button
+              onClick={onReset}
+              className="text-xs px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 transition-colors"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+
+        {/* Auto-play controls */}
+        <div className="mb-3 p-2 bg-gray-900/50 rounded border border-gray-700">
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-xs text-gray-400 font-mono">
+              Image Change: <span className="tabular-nums text-white">{imageChangeInterval}s</span>
+            </label>
+            <input
+              type="range"
+              min={2}
+              max={30}
+              value={imageChangeInterval}
+              onChange={(e) => onImageChangeIntervalChange(Number(e.target.value))}
+              className="flex-1 h-1 accent-cyan-400"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
