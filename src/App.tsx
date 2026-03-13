@@ -37,6 +37,8 @@ export default function App() {
   const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
   const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>([130, 230, 330]);
+  const [flipH, setFlipH] = useState(false);
+  const [flipV, setFlipV] = useState(false);
 
   // Resize canvas to match container
   useEffect(() => {
@@ -233,6 +235,7 @@ export default function App() {
           inset: 0,
           imageRendering: 'pixelated',
           display: 'block',
+          transform: `scaleX(${flipH ? -1 : 1}) scaleY(${flipV ? -1 : 1})`,
         }}
       />
 
@@ -294,6 +297,10 @@ export default function App() {
         onAutoPlayToggle={setIsAutoPlayActive}
         imageChangeInterval={imageChangeInterval}
         onImageChangeIntervalChange={setImageChangeInterval}
+        flipH={flipH}
+        onFlipHToggle={setFlipH}
+        flipV={flipV}
+        onFlipVToggle={setFlipV}
       />
     </div>
   );
