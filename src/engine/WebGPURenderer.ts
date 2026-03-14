@@ -59,6 +59,7 @@ export class WebGPURenderer {
   private layerTextures: GPUTexture[] = [];
   private texW = 0;
   private texH = 0;
+  private msaaTexture: GPUTexture | null = null;
 
   // Compositor pass
   private compositorPipeline    : GPURenderPipeline;
@@ -165,12 +166,27 @@ export class WebGPURenderer {
   // ─── Ensure intermediate textures match canvas size ─────────────────────────
   private ensureLayerTextures(w: number, h: number): void {
     if (this.texW === w && this.texH === h && this.layerTextures.length === 3) return;
+
     for (const t of this.layerTextures) t.destroy();
+    if (this.msaaTexture) this.msaaTexture.destroy();
+
     this.layerTextures = [0, 1, 2].map(() => this.device.createTexture({
       size : [w, h, 1],
       format: this.format,
       usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     }));
+
+    if (this.sampleCount > 1) {
+      this.msaaTexture = this.device.createTexture({
+        size: [w, h, 1],
+        format: this.format,
+        sampleCount: this.sampleCount,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+    } else {
+      this.msaaTexture = null;
+    }
+
     this.texW = w;
     this.texH = h;
   }
@@ -182,6 +198,10 @@ export class WebGPURenderer {
     const newSampleCount = enabled ? 4 : 1;
     if (newSampleCount === this.sampleCount) return;
     this.sampleCount = newSampleCount;
+
+    // Force recreation of layer and MSAA textures on next render
+    this.texW = 0;
+
     // Recreate pipelines with new sample count
     this.layerPipelines = [];
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
@@ -228,9 +248,10 @@ export class WebGPURenderer {
 
       const pass = enc.beginRenderPass({
         colorAttachments: [{
-          view      : this.layerTextures[i].createView(),
+          view      : this.sampleCount > 1 && this.msaaTexture ? this.msaaTexture.createView() : this.layerTextures[i].createView(),
+          resolveTarget: this.sampleCount > 1 ? this.layerTextures[i].createView() : undefined,
           loadOp    : 'clear',
-          storeOp   : 'store',
+          storeOp   : this.sampleCount > 1 ? 'discard' : 'store',
           clearValue: { r: 0, g: 0, b: 0, a: 0 },
         }],
       });
@@ -261,9 +282,10 @@ export class WebGPURenderer {
 
     const finalPass = enc.beginRenderPass({
       colorAttachments: [{
-        view      : canvasTex.createView(),
+        view      : this.sampleCount > 1 && this.msaaTexture ? this.msaaTexture.createView() : canvasTex.createView(),
+        resolveTarget: this.sampleCount > 1 ? canvasTex.createView() : undefined,
         loadOp    : 'clear',
-        storeOp   : 'store',
+        storeOp   : this.sampleCount > 1 ? 'discard' : 'store',
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
       }],
     });
@@ -281,6 +303,7 @@ export class WebGPURenderer {
       lp.fragUniformBuffer.destroy();
     }
     for (const t of this.layerTextures) t.destroy();
+    if (this.msaaTexture) this.msaaTexture.destroy();
     this.compositorUniformBuf.destroy();
   }
 }
