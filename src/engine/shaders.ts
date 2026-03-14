@@ -248,14 +248,15 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   col = alpha_blend(col, c1);
   col = alpha_blend(col, c0);
 
-  // Tracer/ghost: all 3 layers have colour at this pixel with strong overlap
-  // Only show tracer where all three layers have significant alpha (stacking detected)
+  // Tracer/ghost: semi-transparent glow on top where all 3 layers overlap
+  // Shows as a luminous overlay wherever multiple layers converge
   let thresh = compUniforms.tracerThreshold;
-  let overlap = c0.a * c1.a * c2.a;  // Multiplicative overlap: high only when all 3 are present
-  if (overlap > thresh * thresh) {  // Require strong overlap from all three
-    // Bright cyan-white highlight at intersection points (highly visible)
-    let tracer = vec4<f32>(0.8, 1.0, 1.0, 1.0);
-    col = mix(col, tracer, compUniforms.tracerIntensity * 0.8);
+  let overlap = c0.a * c1.a * c2.a;  // Multiplicative overlap
+  if (overlap > thresh) {
+    // Soft cyan-white glow, blended on top with transparency
+    // Low base alpha (0.4) lets underlying colors show through
+    let tracer = vec4<f32>(0.9, 1.0, 1.0, 0.4);
+    col = mix(col, tracer, compUniforms.tracerIntensity * 0.5);
   }
 
   return col;
