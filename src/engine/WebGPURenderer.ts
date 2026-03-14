@@ -50,6 +50,7 @@ export class WebGPURenderer {
   private context : GPUCanvasContext;
   private format  : GPUTextureFormat;
   private sampler : GPUSampler;
+  private sampleCount: number = 1;  // MSAA sample count (1 = no AA, 4 = 4x MSAA)
 
   private layerPipelines: LayerPipeline[] = [];
   private currentTexture: GPUTexture | null = null;
@@ -65,10 +66,11 @@ export class WebGPURenderer {
   private compositorSampler     : GPUSampler;
   private compositorUniformBuf  : GPUBuffer;
 
-  constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat) {
+  constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = true) {
     this.device  = device;
     this.context = context;
     this.format  = format;
+    this.sampleCount = enableMSAA ? 4 : 1;
 
     this.sampler = device.createSampler({
       magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear',
@@ -110,6 +112,7 @@ export class WebGPURenderer {
         targets    : [{ format: this.format }],   // no blending — write clean alpha
       },
       primitive: { topology: 'triangle-list' },
+      multisample: { count: this.sampleCount },
     });
 
     // Rotation uniform: mat3x3 (48 b) + flipX/Y u32 (8 b) + padding = 64 b
@@ -155,6 +158,7 @@ export class WebGPURenderer {
         }],
       },
       primitive: { topology: 'triangle-list' },
+      multisample: { count: this.sampleCount },
     });
   }
 
@@ -173,6 +177,17 @@ export class WebGPURenderer {
 
   // ─── Public API ─────────────────────────────────────────────────────────────
   setTexture(texture: GPUTexture): void { this.currentTexture = texture; }
+
+  setAntialiasing(enabled: boolean): void {
+    const newSampleCount = enabled ? 4 : 1;
+    if (newSampleCount === this.sampleCount) return;
+    this.sampleCount = newSampleCount;
+    // Recreate pipelines with new sample count
+    this.layerPipelines = [];
+    const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
+    for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
+    this.compositorPipeline = this.createCompositorPipeline();
+  }
 
   render(state: RendererState): void {
     if (!this.currentTexture) return;

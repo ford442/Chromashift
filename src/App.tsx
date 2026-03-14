@@ -40,8 +40,12 @@ export default function App() {
   const [layerOpacity, setLayerOpacity] = useState(1.0);
   const [tracerIntensity, setTracerIntensity] = useState(0.7);
   const [squareCanvas, setSquareCanvas] = useState(false);
+  const [antialiasEnabled, setAntialiasEnabled] = useState(true);
 
-  // Resize canvas to match container (square mode: use smaller dimension)
+  const previewOriginalRef = useRef<HTMLCanvasElement>(null);
+  const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
+
+  // Resize canvas: always square, max 95% of viewport height
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -52,25 +56,32 @@ export default function App() {
       const canvas = canvasRef.current;
       if (!canvas || !container) return;
 
-      const rect = container.getBoundingClientRect();
-      const side = squareCanvas ? Math.min(rect.width, rect.height) : null;
-      const w = side ?? rect.width;
-      const h = side ?? rect.height;
-      canvas.width  = w * window.devicePixelRatio;
-      canvas.height = h * window.devicePixelRatio;
-      canvas.style.width  = `${w}px`;
-      canvas.style.height = `${h}px`;
+      const maxSize = window.innerHeight * 0.95;
+      const containerW = container.clientWidth;
+      const containerH = container.clientHeight;
+
+      // Always square, limited to 95% of viewport height
+      const side = Math.min(maxSize, containerW, containerH);
+
+      canvas.width  = side * window.devicePixelRatio;
+      canvas.height = side * window.devicePixelRatio;
+      canvas.style.width  = `${side}px`;
+      canvas.style.height = `${side}px`;
       // Centre the canvas in the container
-      canvas.style.left = `${(rect.width  - w) / 2}px`;
-      canvas.style.top  = `${(rect.height - h) / 2}px`;
+      canvas.style.left = `${(containerW - side) / 2}px`;
+      canvas.style.top  = `${(containerH - side) / 2}px`;
     }
 
     resizeCanvas();
     const observer = new ResizeObserver(resizeCanvas);
     observer.observe(container);
+    window.addEventListener('resize', resizeCanvas);
 
-    return () => { observer.disconnect(); };
-  }, [squareCanvas]);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', resizeCanvas);
+    };
+  }, []);
 
   // Initialise WebGPU
   useEffect(() => {
@@ -138,6 +149,19 @@ export default function App() {
     const url = imageList[currentImageIndex];
     textureManagerRef.current?.loadTexture(url).then((tex) => {
       rendererRef.current?.setTexture(tex);
+      // Update original preview
+      const previewOrig = previewOriginalRef.current;
+      if (previewOrig) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          const ctx = previewOrig.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
+          }
+        };
+        img.src = url;
+      }
     });
   }, [gpuReady, imageList, currentImageIndex]);
 
@@ -186,6 +210,15 @@ export default function App() {
         };
 
         rendererRef.current?.render(state);
+
+        // Update preview: copy main canvas to separated preview
+        const previewSep = previewSeparatedRef.current;
+        if (previewSep && canvasRef.current) {
+          const ctx = previewSep.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
+          }
+        }
       }
 
       animFrameRef.current = requestAnimationFrame(loop);
@@ -245,6 +278,28 @@ export default function App() {
         }}
       />
 
+      {/* Preview: Original Image (Top-Left) */}
+      <div className="absolute top-3 left-3 z-30 border border-gray-600 rounded overflow-hidden bg-black/80">
+        <canvas
+          ref={previewOriginalRef}
+          width={150}
+          height={150}
+          style={{ display: 'block', imageRendering: 'pixelated' }}
+        />
+        <div className="text-xs text-gray-400 px-2 py-1 font-mono">Original</div>
+      </div>
+
+      {/* Preview: RGB Separated Output (Top-Right) */}
+      <div className="absolute top-3 right-3 z-30 border border-gray-600 rounded overflow-hidden bg-black/80">
+        <canvas
+          ref={previewSeparatedRef}
+          width={150}
+          height={150}
+          style={{ display: 'block', imageRendering: 'pixelated' }}
+        />
+        <div className="text-xs text-gray-400 px-2 py-1 font-mono">Separated</div>
+      </div>
+
       {/* Image switcher */}
       {imageList.length > 1 && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-2 z-40">
@@ -297,6 +352,7 @@ export default function App() {
         layerOpacity={layerOpacity}
         tracerIntensity={tracerIntensity}
         squareCanvas={squareCanvas}
+        antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
         onRateChange={handleRateChange}
         onExtensionChange={handleExtensionChange}
@@ -304,6 +360,10 @@ export default function App() {
         onLayerOpacityChange={setLayerOpacity}
         onTracerIntensityChange={setTracerIntensity}
         onSquareCanvasToggle={setSquareCanvas}
+        onAntialiasToggle={(enabled) => {
+          setAntialiasEnabled(enabled);
+          rendererRef.current?.setAntialiasing(enabled);
+        }}
         onReset={handleReset}
         isAutoPlayActive={isAutoPlayActive}
         onAutoPlayToggle={setIsAutoPlayActive}
