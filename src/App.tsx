@@ -46,6 +46,7 @@ export default function App() {
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
+  const hasUpdatedPreviewsForImage = useRef(false);
 
   // Resize canvas: always square, max 95% of viewport height
   useEffect(() => {
@@ -172,7 +173,10 @@ export default function App() {
     if (!isAutoPlayActive || imageList.length === 0) return;
 
     const interval = setInterval(() => {
-      setCurrentImageIndex((prev) => (prev + 1) % imageList.length);
+      setCurrentImageIndex((prev) => {
+        hasUpdatedPreviewsForImage.current = false;
+        return (prev + 1) % imageList.length;
+      });
     }, imageChangeInterval * 1000);
 
     return () => clearInterval(interval);
@@ -213,22 +217,27 @@ export default function App() {
 
         rendererRef.current?.render(state);
 
-        // Update preview: copy main canvas to separated preview
-        const previewSep = previewSeparatedRef.current;
-        if (previewSep && canvasRef.current) {
-          const ctx = previewSep.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
+        // Update preview only on the first frame of a new image
+        if (!hasUpdatedPreviewsForImage.current) {
+          // Update preview: copy main canvas to separated preview
+          const previewSep = previewSeparatedRef.current;
+          if (previewSep && canvasRef.current) {
+            const ctx = previewSep.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
+            }
           }
-        }
 
-        // Update preview: copy main canvas to tracer preview (it's the same as separated, just labeled differently)
-        const previewTracer = previewTracerRef.current;
-        if (previewTracer && canvasRef.current) {
-          const ctx = previewTracer.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(canvasRef.current, 0, 0, previewTracer.width, previewTracer.height);
+          // Update preview: copy main canvas to tracer preview
+          const previewTracer = previewTracerRef.current;
+          if (previewTracer && canvasRef.current) {
+            const ctx = previewTracer.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(canvasRef.current, 0, 0, previewTracer.width, previewTracer.height);
+            }
           }
+
+          hasUpdatedPreviewsForImage.current = true;
         }
       }
 
@@ -328,7 +337,7 @@ export default function App() {
           {imageList.map((_, idx) => (
             <button
               key={idx}
-              onClick={() => setCurrentImageIndex(idx)}
+              onClick={() => { hasUpdatedPreviewsForImage.current = false; setCurrentImageIndex(idx); }}
               className={`w-2.5 h-2.5 rounded-full transition-colors ${
                 idx === currentImageIndex ? 'bg-white' : 'bg-white/30 hover:bg-white/60'
               }`}

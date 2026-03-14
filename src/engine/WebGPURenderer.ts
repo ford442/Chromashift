@@ -174,7 +174,7 @@ export class WebGPURenderer {
       size : [w, h, 1],
       format: this.format,
       usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-      sampleCount: this.sampleCount,
+      sampleCount: 1, // Intermediate resolved textures should always be 1x
     }));
 
     if (this.sampleCount > 1) {
@@ -288,10 +288,9 @@ export class WebGPURenderer {
 
     const finalPass = enc.beginRenderPass({
       colorAttachments: [{
-        view      : this.sampleCount > 1 && this.msaaTexture ? this.msaaTexture.createView() : canvasTex.createView(),
-        resolveTarget: this.sampleCount > 1 ? canvasTex.createView() : undefined,
+        view      : canvasTex.createView(),
         loadOp    : 'clear',
-        storeOp   : this.sampleCount > 1 ? 'discard' : 'store',
+        storeOp   : 'store',
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
       }],
     });
