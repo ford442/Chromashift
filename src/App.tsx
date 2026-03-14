@@ -38,8 +38,10 @@ export default function App() {
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
   const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>([130, 230, 330]);
   const [layerOpacity, setLayerOpacity] = useState(1.0);
+  const [tracerIntensity, setTracerIntensity] = useState(0.7);
+  const [squareCanvas, setSquareCanvas] = useState(false);
 
-  // Resize canvas to match container
+  // Resize canvas to match container (square mode: use smaller dimension)
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -51,20 +53,24 @@ export default function App() {
       if (!canvas || !container) return;
 
       const rect = container.getBoundingClientRect();
-      canvas.width = rect.width * window.devicePixelRatio;
-      canvas.height = rect.height * window.devicePixelRatio;
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
+      const side = squareCanvas ? Math.min(rect.width, rect.height) : null;
+      const w = side ?? rect.width;
+      const h = side ?? rect.height;
+      canvas.width  = w * window.devicePixelRatio;
+      canvas.height = h * window.devicePixelRatio;
+      canvas.style.width  = `${w}px`;
+      canvas.style.height = `${h}px`;
+      // Centre the canvas in the container
+      canvas.style.left = `${(rect.width  - w) / 2}px`;
+      canvas.style.top  = `${(rect.height - h) / 2}px`;
     }
 
     resizeCanvas();
     const observer = new ResizeObserver(resizeCanvas);
     observer.observe(container);
 
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
+    return () => { observer.disconnect(); };
+  }, [squareCanvas]);
 
   // Initialise WebGPU
   useEffect(() => {
@@ -176,6 +182,7 @@ export default function App() {
           ],
           avgLuminance,
           layerOpacity,
+          tracerIntensity,
         };
 
         rendererRef.current?.render(state);
@@ -189,7 +196,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, rotationRates, layerExtensions, avgLuminance, layerOpacity]);
+  }, [gpuReady, frameRate, rotationRates, layerExtensions, avgLuminance, layerOpacity, tracerIntensity]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -288,11 +295,15 @@ export default function App() {
         layerExtensions={layerExtensions}
         frameRate={frameRate}
         layerOpacity={layerOpacity}
+        tracerIntensity={tracerIntensity}
+        squareCanvas={squareCanvas}
         onAngleChange={handleAngleChange}
         onRateChange={handleRateChange}
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
         onLayerOpacityChange={setLayerOpacity}
+        onTracerIntensityChange={setTracerIntensity}
+        onSquareCanvasToggle={setSquareCanvas}
         onReset={handleReset}
         isAutoPlayActive={isAutoPlayActive}
         onAutoPlayToggle={setIsAutoPlayActive}
