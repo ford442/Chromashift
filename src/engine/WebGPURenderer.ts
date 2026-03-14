@@ -158,7 +158,7 @@ export class WebGPURenderer {
         }],
       },
       primitive: { topology: 'triangle-list' },
-      multisample: { count: this.sampleCount },
+      multisample: { count: 1 },  // Canvas always renders at 1x, MSAA only for layer passes
     });
   }
 
