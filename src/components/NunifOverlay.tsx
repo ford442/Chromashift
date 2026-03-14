@@ -12,6 +12,7 @@ interface Props {
   frameRate: number;
   layerOpacity: number;
   tracerIntensity: number;
+  tracerDuration: number;
   squareCanvas: boolean;
   antialiasEnabled: boolean;
   onAngleChange: (layer: 0 | 1 | 2, angle: number) => void;
@@ -20,6 +21,7 @@ interface Props {
   onFrameRateChange: (fps: number) => void;
   onLayerOpacityChange: (opacity: number) => void;
   onTracerIntensityChange: (v: number) => void;
+  onTracerDurationChange: (v: number) => void;
   onSquareCanvasToggle: (v: boolean) => void;
   onAntialiasToggle: (v: boolean) => void;
   onReset: () => void;
@@ -39,6 +41,7 @@ export function NunifOverlay({
   frameRate,
   layerOpacity,
   tracerIntensity,
+  tracerDuration,
   squareCanvas,
   antialiasEnabled,
   onAngleChange,
@@ -47,6 +50,7 @@ export function NunifOverlay({
   onFrameRateChange,
   onLayerOpacityChange,
   onTracerIntensityChange,
+  onTracerDurationChange,
   onSquareCanvasToggle,
   onAntialiasToggle,
   onReset,
@@ -197,6 +201,21 @@ export function NunifOverlay({
             value={tracerIntensity}
             onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
             className="w-40 h-1 accent-yellow-300"
+          />
+        </div>
+
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-xs text-gray-400 font-mono">
+            Tracer Duration: <span className="tabular-nums">{tracerDuration}ms</span>
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={500}
+            step={10}
+            value={tracerDuration}
+            onChange={(e) => onTracerDurationChange(Number(e.target.value))}
+            className="w-40 h-1 accent-orange-300"
           />
           <button
             onClick={() => onSquareCanvasToggle(!squareCanvas)}
