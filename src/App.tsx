@@ -41,9 +41,11 @@ export default function App() {
   const [tracerIntensity, setTracerIntensity] = useState(0.7);
   const [squareCanvas, setSquareCanvas] = useState(false);
   const [antialiasEnabled, setAntialiasEnabled] = useState(true);
+  const [tracerDuration, setTracerDuration] = useState(50);
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
+  const previewTracerRef = useRef<HTMLCanvasElement>(null);
 
   // Resize canvas: always square, max 95% of viewport height
   useEffect(() => {
@@ -219,6 +221,15 @@ export default function App() {
             ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
           }
         }
+
+        // Update preview: copy main canvas to tracer preview (it's the same as separated, just labeled differently)
+        const previewTracer = previewTracerRef.current;
+        if (previewTracer && canvasRef.current) {
+          const ctx = previewTracer.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(canvasRef.current, 0, 0, previewTracer.width, previewTracer.height);
+          }
+        }
       }
 
       animFrameRef.current = requestAnimationFrame(loop);
@@ -300,6 +311,17 @@ export default function App() {
         <div className="text-xs text-gray-400 px-2 py-1 font-mono">Separated</div>
       </div>
 
+      {/* Preview: Tracer/Ghost Output (Bottom-Right) */}
+      <div className="absolute bottom-3 right-3 z-30 border border-yellow-600 rounded overflow-hidden bg-black/80">
+        <canvas
+          ref={previewTracerRef}
+          width={150}
+          height={150}
+          style={{ display: 'block', imageRendering: 'pixelated' }}
+        />
+        <div className="text-xs text-yellow-400 px-2 py-1 font-mono">Tracer</div>
+      </div>
+
       {/* Image switcher */}
       {imageList.length > 1 && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-2 z-40">
@@ -351,6 +373,7 @@ export default function App() {
         frameRate={frameRate}
         layerOpacity={layerOpacity}
         tracerIntensity={tracerIntensity}
+        tracerDuration={tracerDuration}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
@@ -359,6 +382,7 @@ export default function App() {
         onFrameRateChange={setFrameRate}
         onLayerOpacityChange={setLayerOpacity}
         onTracerIntensityChange={setTracerIntensity}
+        onTracerDurationChange={setTracerDuration}
         onSquareCanvasToggle={setSquareCanvas}
         onAntialiasToggle={(enabled) => {
           setAntialiasEnabled(enabled);
