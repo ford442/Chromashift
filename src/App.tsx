@@ -38,7 +38,7 @@ export default function App() {
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
   const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>([130, 230, 330]);
   const [layerOpacity, setLayerOpacity] = useState(1.0);
-  const [tracerIntensity, setTracerIntensity] = useState(0.7);
+  const [tracerIntensity, setTracerIntensity] = useState(0.85);
   const [squareCanvas, setSquareCanvas] = useState(false);
   const [antialiasEnabled, setAntialiasEnabled] = useState(true);
   const [tracerDuration, setTracerDuration] = useState(50);
@@ -275,7 +275,7 @@ export default function App() {
   return (
     <div
       ref={containerRef}
-      className="relative w-screen h-screen bg-black overflow-hidden"
+      className="relative w-screen h-screen bg-green-800 overflow-hidden"
       id="chromashift-container"
     >
       {/* WebGPU canvas */}
