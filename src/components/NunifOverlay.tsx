@@ -11,11 +11,15 @@ interface Props {
   layerExtensions: [number, number, number];
   frameRate: number;
   layerOpacity: number;
+  tracerIntensity: number;
+  squareCanvas: boolean;
   onAngleChange: (layer: 0 | 1 | 2, angle: number) => void;
   onRateChange: (layer: 0 | 1 | 2, rate: number) => void;
   onExtensionChange: (layer: 0 | 1 | 2, extension: number) => void;
   onFrameRateChange: (fps: number) => void;
   onLayerOpacityChange: (opacity: number) => void;
+  onTracerIntensityChange: (v: number) => void;
+  onSquareCanvasToggle: (v: boolean) => void;
   onReset: () => void;
   isAutoPlayActive: boolean;
   onAutoPlayToggle: (active: boolean) => void;
@@ -32,11 +36,15 @@ export function NunifOverlay({
   layerExtensions,
   frameRate,
   layerOpacity,
+  tracerIntensity,
+  squareCanvas,
   onAngleChange,
   onRateChange,
   onExtensionChange,
   onFrameRateChange,
   onLayerOpacityChange,
+  onTracerIntensityChange,
+  onSquareCanvasToggle,
   onReset,
   isAutoPlayActive,
   onAutoPlayToggle,
@@ -171,6 +179,32 @@ export function NunifOverlay({
             onChange={(e) => onLayerOpacityChange(Number(e.target.value))}
             className="w-40 h-1 accent-pink-400"
           />
+        </div>
+
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-xs text-gray-400 font-mono">
+            Tracer: <span className="tabular-nums">{Math.round(tracerIntensity * 100)}%</span>
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={tracerIntensity}
+            onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
+            className="w-40 h-1 accent-yellow-300"
+          />
+          <button
+            onClick={() => onSquareCanvasToggle(!squareCanvas)}
+            className={`ml-2 text-xs px-2 py-0.5 rounded transition-colors ${
+              squareCanvas
+                ? 'bg-orange-600 hover:bg-orange-500 text-white'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+            title="Lock canvas to square aspect ratio"
+          >
+            ▣ Square
+          </button>
         </div>
       </div>
     </div>

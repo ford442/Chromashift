@@ -43,8 +43,32 @@ Once rendering is correct, proceed with AI analysis + threshold optimization
 ✅ Rotation controls affect layers independently
 ✅ Performance: 30+ fps on modern GPU
 
-## Next Steps
-1. Fix canvas sizing in `App.tsx`
-2. Test with `npm run dev`
-3. Verify rendering matches reference app
-4. Commit fix to feature branch
+## Phase 4: Color Stacking Detection (Tracer/Ghost Effect)
+- [ ] Detect when all three layers have color at the same pixel
+- [ ] Create tracer/ghost visual effect for color-stacked points
+- [ ] Optional: Highlight stacked regions with glow or different color
+
+## Phase 5: Square Dimensions & Crop Circle Centering
+- [ ] Enforce square canvas aspect ratio (1:1)
+- [ ] Detect crop circle center and radius from image
+- [ ] Auto-center circle or crop/letterbox to square
+- [ ] Preserve image quality while maintaining square format
+
+## Phase 6: NUNIF Superresolution Integration
+- [ ] Link NUNIF upscaling to image loading pipeline
+- [ ] Apply before color separation (pre-process)
+- [ ] Add toggle control to enable/disable upscaling
+
+## Current Session Progress
+✅ Phase 1: Canvas sizing fix
+✅ Phase 2: Rendering validation
+✅ Auto-play image rotation
+✅ Per-frame angle extensions (0-360°)
+✅ Per-layer flip transforms
+✅ Layer opacity/alpha control
+
+## Next Priority?
+Please prioritize which feature to tackle next:
+1. **Color stacking detection** (simplest - GPU shader-based)
+2. **Square dimensions + centering** (requires image analysis)
+3. **NUNIF superresolution** (requires API/post-processing)
