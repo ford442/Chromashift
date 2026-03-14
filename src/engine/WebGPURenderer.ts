@@ -162,7 +162,7 @@ export class WebGPURenderer {
     });
   }
 
-  // ─── Ensure intermediate textures match canvas size ─────────────────────────
+  // ─── Ensure intermediate textures match canvas size and sample count ─────────
   private ensureLayerTextures(w: number, h: number): void {
     if (this.texW === w && this.texH === h && this.layerTextures.length === 3) return;
     for (const t of this.layerTextures) t.destroy();
@@ -170,6 +170,7 @@ export class WebGPURenderer {
       size : [w, h, 1],
       format: this.format,
       usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      sampleCount: this.sampleCount,
     }));
     this.texW = w;
     this.texH = h;
@@ -187,6 +188,11 @@ export class WebGPURenderer {
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
     for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
     this.compositorPipeline = this.createCompositorPipeline();
+    // Force recreation of intermediate textures with new sample count
+    for (const t of this.layerTextures) t.destroy();
+    this.layerTextures = [];
+    this.texW = 0;
+    this.texH = 0;
   }
 
   render(state: RendererState): void {
