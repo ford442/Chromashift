@@ -10,10 +10,12 @@ interface Props {
   rotationRates: [number, number, number];
   layerExtensions: [number, number, number];
   frameRate: number;
+  layerOpacity: number;
   onAngleChange: (layer: 0 | 1 | 2, angle: number) => void;
   onRateChange: (layer: 0 | 1 | 2, rate: number) => void;
   onExtensionChange: (layer: 0 | 1 | 2, extension: number) => void;
   onFrameRateChange: (fps: number) => void;
+  onLayerOpacityChange: (opacity: number) => void;
   onReset: () => void;
   isAutoPlayActive: boolean;
   onAutoPlayToggle: (active: boolean) => void;
@@ -29,10 +31,12 @@ export function NunifOverlay({
   rotationRates,
   layerExtensions,
   frameRate,
+  layerOpacity,
   onAngleChange,
   onRateChange,
   onExtensionChange,
   onFrameRateChange,
+  onLayerOpacityChange,
   onReset,
   isAutoPlayActive,
   onAutoPlayToggle,
@@ -151,6 +155,21 @@ export function NunifOverlay({
             value={frameRate}
             onChange={(e) => onFrameRateChange(Number(e.target.value))}
             className="w-40 h-1 accent-purple-400"
+          />
+        </div>
+
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-xs text-gray-400 font-mono">
+            Layer Opacity: <span className="tabular-nums">{Math.round(layerOpacity * 100)}%</span>
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={layerOpacity}
+            onChange={(e) => onLayerOpacityChange(Number(e.target.value))}
+            className="w-40 h-1 accent-pink-400"
           />
         </div>
       </div>

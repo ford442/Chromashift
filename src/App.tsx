@@ -37,6 +37,7 @@ export default function App() {
   const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
   const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>([130, 230, 330]);
+  const [layerOpacity, setLayerOpacity] = useState(1.0);
 
   // Resize canvas to match container
   useEffect(() => {
@@ -174,6 +175,7 @@ export default function App() {
             { angleDeg: angles[2], flipX: false, flipY: false },
           ],
           avgLuminance,
+          layerOpacity,
         };
 
         rendererRef.current?.render(state);
@@ -187,7 +189,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, rotationRates, layerExtensions, avgLuminance]);
+  }, [gpuReady, frameRate, rotationRates, layerExtensions, avgLuminance, layerOpacity]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -285,10 +287,12 @@ export default function App() {
         rotationRates={rotationRates}
         layerExtensions={layerExtensions}
         frameRate={frameRate}
+        layerOpacity={layerOpacity}
         onAngleChange={handleAngleChange}
         onRateChange={handleRateChange}
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
+        onLayerOpacityChange={setLayerOpacity}
         onReset={handleReset}
         isAutoPlayActive={isAutoPlayActive}
         onAutoPlayToggle={setIsAutoPlayActive}
