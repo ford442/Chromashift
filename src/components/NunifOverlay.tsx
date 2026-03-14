@@ -13,6 +13,7 @@ interface Props {
   layerOpacity: number;
   tracerIntensity: number;
   squareCanvas: boolean;
+  antialiasEnabled: boolean;
   onAngleChange: (layer: 0 | 1 | 2, angle: number) => void;
   onRateChange: (layer: 0 | 1 | 2, rate: number) => void;
   onExtensionChange: (layer: 0 | 1 | 2, extension: number) => void;
@@ -20,6 +21,7 @@ interface Props {
   onLayerOpacityChange: (opacity: number) => void;
   onTracerIntensityChange: (v: number) => void;
   onSquareCanvasToggle: (v: boolean) => void;
+  onAntialiasToggle: (v: boolean) => void;
   onReset: () => void;
   isAutoPlayActive: boolean;
   onAutoPlayToggle: (active: boolean) => void;
@@ -38,6 +40,7 @@ export function NunifOverlay({
   layerOpacity,
   tracerIntensity,
   squareCanvas,
+  antialiasEnabled,
   onAngleChange,
   onRateChange,
   onExtensionChange,
@@ -45,6 +48,7 @@ export function NunifOverlay({
   onLayerOpacityChange,
   onTracerIntensityChange,
   onSquareCanvasToggle,
+  onAntialiasToggle,
   onReset,
   isAutoPlayActive,
   onAutoPlayToggle,
@@ -204,6 +208,17 @@ export function NunifOverlay({
             title="Lock canvas to square aspect ratio"
           >
             ▣ Square
+          </button>
+          <button
+            onClick={() => onAntialiasToggle(!antialiasEnabled)}
+            className={`ml-2 text-xs px-2 py-0.5 rounded transition-colors ${
+              antialiasEnabled
+                ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
+            title="Enable/disable MSAA antialiasing"
+          >
+            ◆ AA
           </button>
         </div>
       </div>
