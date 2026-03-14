@@ -270,8 +270,8 @@ export class WebGPURenderer {
     // ── Pass 3: compositor – blend + tracer ───────────────────────────────
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0,
       new Float32Array([
-        state.tracerIntensity ?? 0.7,
-        state.tracerThreshold ?? 0.05,
+        state.tracerIntensity ?? 0.85,
+        state.tracerThreshold ?? 0.08,
         0, 0,
       ]));
 
