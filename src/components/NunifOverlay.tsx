@@ -196,7 +196,7 @@ export function NunifOverlay({
           <input
             type="range"
             min={0}
-            max={1}
+            max={2}
             step={0.01}
             value={tracerIntensity}
             onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
@@ -211,7 +211,7 @@ export function NunifOverlay({
           <input
             type="range"
             min={0}
-            max={500}
+            max={1500}
             step={10}
             value={tracerDuration}
             onChange={(e) => onTracerDurationChange(Number(e.target.value))}

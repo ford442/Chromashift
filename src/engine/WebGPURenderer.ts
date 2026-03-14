@@ -271,7 +271,7 @@ export class WebGPURenderer {
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0,
       new Float32Array([
         state.tracerIntensity ?? 0.85,
-        state.tracerThreshold ?? 0.08,
+        state.tracerThreshold ?? 0.02,
         0, 0,
       ]));
 
