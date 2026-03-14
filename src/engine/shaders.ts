@@ -65,9 +65,9 @@ export const fragmentShaderRedOrange = /* wgsl */ `
 
 struct FragUniforms {
   avgLuminance : f32,
+  layerOpacity : f32,
   _pad0 : f32,
   _pad1 : f32,
-  _pad2 : f32,
 };
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
 
@@ -78,18 +78,19 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
   let avg = fragUniforms.avgLuminance;
   let diff = (avg / 255.0) * 32.0;
+  let opacity = fragUniforms.layerOpacity;
 
   // Red / Orange band: lum > 193
   if (lum > 229.0) {
     // past orange -> near white highlight
     let v = (avg + (lum - 229.0)) / 255.0;
-    return vec4<f32>(v, v, v, 1.0);
+    return vec4<f32>(v, v, v, opacity);
   } else if (lum > 209.0) {
     // orange
-    return vec4<f32>(1.0, (128.0 - diff) / 255.0, 0.0, 1.0);
+    return vec4<f32>(1.0, (128.0 - diff) / 255.0, 0.0, opacity);
   } else if (lum > 190.0) {
     // red (193 threshold with 190 border)
-    return vec4<f32>((255.0 - diff) / 255.0, 0.0, 0.0, 1.0);
+    return vec4<f32>((255.0 - diff) / 255.0, 0.0, 0.0, opacity);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -105,9 +106,9 @@ export const fragmentShaderVioletBlue = /* wgsl */ `
 
 struct FragUniforms {
   avgLuminance : f32,
+  layerOpacity : f32,
   _pad0 : f32,
   _pad1 : f32,
-  _pad2 : f32,
 };
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
 
@@ -118,14 +119,15 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
   let avg = fragUniforms.avgLuminance;
   let diff = (avg / 255.0) * 32.0;
+  let opacity = fragUniforms.layerOpacity;
 
   // Violet / Blue band: 158 < lum <= 190
   if (lum > 177.0 && lum <= 190.0) {
     // violet
-    return vec4<f32>((128.0 - diff) / 255.0, 0.0, 1.0, 1.0);
+    return vec4<f32>((128.0 - diff) / 255.0, 0.0, 1.0, opacity);
   } else if (lum > 158.0 && lum <= 177.0) {
     // blue
-    return vec4<f32>(0.0, 0.0, (255.0 - diff) / 255.0, 1.0);
+    return vec4<f32>(0.0, 0.0, (255.0 - diff) / 255.0, opacity);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -141,9 +143,9 @@ export const fragmentShaderGreenYellow = /* wgsl */ `
 
 struct FragUniforms {
   avgLuminance : f32,
+  layerOpacity : f32,
   _pad0 : f32,
   _pad1 : f32,
-  _pad2 : f32,
 };
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
 
@@ -154,14 +156,15 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
   let avg = fragUniforms.avgLuminance;
   let diff = (avg / 255.0) * 32.0;
+  let opacity = fragUniforms.layerOpacity;
 
   // Green / Yellow band: 125 < lum <= 158
   if (lum > 145.0 && lum <= 158.0) {
     // green
-    return vec4<f32>(0.0, (255.0 - diff) / 255.0, 0.0, 1.0);
+    return vec4<f32>(0.0, (255.0 - diff) / 255.0, 0.0, opacity);
   } else if (lum > 125.0 && lum <= 145.0) {
     // yellow
-    return vec4<f32>(1.0, (255.0 - diff) / 255.0, 0.0, 1.0);
+    return vec4<f32>(1.0, (255.0 - diff) / 255.0, 0.0, opacity);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);

@@ -34,6 +34,8 @@ export interface RendererState {
   layers: [LayerState, LayerState, LayerState];
   /** Average luminance [0–255] used for colour-depth modulation */
   avgLuminance: number;
+  /** Layer opacity [0.0–1.0] applied to all layers */
+  layerOpacity?: number;
 }
 
 /** Build a column-major mat3x3 rotation matrix (z-axis) for WGSL. */
@@ -155,7 +157,7 @@ export class WebGPURenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // Fragment uniform: avgLuminance (f32) + 3× padding = 16 bytes
+    // Fragment uniform: avgLuminance (f32) + layerOpacity (f32) + 2× padding = 16 bytes
     const fragUniformBuffer = device.createBuffer({
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -192,8 +194,9 @@ export class WebGPURenderer {
 
       this.device.queue.writeBuffer(lp.rotationBuffer, 0, combinedData);
 
-      // Upload fragment uniforms (avg luminance + padding)
-      const fragData = new Float32Array([state.avgLuminance, 0, 0, 0]);
+      // Upload fragment uniforms (avg luminance + layer opacity + padding)
+      const opacity = state.layerOpacity ?? 1.0;
+      const fragData = new Float32Array([state.avgLuminance, opacity, 0, 0]);
       this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, fragData);
 
       const bindGroup = this.device.createBindGroup({
