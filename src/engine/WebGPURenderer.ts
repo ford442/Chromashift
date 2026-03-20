@@ -31,6 +31,7 @@ export interface RendererState {
   tracerIntensity? : number;  // 0–1 opacity of the persistence overlay
   tracerDuration?  : number;  // milliseconds to hold a hit before it fully fades
   tracerThreshold? : number;  // min alpha to count a layer as "has colour"
+  tracerBelow?     : boolean; // true = render tracer under the 3 colour layers
 }
 
 /** Column-major mat3x3 for WGSL std140. */
@@ -385,8 +386,9 @@ export class WebGPURenderer {
 
     // ── Pass 4: compositor — live layers + persistence → canvas ───────────
     const tracerOpacity = state.tracerIntensity ?? 0.85;
+    const tracerBelow   = state.tracerBelow ? 1.0 : 0.0;
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0,
-      new Float32Array([tracerOpacity, 0, 0, 0]));
+      new Float32Array([tracerOpacity, tracerBelow, 0, 0]));
 
     const compBG = this.device.createBindGroup({
       layout : this.compositorBGL,

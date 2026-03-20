@@ -9,6 +9,7 @@ interface Props {
   layerOpacity            : number;
   tracerIntensity         : number;
   tracerDuration          : number;
+  tracerBelow             : boolean;
   squareCanvas            : boolean;
   antialiasEnabled        : boolean;
   onAngleChange           : (layer: 0 | 1 | 2, angle: number) => void;
@@ -17,6 +18,7 @@ interface Props {
   onLayerOpacityChange    : (opacity: number) => void;
   onTracerIntensityChange : (v: number) => void;
   onTracerDurationChange  : (v: number) => void;
+  onTracerBelowToggle     : (v: boolean) => void;
   onSquareCanvasToggle    : (v: boolean) => void;
   onAntialiasToggle       : (v: boolean) => void;
   onReset                 : () => void;
@@ -36,6 +38,7 @@ export function NunifOverlay({
   layerOpacity,
   tracerIntensity,
   tracerDuration,
+  tracerBelow,
   squareCanvas,
   antialiasEnabled,
   onAngleChange,
@@ -44,6 +47,7 @@ export function NunifOverlay({
   onLayerOpacityChange,
   onTracerIntensityChange,
   onTracerDurationChange,
+  onTracerBelowToggle,
   onSquareCanvasToggle,
   onAntialiasToggle,
   onReset,
@@ -174,6 +178,15 @@ export function NunifOverlay({
               onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
               className="w-28 h-1 accent-yellow-300"
             />
+            <button
+              onClick={() => onTracerBelowToggle(!tracerBelow)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
+                tracerBelow ? 'bg-yellow-700 hover:bg-yellow-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+              }`}
+              title="Toggle tracer above/below colour layers"
+            >
+              {tracerBelow ? '↓ Below' : '↑ Above'}
+            </button>
           </div>
 
           <div className="flex items-center gap-2">

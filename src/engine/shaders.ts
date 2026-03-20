@@ -301,9 +301,9 @@ export const compositorFragmentSource = /* wgsl */ `
 
 struct CompositorUniforms {
   tracerOpacity : f32,  // how opaque the persistence overlay is (0–1)
+  tracerBelow   : f32,  // 1.0 = composite tracer below layers, 0.0 = above
   _pad0         : f32,
   _pad1         : f32,
-  _pad2         : f32,
 };
 @group(0) @binding(5) var<uniform> cu : CompositorUniforms;
 
@@ -321,15 +321,22 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c2   = textureSample(layer2,      cSampler, uv);
   let pers = textureSample(persistence, cSampler, uv);
 
-  // Standard back-to-front composite of live layers
-  var col = vec4<f32>(0.0);
-  col = alpha_blend(col, c2);
-  col = alpha_blend(col, c1);
-  col = alpha_blend(col, c0);
-
-  // Draw persistence layer on top, scaled by tracerOpacity slider
   let persScaled = vec4<f32>(pers.rgb, pers.a * cu.tracerOpacity);
-  col = alpha_blend(col, persScaled);
+
+  var col = vec4<f32>(0.0);
+  if (cu.tracerBelow > 0.5) {
+    // Tracer below — layers render on top of ghosts
+    col = alpha_blend(col, persScaled);
+    col = alpha_blend(col, c2);
+    col = alpha_blend(col, c1);
+    col = alpha_blend(col, c0);
+  } else {
+    // Tracer above — ghosts render on top of layers (default)
+    col = alpha_blend(col, c2);
+    col = alpha_blend(col, c1);
+    col = alpha_blend(col, c0);
+    col = alpha_blend(col, persScaled);
+  }
 
   return col;
 }
