@@ -197,9 +197,9 @@ export default function App() {
         // of a separate rate. This matches the original C++ / JS behaviour where
         // knd/knc/knb were the sole rotation amounts per tick.
         angles = [
-          (angles[0] - layerExtensions[0] + 360) % 360,
-          (angles[1] + layerExtensions[1]) % 360,
-          (angles[2] + layerExtensions[2]) % 360,
+          (angles[0] + DEFAULT_RATES[0] + layerExtensions[0]) % 360,
+          (angles[1] + DEFAULT_RATES[1] + layerExtensions[1]) % 360,
+          (angles[2] + DEFAULT_RATES[2] + layerExtensions[2]) % 360,
         ];
 
         setLayerAngles(angles);
