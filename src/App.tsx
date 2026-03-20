@@ -15,7 +15,8 @@ const IMAGES_ENDPOINT = './images.json';
 type LayerTriple<T> = [T, T, T];
 
 const DEFAULT_ANGLES: LayerTriple<number> = [0, 0, 0];
-const DEFAULT_RATES: LayerTriple<number> = [1, 1.5, 2];
+// Step sizes per frame matching original: 130°, 230°, 330°
+const DEFAULT_EXTENSIONS: LayerTriple<number> = [130, 230, 330];
 const DEFAULT_FPS = 30;
 
 export default function App() {
@@ -31,12 +32,13 @@ export default function App() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
   const [layerAngles, setLayerAngles] = useState<LayerTriple<number>>(DEFAULT_ANGLES);
-  const [rotationRates, setRotationRates] = useState<LayerTriple<number>>(DEFAULT_RATES);
+  // layerExtensions is the per-frame step size for each layer (degrees/frame)
+  // Layer 0 subtracts (spins opposite), layers 1 & 2 add — matching original behaviour
+  const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>(DEFAULT_EXTENSIONS);
   const [frameRate, setFrameRate] = useState(DEFAULT_FPS);
   const [avgLuminance, setAvgLuminance] = useState(128);
   const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
-  const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>([130, 230, 330]);
   const [layerOpacity, setLayerOpacity] = useState(1.0);
   const [tracerIntensity, setTracerIntensity] = useState(0.85);
   const [squareCanvas, setSquareCanvas] = useState(false);
@@ -63,14 +65,12 @@ export default function App() {
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-      // Always square, limited to 95% of viewport height
       const side = Math.min(maxSize, containerW, containerH);
 
       canvas.width  = side * window.devicePixelRatio;
       canvas.height = side * window.devicePixelRatio;
       canvas.style.width  = `${side}px`;
       canvas.style.height = `${side}px`;
-      // Centre the canvas in the container
       canvas.style.left = `${(containerW - side) / 2}px`;
       canvas.style.top  = `${(containerH - side) / 2}px`;
     }
@@ -121,7 +121,6 @@ export default function App() {
       rendererRef.current = renderer;
       textureManagerRef.current = textureManager;
 
-      // Fetch image list
       try {
         const list = await textureManager.fetchImageList(IMAGES_ENDPOINT);
         const urls = list.map((e) => e.url);
@@ -132,7 +131,6 @@ export default function App() {
           renderer.setTexture(tex);
         }
       } catch (e) {
-        // Non-fatal: the engine still works; just no images to show yet
         console.warn('Could not load image list:', e);
       }
 
@@ -152,7 +150,6 @@ export default function App() {
     const url = imageList[currentImageIndex];
     textureManagerRef.current?.loadTexture(url).then((tex) => {
       rendererRef.current?.setTexture(tex);
-      // Update original preview
       const previewOrig = previewOriginalRef.current;
       if (previewOrig) {
         const img = new Image();
@@ -195,11 +192,14 @@ export default function App() {
       if (delta >= msPerFrame) {
         last = now - (delta % msPerFrame);
 
-        // Advance each layer's angle by its rotation rate + extension per frame
+        // Layer 0 subtracts (spins opposite direction), layers 1 & 2 add.
+        // layerExtensions is the total degrees-per-frame step — not added on top
+        // of a separate rate. This matches the original C++ / JS behaviour where
+        // knd/knc/knb were the sole rotation amounts per tick.
         angles = [
-          (angles[0] + rotationRates[0] + layerExtensions[0]) % 360,
-          (angles[1] + rotationRates[1] + layerExtensions[1]) % 360,
-          (angles[2] + rotationRates[2] + layerExtensions[2]) % 360,
+          (angles[0] - layerExtensions[0] + 360) % 360,
+          (angles[1] + layerExtensions[1]) % 360,
+          (angles[2] + layerExtensions[2]) % 360,
         ];
 
         setLayerAngles(angles);
@@ -213,13 +213,13 @@ export default function App() {
           avgLuminance,
           layerOpacity,
           tracerIntensity,
+          tracerDuration,
         };
 
         rendererRef.current?.render(state);
 
-        // Update preview only on the first frame of a new image
+        // Update previews only on first frame of a new image
         if (!hasUpdatedPreviewsForImage.current) {
-          // Update preview: copy main canvas to separated preview
           const previewSep = previewSeparatedRef.current;
           if (previewSep && canvasRef.current) {
             const ctx = previewSep.getContext('2d');
@@ -228,7 +228,6 @@ export default function App() {
             }
           }
 
-          // Update preview: copy main canvas to tracer preview
           const previewTracer = previewTracerRef.current;
           if (previewTracer && canvasRef.current) {
             const ctx = previewTracer.getContext('2d');
@@ -249,20 +248,12 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, rotationRates, layerExtensions, avgLuminance, layerOpacity, tracerIntensity]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity, tracerDuration]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
       const next: LayerTriple<number> = [...prev] as LayerTriple<number>;
       next[layer] = angle;
-      return next;
-    });
-  }, []);
-
-  const handleRateChange = useCallback((layer: 0 | 1 | 2, rate: number) => {
-    setRotationRates((prev) => {
-      const next: LayerTriple<number> = [...prev] as LayerTriple<number>;
-      next[layer] = rate;
       return next;
     });
   }, []);
@@ -277,7 +268,7 @@ export default function App() {
 
   const handleReset = useCallback(() => {
     setLayerAngles([...DEFAULT_ANGLES] as LayerTriple<number>);
-    setRotationRates([...DEFAULT_RATES] as LayerTriple<number>);
+    setLayerExtensions([...DEFAULT_EXTENSIONS] as LayerTriple<number>);
     setFrameRate(DEFAULT_FPS);
   }, []);
 
@@ -331,7 +322,7 @@ export default function App() {
         <div className="text-xs text-yellow-400 px-2 py-1 font-mono">Tracer</div>
       </div>
 
-      {/* Image switcher */}
+      {/* Image switcher dots */}
       {imageList.length > 1 && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-2 z-40">
           {imageList.map((_, idx) => (
@@ -377,7 +368,6 @@ export default function App() {
       {/* NUNIF control overlay */}
       <NunifOverlay
         layerAngles={layerAngles}
-        rotationRates={rotationRates}
         layerExtensions={layerExtensions}
         frameRate={frameRate}
         layerOpacity={layerOpacity}
@@ -386,7 +376,6 @@ export default function App() {
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
-        onRateChange={handleRateChange}
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
         onLayerOpacityChange={setLayerOpacity}
