@@ -53,8 +53,8 @@ export function NunifOverlay({
   onImageChangeIntervalChange,
 }: Props) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-black/70 backdrop-blur-sm text-white p-3 select-none">
-      <div className="max-w-4xl mx-auto">
+    <div className="fixed left-0 top-0 bottom-0 z-50 w-72 bg-black/70 backdrop-blur-sm text-white p-3 select-none overflow-y-auto">
+      <div className="space-y-3">
 
         {/* Header row */}
         <div className="flex items-center justify-between mb-2">
@@ -99,7 +99,7 @@ export function NunifOverlay({
         </div>
 
         {/* Per-layer controls */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="space-y-3">
           {([0, 1, 2] as const).map((i) => (
             <div key={i} className="space-y-1">
               <span className={`text-xs font-mono font-semibold ${LAYER_COLORS[i]}`}>
@@ -140,8 +140,8 @@ export function NunifOverlay({
           ))}
         </div>
 
-        {/* Global controls row */}
-        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 items-center">
+        {/* Global controls */}
+        <div className="space-y-2">
 
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
