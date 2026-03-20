@@ -1,11 +1,11 @@
 /**
  * WebGPURenderer
  *
- * 4-pass rendering pipeline:
- *   Pass 0–2 : Each colour layer renders to its own intermediate GPUTexture
- *              (no blending – clean alpha for stacking detection)
- *   Pass 3   : Compositor reads all 3 layer textures, blends them, and
- *              applies a tracer/ghost highlight wherever all 3 have colour.
+ * 5-pass rendering pipeline:
+ *   Pass 0–2 : Each colour layer → its own intermediate GPUTexture
+ *   Pass 3   : Persistence pass — detects 2+ layer overlap, writes mixed
+ *              colour into ping-pong buffer, decays previous hits
+ *   Pass 4   : Compositor — live layers + persistence overlay → canvas
  */
 
 import {
@@ -13,7 +13,8 @@ import {
   fragmentShaderRedOrange,
   fragmentShaderVioletBlue,
   fragmentShaderGreenYellow,
-  compositorVertexSource,
+  fullscreenVertexSource,
+  persistenceFragmentSource,
   compositorFragmentSource,
 } from './shaders';
 
@@ -24,48 +25,74 @@ export interface LayerState {
 }
 
 export interface RendererState {
-  layers          : [LayerState, LayerState, LayerState];
-  avgLuminance    : number;
-  layerOpacity?   : number;
-  tracerIntensity?: number;   // 0–1, how bright the ghost glow is (default 0.7)
-  tracerThreshold?: number;   // min alpha to count as "has colour"  (default 0.05)
+  layers           : [LayerState, LayerState, LayerState];
+  avgLuminance     : number;
+  layerOpacity?    : number;
+  tracerIntensity? : number;  // 0–1 opacity of the persistence overlay
+  tracerDuration?  : number;  // milliseconds to hold a hit before it fully fades
+  tracerThreshold? : number;  // min alpha to count a layer as "has colour"
 }
 
-/** Build a column-major mat3x3 rotation for WGSL std140 layout. */
+/** Column-major mat3x3 for WGSL std140. */
 function buildRotationMat3(angleDeg: number): Float32Array {
   const rad = (angleDeg * Math.PI) / 180;
   const c = Math.cos(rad), s = Math.sin(rad);
   return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0]);
 }
 
+/**
+ * Convert tracerDuration (ms) and frameRate (fps) into a per-frame
+ * decay multiplier so that after `duration` ms the value reaches ~1/255.
+ *
+ * decay^(fps * duration/1000) = 1/255
+ * decay = (1/255) ^ (1000 / (fps * duration))
+ */
+function durationToDecay(durationMs: number, fps: number): number {
+  if (durationMs <= 0) return 0.0;
+  const frames = fps * durationMs / 1000;
+  if (frames < 1) return 0.0;
+  return Math.pow(1 / 255, 1 / frames);
+}
+
 interface LayerPipeline {
-  pipeline         : GPURenderPipeline;
-  bindGroupLayout  : GPUBindGroupLayout;
-  rotationBuffer   : GPUBuffer;
-  fragUniformBuffer: GPUBuffer;
+  pipeline          : GPURenderPipeline;
+  bindGroupLayout   : GPUBindGroupLayout;
+  rotationBuffer    : GPUBuffer;
+  fragUniformBuffer : GPUBuffer;
 }
 
 export class WebGPURenderer {
-  private device  : GPUDevice;
-  private context : GPUCanvasContext;
-  private format  : GPUTextureFormat;
-  private sampler : GPUSampler;
-  private sampleCount: number = 1;  // MSAA sample count (1 = no AA, 4 = 4x MSAA)
+  private device      : GPUDevice;
+  private context     : GPUCanvasContext;
+  private format      : GPUTextureFormat;
+  private sampler     : GPUSampler;
+  private sampleCount : number = 4;
 
-  private layerPipelines: LayerPipeline[] = [];
-  private currentTexture: GPUTexture | null = null;
+  // Layer passes
+  private layerPipelines : LayerPipeline[] = [];
+  private currentTexture : GPUTexture | null = null;
 
-  // Intermediate per-layer render textures
-  private layerTextures: GPUTexture[] = [];
+  // Intermediate per-layer render textures (always 1x — resolved from MSAA)
+  private layerTextures : GPUTexture[] = [];
+  private msaaTexture   : GPUTexture | null = null;
   private texW = 0;
   private texH = 0;
-  private msaaTexture: GPUTexture | null = null;
 
-  // Compositor pass
-  private compositorPipeline    : GPURenderPipeline;
-  private compositorBGL         : GPUBindGroupLayout;
-  private compositorSampler     : GPUSampler;
-  private compositorUniformBuf  : GPUBuffer;
+  // Persistence ping-pong
+  private persistTextures  : [GPUTexture | null, GPUTexture | null] = [null, null];
+  private persistPingPong  : 0 | 1 = 0;  // which is the "read" texture this frame
+  private persistPipeline  : GPURenderPipeline;
+  private persistBGL       : GPUBindGroupLayout;
+  private persistUniformBuf: GPUBuffer;
+
+  // Compositor
+  private compositorPipeline  : GPURenderPipeline;
+  private compositorBGL       : GPUBindGroupLayout;
+  private compositorSampler   : GPUSampler;
+  private compositorUniformBuf: GPUBuffer;
+
+  // Track fps for decay calculation
+  private lastFps : number = 30;
 
   constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = true) {
     this.device  = device;
@@ -80,18 +107,26 @@ export class WebGPURenderer {
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
     for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
 
-    // Compositor sampler + pipeline
     this.compositorSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
-    this.compositorBGL     = this.createCompositorBGL();
-    this.compositorPipeline = this.createCompositorPipeline();
 
+    // Persistence pipeline
+    this.persistBGL      = this.createPersistBGL();
+    this.persistPipeline = this.createPersistPipeline();
+    this.persistUniformBuf = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // Compositor pipeline
+    this.compositorBGL      = this.createCompositorBGL();
+    this.compositorPipeline = this.createCompositorPipeline();
     this.compositorUniformBuf = device.createBuffer({
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
 
-  // ─── Layer pipeline factory ─────────────────────────────────────────────────
+  // ─── Layer pipeline ─────────────────────────────────────────────────────────
   private createLayerPipeline(fragmentSource: string): LayerPipeline {
     const device = this.device;
 
@@ -110,18 +145,15 @@ export class WebGPURenderer {
       fragment: {
         module     : device.createShaderModule({ code: fragmentSource }),
         entryPoint : 'main',
-        targets    : [{ format: this.format }],   // no blending — write clean alpha
+        targets    : [{ format: this.format }],
       },
-      primitive: { topology: 'triangle-list' },
+      primitive  : { topology: 'triangle-list' },
       multisample: { count: this.sampleCount },
     });
 
-    // Rotation uniform: mat3x3 (48 b) + flipX/Y u32 (8 b) + padding = 64 b
     const rotationBuffer = device.createBuffer({
       size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-
-    // Fragment uniform: avgLuminance + layerOpacity + 2× pad = 16 b
     const fragUniformBuffer = device.createBuffer({
       size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
@@ -129,7 +161,36 @@ export class WebGPURenderer {
     return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer };
   }
 
-  // ─── Compositor pipeline factory ────────────────────────────────────────────
+  // ─── Persistence pipeline ────────────────────────────────────────────────────
+  private createPersistBGL(): GPUBindGroupLayout {
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+  }
+
+  private createPersistPipeline(): GPURenderPipeline {
+    const device = this.device;
+    return device.createRenderPipeline({
+      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistBGL] }),
+      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module     : device.createShaderModule({ code: persistenceFragmentSource }),
+        entryPoint : 'main',
+        targets    : [{ format: this.format }],
+      },
+      primitive  : { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  // ─── Compositor pipeline ─────────────────────────────────────────────────────
   private createCompositorBGL(): GPUBindGroupLayout {
     return this.device.createBindGroupLayout({
       entries: [
@@ -137,7 +198,8 @@ export class WebGPURenderer {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
   }
@@ -146,7 +208,7 @@ export class WebGPURenderer {
     const device = this.device;
     return device.createRenderPipeline({
       layout  : device.createPipelineLayout({ bindGroupLayouts: [this.compositorBGL] }),
-      vertex  : { module: device.createShaderModule({ code: compositorVertexSource }),   entryPoint: 'main' },
+      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
         module     : device.createShaderModule({ code: compositorFragmentSource }),
         entryPoint : 'main',
@@ -158,77 +220,95 @@ export class WebGPURenderer {
           },
         }],
       },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },  // Canvas always renders at 1x, MSAA only for layer passes
+      primitive  : { topology: 'triangle-list' },
+      multisample: { count: 1 },
     });
   }
 
-  // ─── Ensure intermediate textures match canvas size and sample count ─────────
-  private ensureLayerTextures(w: number, h: number): void {
+  // ─── Texture management ──────────────────────────────────────────────────────
+  private ensureTextures(w: number, h: number): void {
     if (this.texW === w && this.texH === h && this.layerTextures.length === 3) return;
 
+    // Destroy old textures
     for (const t of this.layerTextures) t.destroy();
-    if (this.msaaTexture) this.msaaTexture.destroy();
+    this.msaaTexture?.destroy();
+    this.persistTextures[0]?.destroy();
+    this.persistTextures[1]?.destroy();
 
+    // Layer intermediate textures (always 1x so compositor can sample them)
     this.layerTextures = [0, 1, 2].map(() => this.device.createTexture({
-      size : [w, h, 1],
-      format: this.format,
-      usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-      sampleCount: 1, // Intermediate resolved textures should always be 1x
+      size       : [w, h, 1],
+      format     : this.format,
+      usage      : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      sampleCount: 1,
     }));
 
+    // MSAA resolve target (only needed when AA is on)
     if (this.sampleCount > 1) {
       this.msaaTexture = this.device.createTexture({
-        size: [w, h, 1],
-        format: this.format,
+        size       : [w, h, 1],
+        format     : this.format,
         sampleCount: this.sampleCount,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        usage      : GPUTextureUsage.RENDER_ATTACHMENT,
       });
     } else {
       this.msaaTexture = null;
     }
 
+    // Persistence ping-pong textures — both start as RENDER_ATTACHMENT + TEXTURE_BINDING
+    this.persistTextures = [0, 1].map(() => this.device.createTexture({
+      size  : [w, h, 1],
+      format: this.format,
+      usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    })) as [GPUTexture, GPUTexture];
+
+    this.persistPingPong = 0;
     this.texW = w;
     this.texH = h;
   }
 
-  // ─── Public API ─────────────────────────────────────────────────────────────
-  setTexture(texture: GPUTexture): void { this.currentTexture = texture; }
+  // ─── Public API ──────────────────────────────────────────────────────────────
+  setTexture(texture: GPUTexture): void {
+    this.currentTexture = texture;
+  }
 
   setAntialiasing(enabled: boolean): void {
-    const newSampleCount = enabled ? 4 : 1;
-    if (newSampleCount === this.sampleCount) return;
-    this.sampleCount = newSampleCount;
+    const next = enabled ? 4 : 1;
+    if (next === this.sampleCount) return;
+    this.sampleCount = next;
 
-    // Force recreation of layer and MSAA textures on next render
-    this.texW = 0;
-
-    // Recreate pipelines with new sample count
+    // Rebuild layer pipelines with new sample count
     this.layerPipelines = [];
-    const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
-    for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
-    this.compositorPipeline = this.createCompositorPipeline();
-    // Force recreation of intermediate textures with new sample count
+    for (const src of [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow]) {
+      this.layerPipelines.push(this.createLayerPipeline(src));
+    }
+
+    // Force texture recreation
     for (const t of this.layerTextures) t.destroy();
     this.layerTextures = [];
+    this.msaaTexture?.destroy();
+    this.msaaTexture = null;
+    this.persistTextures[0]?.destroy();
+    this.persistTextures[1]?.destroy();
+    this.persistTextures = [null, null];
     this.texW = 0;
     this.texH = 0;
   }
 
-  render(state: RendererState): void {
+  render(state: RendererState, fps = 30): void {
     if (!this.currentTexture) return;
+    this.lastFps = fps;
 
     const canvasTex = this.context.getCurrentTexture();
-    this.ensureLayerTextures(canvasTex.width, canvasTex.height);
+    this.ensureTextures(canvasTex.width, canvasTex.height);
 
     const enc = this.device.createCommandEncoder();
 
-    // ── Passes 0-2: render each layer to its own intermediate texture ──────
+    // ── Passes 0-2: render each colour layer ──────────────────────────────
     for (let i = 0; i < 3; i++) {
       const lp    = this.layerPipelines[i];
       const layer = state.layers[i];
 
-      // Upload rotation + flip
       const rotMat = buildRotationMat3(layer.angleDeg);
       const flipX  = layer.flipX ? 1 : 0;
       const flipY  = layer.flipY ? 1 : 0;
@@ -237,7 +317,6 @@ export class WebGPURenderer {
       new Uint32Array(rotBuf, 48).set([flipX, flipY]);
       this.device.queue.writeBuffer(lp.rotationBuffer, 0, rotBuf);
 
-      // Upload fragment uniforms
       const opacity = state.layerOpacity ?? 1.0;
       this.device.queue.writeBuffer(lp.fragUniformBuffer, 0,
         new Float32Array([state.avgLuminance, opacity, 0, 0]));
@@ -252,13 +331,14 @@ export class WebGPURenderer {
         ],
       });
 
+      const usesMSAA = this.sampleCount > 1 && this.msaaTexture !== null;
       const pass = enc.beginRenderPass({
         colorAttachments: [{
-          view      : this.sampleCount > 1 && this.msaaTexture ? this.msaaTexture.createView() : this.layerTextures[i].createView(),
-          resolveTarget: this.sampleCount > 1 ? this.layerTextures[i].createView() : undefined,
-          loadOp    : 'clear',
-          storeOp   : this.sampleCount > 1 ? 'discard' : 'store',
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          view         : usesMSAA ? this.msaaTexture!.createView() : this.layerTextures[i].createView(),
+          resolveTarget: usesMSAA ? this.layerTextures[i].createView() : undefined,
+          loadOp       : 'clear',
+          storeOp      : usesMSAA ? 'discard' : 'store',
+          clearValue   : { r: 0, g: 0, b: 0, a: 0 },
         }],
       });
       pass.setPipeline(lp.pipeline);
@@ -267,13 +347,50 @@ export class WebGPURenderer {
       pass.end();
     }
 
-    // ── Pass 3: compositor – blend + tracer ───────────────────────────────
+    // ── Pass 3: persistence — detect overlap, decay previous hits ─────────
+    const durationMs  = state.tracerDuration ?? 1000;
+    const decayFactor = durationToDecay(durationMs, fps);
+    const colorThresh = state.tracerThreshold ?? 0.05;
+
+    this.device.queue.writeBuffer(this.persistUniformBuf, 0,
+      new Float32Array([decayFactor, colorThresh, 0, 0]));
+
+    // Read from persistPingPong, write to the other one
+    const readIdx  : 0 | 1 = this.persistPingPong;
+    const writeIdx : 0 | 1 = readIdx === 0 ? 1 : 0;
+
+    const persistBG = this.device.createBindGroup({
+      layout : this.persistBGL,
+      entries: [
+        { binding: 0, resource: this.compositorSampler },
+        { binding: 1, resource: this.layerTextures[0].createView() },
+        { binding: 2, resource: this.layerTextures[1].createView() },
+        { binding: 3, resource: this.layerTextures[2].createView() },
+        { binding: 4, resource: this.persistTextures[readIdx]!.createView() },
+        { binding: 5, resource: { buffer: this.persistUniformBuf } },
+      ],
+    });
+
+    const persistPass = enc.beginRenderPass({
+      colorAttachments: [{
+        view      : this.persistTextures[writeIdx]!.createView(),
+        loadOp    : 'clear',
+        storeOp   : 'store',
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+      }],
+    });
+    persistPass.setPipeline(this.persistPipeline);
+    persistPass.setBindGroup(0, persistBG);
+    persistPass.draw(6);
+    persistPass.end();
+
+    // Flip ping-pong for next frame
+    this.persistPingPong = writeIdx;
+
+    // ── Pass 4: compositor — live layers + persistence → canvas ───────────
+    const tracerOpacity = state.tracerIntensity ?? 0.85;
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0,
-      new Float32Array([
-        state.tracerIntensity ?? 0.85,
-        state.tracerThreshold ?? 0.02,
-        0, 0,
-      ]));
+      new Float32Array([tracerOpacity, 0, 0, 0]));
 
     const compBG = this.device.createBindGroup({
       layout : this.compositorBGL,
@@ -282,7 +399,8 @@ export class WebGPURenderer {
         { binding: 1, resource: this.layerTextures[0].createView() },
         { binding: 2, resource: this.layerTextures[1].createView() },
         { binding: 3, resource: this.layerTextures[2].createView() },
-        { binding: 4, resource: { buffer: this.compositorUniformBuf } },
+        { binding: 4, resource: this.persistTextures[writeIdx]!.createView() },
+        { binding: 5, resource: { buffer: this.compositorUniformBuf } },
       ],
     });
 
@@ -308,7 +426,10 @@ export class WebGPURenderer {
       lp.fragUniformBuffer.destroy();
     }
     for (const t of this.layerTextures) t.destroy();
-    if (this.msaaTexture) this.msaaTexture.destroy();
+    this.msaaTexture?.destroy();
+    this.persistTextures[0]?.destroy();
+    this.persistTextures[1]?.destroy();
+    this.persistUniformBuf.destroy();
     this.compositorUniformBuf.destroy();
   }
 }
