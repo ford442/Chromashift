@@ -192,14 +192,11 @@ export default function App() {
       if (delta >= msPerFrame) {
         last = now - (delta % msPerFrame);
 
-        // Layer 0 subtracts (spins opposite direction), layers 1 & 2 add.
-        // layerExtensions is the total degrees-per-frame step — not added on top
-        // of a separate rate. This matches the original C++ / JS behaviour where
-        // knd/knc/knb were the sole rotation amounts per tick.
+        // Advance each layer's angle by its extension (degrees-per-frame)
         angles = [
-          (angles[0] + DEFAULT_RATES[0] + layerExtensions[0]) % 360,
-          (angles[1] + DEFAULT_RATES[1] + layerExtensions[1]) % 360,
-          (angles[2] + DEFAULT_RATES[2] + layerExtensions[2]) % 360,
+          (angles[0] + layerExtensions[0]) % 360,
+          (angles[1] + layerExtensions[1]) % 360,
+          (angles[2] + layerExtensions[2]) % 360,
         ];
 
         setLayerAngles(angles);
