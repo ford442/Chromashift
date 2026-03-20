@@ -31,7 +31,6 @@ export default function App() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
   const [layerAngles, setLayerAngles] = useState<LayerTriple<number>>(DEFAULT_ANGLES);
-  const [rotationRates, setRotationRates] = useState<LayerTriple<number>>(DEFAULT_RATES);
   const [frameRate, setFrameRate] = useState(DEFAULT_FPS);
   const [avgLuminance, setAvgLuminance] = useState(128);
   const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
@@ -197,9 +196,9 @@ export default function App() {
 
         // Advance each layer's angle by its rotation rate + extension per frame
         angles = [
-          (angles[0] + rotationRates[0] + layerExtensions[0]) % 360,
-          (angles[1] + rotationRates[1] + layerExtensions[1]) % 360,
-          (angles[2] + rotationRates[2] + layerExtensions[2]) % 360,
+          (angles[0] + DEFAULT_RATES[0] + layerExtensions[0]) % 360,
+          (angles[1] + DEFAULT_RATES[1] + layerExtensions[1]) % 360,
+          (angles[2] + DEFAULT_RATES[2] + layerExtensions[2]) % 360,
         ];
 
         setLayerAngles(angles);
@@ -249,20 +248,12 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, rotationRates, layerExtensions, avgLuminance, layerOpacity, tracerIntensity]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
       const next: LayerTriple<number> = [...prev] as LayerTriple<number>;
       next[layer] = angle;
-      return next;
-    });
-  }, []);
-
-  const handleRateChange = useCallback((layer: 0 | 1 | 2, rate: number) => {
-    setRotationRates((prev) => {
-      const next: LayerTriple<number> = [...prev] as LayerTriple<number>;
-      next[layer] = rate;
       return next;
     });
   }, []);
@@ -277,7 +268,6 @@ export default function App() {
 
   const handleReset = useCallback(() => {
     setLayerAngles([...DEFAULT_ANGLES] as LayerTriple<number>);
-    setRotationRates([...DEFAULT_RATES] as LayerTriple<number>);
     setFrameRate(DEFAULT_FPS);
   }, []);
 
@@ -377,7 +367,6 @@ export default function App() {
       {/* NUNIF control overlay */}
       <NunifOverlay
         layerAngles={layerAngles}
-        rotationRates={rotationRates}
         layerExtensions={layerExtensions}
         frameRate={frameRate}
         layerOpacity={layerOpacity}
@@ -386,7 +375,6 @@ export default function App() {
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
-        onRateChange={handleRateChange}
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
         onLayerOpacityChange={setLayerOpacity}
