@@ -91,9 +91,6 @@ export class WebGPURenderer {
   private compositorSampler   : GPUSampler;
   private compositorUniformBuf: GPUBuffer;
 
-  // Track fps for decay calculation
-  private lastFps : number = 30;
-
   constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = true) {
     this.device  = device;
     this.context = context;
@@ -297,7 +294,6 @@ export class WebGPURenderer {
 
   render(state: RendererState, fps = 30): void {
     if (!this.currentTexture) return;
-    this.lastFps = fps;
 
     const canvasTex = this.context.getCurrentTexture();
     this.ensureTextures(canvasTex.width, canvasTex.height);
