@@ -1,17 +1,17 @@
 /**
  * WGSL shaders for the Chromashift 3-layer WebGPU rendering pipeline.
  *
- * Each layer renders a full-screen quad and applies:
- *  - a mat3 rotation + flip transform in the vertex stage
- *  - a colour-channel mask with smooth HSL gradient in the fragment stage
- *
- * A 4th compositor pass detects where all 3 layers have colour (stacking)
- * and applies a tracer/ghost highlight at those points.
+ * Pipeline overview:
+ *   Pass 0–2 : Each colour layer renders to its own intermediate GPUTexture
+ *   Pass 3   : Persistence pass — detects multi-layer spatial overlap,
+ *              blends the mixed colour into a ping-pong persistence buffer
+ *              that decays over tracerDuration milliseconds
+ *   Pass 4   : Compositor — blends the 3 live layers then draws the
+ *              persistence buffer on top
  */
 
-// ─── Shared WGSL helpers (injected into each fragment shader) ─────────────────
+// ─── Shared WGSL helpers ──────────────────────────────────────────────────────
 const WGSL_COLOR_HELPERS = /* wgsl */ `
-// HSL → RGB
 fn hsl_to_rgb(h: f32, s: f32, l: f32) -> vec3<f32> {
   let c = (1.0 - abs(2.0 * l - 1.0)) * s;
   let hp = h / 60.0;
@@ -27,10 +27,6 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> vec3<f32> {
   return clamp(rgb + vec3<f32>(m), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// Smooth gradient within a luminance band: returns RGB colour
-// band_lo/hi: luminance range 0-255
-// hue_lo/hi: start and end hue in degrees
-// sat: saturation, light_lo/hi: lightness range
 fn band_gradient(
   lum      : f32,
   band_lo  : f32,
@@ -48,6 +44,7 @@ fn band_gradient(
 }
 `;
 
+// ─── Vertex shader (shared by all layer passes) ───────────────────────────────
 export const vertexShaderSource = /* wgsl */ `
 struct Uniforms {
   rotation : mat3x3<f32>,
@@ -106,15 +103,12 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let opacity = fragUniforms.layerOpacity;
 
   if (lum > 229.0) {
-    // Near-white highlight: desaturate toward white smoothly
     let rgb = band_gradient(lum, 229.0, 255.0, 45.0, 60.0, 0.3, 0.80, 1.0);
     return vec4<f32>(rgb, opacity);
   } else if (lum > 209.0) {
-    // Orange band: red-orange → deep orange (hue 10→40)
     let rgb = band_gradient(lum, 209.0, 229.0, 10.0, 40.0, 1.0, 0.50, 0.65);
     return vec4<f32>(rgb, opacity);
   } else if (lum > 190.0) {
-    // Red band: deep red → red-orange (hue 0→10)
     let rgb = band_gradient(lum, 190.0, 209.0, 0.0, 10.0, 1.0, 0.40, 0.55);
     return vec4<f32>(rgb, opacity);
   }
@@ -145,11 +139,9 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let opacity = fragUniforms.layerOpacity;
 
   if (lum > 177.0 && lum <= 190.0) {
-    // Violet band: blue-violet → violet (hue 255→290)
     let rgb = band_gradient(lum, 177.0, 190.0, 255.0, 290.0, 1.0, 0.40, 0.55);
     return vec4<f32>(rgb, opacity);
   } else if (lum > 158.0 && lum <= 177.0) {
-    // Blue band: deep blue → blue-violet (hue 220→255)
     let rgb = band_gradient(lum, 158.0, 177.0, 220.0, 255.0, 1.0, 0.38, 0.50);
     return vec4<f32>(rgb, opacity);
   }
@@ -180,11 +172,9 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let opacity = fragUniforms.layerOpacity;
 
   if (lum > 145.0 && lum <= 158.0) {
-    // Green band: yellow-green → green (hue 90→130)
     let rgb = band_gradient(lum, 145.0, 158.0, 90.0, 130.0, 1.0, 0.38, 0.50);
     return vec4<f32>(rgb, opacity);
   } else if (lum > 125.0 && lum <= 145.0) {
-    // Yellow band: warm yellow → yellow-green (hue 50→90)
     let rgb = band_gradient(lum, 125.0, 145.0, 50.0, 90.0, 1.0, 0.40, 0.52);
     return vec4<f32>(rgb, opacity);
   }
@@ -193,8 +183,8 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-// ─── Compositor vertex shader (full-screen quad, no transforms) ──────────────
-export const compositorVertexSource = /* wgsl */ `
+// ─── Full-screen quad vertex (no transform) ───────────────────────────────────
+export const fullscreenVertexSource = /* wgsl */ `
 struct VertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0)       uv       : vec2<f32>,
@@ -214,20 +204,108 @@ fn main(@builtin(vertex_index) vi : u32) -> VertexOutput {
 }
 `;
 
-// ─── Compositor fragment shader – blends 3 layers + tracer effect ────────────
-export const compositorFragmentSource = /* wgsl */ `
-@group(0) @binding(0) var cSampler : sampler;
-@group(0) @binding(1) var layer0   : texture_2d<f32>;
-@group(0) @binding(2) var layer1   : texture_2d<f32>;
-@group(0) @binding(3) var layer2   : texture_2d<f32>;
+// ─── Persistence pass fragment shader ────────────────────────────────────────
+//
+// Reads the 3 live layer textures and the previous persistence texture.
+// Where 2 or more layers have colour at the same pixel, it writes the
+// alpha-blended mix of those layers' colours at full strength.
+// Where fewer than 2 layers overlap, it writes the previous persistence
+// value multiplied by decayFactor (< 1.0), so held colours fade over time.
+//
+export const persistenceFragmentSource = /* wgsl */ `
+@group(0) @binding(0) var samp        : sampler;
+@group(0) @binding(1) var layer0      : texture_2d<f32>;
+@group(0) @binding(2) var layer1      : texture_2d<f32>;
+@group(0) @binding(3) var layer2      : texture_2d<f32>;
+@group(0) @binding(4) var prevPersist : texture_2d<f32>;
 
-struct CompositorUniforms {
-  tracerIntensity  : f32,  // 0–1 how bright the tracer glow is
-  tracerThreshold  : f32,  // min alpha to count as "has colour"
+struct PersistUniforms {
+  decayFactor      : f32,  // per-frame multiplier: 0=instant, ~0.99=slow fade
+  colorThreshold   : f32,  // min alpha to count a layer as "has colour" at pixel
   _pad0            : f32,
   _pad1            : f32,
 };
-@group(0) @binding(4) var<uniform> compUniforms : CompositorUniforms;
+@group(0) @binding(5) var<uniform> pu : PersistUniforms;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c0 = textureSample(layer0, samp, uv);
+  let c1 = textureSample(layer1, samp, uv);
+  let c2 = textureSample(layer2, samp, uv);
+  let prev = textureSample(prevPersist, samp, uv);
+
+  let thresh = pu.colorThreshold;
+
+  // Which layers have colour at this pixel?
+  let has0 = c0.a > thresh;
+  let has1 = c1.a > thresh;
+  let has2 = c2.a > thresh;
+
+  // Count overlapping layers
+  let count = i32(has0) + i32(has1) + i32(has2);
+
+  if (count >= 2) {
+    // Blend together only the layers that are present at this pixel.
+    // Start from transparent and alpha-composite each active layer.
+    var mixed = vec4<f32>(0.0);
+
+    if (has0) {
+      let a = c0.a;
+      mixed = vec4<f32>(
+        mixed.rgb * mixed.a * (1.0 - a) / max(mixed.a + a * (1.0 - mixed.a), 0.0001) + c0.rgb * a / max(mixed.a + a * (1.0 - mixed.a), 0.0001),
+        mixed.a + a * (1.0 - mixed.a)
+      );
+    }
+    if (has1) {
+      let a = c1.a;
+      let newA = mixed.a + a * (1.0 - mixed.a);
+      mixed = vec4<f32>(
+        (mixed.rgb * mixed.a + c1.rgb * a * (1.0 - mixed.a)) / max(newA, 0.0001),
+        newA
+      );
+    }
+    if (has2) {
+      let a = c2.a;
+      let newA = mixed.a + a * (1.0 - mixed.a);
+      mixed = vec4<f32>(
+        (mixed.rgb * mixed.a + c2.rgb * a * (1.0 - mixed.a)) / max(newA, 0.0001),
+        newA
+      );
+    }
+
+    // Take the brighter of: new hit colour vs decayed previous.
+    // This means a fresh strong hit always wins, but a fading hold
+    // stays visible until the new hit surpasses it.
+    let decayed = prev * pu.decayFactor;
+    let newAlpha = max(mixed.a, decayed.a);
+    let newRGB   = mix(decayed.rgb, mixed.rgb, mixed.a / max(newAlpha, 0.0001));
+    return vec4<f32>(newRGB, newAlpha);
+  } else {
+    // No overlap — just decay the previous persistence value
+    return prev * pu.decayFactor;
+  }
+}
+`;
+
+// ─── Compositor fragment shader ───────────────────────────────────────────────
+//
+// Blends the 3 live layers back-to-front, then draws the persistence
+// texture on top so held/fading overlaps remain visible.
+//
+export const compositorFragmentSource = /* wgsl */ `
+@group(0) @binding(0) var cSampler   : sampler;
+@group(0) @binding(1) var layer0     : texture_2d<f32>;
+@group(0) @binding(2) var layer1     : texture_2d<f32>;
+@group(0) @binding(3) var layer2     : texture_2d<f32>;
+@group(0) @binding(4) var persistence: texture_2d<f32>;
+
+struct CompositorUniforms {
+  tracerOpacity : f32,  // how opaque the persistence overlay is (0–1)
+  _pad0         : f32,
+  _pad1         : f32,
+  _pad2         : f32,
+};
+@group(0) @binding(5) var<uniform> cu : CompositorUniforms;
 
 fn alpha_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let a = src.a + dst.a * (1.0 - src.a);
@@ -238,27 +316,24 @@ fn alpha_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
 
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let c0 = textureSample(layer0, cSampler, uv);
-  let c1 = textureSample(layer1, cSampler, uv);
-  let c2 = textureSample(layer2, cSampler, uv);
+  let c0   = textureSample(layer0,      cSampler, uv);
+  let c1   = textureSample(layer1,      cSampler, uv);
+  let c2   = textureSample(layer2,      cSampler, uv);
+  let pers = textureSample(persistence, cSampler, uv);
 
-  // Standard back-to-front compositing
+  // Standard back-to-front composite of live layers
   var col = vec4<f32>(0.0);
   col = alpha_blend(col, c2);
   col = alpha_blend(col, c1);
   col = alpha_blend(col, c0);
 
-  // Tracer/ghost: semi-transparent glow on top where all 3 layers overlap
-  // Shows as a luminous overlay wherever multiple layers converge
-  let thresh = compUniforms.tracerThreshold;
-  let overlap = c0.a * c1.a * c2.a;  // Multiplicative overlap
-  if (overlap > thresh) {
-    // Soft cyan-white glow, blended on top with transparency
-    // Low base alpha (0.4) lets underlying colors show through
-    let tracer = vec4<f32>(0.9, 1.0, 1.0, 0.4);
-    col = mix(col, tracer, compUniforms.tracerIntensity * 0.5);
-  }
+  // Draw persistence layer on top, scaled by tracerOpacity slider
+  let persScaled = vec4<f32>(pers.rgb, pers.a * cu.tracerOpacity);
+  col = alpha_blend(col, persScaled);
 
   return col;
 }
 `;
+
+// Keep old names as aliases so nothing else breaks during transition
+export const compositorVertexSource = fullscreenVertexSource;
