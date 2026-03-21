@@ -9,6 +9,7 @@ interface Props {
   layerOpacity            : number;
   tracerIntensity         : number;
   tracerDuration          : number;
+  tracerBelow             : boolean;
   squareCanvas            : boolean;
   antialiasEnabled        : boolean;
   onAngleChange           : (layer: 0 | 1 | 2, angle: number) => void;
@@ -17,6 +18,7 @@ interface Props {
   onLayerOpacityChange    : (opacity: number) => void;
   onTracerIntensityChange : (v: number) => void;
   onTracerDurationChange  : (v: number) => void;
+  onTracerBelowToggle     : (v: boolean) => void;
   onSquareCanvasToggle    : (v: boolean) => void;
   onAntialiasToggle       : (v: boolean) => void;
   onReset                 : () => void;
@@ -36,6 +38,7 @@ export function NunifOverlay({
   layerOpacity,
   tracerIntensity,
   tracerDuration,
+  tracerBelow,
   squareCanvas,
   antialiasEnabled,
   onAngleChange,
@@ -44,6 +47,7 @@ export function NunifOverlay({
   onLayerOpacityChange,
   onTracerIntensityChange,
   onTracerDurationChange,
+  onTracerBelowToggle,
   onSquareCanvasToggle,
   onAntialiasToggle,
   onReset,
@@ -53,8 +57,8 @@ export function NunifOverlay({
   onImageChangeIntervalChange,
 }: Props) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-black/70 backdrop-blur-sm text-white p-3 select-none">
-      <div className="max-w-4xl mx-auto">
+    <div className="fixed left-0 top-1/2 -translate-y-1/2 z-50 w-72 bg-black/70 backdrop-blur-sm text-white p-3 select-none overflow-y-auto max-h-[80vh] rounded-r-lg">
+      <div className="space-y-3">
 
         {/* Header row */}
         <div className="flex items-center justify-between mb-2">
@@ -99,7 +103,7 @@ export function NunifOverlay({
         </div>
 
         {/* Per-layer controls */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="space-y-3">
           {([0, 1, 2] as const).map((i) => (
             <div key={i} className="space-y-1">
               <span className={`text-xs font-mono font-semibold ${LAYER_COLORS[i]}`}>
@@ -140,8 +144,8 @@ export function NunifOverlay({
           ))}
         </div>
 
-        {/* Global controls row */}
-        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 items-center">
+        {/* Global controls */}
+        <div className="space-y-2">
 
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
@@ -174,6 +178,15 @@ export function NunifOverlay({
               onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
               className="w-28 h-1 accent-yellow-300"
             />
+            <button
+              onClick={() => onTracerBelowToggle(!tracerBelow)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
+                tracerBelow ? 'bg-yellow-700 hover:bg-yellow-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+              }`}
+              title="Toggle tracer above/below colour layers"
+            >
+              {tracerBelow ? '↓ Below' : '↑ Above'}
+            </button>
           </div>
 
           <div className="flex items-center gap-2">

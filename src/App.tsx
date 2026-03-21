@@ -41,6 +41,7 @@ export default function App() {
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
   const [layerOpacity, setLayerOpacity] = useState(1.0);
   const [tracerIntensity, setTracerIntensity] = useState(0.85);
+  const [tracerBelow, setTracerBelow] = useState(false);
   const [squareCanvas, setSquareCanvas] = useState(false);
   const [antialiasEnabled, setAntialiasEnabled] = useState(true);
   const [tracerDuration, setTracerDuration] = useState(50);
@@ -211,11 +212,12 @@ export default function App() {
           layerOpacity,
           tracerIntensity,
           tracerDuration,
+          tracerBelow,
         };
 
         rendererRef.current?.render(state);
 
-        // Update previews only on first frame of a new image
+        // Separated preview updates once per image load
         if (!hasUpdatedPreviewsForImage.current) {
           const previewSep = previewSeparatedRef.current;
           if (previewSep && canvasRef.current) {
@@ -224,16 +226,16 @@ export default function App() {
               ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
             }
           }
-
-          const previewTracer = previewTracerRef.current;
-          if (previewTracer && canvasRef.current) {
-            const ctx = previewTracer.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(canvasRef.current, 0, 0, previewTracer.width, previewTracer.height);
-            }
-          }
-
           hasUpdatedPreviewsForImage.current = true;
+        }
+
+        // Tracer preview updates every frame to show live persistence buffer
+        const previewTracer = previewTracerRef.current;
+        if (previewTracer && canvasRef.current) {
+          const ctx = previewTracer.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(canvasRef.current, 0, 0, previewTracer.width, previewTracer.height);
+          }
         }
       }
 
@@ -245,7 +247,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity, tracerDuration]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity, tracerDuration, tracerBelow]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -370,6 +372,7 @@ export default function App() {
         layerOpacity={layerOpacity}
         tracerIntensity={tracerIntensity}
         tracerDuration={tracerDuration}
+        tracerBelow={tracerBelow}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
@@ -378,6 +381,7 @@ export default function App() {
         onLayerOpacityChange={setLayerOpacity}
         onTracerIntensityChange={setTracerIntensity}
         onTracerDurationChange={setTracerDuration}
+        onTracerBelowToggle={setTracerBelow}
         onSquareCanvasToggle={setSquareCanvas}
         onAntialiasToggle={(enabled) => {
           setAntialiasEnabled(enabled);
