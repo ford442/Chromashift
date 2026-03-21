@@ -57,7 +57,7 @@ export function NunifOverlay({
   onImageChangeIntervalChange,
 }: Props) {
   return (
-    <div className="fixed left-0 top-0 bottom-0 z-50 w-72 bg-black/70 backdrop-blur-sm text-white p-3 select-none overflow-y-auto">
+    <div className="fixed left-0 top-1/2 -translate-y-1/2 z-50 w-72 bg-black/70 backdrop-blur-sm text-white p-3 select-none overflow-y-auto max-h-[80vh] rounded-r-lg">
       <div className="space-y-3">
 
         {/* Header row */}
