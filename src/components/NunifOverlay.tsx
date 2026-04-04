@@ -10,6 +10,7 @@ interface Props {
   tracerIntensity         : number;
   tracerDuration          : number;
   tracerBelow             : boolean;
+  tracerMode              : number;
   squareCanvas            : boolean;
   antialiasEnabled        : boolean;
   onAngleChange           : (layer: 0 | 1 | 2, angle: number) => void;
@@ -19,6 +20,7 @@ interface Props {
   onTracerIntensityChange : (v: number) => void;
   onTracerDurationChange  : (v: number) => void;
   onTracerBelowToggle     : (v: boolean) => void;
+  onTracerModeChange      : (v: number) => void;
   onSquareCanvasToggle    : (v: boolean) => void;
   onAntialiasToggle       : (v: boolean) => void;
   onReset                 : () => void;
@@ -39,6 +41,7 @@ export function NunifOverlay({
   tracerIntensity,
   tracerDuration,
   tracerBelow,
+  tracerMode,
   squareCanvas,
   antialiasEnabled,
   onAngleChange,
@@ -48,6 +51,7 @@ export function NunifOverlay({
   onTracerIntensityChange,
   onTracerDurationChange,
   onTracerBelowToggle,
+  onTracerModeChange,
   onSquareCanvasToggle,
   onAntialiasToggle,
   onReset,
@@ -57,12 +61,12 @@ export function NunifOverlay({
   onImageChangeIntervalChange,
 }: Props) {
   return (
-    <div className="fixed left-0 top-1/2 -translate-y-1/2 z-50 w-72 bg-black/70 backdrop-blur-sm text-white p-3 select-none overflow-y-auto max-h-[80vh] rounded-r-lg">
+    <div className="fixed left-0 top-1/2 -translate-y-1/2 z-50 w-72 bg-black/50 backdrop-blur-xl border-r border-amber-500/20 text-white p-3 select-none overflow-y-auto max-h-[80vh] rounded-r-lg shadow-[0_0_30px_rgba(245,158,11,0.1)]">
       <div className="space-y-3">
 
         {/* Header row */}
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-mono font-bold tracking-widest text-gray-400 uppercase">
+          <span className="text-xs font-mono font-bold tracking-widest text-amber-400 uppercase drop-shadow-[0_0_4px_rgba(251,191,36,0.5)]">
             NUNIF Controls
           </span>
           <div className="flex gap-2">
@@ -70,15 +74,15 @@ export function NunifOverlay({
               onClick={() => onAutoPlayToggle(!isAutoPlayActive)}
               className={`text-xs px-2 py-0.5 rounded transition-colors ${
                 isAutoPlayActive
-                  ? 'bg-green-700 hover:bg-green-600 text-white'
-                  : 'bg-gray-700 hover:bg-gray-600'
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_10px_rgba(245,158,11,0.4)]'
+                  : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
               }`}
             >
               {isAutoPlayActive ? '⏸ Pause' : '▶ Play'}
             </button>
             <button
               onClick={onReset}
-              className="text-xs px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 transition-colors"
+              className="text-xs px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 border border-amber-500/30 transition-colors hover:shadow-[0_0_8px_rgba(245,158,11,0.2)]"
             >
               Reset
             </button>
@@ -86,9 +90,9 @@ export function NunifOverlay({
         </div>
 
         {/* Auto-play interval */}
-        <div className="mb-3 p-2 bg-gray-900/50 rounded border border-gray-700">
+        <div className="mb-3 p-2 bg-amber-950/30 border border-amber-500/20 rounded shadow-[inset_0_0_10px_rgba(245,158,11,0.05)]">
           <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-400 font-mono whitespace-nowrap">
+            <label className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
               Image interval: <span className="tabular-nums text-white">{imageChangeInterval}s</span>
             </label>
             <input
@@ -97,7 +101,7 @@ export function NunifOverlay({
               max={30}
               value={imageChangeInterval}
               onChange={(e) => onImageChangeIntervalChange(Number(e.target.value))}
-              className="flex-1 h-1 accent-cyan-400"
+              className="flex-1 h-1 accent-amber-400 hover:accent-amber-300"
             />
           </div>
         </div>
@@ -113,7 +117,7 @@ export function NunifOverlay({
 
               {/* Manual angle nudge */}
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400 w-16 shrink-0">
+                <label className="text-xs text-amber-400/80 w-16 shrink-0">
                   Angle&nbsp;<span className="tabular-nums">{Math.round(layerAngles[i])}°</span>
                 </label>
                 <input
@@ -128,7 +132,7 @@ export function NunifOverlay({
 
               {/* Step size per frame */}
               <div className="flex items-center gap-2">
-                <label className="text-xs text-gray-400 w-16 shrink-0">
+                <label className="text-xs text-amber-400/80 w-16 shrink-0">
                   Step&nbsp;<span className="tabular-nums">{layerExtensions[i]}°</span>
                 </label>
                 <input
@@ -148,40 +152,40 @@ export function NunifOverlay({
         <div className="space-y-2">
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
+            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
               FPS: <span className="tabular-nums">{frameRate}</span>
             </span>
             <input
               type="range" min={1} max={60} value={frameRate}
               onChange={(e) => onFrameRateChange(Number(e.target.value))}
-              className="w-28 h-1 accent-purple-400"
+              className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
             />
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
+            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
               Opacity: <span className="tabular-nums">{Math.round(layerOpacity * 100)}%</span>
             </span>
             <input
               type="range" min={0} max={1} step={0.01} value={layerOpacity}
               onChange={(e) => onLayerOpacityChange(Number(e.target.value))}
-              className="w-28 h-1 accent-pink-400"
+              className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
             />
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
+            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
               Tracer: <span className="tabular-nums">{Math.round(tracerIntensity * 100)}%</span>
             </span>
             <input
               type="range" min={0} max={1} step={0.01} value={tracerIntensity}
               onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
-              className="w-28 h-1 accent-yellow-300"
+              className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
             />
             <button
               onClick={() => onTracerBelowToggle(!tracerBelow)}
               className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
-                tracerBelow ? 'bg-yellow-700 hover:bg-yellow-600 text-white' : 'bg-gray-700 hover:bg-gray-600'
+                tracerBelow ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
               }`}
               title="Toggle tracer above/below colour layers"
             >
@@ -190,20 +194,35 @@ export function NunifOverlay({
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400 font-mono whitespace-nowrap">
+            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
               Hold: <span className="tabular-nums">{(tracerDuration / 1000).toFixed(1)}s</span>
             </span>
             <input
               type="range" min={0} max={5000} step={100} value={tracerDuration}
               onChange={(e) => onTracerDurationChange(Number(e.target.value))}
-              className="w-28 h-1 accent-orange-300"
+              className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
             />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">Mode:</span>
+            <button
+              onClick={() => onTracerModeChange(tracerMode === 0 ? 1 : 0)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
+                tracerMode === 0
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                  : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
+              }`}
+              title="Toggle between combined colors and grey highlight"
+            >
+              {tracerMode === 0 ? '🎨 Colors' : '◻ Grey'}
+            </button>
           </div>
 
           <button
             onClick={() => onSquareCanvasToggle(!squareCanvas)}
             className={`text-xs px-2 py-0.5 rounded transition-colors ${
-              squareCanvas ? 'bg-orange-600 hover:bg-orange-500 text-white' : 'bg-gray-700 hover:bg-gray-600'
+              squareCanvas ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
             }`}
           >
             ▣ Square
@@ -212,7 +231,7 @@ export function NunifOverlay({
           <button
             onClick={() => onAntialiasToggle(!antialiasEnabled)}
             className={`text-xs px-2 py-0.5 rounded transition-colors ${
-              antialiasEnabled ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-gray-700 hover:bg-gray-600'
+              antialiasEnabled ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
             }`}
           >
             ◆ AA

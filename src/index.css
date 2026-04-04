@@ -1,1 +1,427 @@
 @import "tailwindcss";
+
+/* ============================================
+   CHROMASHIFT - Gold & Glass Theme
+   ============================================ */
+
+/* --------------------------------------------
+   Gold Color Palette Variables
+   -------------------------------------------- */
+:root {
+  /* Gold Spectrum */
+  --gold-50: #FFFBEB;
+  --gold-100: #FEF3C7;
+  --gold-200: #FDE68A;
+  --gold-300: #FCD34D;
+  --gold-400: #FBBF24;
+  --gold-500: #F59E0B;
+  --gold-600: #D97706;
+  --gold-700: #B45309;
+  --gold-800: #92400E;
+  --gold-900: #78350F;
+  --gold-950: #451A03;
+
+  /* Rich Gold Tones */
+  --rich-gold-light: #FFE55C;
+  --rich-gold: #FFD700;
+  --rich-gold-dark: #E6C200;
+  --metallic-gold: #D4AF37;
+  --old-gold: #C5B358;
+  --dark-gold: #B8860B;
+  --deep-gold: #8B6914;
+  --pale-gold: #E6BE8A;
+
+  /* Amber Accent Colors */
+  --amber-50: #FFFBEB;
+  --amber-100: #FEF3C7;
+  --amber-200: #FDE68A;
+  --amber-300: #FCD34D;
+  --amber-400: #FBBF24;
+  --amber-500: #F59E0B;
+  --amber-600: #D97706;
+  --amber-700: #B45309;
+  --amber-800: #92400E;
+  --amber-900: #78350F;
+  --amber-950: #451A03;
+
+  /* Glass Theme Variables */
+  --glass-bg: rgba(255, 255, 255, 0.08);
+  --glass-bg-dark: rgba(0, 0, 0, 0.25);
+  --glass-bg-gold: rgba(255, 215, 0, 0.1);
+  --glass-border: rgba(255, 255, 255, 0.15);
+  --glass-border-gold: rgba(255, 215, 0, 0.25);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  --glass-blur: blur(12px);
+}
+
+/* --------------------------------------------
+   Glass Morphism Utility Classes
+   -------------------------------------------- */
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.glass-dark {
+  background: var(--glass-bg-dark);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.glass-gold {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 215, 0, 0.12) 0%,
+    rgba(212, 175, 55, 0.08) 50%,
+    rgba(255, 215, 0, 0.12) 100%
+  );
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--glass-border-gold);
+  box-shadow: 
+    0 8px 32px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 215, 0, 0.15);
+}
+
+.glass-subtle {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* --------------------------------------------
+   Gold Gradient Backgrounds
+   -------------------------------------------- */
+.bg-gold-gradient {
+  background: linear-gradient(135deg, #FFD700 0%, #D4AF37 50%, #B8860B 100%);
+}
+
+.bg-gold-gradient-radial {
+  background: radial-gradient(ellipse at center, #FFD700 0%, #D4AF37 40%, #8B6914 100%);
+}
+
+.bg-gold-shimmer {
+  background: linear-gradient(
+    90deg,
+    #B8860B 0%,
+    #D4AF37 25%,
+    #FFD700 50%,
+    #D4AF37 75%,
+    #B8860B 100%
+  );
+  background-size: 200% 100%;
+  animation: gold-shimmer 3s ease-in-out infinite;
+}
+
+@keyframes gold-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.bg-gold-mesh {
+  background: 
+    radial-gradient(at 40% 20%, rgba(255, 215, 0, 0.15) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, rgba(212, 175, 55, 0.1) 0px, transparent 50%),
+    radial-gradient(at 0% 50%, rgba(184, 134, 11, 0.1) 0px, transparent 50%),
+    radial-gradient(at 80% 50%, rgba(255, 215, 0, 0.08) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, rgba(212, 175, 55, 0.12) 0px, transparent 50%),
+    #0a0a0a;
+}
+
+.bg-gold-conic {
+  background: conic-gradient(from 0deg at 50% 50%, #B8860B, #D4AF37, #FFD700, #D4AF37, #B8860B);
+}
+
+.bg-gold-linear-subtle {
+  background: linear-gradient(180deg, rgba(255, 215, 0, 0.08) 0%, transparent 100%);
+}
+
+/* --------------------------------------------
+   Text Colors
+   -------------------------------------------- */
+.text-gold {
+  color: var(--rich-gold);
+}
+
+.text-gold-light {
+  color: var(--rich-gold-light);
+}
+
+.text-gold-dark {
+  color: var(--dark-gold);
+}
+
+.text-metallic-gold {
+  color: var(--metallic-gold);
+}
+
+.text-gold-gradient {
+  background: linear-gradient(135deg, #FFD700 0%, #D4AF37 50%, #B8860B 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.text-gold-shimmer {
+  background: linear-gradient(
+    90deg,
+    #B8860B 0%,
+    #FFD700 25%,
+    #FFF8DC 50%,
+    #FFD700 75%,
+    #B8860B 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: gold-shimmer 3s ease-in-out infinite;
+}
+
+/* --------------------------------------------
+   Border Colors
+   -------------------------------------------- */
+.border-gold {
+  border-color: var(--rich-gold);
+}
+
+.border-gold-light {
+  border-color: var(--rich-gold-light);
+}
+
+.border-gold-dark {
+  border-color: var(--dark-gold);
+}
+
+.border-gold-gradient {
+  border-image: linear-gradient(135deg, #FFD700, #D4AF37, #B8860B) 1;
+}
+
+/* --------------------------------------------
+   Backdrop Blur Effects
+   -------------------------------------------- */
+.backdrop-glass {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+}
+
+.backdrop-glass-heavy {
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+}
+
+.backdrop-glass-light {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.backdrop-gold-tint {
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  background: rgba(255, 215, 0, 0.05);
+}
+
+/* --------------------------------------------
+   Gold-Tinted Range Slider Styling
+   -------------------------------------------- */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: linear-gradient(90deg, rgba(255, 215, 0, 0.2), rgba(212, 175, 55, 0.2));
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-track {
+  height: 6px;
+  background: linear-gradient(90deg, rgba(255, 215, 0, 0.2), rgba(212, 175, 55, 0.2));
+  border-radius: 3px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: linear-gradient(135deg, #FFD700 0%, #D4AF37 50%, #B8860B 100%);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid #FFF8DC;
+  box-shadow: 0 2px 8px rgba(255, 215, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 4px 12px rgba(255, 215, 0, 0.6), 0 0 0 2px rgba(255, 215, 0, 0.3);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  background: linear-gradient(90deg, rgba(255, 215, 0, 0.2), rgba(212, 175, 55, 0.2));
+  border-radius: 3px;
+  border: none;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: linear-gradient(135deg, #FFD700 0%, #D4AF37 50%, #B8860B 100%);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid #FFF8DC;
+  box-shadow: 0 2px 8px rgba(255, 215, 0, 0.4);
+  transition: all 0.2s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  transform: scale(1.15);
+}
+
+/* Gold-filled range slider variant */
+input[type="range"].gold-filled {
+  background: linear-gradient(90deg, #B8860B, #D4AF37, #FFD700);
+}
+
+input[type="range"].gold-filled::-webkit-slider-track {
+  background: linear-gradient(90deg, rgba(184, 134, 11, 0.3), rgba(212, 175, 55, 0.3));
+}
+
+input[type="range"].gold-filled::-webkit-slider-thumb {
+  background: linear-gradient(135deg, #FFF8DC 0%, #FFD700 50%, #D4AF37 100%);
+  box-shadow: 0 2px 10px rgba(255, 215, 0, 0.5);
+}
+
+/* --------------------------------------------
+   Button Styles
+   -------------------------------------------- */
+.btn-gold {
+  background: linear-gradient(135deg, #D4AF37 0%, #B8860B 100%);
+  color: #0a0a0a;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(212, 175, 55, 0.3);
+}
+
+.btn-gold:hover {
+  background: linear-gradient(135deg, #FFD700 0%, #D4AF37 100%);
+  box-shadow: 0 6px 20px rgba(255, 215, 0, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-glass-gold {
+  background: rgba(255, 215, 0, 0.1);
+  color: var(--rich-gold);
+  font-weight: 500;
+  padding: 0.75rem 1.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 215, 0, 0.3);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.btn-glass-gold:hover {
+  background: rgba(255, 215, 0, 0.2);
+  border-color: rgba(255, 215, 0, 0.5);
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.2);
+}
+
+/* --------------------------------------------
+   Scrollbar Styling
+   -------------------------------------------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #D4AF37, #B8860B);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #FFD700, #D4AF37);
+}
+
+/* --------------------------------------------
+   Selection Styling
+   -------------------------------------------- */
+::selection {
+  background: rgba(255, 215, 0, 0.3);
+  color: inherit;
+}
+
+::-moz-selection {
+  background: rgba(255, 215, 0, 0.3);
+  color: inherit;
+}
+
+/* --------------------------------------------
+   Glow Effects
+   -------------------------------------------- */
+.glow-gold {
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+}
+
+.glow-gold-strong {
+  box-shadow: 0 0 30px rgba(255, 215, 0, 0.5), 0 0 60px rgba(255, 215, 0, 0.2);
+}
+
+.text-glow-gold {
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.5), 0 0 20px rgba(255, 215, 0, 0.3);
+}
+
+/* --------------------------------------------
+   Focus Ring
+   -------------------------------------------- */
+.focus-gold:focus {
+  outline: none;
+  ring: 2px;
+  ring-color: rgba(255, 215, 0, 0.5);
+  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.3);
+}
+
+/* --------------------------------------------
+   Animations
+   -------------------------------------------- */
+@keyframes gold-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.4); }
+  50% { box-shadow: 0 0 0 10px rgba(255, 215, 0, 0); }
+}
+
+.animate-gold-pulse {
+  animation: gold-pulse 2s infinite;
+}
+
+@keyframes float-gold {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+.animate-float-gold {
+  animation: float-gold 3s ease-in-out infinite;
+}

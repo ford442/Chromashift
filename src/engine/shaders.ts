@@ -44,7 +44,7 @@ fn band_gradient(
 }
 `;
 
-// ─── Vertex shader (shared by all layer passes) ───────────────────────────────
+// ─── Vertex shader (shared by all layer passes) ──────────────────────────────────────────────────
 export const vertexShaderSource = /* wgsl */ `
 struct Uniforms {
   rotation : mat3x3<f32>,
@@ -81,7 +81,7 @@ fn main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
 }
 `;
 
-// ─── Fragment: Layer 0 – Red / Orange ────────────────────────────────────────
+// ─── Fragment: Layer 0 – Red / Orange ──────────────────────────────────────────────
 export const fragmentShaderRedOrange = /* wgsl */ `
 ${WGSL_COLOR_HELPERS}
 
@@ -117,7 +117,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-// ─── Fragment: Layer 1 – Violet / Blue ───────────────────────────────────────
+// ─── Fragment: Layer 1 – Violet / Blue ──────────────────────────────────────────────
 export const fragmentShaderVioletBlue = /* wgsl */ `
 ${WGSL_COLOR_HELPERS}
 
@@ -150,7 +150,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-// ─── Fragment: Layer 2 – Green / Yellow ──────────────────────────────────────
+// ─── Fragment: Layer 2 – Green / Yellow ──────────────────────────────────────────────
 export const fragmentShaderGreenYellow = /* wgsl */ `
 ${WGSL_COLOR_HELPERS}
 
@@ -183,7 +183,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-// ─── Full-screen quad vertex (no transform) ───────────────────────────────────
+// ─── Full-screen quad vertex (no transform) ──────────────────────────────────────────────────
 export const fullscreenVertexSource = /* wgsl */ `
 struct VertexOutput {
   @builtin(position) position : vec4<f32>,
@@ -204,7 +204,7 @@ fn main(@builtin(vertex_index) vi : u32) -> VertexOutput {
 }
 `;
 
-// ─── Persistence pass fragment shader ────────────────────────────────────────
+// ─── Persistence pass fragment shader ──────────────────────────────────────────────────
 //
 // Reads the 3 live layer textures and the previous persistence texture.
 // Where 2 or more layers have colour at the same pixel, it writes the
@@ -222,8 +222,8 @@ export const persistenceFragmentSource = /* wgsl */ `
 struct PersistUniforms {
   decayFactor      : f32,  // per-frame multiplier: 0=instant, ~0.99=slow fade
   colorThreshold   : f32,  // min alpha to count a layer as "has colour" at pixel
+  tracerMode       : f32,  // 0 = combined colors, 1 = grey highlight
   _pad0            : f32,
-  _pad1            : f32,
 };
 @group(0) @binding(5) var<uniform> pu : PersistUniforms;
 
@@ -235,6 +235,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let prev = textureSample(prevPersist, samp, uv);
 
   let thresh = pu.colorThreshold;
+  let mode   = pu.tracerMode;
 
   // Which layers have colour at this pixel?
   let has0 = c0.a > thresh;
@@ -244,50 +245,54 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // Count overlapping layers
   let count = i32(has0) + i32(has1) + i32(has2);
 
+  var newColor = vec4<f32>(0.0);
+
   if (count >= 2) {
-    // Blend together only the layers that are present at this pixel.
-    // Start from transparent and alpha-composite each active layer.
-    var mixed = vec4<f32>(0.0);
+    // 2 or 3 layers colliding → form 4th layer
+    if (mode == 0.0) {
+      // Combined colors (original behavior) - blend active layers
+      var mixed = vec4<f32>(0.0);
 
-    if (has0) {
-      let a = c0.a;
-      mixed = vec4<f32>(
-        mixed.rgb * mixed.a * (1.0 - a) / max(mixed.a + a * (1.0 - mixed.a), 0.0001) + c0.rgb * a / max(mixed.a + a * (1.0 - mixed.a), 0.0001),
-        mixed.a + a * (1.0 - mixed.a)
-      );
+      if (has0) {
+        let a = c0.a;
+        mixed = vec4<f32>(
+          mixed.rgb * mixed.a * (1.0 - a) / max(mixed.a + a * (1.0 - mixed.a), 0.0001) + c0.rgb * a / max(mixed.a + a * (1.0 - mixed.a), 0.0001),
+          mixed.a + a * (1.0 - mixed.a)
+        );
+      }
+      if (has1) {
+        let a = c1.a;
+        let newA = mixed.a + a * (1.0 - mixed.a);
+        mixed = vec4<f32>(
+          (mixed.rgb * mixed.a + c1.rgb * a * (1.0 - mixed.a)) / max(newA, 0.0001),
+          newA
+        );
+      }
+      if (has2) {
+        let a = c2.a;
+        let newA = mixed.a + a * (1.0 - mixed.a);
+        mixed = vec4<f32>(
+          (mixed.rgb * mixed.a + c2.rgb * a * (1.0 - mixed.a)) / max(newA, 0.0001),
+          newA
+        );
+      }
+      newColor = mixed;
+    } else {
+      // Grey highlight mode
+      newColor = vec4<f32>(0.95, 0.95, 0.90, 1.0);
     }
-    if (has1) {
-      let a = c1.a;
-      let newA = mixed.a + a * (1.0 - mixed.a);
-      mixed = vec4<f32>(
-        (mixed.rgb * mixed.a + c1.rgb * a * (1.0 - mixed.a)) / max(newA, 0.0001),
-        newA
-      );
-    }
-    if (has2) {
-      let a = c2.a;
-      let newA = mixed.a + a * (1.0 - mixed.a);
-      mixed = vec4<f32>(
-        (mixed.rgb * mixed.a + c2.rgb * a * (1.0 - mixed.a)) / max(newA, 0.0001),
-        newA
-      );
-    }
-
-    // Take the brighter of: new hit colour vs decayed previous.
-    // This means a fresh strong hit always wins, but a fading hold
-    // stays visible until the new hit surpasses it.
-    let decayed = prev * pu.decayFactor;
-    let newAlpha = max(mixed.a, decayed.a);
-    let newRGB   = mix(decayed.rgb, mixed.rgb, mixed.a / max(newAlpha, 0.0001));
-    return vec4<f32>(newRGB, newAlpha);
-  } else {
-    // No overlap — just decay the previous persistence value
-    return prev * pu.decayFactor;
   }
+
+  // Decay previous persistence
+  let decayed = prev * pu.decayFactor;
+
+  // Keep the stronger one (new collision beats old ghost)
+  // If newColor has alpha, use it; otherwise use decayed
+  return select(decayed, newColor, newColor.a > decayed.a);
 }
 `;
 
-// ─── Compositor fragment shader ───────────────────────────────────────────────
+// ─── Compositor fragment shader ─────────────────────────────────────────────────────────────────────
 //
 // Blends the 3 live layers back-to-front, then draws the persistence
 // texture on top so held/fading overlaps remain visible.

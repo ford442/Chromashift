@@ -32,6 +32,7 @@ export interface RendererState {
   tracerDuration?  : number;  // milliseconds to hold a hit before it fully fades
   tracerThreshold? : number;  // min alpha to count a layer as "has colour"
   tracerBelow?     : boolean; // true = render tracer under the 3 colour layers
+  tracerMode?      : number;  // 0 = combined colors, 1 = grey highlight
 }
 
 /** Column-major mat3x3 for WGSL std140. */
@@ -349,8 +350,9 @@ export class WebGPURenderer {
     const decayFactor = durationToDecay(durationMs, fps);
     const colorThresh = state.tracerThreshold ?? 0.05;
 
+    const tracerMode = state.tracerMode ?? 0.0;
     this.device.queue.writeBuffer(this.persistUniformBuf, 0,
-      new Float32Array([decayFactor, colorThresh, 0, 0]));
+      new Float32Array([decayFactor, colorThresh, tracerMode, 0]));
 
     // Read from persistPingPong, write to the other one
     const readIdx  : 0 | 1 = this.persistPingPong;

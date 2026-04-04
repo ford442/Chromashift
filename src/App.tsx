@@ -45,6 +45,8 @@ export default function App() {
   const [squareCanvas, setSquareCanvas] = useState(false);
   const [antialiasEnabled, setAntialiasEnabled] = useState(true);
   const [tracerDuration, setTracerDuration] = useState(50);
+  const [tracerMode, setTracerMode] = useState(0); // 0 = combined colors, 1 = grey highlight
+  const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
@@ -213,6 +215,7 @@ export default function App() {
           tracerIntensity,
           tracerDuration,
           tracerBelow,
+          tracerMode,
         };
 
         rendererRef.current?.render(state);
@@ -230,11 +233,14 @@ export default function App() {
         }
 
         // Tracer preview updates every frame to show live persistence buffer
-        const previewTracer = previewTracerRef.current;
-        if (previewTracer && canvasRef.current) {
-          const ctx = previewTracer.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(canvasRef.current, 0, 0, previewTracer.width, previewTracer.height);
+        // (unless frozen for "still" preview mode)
+        if (!tracerPreviewFrozen) {
+          const previewTracer = previewTracerRef.current;
+          if (previewTracer && canvasRef.current) {
+            const ctx = previewTracer.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(canvasRef.current, 0, 0, previewTracer.width, previewTracer.height);
+            }
           }
         }
       }
@@ -247,7 +253,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity, tracerDuration, tracerBelow]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity, tracerDuration, tracerBelow, tracerMode, tracerPreviewFrozen]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -274,7 +280,7 @@ export default function App() {
   return (
     <div
       ref={containerRef}
-      className="relative w-screen h-screen bg-green-800 overflow-hidden"
+      className="relative w-screen h-screen bg-gradient-to-br from-gray-900 via-amber-950 to-black overflow-hidden"
       id="chromashift-container"
     >
       {/* WebGPU canvas */}
@@ -289,36 +295,49 @@ export default function App() {
       />
 
       {/* Preview: Original Image (Top-Left) */}
-      <div className="absolute top-3 left-3 z-30 border border-gray-600 rounded overflow-hidden bg-black/80">
+      <div className="absolute top-3 left-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewOriginalRef}
           width={150}
           height={150}
           style={{ display: 'block', imageRendering: 'pixelated' }}
         />
-        <div className="text-xs text-gray-400 px-2 py-1 font-mono">Original</div>
+        <div className="text-xs text-amber-400 px-2 py-1 font-mono">Original</div>
       </div>
 
       {/* Preview: RGB Separated Output (Top-Right) */}
-      <div className="absolute top-3 right-3 z-30 border border-gray-600 rounded overflow-hidden bg-black/80">
+      <div className="absolute top-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewSeparatedRef}
           width={150}
           height={150}
           style={{ display: 'block', imageRendering: 'pixelated' }}
         />
-        <div className="text-xs text-gray-400 px-2 py-1 font-mono">Separated</div>
+        <div className="text-xs text-amber-400 px-2 py-1 font-mono">Separated</div>
       </div>
 
       {/* Preview: Tracer/Ghost Output (Bottom-Right) */}
-      <div className="absolute bottom-3 right-3 z-30 border border-yellow-600 rounded overflow-hidden bg-black/80">
+      <div className="absolute bottom-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewTracerRef}
           width={150}
           height={150}
           style={{ display: 'block', imageRendering: 'pixelated' }}
         />
-        <div className="text-xs text-yellow-400 px-2 py-1 font-mono">Tracer</div>
+        <div className="flex items-center justify-between px-2 py-1">
+          <span className="text-xs text-amber-400 font-mono">Tracer</span>
+          <button
+            onClick={() => setTracerPreviewFrozen(!tracerPreviewFrozen)}
+            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+              tracerPreviewFrozen
+                ? 'bg-red-600 hover:bg-red-500 text-white'
+                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+            }`}
+            title={tracerPreviewFrozen ? 'Unfreeze preview' : 'Freeze preview'}
+          >
+            {tracerPreviewFrozen ? '⏸ Frozen' : 'Live'}
+          </button>
+        </div>
       </div>
 
       {/* Image switcher dots */}
@@ -329,7 +348,7 @@ export default function App() {
               key={idx}
               onClick={() => { hasUpdatedPreviewsForImage.current = false; setCurrentImageIndex(idx); }}
               className={`w-2.5 h-2.5 rounded-full transition-colors ${
-                idx === currentImageIndex ? 'bg-white' : 'bg-white/30 hover:bg-white/60'
+                idx === currentImageIndex ? 'bg-amber-400' : 'bg-amber-400/30 hover:bg-amber-400/60'
               }`}
               aria-label={`Show image ${idx + 1}`}
             />
@@ -338,9 +357,9 @@ export default function App() {
       )}
 
       {/* Average luminance control */}
-      <div className="absolute top-3 right-3 z-40 bg-black/50 rounded p-2 flex flex-col items-end gap-1">
-        <span className="text-xs text-gray-400 font-mono">
-          Avg Lum: <span className="tabular-nums text-white">{avgLuminance}</span>
+      <div className="absolute top-3 right-3 z-40 bg-black/40 backdrop-blur-md rounded p-2 flex flex-col items-end gap-1 border border-amber-500/30">
+        <span className="text-xs text-amber-400 font-mono">
+          Avg Lum: <span className="tabular-nums text-amber-200">{avgLuminance}</span>
         </span>
         <input
           type="range"
@@ -348,16 +367,16 @@ export default function App() {
           max={255}
           value={avgLuminance}
           onChange={(e) => setAvgLuminance(Number(e.target.value))}
-          className="w-28 h-1 accent-yellow-400"
+          className="w-28 h-1 accent-amber-400"
         />
       </div>
 
       {/* Error / no-WebGPU notice */}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80">
-          <div className="bg-gray-900 border border-red-500 rounded-lg p-6 max-w-md text-center">
+        <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80 backdrop-blur-sm">
+          <div className="bg-gray-900/90 backdrop-blur-md border border-red-500/50 rounded-lg p-6 max-w-md text-center shadow-2xl shadow-red-900/20">
             <p className="text-red-400 font-mono text-sm">{error}</p>
-            <p className="text-gray-400 text-xs mt-2">
+            <p className="text-amber-200/70 text-xs mt-2">
               Chromashift requires a browser with WebGPU support (Chrome 113+, Edge 113+).
             </p>
           </div>
@@ -373,6 +392,7 @@ export default function App() {
         tracerIntensity={tracerIntensity}
         tracerDuration={tracerDuration}
         tracerBelow={tracerBelow}
+        tracerMode={tracerMode}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
@@ -382,6 +402,7 @@ export default function App() {
         onTracerIntensityChange={setTracerIntensity}
         onTracerDurationChange={setTracerDuration}
         onTracerBelowToggle={setTracerBelow}
+        onTracerModeChange={setTracerMode}
         onSquareCanvasToggle={setSquareCanvas}
         onAntialiasToggle={(enabled) => {
           setAntialiasEnabled(enabled);
