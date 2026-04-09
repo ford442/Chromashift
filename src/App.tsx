@@ -45,7 +45,7 @@ export default function App() {
   const [tracerBelow, setTracerBelow] = useState(false);
   const [squareCanvas, setSquareCanvas] = useState(false);
   const [antialiasEnabled, setAntialiasEnabled] = useState(true);
-  const [tracerDuration, setTracerDuration] = useState(50);
+  const [tracerDuration, setTracerDuration] = useState(500);
   const [tracerMode, setTracerMode] = useState(0); // 0 = combined colors, 1 = grey highlight
   const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
 
