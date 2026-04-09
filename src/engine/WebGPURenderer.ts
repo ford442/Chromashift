@@ -294,6 +294,14 @@ export class WebGPURenderer {
     this.texH = 0;
   }
 
+  /**
+   * Get the current persistence texture (the accumulated layer overlaps).
+   * Returns null if textures haven't been initialized yet.
+   */
+  getPersistenceTexture(): GPUTexture | null {
+    return this.persistTextures[this.persistPingPong];
+  }
+
   render(state: RendererState, fps = 30): void {
     if (!this.currentTexture) return;
 
