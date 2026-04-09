@@ -276,7 +276,12 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
           newA
         );
       }
-      newColor = mixed;
+      // 3-layer collision: sharp attack (full alpha), 2-layer: slow attack (reduced alpha)
+      if (count == 3) {
+        newColor = vec4<f32>(mixed.rgb, 1.0);  // Sharp attack: appears fully
+      } else {
+        newColor = vec4<f32>(mixed.rgb, 0.7);  // Slow attack: appears gradually
+      }
     } else {
       // Grey highlight mode
       newColor = vec4<f32>(0.95, 0.95, 0.90, 1.0);
@@ -284,12 +289,12 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   }
 
   // Decay based on overlap intensity
-  // 2 overlaps: slower decay (0.8x), 3 overlaps: faster decay (1.2x)
+  // 3 overlaps: slower decay (fades slower), 2 overlaps: normal decay
   var decayMod = 1.0;
   if (count == 2) {
-    decayMod = 0.8;
+    decayMod = 1.0;   // Normal decay for 2-layer hits
   } else if (count == 3) {
-    decayMod = 1.2;
+    decayMod = 0.7;   // Slower decay (persists longer) for 3-layer hits
   }
   let effectiveDecay = pow(pu.decayFactor, decayMod);
   let decayed = prev * effectiveDecay;
