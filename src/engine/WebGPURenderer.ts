@@ -25,14 +25,16 @@ export interface LayerState {
 }
 
 export interface RendererState {
-  layers           : [LayerState, LayerState, LayerState];
-  avgLuminance     : number;
-  layerOpacity?    : number;
-  tracerIntensity? : number;  // 0–1 opacity of the persistence overlay
-  tracerDuration?  : number;  // milliseconds to hold a hit before it fully fades
-  tracerThreshold? : number;  // min alpha to count a layer as "has colour"
-  tracerBelow?     : boolean; // true = render tracer under the 3 colour layers
-  tracerMode?      : number;  // 0 = combined colors, 1 = grey highlight
+  layers            : [LayerState, LayerState, LayerState];
+  avgLuminance      : number;
+  layerOpacity?     : number;
+  tracerIntensity?  : number;  // 0–1 opacity of the persistence overlay
+  tracerDuration?   : number;  // milliseconds to hold a hit before it fully fades
+  tracerThreshold?  : number;  // min alpha to count a layer as "has colour"
+  tracerBelow?      : boolean; // true = render tracer under the 3 colour layers
+  tracerMode?       : number;  // 0 = combined colors, 1 = grey highlight
+  layerBlendMode?   : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  tracerBlendMode?  : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
 }
 
 /** Column-major mat3x3 for WGSL std140. */
@@ -120,7 +122,7 @@ export class WebGPURenderer {
     this.compositorBGL      = this.createCompositorBGL();
     this.compositorPipeline = this.createCompositorPipeline();
     this.compositorUniformBuf = device.createBuffer({
-      size: 16,
+      size: 24,  // f32 tracerOpacity + f32 tracerBelow + u32 layerBlendMode + u32 tracerBlendMode
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
@@ -397,8 +399,18 @@ export class WebGPURenderer {
     // ── Pass 4: compositor — live layers + persistence → canvas ───────────
     const tracerOpacity = state.tracerIntensity ?? 0.85;
     const tracerBelow   = state.tracerBelow ? 1.0 : 0.0;
-    this.device.queue.writeBuffer(this.compositorUniformBuf, 0,
-      new Float32Array([tracerOpacity, tracerBelow, 0, 0]));
+    const layerBlendMode = state.layerBlendMode ?? 0;
+    const tracerBlendMode = state.tracerBlendMode ?? 0;
+
+    const compositorUniforms = new ArrayBuffer(24);
+    const floatView = new Float32Array(compositorUniforms);
+    const uintView = new Uint32Array(compositorUniforms);
+    floatView[0] = tracerOpacity;
+    floatView[1] = tracerBelow;
+    uintView[2] = layerBlendMode;
+    uintView[3] = tracerBlendMode;
+
+    this.device.queue.writeBuffer(this.compositorUniformBuf, 0, compositorUniforms);
 
     const compBG = this.device.createBindGroup({
       layout : this.compositorBGL,

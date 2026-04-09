@@ -48,6 +48,8 @@ export default function App() {
   const [tracerDuration, setTracerDuration] = useState(500);
   const [tracerMode, setTracerMode] = useState(0); // 0 = combined colors, 1 = grey highlight
   const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
+  const [layerBlendMode, setLayerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  const [tracerBlendMode, setTracerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
@@ -170,14 +172,15 @@ export default function App() {
     });
   }, [gpuReady, imageList, currentImageIndex]);
 
-  // Auto-play image rotation
+  // Auto-play image rotation (random)
   useEffect(() => {
     if (!isAutoPlayActive || imageList.length === 0) return;
 
     const interval = setInterval(() => {
-      setCurrentImageIndex((prev) => {
+      setCurrentImageIndex(() => {
         hasUpdatedPreviewsForImage.current = false;
-        return (prev + 1) % imageList.length;
+        // Pick random image (may be same as current)
+        return Math.floor(Math.random() * imageList.length);
       });
     }, imageChangeInterval * 1000);
 
@@ -218,6 +221,8 @@ export default function App() {
           tracerDuration,
           tracerBelow,
           tracerMode,
+          layerBlendMode,
+          tracerBlendMode,
         };
 
         rendererRef.current?.render(state);
@@ -303,7 +308,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity, tracerDuration, tracerBelow, tracerMode, tracerPreviewFrozen]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity, tracerDuration, tracerBelow, tracerMode, layerBlendMode, tracerBlendMode, tracerPreviewFrozen]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -443,6 +448,8 @@ export default function App() {
         tracerDuration={tracerDuration}
         tracerBelow={tracerBelow}
         tracerMode={tracerMode}
+        layerBlendMode={layerBlendMode}
+        tracerBlendMode={tracerBlendMode}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
@@ -453,6 +460,8 @@ export default function App() {
         onTracerDurationChange={setTracerDuration}
         onTracerBelowToggle={setTracerBelow}
         onTracerModeChange={setTracerMode}
+        onLayerBlendModeChange={setLayerBlendMode}
+        onTracerBlendModeChange={setTracerBlendMode}
         onSquareCanvasToggle={setSquareCanvas}
         onAntialiasToggle={(enabled) => {
           setAntialiasEnabled(enabled);

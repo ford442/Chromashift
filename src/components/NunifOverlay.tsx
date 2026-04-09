@@ -11,6 +11,8 @@ interface Props {
   tracerDuration          : number;
   tracerBelow             : boolean;
   tracerMode              : number;
+  layerBlendMode          : number;
+  tracerBlendMode         : number;
   squareCanvas            : boolean;
   antialiasEnabled        : boolean;
   onAngleChange           : (layer: 0 | 1 | 2, angle: number) => void;
@@ -21,6 +23,8 @@ interface Props {
   onTracerDurationChange  : (v: number) => void;
   onTracerBelowToggle     : (v: boolean) => void;
   onTracerModeChange      : (v: number) => void;
+  onLayerBlendModeChange  : (v: number) => void;
+  onTracerBlendModeChange : (v: number) => void;
   onSquareCanvasToggle    : (v: boolean) => void;
   onAntialiasToggle       : (v: boolean) => void;
   onReset                 : () => void;
@@ -42,6 +46,8 @@ export function NunifOverlay({
   tracerDuration,
   tracerBelow,
   tracerMode,
+  layerBlendMode,
+  tracerBlendMode,
   squareCanvas,
   antialiasEnabled,
   onAngleChange,
@@ -52,6 +58,8 @@ export function NunifOverlay({
   onTracerDurationChange,
   onTracerBelowToggle,
   onTracerModeChange,
+  onLayerBlendModeChange,
+  onTracerBlendModeChange,
   onSquareCanvasToggle,
   onAntialiasToggle,
   onReset,
@@ -217,6 +225,36 @@ export function NunifOverlay({
             >
               {tracerMode === 0 ? '🎨 Colors' : '◻ Grey'}
             </button>
+          </div>
+
+          <div className="flex items-center gap-2 mt-2">
+            <label className="text-xs text-amber-400/80 font-mono whitespace-nowrap">Layer blend:</label>
+            <select
+              value={layerBlendMode}
+              onChange={(e) => onLayerBlendModeChange(Number(e.target.value))}
+              className="text-xs px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 border border-amber-500/30 text-white"
+            >
+              <option value={0}>Alpha</option>
+              <option value={1}>Add</option>
+              <option value={2}>Subtract</option>
+              <option value={3}>Multiply</option>
+              <option value={4}>Screen</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-amber-400/80 font-mono whitespace-nowrap">Tracer blend:</label>
+            <select
+              value={tracerBlendMode}
+              onChange={(e) => onTracerBlendModeChange(Number(e.target.value))}
+              className="text-xs px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 border border-amber-500/30 text-white"
+            >
+              <option value={0}>Alpha</option>
+              <option value={1}>Add</option>
+              <option value={2}>Subtract</option>
+              <option value={3}>Multiply</option>
+              <option value={4}>Screen</option>
+            </select>
           </div>
 
           <button
