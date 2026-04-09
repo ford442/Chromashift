@@ -209,6 +209,11 @@ export default function App() {
 
         setLayerAngles(angles);
 
+        // Adjust tracer duration based on FPS: lower FPS needs longer window to see same effect
+        // At 60 FPS: use configured value
+        // At 30 FPS: double the duration
+        const fpsAdjustedTracerDuration = tracerDuration * (60 / frameRate);
+
         const state: RendererState = {
           layers: [
             { angleDeg: angles[0], flipX: false, flipY: false },
@@ -218,7 +223,7 @@ export default function App() {
           avgLuminance,
           layerOpacity,
           tracerIntensity,
-          tracerDuration,
+          tracerDuration: fpsAdjustedTracerDuration,
           tracerBelow,
           tracerMode,
           layerBlendMode,
