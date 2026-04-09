@@ -245,7 +245,11 @@ export default function App() {
             // Copy persistence texture to buffer and display on preview canvas
             const texSize = persistenceTexture.width;
             const previewSize = previewTracer.width; // 150
-            const byteLength = texSize * texSize * 4; // RGBA8
+
+            // bytesPerRow must be a multiple of 256
+            const bytesPerRow = Math.ceil((texSize * 4) / 256) * 256;
+            const byteLength = bytesPerRow * texSize;
+
             const stagingBuffer = device.createBuffer({
               size: byteLength,
               usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
@@ -255,7 +259,7 @@ export default function App() {
             const enc = device.createCommandEncoder();
             enc.copyTextureToBuffer(
               { texture: persistenceTexture },
-              { buffer: stagingBuffer, bytesPerRow: texSize * 4 },
+              { buffer: stagingBuffer, bytesPerRow },
               [texSize, texSize, 1]
             );
             device.queue.submit([enc.finish()]);
@@ -270,7 +274,7 @@ export default function App() {
                 for (let x = 0; x < previewSize; x++) {
                   const srcX = Math.floor(x * scale);
                   const srcY = Math.floor(y * scale);
-                  const srcIdx = (srcY * texSize + srcX) * 4;
+                  const srcIdx = srcY * bytesPerRow + srcX * 4;
                   const dstIdx = (y * previewSize + x) * 4;
                   scaledData[dstIdx] = fullData[srcIdx];
                   scaledData[dstIdx + 1] = fullData[srcIdx + 1];
