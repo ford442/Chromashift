@@ -283,8 +283,16 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     }
   }
 
-  // Decay previous persistence
-  let decayed = prev * pu.decayFactor;
+  // Decay based on overlap intensity
+  // 2 overlaps: slower decay (0.8x), 3 overlaps: faster decay (1.2x)
+  var decayMod = 1.0;
+  if (count == 2) {
+    decayMod = 0.8;
+  } else if (count == 3) {
+    decayMod = 1.2;
+  }
+  let effectiveDecay = pow(pu.decayFactor, decayMod);
+  let decayed = prev * effectiveDecay;
 
   // Keep the stronger one (new collision beats old ghost)
   // If newColor has alpha, use it; otherwise use decayed
@@ -305,10 +313,10 @@ export const compositorFragmentSource = /* wgsl */ `
 @group(0) @binding(4) var persistence: texture_2d<f32>;
 
 struct CompositorUniforms {
-  tracerOpacity : f32,  // how opaque the persistence overlay is (0–1)
-  tracerBelow   : f32,  // 1.0 = composite tracer below layers, 0.0 = above
-  _pad0         : f32,
-  _pad1         : f32,
+  tracerOpacity  : f32,  // how opaque the persistence overlay is (0–1)
+  tracerBelow    : f32,  // 1.0 = composite tracer below layers, 0.0 = above
+  layerBlendMode : u32,  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  tracerBlendMode: u32,  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
 };
 @group(0) @binding(5) var<uniform> cu : CompositorUniforms;
 
@@ -317,6 +325,36 @@ fn alpha_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   if (a < 0.0001) { return vec4<f32>(0.0); }
   let rgb = (src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / a;
   return vec4<f32>(rgb, a);
+}
+
+fn add_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  return dst + src;
+}
+
+fn subtract_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  return max(dst - src, vec4<f32>(0.0));
+}
+
+fn multiply_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let rgb = dst.rgb * src.rgb;
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn screen_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let rgb = 1.0 - (1.0 - dst.rgb) * (1.0 - src.rgb);
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
+  switch (mode) {
+    case 1u: { return add_blend(dst, src); }
+    case 2u: { return subtract_blend(dst, src); }
+    case 3u: { return multiply_blend(dst, src); }
+    case 4u: { return screen_blend(dst, src); }
+    default: { return alpha_blend(dst, src); }
+  }
 }
 
 @fragment
@@ -331,16 +369,16 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   var col = vec4<f32>(0.0);
   if (cu.tracerBelow > 0.5) {
     // Tracer below — layers render on top of ghosts
-    col = alpha_blend(col, persScaled);
-    col = alpha_blend(col, c2);
-    col = alpha_blend(col, c1);
-    col = alpha_blend(col, c0);
+    col = blend(col, persScaled, cu.tracerBlendMode);
+    col = blend(col, c2, cu.layerBlendMode);
+    col = blend(col, c1, cu.layerBlendMode);
+    col = blend(col, c0, cu.layerBlendMode);
   } else {
     // Tracer above — ghosts render on top of layers (default)
-    col = alpha_blend(col, c2);
-    col = alpha_blend(col, c1);
-    col = alpha_blend(col, c0);
-    col = alpha_blend(col, persScaled);
+    col = blend(col, c2, cu.layerBlendMode);
+    col = blend(col, c1, cu.layerBlendMode);
+    col = blend(col, c0, cu.layerBlendMode);
+    col = blend(col, persScaled, cu.tracerBlendMode);
   }
 
   return col;
