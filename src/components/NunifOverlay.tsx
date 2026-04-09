@@ -181,50 +181,55 @@ export function NunifOverlay({
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
-              Tracer: <span className="tabular-nums">{Math.round(tracerIntensity * 100)}%</span>
-            </span>
-            <input
-              type="range" min={0} max={1} step={0.01} value={tracerIntensity}
-              onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
-              className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
-            />
-            <button
-              onClick={() => onTracerBelowToggle(!tracerBelow)}
-              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
-                tracerBelow ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
-              }`}
-              title="Toggle tracer above/below colour layers"
-            >
-              {tracerBelow ? '↓ Below' : '↑ Above'}
-            </button>
-          </div>
+          {/* Tracer/Persistence Controls Section */}
+          <div className="border-t border-amber-500/20 pt-3 mt-3 space-y-2">
+            <div className="text-xs font-mono font-bold text-amber-400/60 uppercase tracking-wider mb-2">Tracer/Persistence</div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
-              Hold: <span className="tabular-nums">{(tracerDuration / 1000).toFixed(1)}s</span>
-            </span>
-            <input
-              type="range" min={0} max={5000} step={100} value={tracerDuration}
-              onChange={(e) => onTracerDurationChange(Number(e.target.value))}
-              className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
-            />
-          </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
+                Opacity: <span className="tabular-nums text-white">{Math.round(tracerIntensity * 100)}%</span>
+              </span>
+              <input
+                type="range" min={0} max={1} step={0.01} value={tracerIntensity}
+                onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
+                className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
+              />
+              <button
+                onClick={() => onTracerBelowToggle(!tracerBelow)}
+                className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
+                  tracerBelow ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
+                }`}
+                title="Toggle tracer above/below colour layers"
+              >
+                {tracerBelow ? '↓ Below' : '↑ Above'}
+              </button>
+            </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">Mode:</span>
-            <button
-              onClick={() => onTracerModeChange(tracerMode === 0 ? 1 : 0)}
-              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
-                tracerMode === 0
-                  ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
-                  : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
-              }`}
-              title="Toggle between combined colors and grey highlight"
-            >
-              {tracerMode === 0 ? '🎨 Colors' : '◻ Grey'}
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
+                Hold: <span className="tabular-nums">{(tracerDuration / 1000).toFixed(1)}s</span>
+              </span>
+              <input
+                type="range" min={0} max={5000} step={100} value={tracerDuration}
+                onChange={(e) => onTracerDurationChange(Number(e.target.value))}
+                className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">Mode:</span>
+              <button
+                onClick={() => onTracerModeChange(tracerMode === 0 ? 1 : 0)}
+                className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
+                  tracerMode === 0
+                    ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                    : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
+                }`}
+                title="Toggle between combined colors and grey highlight"
+              >
+                {tracerMode === 0 ? '🎨 Colors' : '◻ Grey'}
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2 mt-2">
