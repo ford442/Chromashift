@@ -23,6 +23,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<WebGPURenderer | null>(null);
   const textureManagerRef = useRef<TextureManager | null>(null);
+  const deviceRef = useRef<GPUDevice | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -121,6 +122,7 @@ export default function App() {
       const renderer = new WebGPURenderer(device, context, format);
       const textureManager = new TextureManager(device);
 
+      deviceRef.current = device;
       rendererRef.current = renderer;
       textureManagerRef.current = textureManager;
 
@@ -236,11 +238,55 @@ export default function App() {
         // (unless frozen for "still" preview mode)
         if (!tracerPreviewFrozen) {
           const previewTracer = previewTracerRef.current;
-          if (previewTracer && canvasRef.current) {
-            const ctx = previewTracer.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(canvasRef.current, 0, 0, previewTracer.width, previewTracer.height);
-            }
+          const persistenceTexture = rendererRef.current?.getPersistenceTexture();
+          const device = deviceRef.current;
+
+          if (previewTracer && persistenceTexture && device) {
+            // Copy persistence texture to buffer and display on preview canvas
+            const texSize = persistenceTexture.width;
+            const previewSize = previewTracer.width; // 150
+            const byteLength = texSize * texSize * 4; // RGBA8
+            const stagingBuffer = device.createBuffer({
+              size: byteLength,
+              usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+              mappedAtCreation: false,
+            });
+
+            const enc = device.createCommandEncoder();
+            enc.copyTextureToBuffer(
+              { texture: persistenceTexture },
+              { buffer: stagingBuffer, bytesPerRow: texSize * 4 },
+              [texSize, texSize, 1]
+            );
+            device.queue.submit([enc.finish()]);
+
+            stagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
+              const fullData = new Uint8ClampedArray(stagingBuffer.getMappedRange());
+
+              // Downsample to preview size (150x150)
+              const scale = texSize / previewSize;
+              const scaledData = new Uint8ClampedArray(previewSize * previewSize * 4);
+              for (let y = 0; y < previewSize; y++) {
+                for (let x = 0; x < previewSize; x++) {
+                  const srcX = Math.floor(x * scale);
+                  const srcY = Math.floor(y * scale);
+                  const srcIdx = (srcY * texSize + srcX) * 4;
+                  const dstIdx = (y * previewSize + x) * 4;
+                  scaledData[dstIdx] = fullData[srcIdx];
+                  scaledData[dstIdx + 1] = fullData[srcIdx + 1];
+                  scaledData[dstIdx + 2] = fullData[srcIdx + 2];
+                  scaledData[dstIdx + 3] = fullData[srcIdx + 3];
+                }
+              }
+
+              const imageData = new ImageData(scaledData, previewSize, previewSize);
+              const ctx = previewTracer.getContext('2d');
+              if (ctx) {
+                ctx.putImageData(imageData, 0, 0);
+              }
+              stagingBuffer.unmap();
+              stagingBuffer.destroy();
+            });
           }
         }
       }
