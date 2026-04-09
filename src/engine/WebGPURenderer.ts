@@ -254,11 +254,11 @@ export class WebGPURenderer {
       this.msaaTexture = null;
     }
 
-    // Persistence ping-pong textures — both start as RENDER_ATTACHMENT + TEXTURE_BINDING
+    // Persistence ping-pong textures — both start as RENDER_ATTACHMENT + TEXTURE_BINDING + COPY_SRC
     this.persistTextures = [0, 1].map(() => this.device.createTexture({
       size  : [w, h, 1],
       format: this.format,
-      usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
     })) as [GPUTexture, GPUTexture];
 
     this.persistPingPong = 0;
