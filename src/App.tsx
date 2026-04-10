@@ -55,6 +55,7 @@ export default function App() {
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
   const hasUpdatedPreviewsForImage = useRef(false);
+  const capturePreviewAfterRender = useRef(false);
 
   // Resize canvas: always square, max 95% of viewport height
   useEffect(() => {
@@ -157,19 +158,7 @@ export default function App() {
     const url = imageList[currentImageIndex];
     textureManagerRef.current?.loadTexture(url).then((tex) => {
       rendererRef.current?.setTexture(tex);
-      hasUpdatedPreviewsForImage.current = false;  // Reset flag for preview update
-
-      // Update separated preview after new texture is set
-      // Use setTimeout to ensure the texture has been rendered
-      setTimeout(() => {
-        const previewSep = previewSeparatedRef.current;
-        if (previewSep && canvasRef.current) {
-          const ctx = previewSep.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
-          }
-        }
-      }, 0);
+      capturePreviewAfterRender.current = true;  // Capture preview after next render
 
       const previewOrig = previewOriginalRef.current;
       if (previewOrig) {
@@ -245,6 +234,18 @@ export default function App() {
         };
 
         rendererRef.current?.render(state);
+
+        // Capture separated preview once after each new texture is rendered
+        if (capturePreviewAfterRender.current) {
+          capturePreviewAfterRender.current = false;
+          const previewSep = previewSeparatedRef.current;
+          if (previewSep && canvasRef.current) {
+            const ctx = previewSep.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
+            }
+          }
+        }
 
         // Tracer preview updates every frame to show live persistence buffer
         // (unless frozen for "still" preview mode)
