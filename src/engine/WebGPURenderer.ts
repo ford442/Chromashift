@@ -122,7 +122,7 @@ export class WebGPURenderer {
     this.compositorBGL      = this.createCompositorBGL();
     this.compositorPipeline = this.createCompositorPipeline();
     this.compositorUniformBuf = device.createBuffer({
-      size: 24,  // f32 tracerOpacity + f32 tracerBelow + u32 layerBlendMode + u32 tracerBlendMode
+      size: 32,  // f32 tracerOpacity + f32 tracerBelow + u32 layerBlendMode + u32 tracerBlendMode + f32*3 layerOpacities + padding
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
@@ -401,14 +401,19 @@ export class WebGPURenderer {
     const tracerBelow   = state.tracerBelow ? 1.0 : 0.0;
     const layerBlendMode = state.layerBlendMode ?? 0;
     const tracerBlendMode = state.tracerBlendMode ?? 0;
+    const layerOpacity = state.layerOpacity ?? 1.0;
 
-    const compositorUniforms = new ArrayBuffer(24);
+    const compositorUniforms = new ArrayBuffer(32);
     const floatView = new Float32Array(compositorUniforms);
     const uintView = new Uint32Array(compositorUniforms);
     floatView[0] = tracerOpacity;
     floatView[1] = tracerBelow;
     uintView[2] = layerBlendMode;
     uintView[3] = tracerBlendMode;
+    floatView[4] = layerOpacity;  // layerOpacity0
+    floatView[5] = layerOpacity;  // layerOpacity1
+    floatView[6] = layerOpacity;  // layerOpacity2
+    // floatView[7] = padding
 
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0, compositorUniforms);
 
