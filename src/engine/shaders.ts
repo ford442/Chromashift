@@ -100,17 +100,16 @@ struct FragUniforms {
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
-  let opacity = fragUniforms.layerOpacity;
 
   if (lum > 229.0) {
     let rgb = band_gradient(lum, 229.0, 255.0, 45.0, 60.0, 0.3, 0.80, 1.0);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   } else if (lum > 209.0) {
     let rgb = band_gradient(lum, 209.0, 229.0, 10.0, 40.0, 1.0, 0.50, 0.65);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   } else if (lum > 190.0) {
     let rgb = band_gradient(lum, 190.0, 209.0, 0.0, 10.0, 1.0, 0.40, 0.55);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -136,14 +135,13 @@ struct FragUniforms {
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
-  let opacity = fragUniforms.layerOpacity;
 
   if (lum > 177.0 && lum <= 190.0) {
     let rgb = band_gradient(lum, 177.0, 190.0, 255.0, 290.0, 1.0, 0.40, 0.55);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   } else if (lum > 158.0 && lum <= 177.0) {
     let rgb = band_gradient(lum, 158.0, 177.0, 220.0, 255.0, 1.0, 0.38, 0.50);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -169,14 +167,13 @@ struct FragUniforms {
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
-  let opacity = fragUniforms.layerOpacity;
 
   if (lum > 145.0 && lum <= 158.0) {
     let rgb = band_gradient(lum, 145.0, 158.0, 90.0, 130.0, 1.0, 0.38, 0.50);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   } else if (lum > 125.0 && lum <= 145.0) {
     let rgb = band_gradient(lum, 125.0, 145.0, 50.0, 90.0, 1.0, 0.40, 0.52);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -322,8 +319,16 @@ struct CompositorUniforms {
   tracerBelow    : f32,  // 1.0 = composite tracer below layers, 0.0 = above
   layerBlendMode : u32,  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
   tracerBlendMode: u32,  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  layerOpacity0  : f32,  // opacity for layer 0
+  layerOpacity1  : f32,  // opacity for layer 1
+  layerOpacity2  : f32,  // opacity for layer 2
+  _pad0          : f32,  // padding
 };
 @group(0) @binding(5) var<uniform> cu : CompositorUniforms;
+
+fn applyOpacity(color: vec4<f32>, opacity: f32) -> vec4<f32> {
+  return vec4<f32>(color.rgb, color.a * opacity);
+}
 
 fn alpha_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let a = src.a + dst.a * (1.0 - src.a);
@@ -371,18 +376,23 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
   let persScaled = vec4<f32>(pers.rgb, pers.a * cu.tracerOpacity);
 
+  // Apply per-layer opacity before compositing
+  let c0Opaque = applyOpacity(c0, cu.layerOpacity0);
+  let c1Opaque = applyOpacity(c1, cu.layerOpacity1);
+  let c2Opaque = applyOpacity(c2, cu.layerOpacity2);
+
   var col = vec4<f32>(0.0);
   if (cu.tracerBelow > 0.5) {
     // Tracer below — layers render on top of ghosts
     col = blend(col, persScaled, cu.tracerBlendMode);
-    col = blend(col, c2, cu.layerBlendMode);
-    col = blend(col, c1, cu.layerBlendMode);
-    col = blend(col, c0, cu.layerBlendMode);
+    col = blend(col, c2Opaque, cu.layerBlendMode);
+    col = blend(col, c1Opaque, cu.layerBlendMode);
+    col = blend(col, c0Opaque, cu.layerBlendMode);
   } else {
     // Tracer above — ghosts render on top of layers (default)
-    col = blend(col, c2, cu.layerBlendMode);
-    col = blend(col, c1, cu.layerBlendMode);
-    col = blend(col, c0, cu.layerBlendMode);
+    col = blend(col, c2Opaque, cu.layerBlendMode);
+    col = blend(col, c1Opaque, cu.layerBlendMode);
+    col = blend(col, c0Opaque, cu.layerBlendMode);
     col = blend(col, persScaled, cu.tracerBlendMode);
   }
 

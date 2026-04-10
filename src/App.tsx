@@ -157,6 +157,20 @@ export default function App() {
     const url = imageList[currentImageIndex];
     textureManagerRef.current?.loadTexture(url).then((tex) => {
       rendererRef.current?.setTexture(tex);
+      hasUpdatedPreviewsForImage.current = false;  // Reset flag for preview update
+
+      // Update separated preview after new texture is set
+      // Use setTimeout to ensure the texture has been rendered
+      setTimeout(() => {
+        const previewSep = previewSeparatedRef.current;
+        if (previewSep && canvasRef.current) {
+          const ctx = previewSep.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
+          }
+        }
+      }, 0);
+
       const previewOrig = previewOriginalRef.current;
       if (previewOrig) {
         const img = new Image();
@@ -231,18 +245,6 @@ export default function App() {
         };
 
         rendererRef.current?.render(state);
-
-        // Separated preview updates once per image load
-        if (!hasUpdatedPreviewsForImage.current) {
-          const previewSep = previewSeparatedRef.current;
-          if (previewSep && canvasRef.current) {
-            const ctx = previewSep.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
-            }
-          }
-          hasUpdatedPreviewsForImage.current = true;
-        }
 
         // Tracer preview updates every frame to show live persistence buffer
         // (unless frozen for "still" preview mode)
