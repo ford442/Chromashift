@@ -101,15 +101,17 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
 
+  let opacity = fragUniforms.layerOpacity;
+
   if (lum > 229.0) {
     let rgb = band_gradient(lum, 229.0, 255.0, 45.0, 60.0, 0.3, 0.80, 1.0);
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(rgb, opacity);
   } else if (lum > 209.0) {
     let rgb = band_gradient(lum, 209.0, 229.0, 10.0, 40.0, 1.0, 0.50, 0.65);
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(rgb, opacity);
   } else if (lum > 190.0) {
     let rgb = band_gradient(lum, 190.0, 209.0, 0.0, 10.0, 1.0, 0.40, 0.55);
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(rgb, opacity);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -136,12 +138,14 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
 
+  let opacity = fragUniforms.layerOpacity;
+
   if (lum > 177.0 && lum <= 190.0) {
     let rgb = band_gradient(lum, 177.0, 190.0, 255.0, 290.0, 1.0, 0.40, 0.55);
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(rgb, opacity);
   } else if (lum > 158.0 && lum <= 177.0) {
     let rgb = band_gradient(lum, 158.0, 177.0, 220.0, 255.0, 1.0, 0.38, 0.50);
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(rgb, opacity);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -168,12 +172,14 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
 
+  let opacity = fragUniforms.layerOpacity;
+
   if (lum > 145.0 && lum <= 158.0) {
     let rgb = band_gradient(lum, 145.0, 158.0, 90.0, 130.0, 1.0, 0.38, 0.50);
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(rgb, opacity);
   } else if (lum > 125.0 && lum <= 145.0) {
     let rgb = band_gradient(lum, 125.0, 145.0, 50.0, 90.0, 1.0, 0.40, 0.52);
-    return vec4<f32>(rgb, 1.0);
+    return vec4<f32>(rgb, opacity);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
