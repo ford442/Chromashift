@@ -370,21 +370,25 @@ fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
 }
 
 // blend_tracer is used exclusively for the persistence/tracer layer.
-// In alpha mode (0) it mixes standard alpha blend with screen blend,
-// weighted by the source alpha, so the tracer colour punches through
-// the live layers whether it is composited above or below them.
+// Uses standard alpha blending so tracer colors appear exactly as in the preview.
 fn blend_tracer(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
   switch (mode) {
     case 1u: { return add_blend(dst, src); }
     case 2u: { return subtract_blend(dst, src); }
     case 3u: { return multiply_blend(dst, src); }
     case 4u: { return screen_blend(dst, src); }
-    default: {
-      let ab = alpha_blend(dst, src);
-      let sc = screen_blend(dst, src);
-      return mix(ab, sc, src.a);
-    }
+    default: { return alpha_blend(dst, src); }
   }
+}
+
+// blend_preserve_tracer: standard blend, but when the layer is 
+// transparent (alpha near 0), preserve the destination color unchanged.
+// This ensures the tracer shows through black/transparent layer areas.
+fn blend_preserve_tracer(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
+  if (src.a < 0.001) {
+    return dst;
+  }
+  return blend(dst, src, mode);
 }
 
 @fragment
@@ -409,11 +413,13 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     col = blend(col, c1Opaque, cu.layerBlendMode);
     col = blend(col, c0Opaque, cu.layerBlendMode);
   } else {
-    // Tracer above — ghosts render on top of layers (default)
-    col = blend(col, c2Opaque, cu.layerBlendMode);
-    col = blend(col, c1Opaque, cu.layerBlendMode);
-    col = blend(col, c0Opaque, cu.layerBlendMode);
+    // Tracer above (default): 
+    // Start with tracer, then layer on top using alpha-preserving blend.
+    // This ensures transparent/black layer pixels show the tracer color through.
     col = blend_tracer(col, persScaled, cu.tracerBlendMode);
+    col = blend_preserve_tracer(col, c2Opaque, cu.layerBlendMode);
+    col = blend_preserve_tracer(col, c1Opaque, cu.layerBlendMode);
+    col = blend_preserve_tracer(col, c0Opaque, cu.layerBlendMode);
   }
 
   return col;
