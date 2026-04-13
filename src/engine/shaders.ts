@@ -407,19 +407,18 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
   var col = vec4<f32>(0.0);
   if (cu.tracerBelow > 0.5) {
-    // Tracer below — layers render on top of ghosts
+    // Tracer below — tracer renders under the colour layers
     col = blend_tracer(col, persScaled, cu.tracerBlendMode);
     col = blend(col, c2Opaque, cu.layerBlendMode);
     col = blend(col, c1Opaque, cu.layerBlendMode);
     col = blend(col, c0Opaque, cu.layerBlendMode);
   } else {
-    // Tracer above (default): 
-    // Start with tracer, then layer on top using alpha-preserving blend.
-    // This ensures transparent/black layer pixels show the tracer color through.
+    // Tracer above (default) — colour layers composited first, then the
+    // persistence overlay is drawn on top so it is always visible.
+    col = blend(col, c2Opaque, cu.layerBlendMode);
+    col = blend(col, c1Opaque, cu.layerBlendMode);
+    col = blend(col, c0Opaque, cu.layerBlendMode);
     col = blend_tracer(col, persScaled, cu.tracerBlendMode);
-    col = blend_preserve_tracer(col, c2Opaque, cu.layerBlendMode);
-    col = blend_preserve_tracer(col, c1Opaque, cu.layerBlendMode);
-    col = blend_preserve_tracer(col, c0Opaque, cu.layerBlendMode);
   }
 
   return col;
