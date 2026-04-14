@@ -3,34 +3,36 @@
  */
 
 interface Props {
-  layerAngles             : [number, number, number];
-  layerExtensions         : [number, number, number];
-  frameRate               : number;
-  layerOpacity            : number;
-  tracerIntensity         : number;
-  tracerDuration          : number;
-  tracerBelow             : boolean;
-  tracerMode              : number;
-  layerBlendMode          : number;
-  tracerBlendMode         : number;
-  squareCanvas            : boolean;
-  antialiasEnabled        : boolean;
-  onAngleChange           : (layer: 0 | 1 | 2, angle: number) => void;
-  onExtensionChange       : (layer: 0 | 1 | 2, extension: number) => void;
-  onFrameRateChange       : (fps: number) => void;
-  onLayerOpacityChange    : (opacity: number) => void;
-  onTracerIntensityChange : (v: number) => void;
-  onTracerDurationChange  : (v: number) => void;
-  onTracerBelowToggle     : (v: boolean) => void;
-  onTracerModeChange      : (v: number) => void;
-  onLayerBlendModeChange  : (v: number) => void;
-  onTracerBlendModeChange : (v: number) => void;
-  onSquareCanvasToggle    : (v: boolean) => void;
-  onAntialiasToggle       : (v: boolean) => void;
-  onReset                 : () => void;
-  isAutoPlayActive        : boolean;
-  onAutoPlayToggle        : (active: boolean) => void;
-  imageChangeInterval     : number;
+  layerAngles                : [number, number, number];
+  layerExtensions            : [number, number, number];
+  frameRate                  : number;
+  layerOpacity               : number;
+  tracerAboveIntensity       : number;
+  tracerBelowIntensity       : number;
+  tracerAboveDuration        : number;
+  tracerBelowDuration        : number;
+  tracerMode                 : number;
+  layerBlendMode             : number;
+  tracerBlendMode            : number;
+  squareCanvas               : boolean;
+  antialiasEnabled           : boolean;
+  onAngleChange              : (layer: 0 | 1 | 2, angle: number) => void;
+  onExtensionChange          : (layer: 0 | 1 | 2, extension: number) => void;
+  onFrameRateChange          : (fps: number) => void;
+  onLayerOpacityChange       : (opacity: number) => void;
+  onTracerAboveIntensityChange: (v: number) => void;
+  onTracerBelowIntensityChange: (v: number) => void;
+  onTracerAboveDurationChange : (v: number) => void;
+  onTracerBelowDurationChange : (v: number) => void;
+  onTracerModeChange         : (v: number) => void;
+  onLayerBlendModeChange     : (v: number) => void;
+  onTracerBlendModeChange    : (v: number) => void;
+  onSquareCanvasToggle       : (v: boolean) => void;
+  onAntialiasToggle          : (v: boolean) => void;
+  onReset                    : () => void;
+  isAutoPlayActive           : boolean;
+  onAutoPlayToggle           : (active: boolean) => void;
+  imageChangeInterval        : number;
   onImageChangeIntervalChange: (seconds: number) => void;
 }
 
@@ -42,9 +44,10 @@ export function NunifOverlay({
   layerExtensions,
   frameRate,
   layerOpacity,
-  tracerIntensity,
-  tracerDuration,
-  tracerBelow,
+  tracerAboveIntensity,
+  tracerBelowIntensity,
+  tracerAboveDuration,
+  tracerBelowDuration,
   tracerMode,
   layerBlendMode,
   tracerBlendMode,
@@ -54,9 +57,10 @@ export function NunifOverlay({
   onExtensionChange,
   onFrameRateChange,
   onLayerOpacityChange,
-  onTracerIntensityChange,
-  onTracerDurationChange,
-  onTracerBelowToggle,
+  onTracerAboveIntensityChange,
+  onTracerBelowIntensityChange,
+  onTracerAboveDurationChange,
+  onTracerBelowDurationChange,
   onTracerModeChange,
   onLayerBlendModeChange,
   onTracerBlendModeChange,
@@ -183,37 +187,36 @@ export function NunifOverlay({
 
           {/* Tracer/Persistence Controls Section */}
           <div className="border-t border-amber-500/20 pt-3 mt-3 space-y-2">
-            <div className="text-xs font-mono font-bold text-amber-400/60 uppercase tracking-wider mb-2">Tracer/Persistence</div>
+            <div className="text-xs font-mono font-bold text-amber-400/60 uppercase tracking-wider mb-2">Dual Tracer System</div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
-                Opacity: <span className="tabular-nums text-white">{Math.round(tracerIntensity * 100)}%</span>
-              </span>
-              <input
-                type="range" min={0} max={1} step={0.01} value={tracerIntensity}
-                onChange={(e) => onTracerIntensityChange(Number(e.target.value))}
-                className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
-              />
-              <button
-                onClick={() => onTracerBelowToggle(!tracerBelow)}
-                className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
-                  tracerBelow ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]' : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
-                }`}
-                title="Toggle tracer above/below colour layers"
-              >
-                {tracerBelow ? '↓ Below' : '↑ Above'}
-              </button>
+            {/* Tracer Above Controls */}
+            <div className="bg-amber-950/20 p-2 rounded border border-amber-500/10 space-y-2">
+              <div className="text-[10px] text-amber-300 font-mono">Top Layer (Above)</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-amber-400/80 font-mono">Opac:</span>
+                <input type="range" min={0} max={1} step={0.01} value={tracerAboveIntensity} onChange={(e) => onTracerAboveIntensityChange(Number(e.target.value))} className="w-20 h-1 accent-amber-400" />
+                <span className="text-[10px] tabular-nums text-white w-8">{Math.round(tracerAboveIntensity * 100)}%</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-amber-400/80 font-mono">Hold:</span>
+                <input type="range" min={0} max={5000} step={100} value={tracerAboveDuration} onChange={(e) => onTracerAboveDurationChange(Number(e.target.value))} className="w-20 h-1 accent-amber-400" />
+                <span className="text-[10px] tabular-nums w-8">{(tracerAboveDuration / 1000).toFixed(1)}s</span>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
-                Hold: <span className="tabular-nums">{(tracerDuration / 1000).toFixed(1)}s</span>
-              </span>
-              <input
-                type="range" min={0} max={5000} step={100} value={tracerDuration}
-                onChange={(e) => onTracerDurationChange(Number(e.target.value))}
-                className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
-              />
+            {/* Tracer Below Controls */}
+            <div className="bg-amber-950/20 p-2 rounded border border-amber-500/10 space-y-2">
+              <div className="text-[10px] text-amber-300 font-mono">Base Layer (Below)</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-amber-400/80 font-mono">Opac:</span>
+                <input type="range" min={0} max={1} step={0.01} value={tracerBelowIntensity} onChange={(e) => onTracerBelowIntensityChange(Number(e.target.value))} className="w-20 h-1 accent-amber-400" />
+                <span className="text-[10px] tabular-nums text-white w-8">{Math.round(tracerBelowIntensity * 100)}%</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-amber-400/80 font-mono">Hold:</span>
+                <input type="range" min={0} max={10000} step={100} value={tracerBelowDuration} onChange={(e) => onTracerBelowDurationChange(Number(e.target.value))} className="w-20 h-1 accent-amber-400" />
+                <span className="text-[10px] tabular-nums w-8">{(tracerBelowDuration / 1000).toFixed(1)}s</span>
+              </div>
             </div>
 
             <div className="flex items-center gap-2">

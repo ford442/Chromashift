@@ -306,27 +306,28 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
 // ─── Compositor fragment shader ─────────────────────────────────────────────────────────────────────
 //
-// Blends the 3 live layers back-to-front, then draws the persistence
-// texture on top so held/fading overlaps remain visible.
+// Blends the "Below" persistence texture, then the 3 live layers,
+// then the "Above" persistence texture on top.
 //
 export const compositorFragmentSource = /* wgsl */ `
-@group(0) @binding(0) var cSampler   : sampler;
-@group(0) @binding(1) var layer0     : texture_2d<f32>;
-@group(0) @binding(2) var layer1     : texture_2d<f32>;
-@group(0) @binding(3) var layer2     : texture_2d<f32>;
-@group(0) @binding(4) var persistence: texture_2d<f32>;
+@group(0) @binding(0) var cSampler       : sampler;
+@group(0) @binding(1) var layer0         : texture_2d<f32>;
+@group(0) @binding(2) var layer1         : texture_2d<f32>;
+@group(0) @binding(3) var layer2         : texture_2d<f32>;
+@group(0) @binding(4) var persistBelow   : texture_2d<f32>;
+@group(0) @binding(5) var persistAbove   : texture_2d<f32>;
 
 struct CompositorUniforms {
-  tracerOpacity  : f32,  // how opaque the persistence overlay is (0–1)
-  tracerBelow    : f32,  // 1.0 = composite tracer below layers, 0.0 = above
-  layerBlendMode : u32,  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
-  tracerBlendMode: u32,  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
-  layerOpacity0  : f32,  // opacity for layer 0
-  layerOpacity1  : f32,  // opacity for layer 1
-  layerOpacity2  : f32,  // opacity for layer 2
-  _pad0          : f32,  // padding
+  tracerAboveOpacity : f32,
+  tracerBelowOpacity : f32,
+  layerBlendMode     : u32,
+  tracerBlendMode    : u32,
+  layerOpacity0      : f32,
+  layerOpacity1      : f32,
+  layerOpacity2      : f32,
+  _pad0              : f32,
 };
-@group(0) @binding(5) var<uniform> cu : CompositorUniforms;
+@group(0) @binding(6) var<uniform> cu : CompositorUniforms;
 
 fn applyOpacity(color: vec4<f32>, opacity: f32) -> vec4<f32> {
   return vec4<f32>(color.rgb, color.a * opacity);
@@ -369,8 +370,6 @@ fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
   }
 }
 
-// blend_tracer is used exclusively for the persistence/tracer layer.
-// Uses standard alpha blending so tracer colors appear exactly as in the preview.
 fn blend_tracer(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
   switch (mode) {
     case 1u: { return add_blend(dst, src); }
@@ -381,45 +380,33 @@ fn blend_tracer(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
   }
 }
 
-// blend_preserve_tracer: standard blend, but when the layer is 
-// transparent (alpha near 0), preserve the destination color unchanged.
-// This ensures the tracer shows through black/transparent layer areas.
-fn blend_preserve_tracer(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
-  if (src.a < 0.001) {
-    return dst;
-  }
-  return blend(dst, src, mode);
-}
-
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let c0   = textureSample(layer0,      cSampler, uv);
-  let c1   = textureSample(layer1,      cSampler, uv);
-  let c2   = textureSample(layer2,      cSampler, uv);
-  let pers = textureSample(persistence, cSampler, uv);
+  let c0      = textureSample(layer0,       cSampler, uv);
+  let c1      = textureSample(layer1,       cSampler, uv);
+  let c2      = textureSample(layer2,       cSampler, uv);
+  let pBelow  = textureSample(persistBelow, cSampler, uv);
+  let pAbove  = textureSample(persistAbove, cSampler, uv);
 
-  let persScaled = vec4<f32>(pers.rgb, pers.a * cu.tracerOpacity);
+  let pBelowScaled = vec4<f32>(pBelow.rgb, pBelow.a * cu.tracerBelowOpacity);
+  let pAboveScaled = vec4<f32>(pAbove.rgb, pAbove.a * cu.tracerAboveOpacity);
 
-  // Apply per-layer opacity before compositing
   let c0Opaque = applyOpacity(c0, cu.layerOpacity0);
   let c1Opaque = applyOpacity(c1, cu.layerOpacity1);
   let c2Opaque = applyOpacity(c2, cu.layerOpacity2);
 
   var col = vec4<f32>(0.0);
-  if (cu.tracerBelow > 0.5) {
-    // Tracer below — tracer renders under the colour layers
-    col = blend_tracer(col, persScaled, cu.tracerBlendMode);
-    col = blend(col, c2Opaque, cu.layerBlendMode);
-    col = blend(col, c1Opaque, cu.layerBlendMode);
-    col = blend(col, c0Opaque, cu.layerBlendMode);
-  } else {
-    // Tracer above (default) — colour layers composited first, then the
-    // persistence overlay is drawn on top so it is always visible.
-    col = blend(col, c2Opaque, cu.layerBlendMode);
-    col = blend(col, c1Opaque, cu.layerBlendMode);
-    col = blend(col, c0Opaque, cu.layerBlendMode);
-    col = blend_tracer(col, persScaled, cu.tracerBlendMode);
-  }
+
+  // 1. Draw Tracer Below
+  col = blend_tracer(col, pBelowScaled, cu.tracerBlendMode);
+
+  // 2. Draw Color Layers
+  col = blend(col, c2Opaque, cu.layerBlendMode);
+  col = blend(col, c1Opaque, cu.layerBlendMode);
+  col = blend(col, c0Opaque, cu.layerBlendMode);
+
+  // 3. Draw Tracer Above
+  col = blend_tracer(col, pAboveScaled, cu.tracerBlendMode);
 
   return col;
 }

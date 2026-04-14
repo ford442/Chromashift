@@ -25,16 +25,17 @@ export interface LayerState {
 }
 
 export interface RendererState {
-  layers            : [LayerState, LayerState, LayerState];
-  avgLuminance      : number;
-  layerOpacity?     : number;
-  tracerIntensity?  : number;  // 0–1 opacity of the persistence overlay
-  tracerDuration?   : number;  // milliseconds to hold a hit before it fully fades
-  tracerThreshold?  : number;  // min alpha to count a layer as "has colour"
-  tracerBelow?      : boolean; // true = render tracer under the 3 colour layers
-  tracerMode?       : number;  // 0 = combined colors, 1 = grey highlight
-  layerBlendMode?   : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
-  tracerBlendMode?  : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  layers               : [LayerState, LayerState, LayerState];
+  avgLuminance         : number;
+  layerOpacity?        : number;
+  tracerAboveIntensity?: number;  // NEW
+  tracerBelowIntensity?: number;  // NEW
+  tracerAboveDuration? : number;  // NEW
+  tracerBelowDuration? : number;  // NEW
+  tracerThreshold?     : number;
+  tracerMode?          : number;  // 0 = combined colors, 1 = grey highlight
+  layerBlendMode?      : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
 }
 
 /** Column-major mat3x3 for WGSL std140. */
@@ -82,12 +83,14 @@ export class WebGPURenderer {
   private texW = 0;
   private texH = 0;
 
-  // Persistence ping-pong
-  private persistTextures  : [GPUTexture | null, GPUTexture | null] = [null, null];
-  private persistPingPong  : 0 | 1 = 0;  // which is the "read" texture this frame
-  private persistPipeline  : GPURenderPipeline;
-  private persistBGL       : GPUBindGroupLayout;
-  private persistUniformBuf: GPUBuffer;
+  // Persistence ping-pong (Dual system)
+  private persistAboveTextures  : [GPUTexture | null, GPUTexture | null] = [null, null];
+  private persistBelowTextures  : [GPUTexture | null, GPUTexture | null] = [null, null];
+  private persistPingPong       : 0 | 1 = 0;  // shared index
+  private persistPipeline       : GPURenderPipeline;
+  private persistBGL            : GPUBindGroupLayout;
+  private persistAboveUniformBuf: GPUBuffer;
+  private persistBelowUniformBuf: GPUBuffer;
 
   // Compositor
   private compositorPipeline  : GPURenderPipeline;
@@ -113,16 +116,14 @@ export class WebGPURenderer {
     // Persistence pipeline
     this.persistBGL      = this.createPersistBGL();
     this.persistPipeline = this.createPersistPipeline();
-    this.persistUniformBuf = device.createBuffer({
-      size: 16,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+    this.persistAboveUniformBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.persistBelowUniformBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     // Compositor pipeline
     this.compositorBGL      = this.createCompositorBGL();
     this.compositorPipeline = this.createCompositorPipeline();
     this.compositorUniformBuf = device.createBuffer({
-      size: 32,  // f32 tracerOpacity + f32 tracerBelow + u32 layerBlendMode + u32 tracerBlendMode + f32*3 layerOpacities + padding
+      size: 32, // Accommodates the new struct layout
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
@@ -200,7 +201,8 @@ export class WebGPURenderer {
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // NEW: persistAbove
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },      // MOVED to 6
       ],
     });
   }
@@ -233,8 +235,8 @@ export class WebGPURenderer {
     // Destroy old textures
     for (const t of this.layerTextures) t.destroy();
     this.msaaTexture?.destroy();
-    this.persistTextures[0]?.destroy();
-    this.persistTextures[1]?.destroy();
+    this.persistAboveTextures[0]?.destroy(); this.persistAboveTextures[1]?.destroy();
+    this.persistBelowTextures[0]?.destroy(); this.persistBelowTextures[1]?.destroy();
 
     // Layer intermediate textures (always 1x so compositor can sample them)
     this.layerTextures = [0, 1, 2].map(() => this.device.createTexture({
@@ -257,11 +259,13 @@ export class WebGPURenderer {
     }
 
     // Persistence ping-pong textures — both start as RENDER_ATTACHMENT + TEXTURE_BINDING + COPY_SRC
-    this.persistTextures = [0, 1].map(() => this.device.createTexture({
-      size  : [w, h, 1],
-      format: this.format,
+    const createPersistTex = () => this.device.createTexture({
+      size  : [w, h, 1], format: this.format,
       usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-    })) as [GPUTexture, GPUTexture];
+    });
+
+    this.persistAboveTextures = [createPersistTex(), createPersistTex()] as [GPUTexture, GPUTexture];
+    this.persistBelowTextures = [createPersistTex(), createPersistTex()] as [GPUTexture, GPUTexture];
 
     this.persistPingPong = 0;
     this.texW = w;
@@ -289,9 +293,10 @@ export class WebGPURenderer {
     this.layerTextures = [];
     this.msaaTexture?.destroy();
     this.msaaTexture = null;
-    this.persistTextures[0]?.destroy();
-    this.persistTextures[1]?.destroy();
-    this.persistTextures = [null, null];
+    this.persistAboveTextures[0]?.destroy(); this.persistAboveTextures[1]?.destroy();
+    this.persistBelowTextures[0]?.destroy(); this.persistBelowTextures[1]?.destroy();
+    this.persistAboveTextures = [null, null];
+    this.persistBelowTextures = [null, null];
     this.texW = 0;
     this.texH = 0;
   }
@@ -301,7 +306,7 @@ export class WebGPURenderer {
    * Returns null if textures haven't been initialized yet.
    */
   getPersistenceTexture(): GPUTexture | null {
-    return this.persistTextures[this.persistPingPong];
+    return this.persistAboveTextures[this.persistPingPong];
   }
 
   render(state: RendererState, fps = 30): void {
@@ -355,50 +360,53 @@ export class WebGPURenderer {
       pass.end();
     }
 
-    // ── Pass 3: persistence — detect overlap, decay previous hits ─────────
-    const durationMs  = state.tracerDuration ?? 1000;
-    const decayFactor = durationToDecay(durationMs, fps);
+    // ── Pass 3: persistence (Run twice: Once for Below, Once for Above) ─────────
     const colorThresh = state.tracerThreshold ?? 0.05;
-
     const tracerMode = state.tracerMode ?? 0.0;
-    this.device.queue.writeBuffer(this.persistUniformBuf, 0,
-      new Float32Array([decayFactor, colorThresh, tracerMode, 0]));
-
-    // Read from persistPingPong, write to the other one
     const readIdx  : 0 | 1 = this.persistPingPong;
     const writeIdx : 0 | 1 = readIdx === 0 ? 1 : 0;
 
-    const persistBG = this.device.createBindGroup({
-      layout : this.persistBGL,
-      entries: [
-        { binding: 0, resource: this.compositorSampler },
-        { binding: 1, resource: this.layerTextures[0].createView() },
-        { binding: 2, resource: this.layerTextures[1].createView() },
-        { binding: 3, resource: this.layerTextures[2].createView() },
-        { binding: 4, resource: this.persistTextures[readIdx]!.createView() },
-        { binding: 5, resource: { buffer: this.persistUniformBuf } },
-      ],
-    });
+    // Helper to run a persistence pass
+    const runPersistPass = (
+      duration: number,
+      uniformBuf: GPUBuffer,
+      textures: [GPUTexture | null, GPUTexture | null]
+    ) => {
+      const decayFactor = durationToDecay(duration, fps);
+      this.device.queue.writeBuffer(uniformBuf, 0, new Float32Array([decayFactor, colorThresh, tracerMode, 0]));
 
-    const persistPass = enc.beginRenderPass({
-      colorAttachments: [{
-        view      : this.persistTextures[writeIdx]!.createView(),
-        loadOp    : 'clear',
-        storeOp   : 'store',
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },
-      }],
-    });
-    persistPass.setPipeline(this.persistPipeline);
-    persistPass.setBindGroup(0, persistBG);
-    persistPass.draw(6);
-    persistPass.end();
+      const bg = this.device.createBindGroup({
+        layout : this.persistBGL,
+        entries: [
+          { binding: 0, resource: this.compositorSampler },
+          { binding: 1, resource: this.layerTextures[0].createView() },
+          { binding: 2, resource: this.layerTextures[1].createView() },
+          { binding: 3, resource: this.layerTextures[2].createView() },
+          { binding: 4, resource: textures[readIdx]!.createView() },
+          { binding: 5, resource: { buffer: uniformBuf } },
+        ],
+      });
 
-    // Flip ping-pong for next frame
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{
+          view      : textures[writeIdx]!.createView(),
+          loadOp    : 'clear', storeOp   : 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        }],
+      });
+      pass.setPipeline(this.persistPipeline); pass.setBindGroup(0, bg); pass.draw(6); pass.end();
+    };
+
+    // Execute Below Pass
+    runPersistPass(state.tracerBelowDuration ?? 0, this.persistBelowUniformBuf, this.persistBelowTextures);
+    // Execute Above Pass
+    runPersistPass(state.tracerAboveDuration ?? 1000, this.persistAboveUniformBuf, this.persistAboveTextures);
+
     this.persistPingPong = writeIdx;
 
-    // ── Pass 4: compositor — live layers + persistence → canvas ───────────
-    const tracerOpacity = state.tracerIntensity ?? 0.85;
-    const tracerBelow   = state.tracerBelow ? 1.0 : 0.0;
+    // ── Pass 4: compositor ───────────
+    const tracerAboveOp = state.tracerAboveIntensity ?? 0.85;
+    const tracerBelowOp = state.tracerBelowIntensity ?? 0.0;
     const layerBlendMode = state.layerBlendMode ?? 0;
     const tracerBlendMode = state.tracerBlendMode ?? 0;
     const layerOpacity = state.layerOpacity ?? 1.0;
@@ -406,14 +414,13 @@ export class WebGPURenderer {
     const compositorUniforms = new ArrayBuffer(32);
     const floatView = new Float32Array(compositorUniforms);
     const uintView = new Uint32Array(compositorUniforms);
-    floatView[0] = tracerOpacity;
-    floatView[1] = tracerBelow;
+    floatView[0] = tracerAboveOp;
+    floatView[1] = tracerBelowOp;
     uintView[2] = layerBlendMode;
     uintView[3] = tracerBlendMode;
-    floatView[4] = layerOpacity;  // layerOpacity0
-    floatView[5] = layerOpacity;  // layerOpacity1
-    floatView[6] = layerOpacity;  // layerOpacity2
-    // floatView[7] = padding
+    floatView[4] = layerOpacity;
+    floatView[5] = layerOpacity;
+    floatView[6] = layerOpacity;
 
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0, compositorUniforms);
 
@@ -424,8 +431,9 @@ export class WebGPURenderer {
         { binding: 1, resource: this.layerTextures[0].createView() },
         { binding: 2, resource: this.layerTextures[1].createView() },
         { binding: 3, resource: this.layerTextures[2].createView() },
-        { binding: 4, resource: this.persistTextures[writeIdx]!.createView() },
-        { binding: 5, resource: { buffer: this.compositorUniformBuf } },
+        { binding: 4, resource: this.persistBelowTextures[writeIdx]!.createView() }, // Binding 4: Below
+        { binding: 5, resource: this.persistAboveTextures[writeIdx]!.createView() }, // Binding 5: Above
+        { binding: 6, resource: { buffer: this.compositorUniformBuf } },
       ],
     });
 
@@ -452,9 +460,12 @@ export class WebGPURenderer {
     }
     for (const t of this.layerTextures) t.destroy();
     this.msaaTexture?.destroy();
-    this.persistTextures[0]?.destroy();
-    this.persistTextures[1]?.destroy();
-    this.persistUniformBuf.destroy();
+    this.persistAboveTextures[0]?.destroy();
+    this.persistAboveTextures[1]?.destroy();
+    this.persistBelowTextures[0]?.destroy();
+    this.persistBelowTextures[1]?.destroy();
+    this.persistAboveUniformBuf.destroy();
+    this.persistBelowUniformBuf.destroy();
     this.compositorUniformBuf.destroy();
   }
 }

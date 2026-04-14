@@ -41,11 +41,12 @@ export default function App() {
   const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
   const [layerOpacity, setLayerOpacity] = useState(1.0);
-  const [tracerIntensity, setTracerIntensity] = useState(0.85);
-  const [tracerBelow, setTracerBelow] = useState(false);
+  const [tracerAboveIntensity, setTracerAboveIntensity] = useState(0.85);
+  const [tracerBelowIntensity, setTracerBelowIntensity] = useState(0.30);
+  const [tracerAboveDuration, setTracerAboveDuration] = useState(500);
+  const [tracerBelowDuration, setTracerBelowDuration] = useState(2000);
   const [squareCanvas, setSquareCanvas] = useState(false);
   const [antialiasEnabled, setAntialiasEnabled] = useState(true);
-  const [tracerDuration, setTracerDuration] = useState(500);
   const [tracerMode, setTracerMode] = useState(0); // 0 = combined colors, 1 = grey highlight
   const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
   const [layerBlendMode, setLayerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
@@ -212,11 +213,6 @@ export default function App() {
 
         setLayerAngles(angles);
 
-        // Adjust tracer duration based on FPS: lower FPS needs longer window to see same effect
-        // At 60 FPS: use configured value
-        // At 30 FPS: double the duration
-        const fpsAdjustedTracerDuration = tracerDuration * (60 / frameRate);
-
         const state: RendererState = {
           layers: [
             { angleDeg: angles[0], flipX: false, flipY: false },
@@ -225,9 +221,10 @@ export default function App() {
           ],
           avgLuminance,
           layerOpacity,
-          tracerIntensity,
-          tracerDuration: fpsAdjustedTracerDuration,
-          tracerBelow,
+          tracerAboveIntensity,
+          tracerBelowIntensity,
+          tracerAboveDuration: tracerAboveDuration * (60 / frameRate),
+          tracerBelowDuration: tracerBelowDuration * (60 / frameRate),
           tracerMode,
           layerBlendMode,
           tracerBlendMode,
@@ -316,7 +313,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerIntensity, tracerDuration, tracerBelow, tracerMode, layerBlendMode, tracerBlendMode, tracerPreviewFrozen]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, tracerPreviewFrozen]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -452,9 +449,10 @@ export default function App() {
         layerExtensions={layerExtensions}
         frameRate={frameRate}
         layerOpacity={layerOpacity}
-        tracerIntensity={tracerIntensity}
-        tracerDuration={tracerDuration}
-        tracerBelow={tracerBelow}
+        tracerAboveIntensity={tracerAboveIntensity}
+        tracerBelowIntensity={tracerBelowIntensity}
+        tracerAboveDuration={tracerAboveDuration}
+        tracerBelowDuration={tracerBelowDuration}
         tracerMode={tracerMode}
         layerBlendMode={layerBlendMode}
         tracerBlendMode={tracerBlendMode}
@@ -464,9 +462,10 @@ export default function App() {
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
         onLayerOpacityChange={setLayerOpacity}
-        onTracerIntensityChange={setTracerIntensity}
-        onTracerDurationChange={setTracerDuration}
-        onTracerBelowToggle={setTracerBelow}
+        onTracerAboveIntensityChange={setTracerAboveIntensity}
+        onTracerBelowIntensityChange={setTracerBelowIntensity}
+        onTracerAboveDurationChange={setTracerAboveDuration}
+        onTracerBelowDurationChange={setTracerBelowDuration}
         onTracerModeChange={setTracerMode}
         onLayerBlendModeChange={setLayerBlendMode}
         onTracerBlendModeChange={setTracerBlendMode}
