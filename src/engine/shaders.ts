@@ -101,17 +101,15 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
 
-  let opacity = fragUniforms.layerOpacity;
-
   if (lum > 229.0) {
     let rgb = band_gradient(lum, 229.0, 255.0, 45.0, 60.0, 0.3, 0.80, 1.0);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   } else if (lum > 209.0) {
     let rgb = band_gradient(lum, 209.0, 229.0, 10.0, 40.0, 1.0, 0.50, 0.65);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   } else if (lum > 190.0) {
     let rgb = band_gradient(lum, 190.0, 209.0, 0.0, 10.0, 1.0, 0.40, 0.55);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -138,14 +136,12 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
 
-  let opacity = fragUniforms.layerOpacity;
-
   if (lum > 177.0 && lum <= 190.0) {
     let rgb = band_gradient(lum, 177.0, 190.0, 255.0, 290.0, 1.0, 0.40, 0.55);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   } else if (lum > 158.0 && lum <= 177.0) {
     let rgb = band_gradient(lum, 158.0, 177.0, 220.0, 255.0, 1.0, 0.38, 0.50);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -172,14 +168,12 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample  = textureSample(tex, texSampler, uv);
   let lum     = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
 
-  let opacity = fragUniforms.layerOpacity;
-
   if (lum > 145.0 && lum <= 158.0) {
     let rgb = band_gradient(lum, 145.0, 158.0, 90.0, 130.0, 1.0, 0.38, 0.50);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   } else if (lum > 125.0 && lum <= 145.0) {
     let rgb = band_gradient(lum, 125.0, 145.0, 50.0, 90.0, 1.0, 0.40, 0.52);
-    return vec4<f32>(rgb, opacity);
+    return vec4<f32>(rgb, 1.0);
   }
 
   return vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -360,12 +354,78 @@ fn screen_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   return vec4<f32>(rgb, a);
 }
 
+fn lighten_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let rgb = max(dst.rgb, src.rgb);
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn darken_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let rgb = min(dst.rgb, src.rgb);
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn overlay_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let rgb = select(
+    1.0 - 2.0 * (1.0 - dst.rgb) * (1.0 - src.rgb),
+    2.0 * dst.rgb * src.rgb,
+    dst.rgb < vec3<f32>(0.5)
+  );
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn color_dodge_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let safeDenom = max(vec3<f32>(1.0) - src.rgb, vec3<f32>(0.0001));
+  let rgb = clamp(dst.rgb / safeDenom, vec3<f32>(0.0), vec3<f32>(1.0));
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn color_burn_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let safeSrc = max(src.rgb, vec3<f32>(0.0001));
+  let rgb = clamp(vec3<f32>(1.0) - (vec3<f32>(1.0) - dst.rgb) / safeSrc, vec3<f32>(0.0), vec3<f32>(1.0));
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn difference_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let rgb = abs(dst.rgb - src.rgb);
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn exclusion_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let rgb = dst.rgb + src.rgb - 2.0 * dst.rgb * src.rgb;
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
+fn hard_light_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
+  let rgb = select(
+    1.0 - 2.0 * (1.0 - src.rgb) * (1.0 - dst.rgb),
+    2.0 * src.rgb * dst.rgb,
+    src.rgb < vec3<f32>(0.5)
+  );
+  let a = src.a + dst.a * (1.0 - src.a);
+  return vec4<f32>(rgb, a);
+}
+
 fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
   switch (mode) {
     case 1u: { return add_blend(dst, src); }
     case 2u: { return subtract_blend(dst, src); }
     case 3u: { return multiply_blend(dst, src); }
     case 4u: { return screen_blend(dst, src); }
+    case 5u: { return lighten_blend(dst, src); }
+    case 6u: { return darken_blend(dst, src); }
+    case 7u: { return overlay_blend(dst, src); }
+    case 8u: { return color_dodge_blend(dst, src); }
+    case 9u: { return color_burn_blend(dst, src); }
+    case 10u: { return difference_blend(dst, src); }
+    case 11u: { return exclusion_blend(dst, src); }
+    case 12u: { return hard_light_blend(dst, src); }
     default: { return alpha_blend(dst, src); }
   }
 }
@@ -376,6 +436,14 @@ fn blend_tracer(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
     case 2u: { return subtract_blend(dst, src); }
     case 3u: { return multiply_blend(dst, src); }
     case 4u: { return screen_blend(dst, src); }
+    case 5u: { return lighten_blend(dst, src); }
+    case 6u: { return darken_blend(dst, src); }
+    case 7u: { return overlay_blend(dst, src); }
+    case 8u: { return color_dodge_blend(dst, src); }
+    case 9u: { return color_burn_blend(dst, src); }
+    case 10u: { return difference_blend(dst, src); }
+    case 11u: { return exclusion_blend(dst, src); }
+    case 12u: { return hard_light_blend(dst, src); }
     default: { return alpha_blend(dst, src); }
   }
 }

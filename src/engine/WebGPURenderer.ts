@@ -34,8 +34,8 @@ export interface RendererState {
   tracerBelowDuration? : number;  // NEW
   tracerThreshold?     : number;
   tracerMode?          : number;  // 0 = combined colors, 1 = grey highlight
-  layerBlendMode?      : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
-  tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  layerBlendMode?      : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
+  tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
 }
 
 /** Column-major mat3x3 for WGSL std140. */
