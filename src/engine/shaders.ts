@@ -327,6 +327,13 @@ fn applyOpacity(color: vec4<f32>, opacity: f32) -> vec4<f32> {
   return vec4<f32>(color.rgb, color.a * opacity);
 }
 
+fn blend_alpha(dst: vec4<f32>, src: vec4<f32>) -> f32 {
+  return src.a + dst.a * (1.0 - src.a);
+}
+
+// Used by divide-based blend modes (Color Dodge/Burn) to avoid divide-by-zero.
+const BLEND_EPSILON : f32 = 0.0001;
+
 fn alpha_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let a = src.a + dst.a * (1.0 - src.a);
   if (a < 0.0001) { return vec4<f32>(0.0); }
@@ -344,25 +351,25 @@ fn subtract_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
 
 fn multiply_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let rgb = dst.rgb * src.rgb;
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
 fn screen_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let rgb = 1.0 - (1.0 - dst.rgb) * (1.0 - src.rgb);
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
 fn lighten_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let rgb = max(dst.rgb, src.rgb);
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
 fn darken_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let rgb = min(dst.rgb, src.rgb);
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
@@ -372,33 +379,33 @@ fn overlay_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
     2.0 * dst.rgb * src.rgb,
     dst.rgb < vec3<f32>(0.5)
   );
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
 fn color_dodge_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let safeDenom = max(vec3<f32>(1.0) - src.rgb, vec3<f32>(0.0001));
+  let safeDenom = max(vec3<f32>(1.0) - src.rgb, vec3<f32>(BLEND_EPSILON));
   let rgb = clamp(dst.rgb / safeDenom, vec3<f32>(0.0), vec3<f32>(1.0));
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
 fn color_burn_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let safeSrc = max(src.rgb, vec3<f32>(0.0001));
+  let safeSrc = max(src.rgb, vec3<f32>(BLEND_EPSILON));
   let rgb = clamp(vec3<f32>(1.0) - (vec3<f32>(1.0) - dst.rgb) / safeSrc, vec3<f32>(0.0), vec3<f32>(1.0));
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
 fn difference_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let rgb = abs(dst.rgb - src.rgb);
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
 fn exclusion_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
   let rgb = dst.rgb + src.rgb - 2.0 * dst.rgb * src.rgb;
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
@@ -408,7 +415,7 @@ fn hard_light_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
     2.0 * src.rgb * dst.rgb,
     src.rgb < vec3<f32>(0.5)
   );
-  let a = src.a + dst.a * (1.0 - src.a);
+  let a = blend_alpha(dst, src);
   return vec4<f32>(rgb, a);
 }
 
