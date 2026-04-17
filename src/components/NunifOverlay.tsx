@@ -247,6 +247,14 @@ export function NunifOverlay({
               <option value={2}>Subtract</option>
               <option value={3}>Multiply</option>
               <option value={4}>Screen</option>
+              <option value={5}>Lighten</option>
+              <option value={6}>Darken</option>
+              <option value={7}>Overlay</option>
+              <option value={8}>Color Dodge</option>
+              <option value={9}>Color Burn</option>
+              <option value={10}>Difference</option>
+              <option value={11}>Exclusion</option>
+              <option value={12}>Hard Light</option>
             </select>
           </div>
 
@@ -262,6 +270,14 @@ export function NunifOverlay({
               <option value={2}>Subtract</option>
               <option value={3}>Multiply</option>
               <option value={4}>Screen</option>
+              <option value={5}>Lighten</option>
+              <option value={6}>Darken</option>
+              <option value={7}>Overlay</option>
+              <option value={8}>Color Dodge</option>
+              <option value={9}>Color Burn</option>
+              <option value={10}>Difference</option>
+              <option value={11}>Exclusion</option>
+              <option value={12}>Hard Light</option>
             </select>
           </div>
 
