@@ -215,13 +215,7 @@ export class WebGPURenderer {
       fragment: {
         module     : device.createShaderModule({ code: compositorFragmentSource }),
         entryPoint : 'main',
-        targets    : [{
-          format: this.format,
-          blend : {
-            color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-            alpha: { srcFactor: 'one',       dstFactor: 'one-minus-src-alpha', operation: 'add' },
-          },
-        }],
+        targets    : [{ format: this.format }],
       },
       primitive  : { topology: 'triangle-list' },
       multisample: { count: 1 },

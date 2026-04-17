@@ -121,7 +121,7 @@ export default function App() {
       }
 
       const format = navigator.gpu.getPreferredCanvasFormat();
-      context.configure({ device, format, alphaMode: 'premultiplied' });
+      context.configure({ device, format, alphaMode: 'opaque' });
 
       const renderer = new WebGPURenderer(device, context, format);
       const textureManager = new TextureManager(device);
