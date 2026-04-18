@@ -303,6 +303,36 @@ export class WebGPURenderer {
     return this.persistAboveTextures[this.persistPingPong];
   }
 
+  /**
+   * Clear all persistence textures to transparent black.
+   * Call this when changing images to reset the tracer.
+   */
+  clearPersistence(): void {
+    const enc = this.device.createCommandEncoder();
+    
+    // Clear all 4 persistence textures
+    const allTextures = [
+      this.persistAboveTextures[0], this.persistAboveTextures[1],
+      this.persistBelowTextures[0], this.persistBelowTextures[1]
+    ];
+    
+    for (const tex of allTextures) {
+      if (!tex) continue;
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{
+          view: tex.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        }],
+      });
+      pass.end();
+    }
+    
+    this.device.queue.submit([enc.finish()]);
+    this.persistPingPong = 0;
+  }
+
   render(state: RendererState, fps = 30): void {
     if (!this.currentTexture) return;
 

@@ -58,6 +58,7 @@ export default function App() {
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
   const hasUpdatedPreviewsForImage = useRef(false);
   const capturePreviewAfterRender = useRef(false);
+  const captureTracerAfterRender = useRef(false);
 
   // Resize canvas: respect image aspect ratio unless "Square Canvas" is toggled
   useEffect(() => {
@@ -186,9 +187,17 @@ export default function App() {
   useEffect(() => {
     if (!gpuReady || imageList.length === 0) return;
     const url = imageList[currentImageIndex];
+    
+    // Clear persistence buffers when changing images so tracer starts fresh
+    rendererRef.current?.clearPersistence();
+    // Also freeze tracer preview until new image is rendered
+    setTracerPreviewFrozen(true);
+    
     textureManagerRef.current?.loadTexture(url).then((tex) => {
       rendererRef.current?.setTexture(tex);
-      capturePreviewAfterRender.current = true;  // Capture preview after next render
+      capturePreviewAfterRender.current = true;  // Capture separated preview after next render
+      // Will also capture tracer preview at same time
+      captureTracerAfterRender.current = true;
 
       const previewOrig = previewOriginalRef.current;
       if (previewOrig) {
@@ -275,6 +284,71 @@ export default function App() {
             if (ctx) {
               ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
             }
+          }
+        }
+
+        // Capture tracer preview once after each new texture is rendered (sync with separated)
+        if (captureTracerAfterRender.current) {
+          captureTracerAfterRender.current = false;
+          const previewTracer = previewTracerRef.current;
+          const persistenceTexture = rendererRef.current?.getPersistenceTexture();
+          const device = deviceRef.current;
+
+          if (previewTracer && persistenceTexture && device) {
+            // Copy persistence texture to buffer and display on preview canvas
+            const texW = persistenceTexture.width;
+            const texH = persistenceTexture.height;
+            const previewSize = previewTracer.width; // 150
+
+            // bytesPerRow must be a multiple of 256
+            const bytesPerRow = Math.ceil((texW * 4) / 256) * 256;
+            const byteLength = bytesPerRow * texH;
+
+            const stagingBuffer = device.createBuffer({
+              size: byteLength,
+              usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+              mappedAtCreation: false,
+            });
+
+            const enc = device.createCommandEncoder();
+            enc.copyTextureToBuffer(
+              { texture: persistenceTexture },
+              { buffer: stagingBuffer, bytesPerRow },
+              [texW, texH, 1]
+            );
+            device.queue.submit([enc.finish()]);
+
+            stagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
+              const fullData = new Uint8ClampedArray(stagingBuffer.getMappedRange());
+
+              // Downsample to preview size (150x150)
+              const scaleX = texW / previewSize;
+              const scaleY = texH / previewSize;
+              const scaledData = new Uint8ClampedArray(previewSize * previewSize * 4);
+              for (let y = 0; y < previewSize; y++) {
+                for (let x = 0; x < previewSize; x++) {
+                  const srcX = Math.floor(x * scaleX);
+                  const srcY = Math.floor(y * scaleY);
+                  const srcIdx = srcY * bytesPerRow + srcX * 4;
+                  const dstIdx = (y * previewSize + x) * 4;
+                  scaledData[dstIdx] = fullData[srcIdx];
+                  scaledData[dstIdx + 1] = fullData[srcIdx + 1];
+                  scaledData[dstIdx + 2] = fullData[srcIdx + 2];
+                  scaledData[dstIdx + 3] = fullData[srcIdx + 3];
+                }
+              }
+
+              const imageData = new ImageData(scaledData, previewSize, previewSize);
+              const ctx = previewTracer.getContext('2d');
+              if (ctx) {
+                ctx.putImageData(imageData, 0, 0);
+              }
+              stagingBuffer.unmap();
+              stagingBuffer.destroy();
+              
+              // After capturing, unfreeze the tracer preview so it can update live
+              setTracerPreviewFrozen(false);
+            });
           }
         }
 
