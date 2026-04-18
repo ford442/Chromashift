@@ -247,34 +247,15 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   if (count >= 2) {
     // 2 or 3 layers colliding → form 4th layer
     if (mode == 0.0) {
-      // Combined colors (original behavior) - blend active layers
-      var mixed = vec4<f32>(0.0);
-
-      if (has0) {
-        let a = c0.a;
-        mixed = vec4<f32>(
-          mixed.rgb * mixed.a * (1.0 - a) / max(mixed.a + a * (1.0 - mixed.a), 0.0001) + c0.rgb * a / max(mixed.a + a * (1.0 - mixed.a), 0.0001),
-          mixed.a + a * (1.0 - mixed.a)
-        );
-      }
-      if (has1) {
-        let a = c1.a;
-        let newA = mixed.a + a * (1.0 - mixed.a);
-        mixed = vec4<f32>(
-          (mixed.rgb * mixed.a + c1.rgb * a * (1.0 - mixed.a)) / max(newA, 0.0001),
-          newA
-        );
-      }
-      if (has2) {
-        let a = c2.a;
-        let newA = mixed.a + a * (1.0 - mixed.a);
-        mixed = vec4<f32>(
-          (mixed.rgb * mixed.a + c2.rgb * a * (1.0 - mixed.a)) / max(newA, 0.0001),
-          newA
-        );
-      }
-      // All multi-layer collisions write at full alpha so the tracer is vivid
-      newColor = vec4<f32>(mixed.rgb, 1.0);
+      // Equal-weight average of all active layers so every colliding color contributes.
+      // Alpha-over compositing can't be used here because all layers output alpha=1.0,
+      // which causes the first active layer to fully occlude all subsequent ones.
+      var mixed = vec3<f32>(0.0);
+      var cnt = 0.0;
+      if (has0) { mixed += c0.rgb; cnt += 1.0; }
+      if (has1) { mixed += c1.rgb; cnt += 1.0; }
+      if (has2) { mixed += c2.rgb; cnt += 1.0; }
+      newColor = vec4<f32>(mixed / cnt, 1.0);
     } else {
       // Grey highlight mode
       newColor = vec4<f32>(0.95, 0.95, 0.90, 1.0);
