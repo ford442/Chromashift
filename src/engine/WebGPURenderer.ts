@@ -111,7 +111,7 @@ export class WebGPURenderer {
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
     for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
 
-    this.compositorSampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' });
+    this.compositorSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
     // Persistence pipeline
     this.persistBGL      = this.createPersistBGL();
@@ -400,7 +400,7 @@ export class WebGPURenderer {
 
     // ── Pass 4: compositor ───────────
     const tracerAboveOp = state.tracerAboveIntensity ?? 0.85;
-    const tracerBelowOp = state.tracerBelowIntensity ?? 0.0;
+    const tracerBelowOp = state.tracerBelowIntensity ?? 0.30;
     const layerBlendMode = state.layerBlendMode ?? 0;
     const tracerBlendMode = state.tracerBlendMode ?? 0;
     const layerOpacity = state.layerOpacity ?? 1.0;

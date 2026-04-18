@@ -464,7 +464,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // 3. Draw Tracer Above
   col = blend_tracer(col, pAboveScaled, cu.tracerBlendMode);
 
-  return col;
+  return vec4<f32>(col.rgb, 1.0);
 }
 `;
 
