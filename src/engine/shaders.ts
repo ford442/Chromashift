@@ -491,7 +491,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     finalCol = layerCol;
   } else if (!layerIsBlack && !tracerIsBlack) {
     // Both have color → blend them (tracer on top)
-    finalCol = blend_alpha(layerCol, tracerCol);
+    finalCol = alpha_blend(layerCol, tracerCol);
   } else {
     // Both black/transparent → transparent
     finalCol = vec4<f32>(0.0, 0.0, 0.0, 0.0);
