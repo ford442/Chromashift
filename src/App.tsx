@@ -52,6 +52,7 @@ export default function App() {
   const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
   const [layerBlendMode, setLayerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
   const [tracerBlendMode, setTracerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  const [isPaused, setIsPaused] = useState(false); // Pauses animation AND tracer decay
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
@@ -271,6 +272,7 @@ export default function App() {
           tracerMode,
           layerBlendMode,
           tracerBlendMode,
+          paused: isPaused,
         };
 
         rendererRef.current?.render(state);
@@ -423,7 +425,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, tracerPreviewFrozen]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, tracerPreviewFrozen, isPaused]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -525,6 +527,20 @@ export default function App() {
           ))}
         </div>
       )}
+
+      {/* Pause button */}
+      <div className="absolute bottom-3 left-3 z-40">
+        <button
+          onClick={() => setIsPaused(!isPaused)}
+          className={`px-3 py-1.5 rounded font-mono text-sm transition-colors ${
+            isPaused
+              ? 'bg-amber-500 hover:bg-amber-400 text-black'
+              : 'bg-gray-800 hover:bg-gray-700 text-amber-400 border border-amber-500/50'
+          }`}
+        >
+          {isPaused ? '▶ Resume' : '⏸ Pause'}
+        </button>
+      </div>
 
       {/* Average luminance control */}
       <div className="absolute top-3 right-3 z-40 bg-black/40 backdrop-blur-md rounded p-2 flex flex-col items-end gap-1 border border-amber-500/30">

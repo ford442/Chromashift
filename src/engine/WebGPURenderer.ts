@@ -36,6 +36,7 @@ export interface RendererState {
   tracerMode?          : number;  // 0 = combined colors, 1 = grey highlight
   layerBlendMode?      : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
+  paused?              : boolean; // When true, tracer persistence stops decaying
 }
 
 /** Column-major mat3x3 for WGSL std140. */
@@ -387,6 +388,7 @@ export class WebGPURenderer {
     // ── Pass 3: persistence (Run twice: Once for Below, Once for Above) ─────────
     const colorThresh = state.tracerThreshold ?? 0.05;
     const tracerMode = state.tracerMode ?? 0.0;
+    const isPaused = state.paused ?? false;
     const readIdx  : 0 | 1 = this.persistPingPong;
     const writeIdx : 0 | 1 = readIdx === 0 ? 1 : 0;
 
@@ -396,7 +398,8 @@ export class WebGPURenderer {
       uniformBuf: GPUBuffer,
       textures: [GPUTexture | null, GPUTexture | null]
     ) => {
-      const decayFactor = durationToDecay(duration, fps);
+      // When paused, use decayFactor = 1.0 so tracer stays exactly as-is
+      const decayFactor = isPaused ? 1.0 : durationToDecay(duration, fps);
 
       // Strictly align Float32 and Uint32 to prevent WGSL memory corruption.
       // Offset 0: decayFactor (f32)
