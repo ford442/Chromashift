@@ -388,7 +388,6 @@ export class WebGPURenderer {
     // ── Pass 3: persistence (Run twice: Once for Below, Once for Above) ─────────
     const colorThresh = state.tracerThreshold ?? 0.05;
     const tracerMode = state.tracerMode ?? 0.0;
-    const isPaused = state.paused ?? false;
     const readIdx  : 0 | 1 = this.persistPingPong;
     const writeIdx : 0 | 1 = readIdx === 0 ? 1 : 0;
 
@@ -398,8 +397,7 @@ export class WebGPURenderer {
       uniformBuf: GPUBuffer,
       textures: [GPUTexture | null, GPUTexture | null]
     ) => {
-      // When paused, use decayFactor = 1.0 so tracer stays exactly as-is
-      const decayFactor = isPaused ? 1.0 : durationToDecay(duration, fps);
+      const decayFactor = durationToDecay(duration, fps);
 
       // Strictly align Float32 and Uint32 to prevent WGSL memory corruption.
       // Offset 0: decayFactor (f32)

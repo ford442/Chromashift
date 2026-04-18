@@ -188,9 +188,8 @@ export default function App() {
     if (!gpuReady || imageList.length === 0) return;
     const url = imageList[currentImageIndex];
     
-    // NOTE: We intentionally do NOT clear persistence here.
-    // This allows the tracer from the previous image to fade out naturally
-    // while the new image layers build up on top, creating a crossfade effect.
+    // Clear persistence when changing images so tracer starts fresh for new image
+    rendererRef.current?.clearPersistence();
     
     textureManagerRef.current?.loadTexture(url).then((tex) => {
       rendererRef.current?.setTexture(tex);
@@ -218,7 +217,8 @@ export default function App() {
 
   // Auto-play image rotation (random)
   useEffect(() => {
-    if (!isAutoPlayActive || imageList.length === 0) return;
+    // Don't auto-advance images when paused
+    if (!isAutoPlayActive || isPaused || imageList.length === 0) return;
 
     const interval = setInterval(() => {
       setCurrentImageIndex(() => {
@@ -229,7 +229,7 @@ export default function App() {
     }, imageChangeInterval * 1000);
 
     return () => clearInterval(interval);
-  }, [isAutoPlayActive, imageChangeInterval, imageList.length]);
+  }, [isAutoPlayActive, isPaused, imageChangeInterval, imageList.length]);
 
   // Animation loop
   useEffect(() => {
@@ -244,14 +244,17 @@ export default function App() {
       if (delta >= msPerFrame) {
         last = now - (delta % msPerFrame);
 
-        // Advance each layer's angle by its extension (degrees-per-frame)
-        angles = [
-          (angles[0] + layerExtensions[0]) % 360,
-          (angles[1] + layerExtensions[1]) % 360,
-          (angles[2] + layerExtensions[2]) % 360,
-        ];
-
-        setLayerAngles(angles);
+        // Only advance angles when NOT paused
+        // When paused, layers stay static but tracer continues to decay
+        if (!isPaused) {
+          // Advance each layer's angle by its extension (degrees-per-frame)
+          angles = [
+            (angles[0] + layerExtensions[0]) % 360,
+            (angles[1] + layerExtensions[1]) % 360,
+            (angles[2] + layerExtensions[2]) % 360,
+          ];
+          setLayerAngles(angles);
+        }
 
         const state: RendererState = {
           layers: [

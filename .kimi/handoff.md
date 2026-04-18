@@ -11,8 +11,9 @@ Chromashift is a WebGPU-based 5-pass colour-separation slideshow engine at `/roo
 5. **Layer opacity fix** — Layer fragment shaders now actually use `layerOpacity` uniform to modulate output alpha, fixing the issue where opacity sliders didn't work.
 6. **Transparent background + tracer/layer fallback** — Changed compositor to clear to transparent (`a: 0`) instead of opaque black. Added logic so that when main layers are black/transparent, the tracer shows through, and vice versa. Final output preserves actual alpha instead of forcing to 1.0.
 7. **CRITICAL FIX: Layer opacity no longer breaks tracer** — Removed alpha modulation from layer shaders. Now layers always output full alpha (for persistence detection), and opacity is only applied in the compositor. This fixes the bug where lowering layer opacity below 10% made the tracer vanish because the persistence pass couldn't detect overlapping layers.
-8. **Pause button + tracer persistence** — Added `paused` state to `RendererState`. When paused, the decay factor is set to 1.0 (no decay), so the tracer stays exactly as-is instead of fading out. Added Pause button to the UI (bottom-left).
-9. **Crossfade effect** — Removed `clearPersistence()` call when changing images. The tracer from the previous image now fades out naturally while new image layers build up on top, creating a smooth crossfade transition.
+8. **Pause button + tracer persistence** — Added `paused` state to `RendererState`. When paused, layer rotation stops but tracer continues to decay naturally. Auto-play image changes are also paused. Added Pause button to the UI (bottom-left).
+9. **Clear persistence on image change** — `clearPersistence()` is called when changing images so the tracer starts fresh for the new image only.
+10. **Preview sync fix** — All three previews (Original, Separated, Tracer) now capture at the same time when a new image loads.
 
 ## Current State
 - `npm run build` ✅ clean
