@@ -244,17 +244,14 @@ export default function App() {
       if (delta >= msPerFrame) {
         last = now - (delta % msPerFrame);
 
-        // Only advance angles when NOT paused
-        // When paused, layers stay static but tracer continues to decay
-        if (!isPaused) {
-          // Advance each layer's angle by its extension (degrees-per-frame)
-          angles = [
-            (angles[0] + layerExtensions[0]) % 360,
-            (angles[1] + layerExtensions[1]) % 360,
-            (angles[2] + layerExtensions[2]) % 360,
-          ];
-          setLayerAngles(angles);
-        }
+        // Always advance layer angles (rotation continues even when paused)
+        // User can set angle sliders to 0 if they want to stop rotation
+        angles = [
+          (angles[0] + layerExtensions[0]) % 360,
+          (angles[1] + layerExtensions[1]) % 360,
+          (angles[2] + layerExtensions[2]) % 360,
+        ];
+        setLayerAngles(angles);
 
         const state: RendererState = {
           layers: [
