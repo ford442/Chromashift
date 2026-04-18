@@ -46,7 +46,7 @@ export default function App() {
   const [tracerBelowIntensity, setTracerBelowIntensity] = useState(0.30);
   const [tracerAboveDuration, setTracerAboveDuration] = useState(500);
   const [tracerBelowDuration, setTracerBelowDuration] = useState(2000);
-  const [squareCanvas, setSquareCanvas] = useState(false);
+  const [squareCanvas, setSquareCanvas] = useState(true);
   const [antialiasEnabled, setAntialiasEnabled] = useState(true);
   const [tracerMode, setTracerMode] = useState(0); // 0 = combined colors, 1 = grey highlight
   const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
@@ -287,12 +287,13 @@ export default function App() {
 
           if (previewTracer && persistenceTexture && device) {
             // Copy persistence texture to buffer and display on preview canvas
-            const texSize = persistenceTexture.width;
+            const texW = persistenceTexture.width;
+            const texH = persistenceTexture.height;
             const previewSize = previewTracer.width; // 150
 
             // bytesPerRow must be a multiple of 256
-            const bytesPerRow = Math.ceil((texSize * 4) / 256) * 256;
-            const byteLength = bytesPerRow * texSize;
+            const bytesPerRow = Math.ceil((texW * 4) / 256) * 256;
+            const byteLength = bytesPerRow * texH;
 
             const stagingBuffer = device.createBuffer({
               size: byteLength,
@@ -304,7 +305,7 @@ export default function App() {
             enc.copyTextureToBuffer(
               { texture: persistenceTexture },
               { buffer: stagingBuffer, bytesPerRow },
-              [texSize, texSize, 1]
+              [texW, texH, 1]
             );
             device.queue.submit([enc.finish()]);
 
@@ -312,12 +313,13 @@ export default function App() {
               const fullData = new Uint8ClampedArray(stagingBuffer.getMappedRange());
 
               // Downsample to preview size (150x150)
-              const scale = texSize / previewSize;
+              const scaleX = texW / previewSize;
+              const scaleY = texH / previewSize;
               const scaledData = new Uint8ClampedArray(previewSize * previewSize * 4);
               for (let y = 0; y < previewSize; y++) {
                 for (let x = 0; x < previewSize; x++) {
-                  const srcX = Math.floor(x * scale);
-                  const srcY = Math.floor(y * scale);
+                  const srcX = Math.floor(x * scaleX);
+                  const srcY = Math.floor(y * scaleY);
                   const srcIdx = srcY * bytesPerRow + srcX * 4;
                   const dstIdx = (y * previewSize + x) * 4;
                   scaledData[dstIdx] = fullData[srcIdx];
