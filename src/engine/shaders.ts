@@ -219,8 +219,8 @@ export const persistenceFragmentSource = /* wgsl */ `
 struct PersistUniforms {
   decayFactor      : f32,  // per-frame multiplier: 0=instant, ~0.99=slow fade
   colorThreshold   : f32,  // min alpha to count a layer as "has colour" at pixel
-  tracerMode       : f32,  // 0 = combined colors, 1 = grey highlight
-  _pad0            : f32,
+  tracerMode       : u32,  // 0 = combined colors, 1 = grey highlight
+  _pad0            : u32,
 };
 @group(0) @binding(5) var<uniform> pu : PersistUniforms;
 
@@ -246,7 +246,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
   if (count >= 2) {
     // 2 or 3 layers colliding → form 4th layer
-    if (mode == 0.0) {
+    if (mode == 0u) {
       // Equal-weight average of all active layers so every colliding color contributes.
       // Alpha-over compositing can't be used here because all layers output alpha=1.0,
       // which causes the first active layer to fully occlude all subsequent ones.

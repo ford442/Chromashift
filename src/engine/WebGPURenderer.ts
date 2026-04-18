@@ -367,7 +367,17 @@ export class WebGPURenderer {
       textures: [GPUTexture | null, GPUTexture | null]
     ) => {
       const decayFactor = durationToDecay(duration, fps);
-      this.device.queue.writeBuffer(uniformBuf, 0, new Float32Array([decayFactor, colorThresh, tracerMode, 0]));
+
+      // Strictly align Float32 and Uint32 to prevent WGSL memory corruption.
+      // Offset 0: decayFactor (f32)
+      // Offset 4: colorThresh (f32)
+      // Offset 8: tracerMode (u32)
+      // Offset 12: padding/reserved
+      const buf = new ArrayBuffer(16);
+      new Float32Array(buf, 0, 2).set([decayFactor, colorThresh]);
+      new Uint32Array(buf, 8, 2).set([tracerMode, 0]);
+
+      this.device.queue.writeBuffer(uniformBuf, 0, buf);
 
       const bg = this.device.createBindGroup({
         layout : this.persistBGL,

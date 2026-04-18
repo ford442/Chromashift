@@ -31,6 +31,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [imageList, setImageList] = useState<string[]>([]);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [imageAspect, setImageAspect] = useState(1);
 
   const [layerAngles, setLayerAngles] = useState<LayerTriple<number>>(DEFAULT_ANGLES);
   // layerExtensions is the per-frame step size for each layer (degrees/frame)
@@ -58,7 +59,7 @@ export default function App() {
   const hasUpdatedPreviewsForImage = useRef(false);
   const capturePreviewAfterRender = useRef(false);
 
-  // Resize canvas: always square, max 95% of viewport height
+  // Resize canvas: respect image aspect ratio unless "Square Canvas" is toggled
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
@@ -73,14 +74,42 @@ export default function App() {
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-      const side = Math.floor(Math.min(maxSize, containerW, containerH));
+      const boxW = containerW;
+      const boxH = Math.floor(Math.min(maxSize, containerH));
 
-      canvas.width  = Math.floor(side * window.devicePixelRatio);
-      canvas.height = Math.floor(side * window.devicePixelRatio);
-      canvas.style.width  = `${side}px`;
-      canvas.style.height = `${side}px`;
-      canvas.style.left = `${Math.floor((containerW - side) / 2)}px`;
-      canvas.style.top  = `${Math.floor((containerH - side) / 2)}px`;
+      let targetW = boxW;
+      let targetH = boxH;
+
+      // Fit mathematically without distorting
+      if (squareCanvas) {
+        const side = Math.floor(Math.min(boxW, boxH));
+        targetW = side;
+        targetH = side;
+      } else {
+        if (boxW / boxH > imageAspect) {
+          targetH = boxH;
+          targetW = Math.floor(targetH * imageAspect);
+        } else {
+          targetW = boxW;
+          targetH = Math.floor(targetW / imageAspect);
+        }
+      }
+
+      // 1. Lock exact integer CSS coordinates to prevent Chrome sub-pixel blur
+      const cssW = Math.floor(targetW);
+      const cssH = Math.floor(targetH);
+      const cssLeft = Math.floor((containerW - cssW) / 2);
+      const cssTop  = Math.floor((containerH - cssH) / 2);
+
+      canvas.style.width  = `${cssW}px`;
+      canvas.style.height = `${cssH}px`;
+      canvas.style.left   = `${cssLeft}px`;
+      canvas.style.top    = `${cssTop}px`;
+
+      // 2. Lock actual internal resolution strictly to integer * DPR
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      canvas.width  = Math.floor(cssW * dpr);
+      canvas.height = Math.floor(cssH * dpr);
     }
 
     resizeCanvas();
@@ -92,7 +121,7 @@ export default function App() {
       observer.disconnect();
       window.removeEventListener('resize', resizeCanvas);
     };
-  }, []);
+  }, [squareCanvas, imageAspect]);
 
   // Initialise WebGPU
   useEffect(() => {
@@ -166,6 +195,11 @@ export default function App() {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
+          // Capture the native aspect ratio
+          if (img.height > 0) {
+            setImageAspect(img.width / img.height);
+          }
+
           const ctx = previewOrig.getContext('2d');
           if (ctx) {
             ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
