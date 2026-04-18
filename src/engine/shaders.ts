@@ -205,7 +205,7 @@ fn main(@builtin(vertex_index) vi : u32) -> VertexOutput {
 //
 // Reads the 3 live layer textures and the previous persistence texture.
 // Where 2 or more layers have colour at the same pixel, it writes the
-// alpha-blended mix of those layers' colours at full strength.
+// equal-weight average of those layers' colours at full strength.
 // Where fewer than 2 layers overlap, it writes the previous persistence
 // value multiplied by decayFactor (< 1.0), so held colours fade over time.
 //
