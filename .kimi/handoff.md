@@ -10,6 +10,7 @@ Chromashift is a WebGPU-based 5-pass colour-separation slideshow engine at `/roo
 4. **Square canvas now defaults to ON** — Changed `squareCanvas` state default from `false` to `true` in `src/App.tsx`.
 5. **Layer opacity fix** — Layer fragment shaders now actually use `layerOpacity` uniform to modulate output alpha, fixing the issue where opacity sliders didn't work.
 6. **Transparent background + tracer/layer fallback** — Changed compositor to clear to transparent (`a: 0`) instead of opaque black. Added logic so that when main layers are black/transparent, the tracer shows through, and vice versa. Final output preserves actual alpha instead of forcing to 1.0.
+7. **CRITICAL FIX: Layer opacity no longer breaks tracer** — Removed alpha modulation from layer shaders. Now layers always output full alpha (for persistence detection), and opacity is only applied in the compositor. This fixes the bug where lowering layer opacity below 10% made the tracer vanish because the persistence pass couldn't detect overlapping layers.
 
 ## Current State
 - `npm run build` ✅ clean

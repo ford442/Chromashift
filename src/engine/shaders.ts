@@ -114,8 +114,8 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     result = vec4<f32>(rgb, 1.0);
   }
 
-  // Apply layer opacity
-  result.a = result.a * fragUniforms.layerOpacity;
+  // Layer outputs full alpha for persistence detection
+  // Opacity is applied in compositor, not here
   return result;
 }
 `;
@@ -186,8 +186,8 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     result = vec4<f32>(rgb, 1.0);
   }
 
-  // Apply layer opacity
-  result.a = result.a * fragUniforms.layerOpacity;
+  // Layer outputs full alpha for persistence detection
+  // Opacity is applied in compositor, not here
   return result;
 }
 `;
@@ -463,38 +463,51 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c1Opaque = applyOpacity(c1, cu.layerOpacity1);
   let c2Opaque = applyOpacity(c2, cu.layerOpacity2);
 
-  // Blend layers first
+  // Blend layers
   var layerCol = vec4<f32>(0.0);
   layerCol = blend(layerCol, c2Opaque, cu.layerBlendMode);
   layerCol = blend(layerCol, c1Opaque, cu.layerBlendMode);
   layerCol = blend(layerCol, c0Opaque, cu.layerBlendMode);
-
-  // Check if layer output is effectively black/transparent
-  let layerLum = dot(layerCol.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-  let layerIsBlack = layerCol.a < 0.01 || layerLum < 0.01;
 
   // Blend tracers
   var tracerCol = vec4<f32>(0.0);
   tracerCol = blend_tracer(tracerCol, pBelowScaled, cu.tracerBlendMode);
   tracerCol = blend_tracer(tracerCol, pAboveScaled, cu.tracerBlendMode);
 
-  // Check if tracer output is effectively black/transparent  
-  let tracerLum = dot(tracerCol.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
-  let tracerIsBlack = tracerCol.a < 0.01 || tracerLum < 0.01;
-
+  // Calculate total layer opacity (approximate)
+  let totalLayerAlpha = layerCol.a;
+  
+  // If layers are mostly transparent, show tracer
+  // If tracer is mostly transparent, show layers
+  // Otherwise, blend based on relative opacity
   var finalCol: vec4<f32>;
-  if (layerIsBlack && !tracerIsBlack) {
-    // Main is black/transparent, tracer has color → show tracer
-    finalCol = tracerCol;
-  } else if (tracerIsBlack && !layerIsBlack) {
-    // Tracer is black/transparent, main has color → show main
-    finalCol = layerCol;
-  } else if (!layerIsBlack && !tracerIsBlack) {
-    // Both have color → blend them (tracer on top)
-    finalCol = alpha_blend(layerCol, tracerCol);
-  } else {
-    // Both black/transparent → transparent
+  
+  if (totalLayerAlpha < 0.05 && tracerCol.a < 0.05) {
+    // Both transparent
     finalCol = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  } else if (totalLayerAlpha < 0.05) {
+    // Only tracer visible
+    finalCol = tracerCol;
+  } else if (tracerCol.a < 0.05) {
+    // Only layers visible
+    finalCol = layerCol;
+  } else {
+    // Both have content - use weighted blend
+    // Higher layer opacity = more layer, less tracer
+    // Lower layer opacity = more tracer, less layer
+    let layerWeight = totalLayerAlpha;
+    let tracerWeight = tracerCol.a * (1.0 - totalLayerAlpha * 0.8);
+    let totalWeight = layerWeight + tracerWeight;
+    
+    if (totalWeight > 0.0) {
+      let mixFactor = tracerWeight / totalWeight;
+      // Blend RGB based on weights, keep combined alpha
+      let rgb = mix(layerCol.rgb, tracerCol.rgb, mixFactor);
+      let a = max(layerCol.a, tracerCol.a);
+      finalCol = vec4<f32>(rgb, a);
+    } else {
+      finalCol = layerCol;
+    }
   }
 
   return finalCol;
