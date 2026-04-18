@@ -1,85 +1,96 @@
-/**
- * WGSL shaders for the Chromashift 3-layer WebGPU rendering pipeline.
- *
- * Pipeline overview:
- *   Pass 0–2 : Each colour layer renders to its own intermediate GPUTexture
- *   Pass 3   : Persistence pass — detects multi-layer spatial overlap,
- *              blends the mixed colour into a ping-pong persistence buffer
- *              that decays over tracerDuration milliseconds
- *   Pass 4   : Compositor — blends the 3 live layers then draws the
- *              persistence buffer on top
- */
+// Chromashift shaders – everything needed for the WebGPU renderer
 
-// ─── Shared WGSL helpers ──────────────────────────────────────────────────────
+// ─── Shared colour utility helpers ──────────────────────────────────────────────────────────────────
 const WGSL_COLOR_HELPERS = /* wgsl */ `
-fn hsl_to_rgb(h: f32, s: f32, l: f32) -> vec3<f32> {
-  let c = (1.0 - abs(2.0 * l - 1.0)) * s;
-  let hp = h / 60.0;
-  let x = c * (1.0 - abs((hp % 2.0) - 1.0));
-  var rgb = vec3<f32>(0.0);
-  if      (hp < 1.0) { rgb = vec3<f32>(c, x, 0.0); }
-  else if (hp < 2.0) { rgb = vec3<f32>(x, c, 0.0); }
-  else if (hp < 3.0) { rgb = vec3<f32>(0.0, c, x); }
-  else if (hp < 4.0) { rgb = vec3<f32>(0.0, x, c); }
-  else if (hp < 5.0) { rgb = vec3<f32>(x, 0.0, c); }
-  else               { rgb = vec3<f32>(c, 0.0, x); }
-  let m = l - c / 2.0;
-  return clamp(rgb + vec3<f32>(m), vec3<f32>(0.0), vec3<f32>(1.0));
+// Convert HSL (0–1) to RGB (0–1)
+fn hsl2rgb(h: f32, s: f32, l: f32) -> vec3<f32> {
+  let a = s * min(l, 1.0 - l);
+  let k = (h * 6.0 + vec3<f32>(0.0, 4.0, 2.0)) / 6.0;
+  let f = fract(k - floor(k));
+  let cubic = f * f * (3.0 - 2.0 * f);  // smoothstep(0,1,f)
+  let rgb = l - a + a * (4.0 * cubic - 12.0 * cubic + 6.0);
+  return rgb;
 }
 
+// Map a luminance value into a gradient band
 fn band_gradient(
-  lum      : f32,
-  band_lo  : f32,
-  band_hi  : f32,
-  hue_lo   : f32,
-  hue_hi   : f32,
-  sat      : f32,
-  light_lo : f32,
-  light_hi : f32,
+  val       : f32,
+  low       : f32,   high      : f32,
+  hue_low   : f32,   hue_high  : f32,
+  sat       : f32,
+  lum_low   : f32,   lum_high  : f32
 ) -> vec3<f32> {
-  let t     = smoothstep(band_lo, band_hi, lum);
-  let hue   = mix(hue_lo, hue_hi, t);
-  let light = mix(light_lo, light_hi, t);
-  return hsl_to_rgb(hue, sat, light);
+  let t = clamp((val - low) / (high - low), 0.0, 1.0);
+  let hue = mix(hue_low, hue_high, t) / 360.0;
+  let lum = mix(lum_low, lum_high, t);
+  return hsl2rgb(hue, sat, lum);
 }
 `;
 
-// ─── Vertex shader (shared by all layer passes) ──────────────────────────────────────────────────
-export const vertexShaderSource = /* wgsl */ `
-struct Uniforms {
-  rotation : mat3x3<f32>,
-  flipX    : u32,
-  flipY    : u32,
-};
-
-@group(0) @binding(0) var<uniform> uniforms : Uniforms;
-
+// ─── Vertex: rotate/flip layers (3 copies, one per layer) ──────────────────────────────────────────────────
+const vertexShaderCommon = /* wgsl */ `
 struct VertexOutput {
   @builtin(position) position : vec4<f32>,
   @location(0)       uv       : vec2<f32>,
 };
 
+struct Uniforms {
+  angleRad : f32,
+  flipX    : f32,   // 1.0 = flip, 0.0 = normal
+  flipY    : f32,
+  aspect   : f32,   // canvas.width / canvas.height
+};
+@group(0) @binding(0) var<uniform> u : Uniforms;
+
+// Corners of a full-screen quad (NDC -1..+1)
+const POS = array<vec2<f32>, 6>(
+  vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),
+  vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0)
+);
+
+// Texture UVs that match those positions
+const UV = array<vec2<f32>, 6>(
+  vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 0.0),
+  vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(1.0, 0.0)
+);
+
 @vertex
-fn main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
-  var positions = array<vec2<f32>, 6>(
-    vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),
-    vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0),
+fn main(@builtin(vertex_index) vi : u32) -> VertexOutput {
+  var pos = POS[vi];
+  var uv  = UV[vi];
+
+  // Apply flip BEFORE rotation
+  uv.x = mix(uv.x, 1.0 - uv.x, u.flipX);
+  uv.y = mix(uv.y, 1.0 - uv.y, u.flipY);
+
+  // Rotate around center (0.5,0.5)
+  let c = cos(u.angleRad);
+  let s = sin(u.angleRad);
+  let ctr = vec2<f32>(0.5, 0.5);
+  let p = uv - ctr;
+
+  // Correct for aspect ratio so rotation looks circular not elliptical
+  let aspectCorrection = vec2<f32>(1.0, u.aspect);
+  let pAspect = p * aspectCorrection;
+  let rotated = vec2<f32>(
+    pAspect.x * c - pAspect.y * s,
+    pAspect.x * s + pAspect.y * c
   );
-
-  let clipPos = positions[vertexIndex];
-
-  var flipped = clipPos;
-  if (uniforms.flipX != 0u) { flipped.x *= -1.0; }
-  if (uniforms.flipY != 0u) { flipped.y *= -1.0; }
-
-  let rotated = uniforms.rotation * vec3<f32>(flipped, 1.0);
+  uv = rotated / aspectCorrection + ctr;
 
   var out : VertexOutput;
-  out.position = vec4<f32>(rotated.xy, 0.0, 1.0);
-  out.uv       = clipPos * 0.5 + 0.5;
+  out.position = vec4<f32>(pos, 0.0, 1.0);
+  out.uv = uv;
   return out;
 }
 `;
+
+export const vertexShaderLayer0 = vertexShaderCommon;
+export const vertexShaderLayer1 = vertexShaderCommon;
+export const vertexShaderLayer2 = vertexShaderCommon;
+
+// Backward compatibility: vertexShaderSource was the old name
+export const vertexShaderSource = vertexShaderCommon;
 
 // ─── Fragment: Layer 0 – Red / Orange ──────────────────────────────────────────────
 export const fragmentShaderRedOrange = /* wgsl */ `
@@ -117,8 +128,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // Layer outputs full alpha for persistence detection
   // Opacity is applied in compositor, not here
   return result;
-}
-`;
+}`;
 
 // ─── Fragment: Layer 1 – Violet / Blue ──────────────────────────────────────────────
 export const fragmentShaderVioletBlue = /* wgsl */ `
@@ -150,11 +160,10 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     result = vec4<f32>(rgb, 1.0);
   }
 
-  // Apply layer opacity
-  result.a = result.a * fragUniforms.layerOpacity;
+  // Layer outputs full alpha for persistence detection
+  // Opacity is applied in compositor, not here
   return result;
-}
-`;
+}`;
 
 // ─── Fragment: Layer 2 – Green / Yellow ──────────────────────────────────────────────
 export const fragmentShaderGreenYellow = /* wgsl */ `
@@ -199,89 +208,78 @@ struct VertexOutput {
   @location(0)       uv       : vec2<f32>,
 };
 
+const POS = array<vec2<f32>, 6>(
+  vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),
+  vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0)
+);
+const UV  = array<vec2<f32>, 6>(
+  vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 0.0),
+  vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(1.0, 0.0)
+);
+
 @vertex
 fn main(@builtin(vertex_index) vi : u32) -> VertexOutput {
-  var pos = array<vec2<f32>, 6>(
-    vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),
-    vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0),
-  );
-  let p = pos[vi];
   var out : VertexOutput;
-  out.position = vec4<f32>(p, 0.0, 1.0);
-  out.uv       = p * 0.5 + 0.5;
+  out.position = vec4<f32>(POS[vi], 0.0, 1.0);
+  out.uv = UV[vi];
   return out;
 }
 `;
 
-// ─── Persistence pass fragment shader ──────────────────────────────────────────────────
+// ─── Persistence fragment shader ─────────────────────────────────────────────────────
 //
-// Reads the 3 live layer textures and the previous persistence texture.
-// Where 2 or more layers have colour at the same pixel, it writes the
-// equal-weight average of those layers' colours at full strength.
-// Where fewer than 2 layers overlap, it writes the previous persistence
-// value multiplied by decayFactor (< 1.0), so held colours fade over time.
+// Accumulates layer overlaps (collisions) over time with configurable decay.
+// When layers overlap, we capture the blended color.
+// When they don't overlap, we decay the previous persistence.
 //
+// Uniforms layout (std140-ish, WGSL explicit offsets):
+//   0: decayFactor (f32) – 0.99 = slow fade, 0.5 = fast fade
+//   4: colorThresh  (f32) – minimum alpha to consider a "collision"
+//   8: tracerMode   (u32)  – 0 = combined colors, 1 = grey highlight
+//  12: _reserved    (u32)
+//
+// Keep the uniform definition in sync with WebGPURenderer.ts
+
 export const persistenceFragmentSource = /* wgsl */ `
-@group(0) @binding(0) var samp        : sampler;
-@group(0) @binding(1) var layer0      : texture_2d<f32>;
-@group(0) @binding(2) var layer1      : texture_2d<f32>;
-@group(0) @binding(3) var layer2      : texture_2d<f32>;
-@group(0) @binding(4) var prevPersist : texture_2d<f32>;
+@group(0) @binding(0) var cSampler  : sampler;
+@group(0) @binding(1) var layer0    : texture_2d<f32>;
+@group(0) @binding(2) var layer1    : texture_2d<f32>;
+@group(0) @binding(3) var layer2    : texture_2d<f32>;
+@group(0) @binding(4) var prevTex   : texture_2d<f32>;
 
 struct PersistUniforms {
-  decayFactor      : f32,  // per-frame multiplier: 0=instant, ~0.99=slow fade
-  colorThreshold   : f32,  // min alpha to count a layer as "has colour" at pixel
-  tracerMode       : u32,  // 0 = combined colors, 1 = grey highlight
-  _pad0            : u32,
+  decayFactor : f32,
+  colorThresh : f32,
+  tracerMode  : u32,
+  _reserved   : u32,
 };
 @group(0) @binding(5) var<uniform> pu : PersistUniforms;
 
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let c0 = textureSample(layer0, samp, uv);
-  let c1 = textureSample(layer1, samp, uv);
-  let c2 = textureSample(layer2, samp, uv);
-  let prev = textureSample(prevPersist, samp, uv);
+  let c0 = textureSample(layer0, cSampler, uv);
+  let c1 = textureSample(layer1, cSampler, uv);
+  let c2 = textureSample(layer2, cSampler, uv);
+  let prev = textureSample(prevTex, cSampler, uv);
 
-  let thresh = pu.colorThreshold;
-  let mode   = pu.tracerMode;
+  // Overlap detection: all 3 layers must have visible color
+  // Using alpha threshold from uniform for configurability
+  let thresh = pu.colorThresh;
+  let allVisible = (c0.a > thresh) && (c1.a > thresh) && (c2.a > thresh);
 
-  // Which layers have colour at this pixel?
-  let has0 = c0.a > thresh;
-  let has1 = c1.a > thresh;
-  let has2 = c2.a > thresh;
-
-  // Count overlapping layers
-  let count = i32(has0) + i32(has1) + i32(has2);
-
-  var newColor = vec4<f32>(0.0);
-
-  if (count >= 2) {
-    // 2 or 3 layers colliding → form 4th layer
-    if (mode == 0u) {
-      // Equal-weight average of all active layers so every colliding color contributes.
-      // Alpha-over compositing can't be used here because all layers output alpha=1.0,
-      // which causes the first active layer to fully occlude all subsequent ones.
-      var mixed = vec3<f32>(0.0);
-      var cnt = 0.0;
-      if (has0) { mixed += c0.rgb; cnt += 1.0; }
-      if (has1) { mixed += c1.rgb; cnt += 1.0; }
-      if (has2) { mixed += c2.rgb; cnt += 1.0; }
-      newColor = vec4<f32>(mixed / max(cnt, 1.0), 1.0);
-    } else {
-      // Grey highlight mode
-      newColor = vec4<f32>(0.95, 0.95, 0.90, 1.0);
-    }
+  var newColor: vec4<f32>;
+  if (pu.tracerMode == 1u) {
+    // Grey highlight mode: use luminance of combined layers
+    let combined = (c0.rgb + c1.rgb + c2.rgb) / 3.0;
+    let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
+    newColor = vec4<f32>(vec3<f32>(lum), 1.0);
+  } else {
+    // Combined colors mode: average the overlapping colors
+    newColor = vec4<f32>((c0.rgb + c1.rgb + c2.rgb) / 3.0, 1.0);
   }
 
-  // Decay based on overlap intensity
-  // 3 overlaps: slower decay (fades slower), 2 overlaps: normal decay
-  var decayMod = 1.0;
-  if (count == 2) {
-    decayMod = 1.0;   // Normal decay for 2-layer hits
-  } else if (count == 3) {
-    decayMod = 0.7;   // Slower decay (persists longer) for 3-layer hits
-  }
+  // Decay modifier: when all 3 overlap, decay slower to preserve the collision
+  let decayMod = select(1.0, 1.5, allVisible);
   let effectiveDecay = pow(pu.decayFactor, decayMod);
   let decayed = prev * effectiveDecay;
 
@@ -474,43 +472,20 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   tracerCol = blend_tracer(tracerCol, pBelowScaled, cu.tracerBlendMode);
   tracerCol = blend_tracer(tracerCol, pAboveScaled, cu.tracerBlendMode);
 
-  // Calculate total layer opacity (approximate)
-  let totalLayerAlpha = layerCol.a;
+  // Always do a weighted blend between layers and tracer
+  // This ensures the tracer color mixes in even at low layer opacity
+  let layerWeight = max(layerCol.a, 0.001);  // Ensure at least tiny weight
+  let tracerWeight = max(tracerCol.a, 0.001);  // Ensure at least tiny weight
+  let totalWeight = layerWeight + tracerWeight;
   
-  // If layers are mostly transparent, show tracer
-  // If tracer is mostly transparent, show layers
-  // Otherwise, blend based on relative opacity
-  var finalCol: vec4<f32>;
+  let layerRatio = layerWeight / totalWeight;
+  let tracerRatio = tracerWeight / totalWeight;
   
-  if (totalLayerAlpha < 0.05 && tracerCol.a < 0.05) {
-    // Both transparent
-    finalCol = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-  } else if (totalLayerAlpha < 0.05) {
-    // Only tracer visible
-    finalCol = tracerCol;
-  } else if (tracerCol.a < 0.05) {
-    // Only layers visible
-    finalCol = layerCol;
-  } else {
-    // Both have content - use weighted blend
-    // Higher layer opacity = more layer, less tracer
-    // Lower layer opacity = more tracer, less layer
-    let layerWeight = totalLayerAlpha;
-    let tracerWeight = tracerCol.a * (1.0 - totalLayerAlpha * 0.8);
-    let totalWeight = layerWeight + tracerWeight;
-    
-    if (totalWeight > 0.0) {
-      let mixFactor = tracerWeight / totalWeight;
-      // Blend RGB based on weights, keep combined alpha
-      let rgb = mix(layerCol.rgb, tracerCol.rgb, mixFactor);
-      let a = max(layerCol.a, tracerCol.a);
-      finalCol = vec4<f32>(rgb, a);
-    } else {
-      finalCol = layerCol;
-    }
-  }
-
-  return finalCol;
+  // Blend RGB based on relative weights
+  let rgb = layerCol.rgb * layerRatio + tracerCol.rgb * tracerRatio;
+  let a = max(layerCol.a, tracerCol.a);
+  
+  return vec4<f32>(rgb, a);
 }
 `;
 
