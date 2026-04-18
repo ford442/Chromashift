@@ -446,7 +446,7 @@ export class WebGPURenderer {
         view      : canvasTex.createView(),
         loadOp    : 'clear',
         storeOp   : 'store',
-        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },  // Transparent background, not opaque black
       }],
     });
     finalPass.setPipeline(this.compositorPipeline);

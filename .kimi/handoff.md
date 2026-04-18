@@ -8,6 +8,8 @@ Chromashift is a WebGPU-based 5-pass colour-separation slideshow engine at `/roo
 2. **Tracer uniform buffer alignment fix** — `src/engine/WebGPURenderer.ts` now writes the persistence-pass uniform buffer with strict `Float32Array`/`Uint32Array` alignment. The WGSL shader (`src/engine/shaders.ts`) `PersistUniforms.tracerMode` was updated from `f32` to `u32` to match.
 3. **Tracer preview texture copy fix** — Fixed a bug where the tracer preview assumed square textures (`texSize` for both dimensions). Now uses proper width/height (`texW`, `texH`) for texture copy and downsampling, fixing the "copy range touches outside of texture" error for rectangular images.
 4. **Square canvas now defaults to ON** — Changed `squareCanvas` state default from `false` to `true` in `src/App.tsx`.
+5. **Layer opacity fix** — Layer fragment shaders now actually use `layerOpacity` uniform to modulate output alpha, fixing the issue where opacity sliders didn't work.
+6. **Transparent background + tracer/layer fallback** — Changed compositor to clear to transparent (`a: 0`) instead of opaque black. Added logic so that when main layers are black/transparent, the tracer shows through, and vice versa. Final output preserves actual alpha instead of forcing to 1.0.
 
 ## Current State
 - `npm run build` ✅ clean
