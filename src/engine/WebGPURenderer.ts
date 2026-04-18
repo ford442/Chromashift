@@ -111,7 +111,7 @@ export class WebGPURenderer {
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
     for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
 
-    this.compositorSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+    this.compositorSampler = device.createSampler({ magFilter: 'nearest', minFilter: 'nearest' });
 
     // Persistence pipeline
     this.persistBGL      = this.createPersistBGL();

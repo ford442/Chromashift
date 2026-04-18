@@ -73,14 +73,14 @@ export default function App() {
       const containerW = container.clientWidth;
       const containerH = container.clientHeight;
 
-      const side = Math.min(maxSize, containerW, containerH);
+      const side = Math.floor(Math.min(maxSize, containerW, containerH));
 
-      canvas.width  = side * window.devicePixelRatio;
-      canvas.height = side * window.devicePixelRatio;
+      canvas.width  = Math.floor(side * window.devicePixelRatio);
+      canvas.height = Math.floor(side * window.devicePixelRatio);
       canvas.style.width  = `${side}px`;
       canvas.style.height = `${side}px`;
-      canvas.style.left = `${(containerW - side) / 2}px`;
-      canvas.style.top  = `${(containerH - side) / 2}px`;
+      canvas.style.left = `${Math.floor((containerW - side) / 2)}px`;
+      canvas.style.top  = `${Math.floor((containerH - side) / 2)}px`;
     }
 
     resizeCanvas();
@@ -366,7 +366,7 @@ export default function App() {
       </div>
 
       {/* Preview: RGB Separated Output (Top-Right) */}
-      <div className="absolute top-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+      <div className="absolute top-3 right-3 z-30 mt-24 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewSeparatedRef}
           width={150}
