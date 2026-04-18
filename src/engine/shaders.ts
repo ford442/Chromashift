@@ -255,7 +255,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
       if (has0) { mixed += c0.rgb; cnt += 1.0; }
       if (has1) { mixed += c1.rgb; cnt += 1.0; }
       if (has2) { mixed += c2.rgb; cnt += 1.0; }
-      newColor = vec4<f32>(mixed / cnt, 1.0);
+      newColor = vec4<f32>(mixed / max(cnt, 1.0), 1.0);
     } else {
       // Grey highlight mode
       newColor = vec4<f32>(0.95, 0.95, 0.90, 1.0);
