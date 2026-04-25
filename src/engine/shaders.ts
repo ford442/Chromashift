@@ -315,136 +315,81 @@ struct CompositorUniforms {
 };
 @group(0) @binding(6) var<uniform> cu : CompositorUniforms;
 
-fn applyOpacity(color: vec4<f32>, opacity: f32) -> vec4<f32> {
-  return vec4<f32>(color.rgb, color.a * opacity);
-}
-
-fn blend_alpha(dst: vec4<f32>, src: vec4<f32>) -> f32 {
-  return src.a + dst.a * (1.0 - src.a);
-}
-
-// Used by divide-based blend modes (Color Dodge/Burn) to avoid divide-by-zero.
 const BLEND_EPSILON : f32 = 0.0001;
 
+fn scale_premultiplied(color: vec4<f32>, opacity: f32) -> vec4<f32> {
+  return color * opacity;
+}
+
+fn unpremultiply(color: vec4<f32>) -> vec4<f32> {
+  if (color.a < BLEND_EPSILON) { return vec4<f32>(0.0); }
+  return vec4<f32>(color.rgb / color.a, color.a);
+}
+
 fn alpha_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let a = src.a + dst.a * (1.0 - src.a);
-  if (a < 0.0001) { return vec4<f32>(0.0); }
-  let rgb = (src.rgb * src.a + dst.rgb * dst.a * (1.0 - src.a)) / a;
-  return vec4<f32>(rgb, a);
-}
-
-fn add_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  return dst + src;
-}
-
-fn subtract_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  return max(dst - src, vec4<f32>(0.0));
-}
-
-fn multiply_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let rgb = dst.rgb * src.rgb;
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn screen_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let rgb = 1.0 - (1.0 - dst.rgb) * (1.0 - src.rgb);
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn lighten_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let rgb = max(dst.rgb, src.rgb);
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn darken_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let rgb = min(dst.rgb, src.rgb);
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn overlay_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let rgb = select(
-    1.0 - 2.0 * (1.0 - dst.rgb) * (1.0 - src.rgb),
-    2.0 * dst.rgb * src.rgb,
-    dst.rgb < vec3<f32>(0.5)
-  );
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn color_dodge_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let safeDenom = max(vec3<f32>(1.0) - src.rgb, vec3<f32>(BLEND_EPSILON));
-  let rgb = clamp(dst.rgb / safeDenom, vec3<f32>(0.0), vec3<f32>(1.0));
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn color_burn_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let safeSrc = max(src.rgb, vec3<f32>(BLEND_EPSILON));
-  let rgb = clamp(vec3<f32>(1.0) - (vec3<f32>(1.0) - dst.rgb) / safeSrc, vec3<f32>(0.0), vec3<f32>(1.0));
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn difference_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let rgb = abs(dst.rgb - src.rgb);
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn exclusion_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let rgb = dst.rgb + src.rgb - 2.0 * dst.rgb * src.rgb;
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
-}
-
-fn hard_light_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
-  let rgb = select(
-    1.0 - 2.0 * (1.0 - src.rgb) * (1.0 - dst.rgb),
-    2.0 * src.rgb * dst.rgb,
-    src.rgb < vec3<f32>(0.5)
-  );
-  let a = blend_alpha(dst, src);
-  return vec4<f32>(rgb, a);
+  return src + dst * (1.0 - src.a);
 }
 
 fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
-  switch (mode) {
-    case 1u: { return add_blend(dst, src); }
-    case 2u: { return subtract_blend(dst, src); }
-    case 3u: { return multiply_blend(dst, src); }
-    case 4u: { return screen_blend(dst, src); }
-    case 5u: { return lighten_blend(dst, src); }
-    case 6u: { return darken_blend(dst, src); }
-    case 7u: { return overlay_blend(dst, src); }
-    case 8u: { return color_dodge_blend(dst, src); }
-    case 9u: { return color_burn_blend(dst, src); }
-    case 10u: { return difference_blend(dst, src); }
-    case 11u: { return exclusion_blend(dst, src); }
-    case 12u: { return hard_light_blend(dst, src); }
-    default: { return alpha_blend(dst, src); }
+  if (mode == 0u) {
+    return alpha_blend(dst, src);
   }
-}
 
-fn blend_tracer(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
-  switch (mode) {
-    case 1u: { return add_blend(dst, src); }
-    case 2u: { return subtract_blend(dst, src); }
-    case 3u: { return multiply_blend(dst, src); }
-    case 4u: { return screen_blend(dst, src); }
-    case 5u: { return lighten_blend(dst, src); }
-    case 6u: { return darken_blend(dst, src); }
-    case 7u: { return overlay_blend(dst, src); }
-    case 8u: { return color_dodge_blend(dst, src); }
-    case 9u: { return color_burn_blend(dst, src); }
-    case 10u: { return difference_blend(dst, src); }
-    case 11u: { return exclusion_blend(dst, src); }
-    case 12u: { return hard_light_blend(dst, src); }
-    default: { return alpha_blend(dst, src); }
+  if (mode == 1u) {
+    return src + dst;
   }
+
+  if (mode > 12u) {
+    return alpha_blend(dst, src);
+  }
+
+  let s = unpremultiply(src);
+  let d = unpremultiply(dst);
+  var rgb = vec3<f32>(0.0);
+
+  switch (mode) {
+    case 2u:  { rgb = max(d.rgb - s.rgb, vec3<f32>(0.0)); }
+    case 3u:  { rgb = d.rgb * s.rgb; }
+    case 4u:  { rgb = 1.0 - (1.0 - d.rgb) * (1.0 - s.rgb); }
+    case 5u:  { rgb = max(d.rgb, s.rgb); }
+    case 6u:  { rgb = min(d.rgb, s.rgb); }
+    case 7u:  {
+      rgb = select(
+        1.0 - 2.0 * (1.0 - d.rgb) * (1.0 - s.rgb),
+        2.0 * d.rgb * s.rgb,
+        d.rgb < vec3<f32>(0.5)
+      );
+    }
+    case 8u:  {
+      let safeDenom = max(vec3<f32>(1.0) - s.rgb, vec3<f32>(BLEND_EPSILON));
+      rgb = clamp(d.rgb / safeDenom, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    case 9u:  {
+      let safeSrc = max(s.rgb, vec3<f32>(BLEND_EPSILON));
+      rgb = clamp(vec3<f32>(1.0) - (vec3<f32>(1.0) - d.rgb) / safeSrc, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    case 10u: { rgb = abs(d.rgb - s.rgb); }
+    case 11u: { rgb = d.rgb + s.rgb - 2.0 * d.rgb * s.rgb; }
+    case 12u: {
+      rgb = select(
+        1.0 - 2.0 * (1.0 - s.rgb) * (1.0 - d.rgb),
+        2.0 * s.rgb * d.rgb,
+        s.rgb < vec3<f32>(0.5)
+      );
+    }
+    default:  { rgb = s.rgb; }
+  }
+
+  let outAlpha = s.a + d.a * (1.0 - s.a);
+  if (outAlpha < BLEND_EPSILON) { return vec4<f32>(0.0); }
+
+  let outRgb = (
+    s.rgb * s.a * (1.0 - d.a) +
+    d.rgb * d.a * (1.0 - s.a) +
+    rgb * s.a * d.a
+  ) / outAlpha;
+
+  return vec4<f32>(outRgb * outAlpha, outAlpha);
 }
 
 @fragment
@@ -455,12 +400,12 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let pBelow  = textureSample(persistBelow, cSampler, uv);
   let pAbove  = textureSample(persistAbove, cSampler, uv);
 
-  let pBelowScaled = vec4<f32>(pBelow.rgb, pBelow.a * cu.tracerBelowOpacity);
-  let pAboveScaled = vec4<f32>(pAbove.rgb, pAbove.a * cu.tracerAboveOpacity);
+  let pBelowScaled = scale_premultiplied(pBelow, cu.tracerBelowOpacity);
+  let pAboveScaled = scale_premultiplied(pAbove, cu.tracerAboveOpacity);
 
-  let c0Opaque = applyOpacity(c0, cu.layerOpacity0);
-  let c1Opaque = applyOpacity(c1, cu.layerOpacity1);
-  let c2Opaque = applyOpacity(c2, cu.layerOpacity2);
+  let c0Opaque = scale_premultiplied(c0, cu.layerOpacity0);
+  let c1Opaque = scale_premultiplied(c1, cu.layerOpacity1);
+  let c2Opaque = scale_premultiplied(c2, cu.layerOpacity2);
 
   // 1. Blend the main active layers together
   var layerCol = vec4<f32>(0.0);
@@ -474,17 +419,17 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   if (cu.outputMode == 1u) {
     // Tracer Focus: layers first, then both tracers on top
     finalCol = alpha_blend(finalCol, layerCol);
-    finalCol = blend_tracer(finalCol, pBelowScaled, cu.tracerBlendMode);
-    finalCol = blend_tracer(finalCol, pAboveScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 2u) {
     // Tracer Only: suppress live layers
-    finalCol = blend_tracer(finalCol, pBelowScaled, cu.tracerBlendMode);
-    finalCol = blend_tracer(finalCol, pAboveScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else {
     // Mixed (default): Below -> Layers -> Above
-    finalCol = blend_tracer(finalCol, pBelowScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = alpha_blend(finalCol, layerCol);
-    finalCol = blend_tracer(finalCol, pAboveScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   }
 
   return finalCol;
