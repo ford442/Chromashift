@@ -52,6 +52,7 @@ export default function App() {
   const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
   const [layerBlendMode, setLayerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
   const [tracerBlendMode, setTracerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
+  const [outputMode, setOutputMode] = useState(0); // 0=mixed, 1=tracer focus, 2=tracer only
   const [isPaused, setIsPaused] = useState(false); // Pauses animation AND tracer decay
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
@@ -268,6 +269,7 @@ export default function App() {
           tracerMode,
           layerBlendMode,
           tracerBlendMode,
+          outputMode,
           paused: isPaused,
         };
 
@@ -513,6 +515,7 @@ export default function App() {
         tracerMode={tracerMode}
         layerBlendMode={layerBlendMode}
         tracerBlendMode={tracerBlendMode}
+        outputMode={outputMode}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
@@ -526,6 +529,7 @@ export default function App() {
         onTracerModeChange={setTracerMode}
         onLayerBlendModeChange={setLayerBlendMode}
         onTracerBlendModeChange={setTracerBlendMode}
+        onOutputModeChange={setOutputMode}
         onSquareCanvasToggle={setSquareCanvas}
         onAntialiasToggle={(enabled) => {
           setAntialiasEnabled(enabled);

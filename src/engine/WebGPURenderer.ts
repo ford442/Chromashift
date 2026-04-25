@@ -36,6 +36,7 @@ export interface RendererState {
   tracerMode?          : number;  // 0 = combined colors, 1 = grey highlight
   layerBlendMode?      : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
+  outputMode?          : number;  // 0 = mixed, 1 = tracer focus, 2 = tracer only
   paused?              : boolean; // When true, tracer persistence stops decaying
 }
 
@@ -456,6 +457,7 @@ export class WebGPURenderer {
     floatView[4] = layerOpacity;
     floatView[5] = layerOpacity;
     floatView[6] = layerOpacity;
+    uintView[7] = state.outputMode ?? 0;
 
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0, compositorUniforms);
 

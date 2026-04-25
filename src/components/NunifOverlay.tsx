@@ -14,6 +14,7 @@ interface Props {
   tracerMode                 : number;
   layerBlendMode             : number;
   tracerBlendMode            : number;
+  outputMode                 : number;
   squareCanvas               : boolean;
   antialiasEnabled           : boolean;
   onAngleChange              : (layer: 0 | 1 | 2, angle: number) => void;
@@ -27,6 +28,7 @@ interface Props {
   onTracerModeChange         : (v: number) => void;
   onLayerBlendModeChange     : (v: number) => void;
   onTracerBlendModeChange    : (v: number) => void;
+  onOutputModeChange         : (v: number) => void;
   onSquareCanvasToggle       : (v: boolean) => void;
   onAntialiasToggle          : (v: boolean) => void;
   onReset                    : () => void;
@@ -51,6 +53,7 @@ export function NunifOverlay({
   tracerMode,
   layerBlendMode,
   tracerBlendMode,
+  outputMode,
   squareCanvas,
   antialiasEnabled,
   onAngleChange,
@@ -64,6 +67,7 @@ export function NunifOverlay({
   onTracerModeChange,
   onLayerBlendModeChange,
   onTracerBlendModeChange,
+  onOutputModeChange,
   onSquareCanvasToggle,
   onAntialiasToggle,
   onReset,
@@ -232,6 +236,45 @@ export function NunifOverlay({
               >
                 {tracerMode === 0 ? '🎨 Colors' : '◻ Grey'}
               </button>
+            </div>
+
+            <div className="space-y-1 pt-1">
+              <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">Output:</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => onOutputModeChange(0)}
+                  className={`text-[10px] px-2 py-0.5 rounded transition-colors flex-1 ${
+                    outputMode === 0
+                      ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                      : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
+                  }`}
+                  title="Normal mix: Below tracer -> Layers -> Above tracer"
+                >
+                  Mixed
+                </button>
+                <button
+                  onClick={() => onOutputModeChange(1)}
+                  className={`text-[10px] px-2 py-0.5 rounded transition-colors flex-1 ${
+                    outputMode === 1
+                      ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                      : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
+                  }`}
+                  title="Tracers dominate: Layers -> Below -> Above"
+                >
+                  Tracer Focus
+                </button>
+                <button
+                  onClick={() => onOutputModeChange(2)}
+                  className={`text-[10px] px-2 py-0.5 rounded transition-colors flex-1 ${
+                    outputMode === 2
+                      ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                      : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
+                  }`}
+                  title="Show only the decaying tracers"
+                >
+                  Tracer Only
+                </button>
+              </div>
             </div>
           </div>
 

@@ -263,28 +263,29 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let prev = textureSample(prevTex, cSampler, uv);
 
   // Overlap detection: all 3 layers must have visible color
-  // Using alpha threshold from uniform for configurability
   let thresh = pu.colorThresh;
   let allVisible = (c0.a > thresh) && (c1.a > thresh) && (c2.a > thresh);
 
-  var newColor: vec4<f32>;
-  if (pu.tracerMode == 1u) {
-    // Grey highlight mode: use luminance of combined layers
-    let combined = (c0.rgb + c1.rgb + c2.rgb) / 3.0;
-    let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
-    newColor = vec4<f32>(vec3<f32>(lum), 1.0);
-  } else {
-    // Combined colors mode: average the overlapping colors
-    newColor = vec4<f32>((c0.rgb + c1.rgb + c2.rgb) / 3.0, 1.0);
+  // Default to zero alpha (empty)
+  var newColor = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+
+  // Only stamp a new tracer ghost if the layers actually overlap here
+  if (allVisible) {
+    if (pu.tracerMode == 1u) {
+      let combined = (c0.rgb + c1.rgb + c2.rgb) / 3.0;
+      let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
+      newColor = vec4<f32>(vec3<f32>(lum), 1.0);
+    } else {
+      newColor = vec4<f32>((c0.rgb + c1.rgb + c2.rgb) / 3.0, 1.0);
+    }
   }
 
-  // Decay modifier: when all 3 overlap, decay slower to preserve the collision
+  // Decay modifier
   let decayMod = select(1.0, 1.5, allVisible);
   let effectiveDecay = pow(pu.decayFactor, decayMod);
   let decayed = prev * effectiveDecay;
 
   // Keep the stronger one (new collision beats old ghost)
-  // If newColor has alpha, use it; otherwise use decayed
   return select(decayed, newColor, newColor.a > decayed.a);
 }
 `;
@@ -310,7 +311,7 @@ struct CompositorUniforms {
   layerOpacity0      : f32,
   layerOpacity1      : f32,
   layerOpacity2      : f32,
-  _pad0              : f32,
+  outputMode         : u32,
 };
 @group(0) @binding(6) var<uniform> cu : CompositorUniforms;
 
@@ -461,31 +462,32 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c1Opaque = applyOpacity(c1, cu.layerOpacity1);
   let c2Opaque = applyOpacity(c2, cu.layerOpacity2);
 
-  // Blend layers
+  // 1. Blend the main active layers together
   var layerCol = vec4<f32>(0.0);
   layerCol = blend(layerCol, c2Opaque, cu.layerBlendMode);
   layerCol = blend(layerCol, c1Opaque, cu.layerBlendMode);
   layerCol = blend(layerCol, c0Opaque, cu.layerBlendMode);
 
-  // Blend tracers
-  var tracerCol = vec4<f32>(0.0);
-  tracerCol = blend_tracer(tracerCol, pBelowScaled, cu.tracerBlendMode);
-  tracerCol = blend_tracer(tracerCol, pAboveScaled, cu.tracerBlendMode);
+  // 2. Build the final depth stack based on output mode
+  var finalCol = vec4<f32>(0.0);
 
-  // Always do a weighted blend between layers and tracer
-  // This ensures the tracer color mixes in even at low layer opacity
-  let layerWeight = max(layerCol.a, 0.001);  // Ensure at least tiny weight
-  let tracerWeight = max(tracerCol.a, 0.001);  // Ensure at least tiny weight
-  let totalWeight = layerWeight + tracerWeight;
-  
-  let layerRatio = layerWeight / totalWeight;
-  let tracerRatio = tracerWeight / totalWeight;
-  
-  // Blend RGB based on relative weights
-  let rgb = layerCol.rgb * layerRatio + tracerCol.rgb * tracerRatio;
-  let a = max(layerCol.a, tracerCol.a);
-  
-  return vec4<f32>(rgb, a);
+  if (cu.outputMode == 1u) {
+    // Tracer Focus: layers first, then both tracers on top
+    finalCol = alpha_blend(finalCol, layerCol);
+    finalCol = blend_tracer(finalCol, pBelowScaled, cu.tracerBlendMode);
+    finalCol = blend_tracer(finalCol, pAboveScaled, cu.tracerBlendMode);
+  } else if (cu.outputMode == 2u) {
+    // Tracer Only: suppress live layers
+    finalCol = blend_tracer(finalCol, pBelowScaled, cu.tracerBlendMode);
+    finalCol = blend_tracer(finalCol, pAboveScaled, cu.tracerBlendMode);
+  } else {
+    // Mixed (default): Below -> Layers -> Above
+    finalCol = blend_tracer(finalCol, pBelowScaled, cu.tracerBlendMode);
+    finalCol = alpha_blend(finalCol, layerCol);
+    finalCol = blend_tracer(finalCol, pAboveScaled, cu.tracerBlendMode);
+  }
+
+  return finalCol;
 }
 `;
 
