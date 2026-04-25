@@ -339,6 +339,10 @@ fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
     return src + dst;
   }
 
+  if (mode > 12u) {
+    return alpha_blend(dst, src);
+  }
+
   let s = unpremultiply(src);
   let d = unpremultiply(dst);
   var rgb = vec3<f32>(0.0);
