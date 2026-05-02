@@ -54,6 +54,8 @@ export default function App() {
   const [tracerBlendMode, setTracerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
   const [outputMode, setOutputMode] = useState(0); // 0=mixed, 1=tracer focus, 2=tracer only
   const [isPaused, setIsPaused] = useState(false); // Pauses animation AND tracer decay
+  const [layerScale, setLayerScale] = useState(1.0);
+  const [tracerScale, setTracerScale] = useState(1.0);
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
@@ -271,6 +273,8 @@ export default function App() {
           ],
           avgLuminance,
           layerOpacity,
+          layerScale,
+          tracerScale,
           tracerAboveIntensity,
           tracerBelowIntensity,
           tracerAboveDuration: tracerAboveDuration * (60 / frameRate),
@@ -367,7 +371,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -517,6 +521,8 @@ export default function App() {
         layerExtensions={layerExtensions}
         frameRate={frameRate}
         layerOpacity={layerOpacity}
+        layerScale={layerScale}
+        tracerScale={tracerScale}
         tracerAboveIntensity={tracerAboveIntensity}
         tracerBelowIntensity={tracerBelowIntensity}
         tracerAboveDuration={tracerAboveDuration}
@@ -531,6 +537,8 @@ export default function App() {
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
         onLayerOpacityChange={setLayerOpacity}
+        onLayerScaleChange={setLayerScale}
+        onTracerScaleChange={setTracerScale}
         onTracerAboveIntensityChange={setTracerAboveIntensity}
         onTracerBelowIntensityChange={setTracerBelowIntensity}
         onTracerAboveDurationChange={setTracerAboveDuration}

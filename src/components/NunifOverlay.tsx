@@ -7,6 +7,8 @@ interface Props {
   layerExtensions            : [number, number, number];
   frameRate                  : number;
   layerOpacity               : number;
+  layerScale                 : number;
+  tracerScale                : number;
   tracerAboveIntensity       : number;
   tracerBelowIntensity       : number;
   tracerAboveDuration        : number;
@@ -21,6 +23,8 @@ interface Props {
   onExtensionChange          : (layer: 0 | 1 | 2, extension: number) => void;
   onFrameRateChange          : (fps: number) => void;
   onLayerOpacityChange       : (opacity: number) => void;
+  onLayerScaleChange         : (v: number) => void;
+  onTracerScaleChange        : (v: number) => void;
   onTracerAboveIntensityChange: (v: number) => void;
   onTracerBelowIntensityChange: (v: number) => void;
   onTracerAboveDurationChange : (v: number) => void;
@@ -46,6 +50,8 @@ export function NunifOverlay({
   layerExtensions,
   frameRate,
   layerOpacity,
+  layerScale,
+  tracerScale,
   tracerAboveIntensity,
   tracerBelowIntensity,
   tracerAboveDuration,
@@ -60,6 +66,8 @@ export function NunifOverlay({
   onExtensionChange,
   onFrameRateChange,
   onLayerOpacityChange,
+  onLayerScaleChange,
+  onTracerScaleChange,
   onTracerAboveIntensityChange,
   onTracerBelowIntensityChange,
   onTracerAboveDurationChange,
@@ -185,6 +193,28 @@ export function NunifOverlay({
             <input
               type="range" min={0} max={1} step={0.01} value={layerOpacity}
               onChange={(e) => onLayerOpacityChange(Number(e.target.value))}
+              className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
+              Layer Res: <span className="tabular-nums">{layerScale.toFixed(1)}x</span>
+            </span>
+            <input
+              type="range" min={0.1} max={2.0} step={0.1} value={layerScale}
+              onChange={(e) => onLayerScaleChange(Number(e.target.value))}
+              className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
+              Tracer Res: <span className="tabular-nums">{tracerScale.toFixed(1)}x</span>
+            </span>
+            <input
+              type="range" min={0.1} max={2.0} step={0.1} value={tracerScale}
+              onChange={(e) => onTracerScaleChange(Number(e.target.value))}
               className="w-28 h-1 accent-amber-400 hover:accent-amber-300"
             />
           </div>

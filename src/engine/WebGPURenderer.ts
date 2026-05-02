@@ -28,6 +28,8 @@ export interface RendererState {
   layers               : [LayerState, LayerState, LayerState];
   avgLuminance         : number;
   layerOpacity?        : number;
+  layerScale?          : number;  // 0.1–2.0, default 1.0
+  tracerScale?         : number;  // 0.1–2.0, default 1.0
   tracerAboveIntensity?: number;  // NEW
   tracerBelowIntensity?: number;  // NEW
   tracerAboveDuration? : number;  // NEW
@@ -100,11 +102,13 @@ export class WebGPURenderer {
   private layerPipelines : LayerPipeline[] = [];
   private currentTexture : GPUTexture | null = null;
 
-  // Intermediate per-layer render textures (always 1x — resolved from MSAA)
+  // Intermediate per-layer render textures (scaled by layerScale)
   private layerTextures : GPUTexture[] = [];
   private msaaTexture   : GPUTexture | null = null;
   private texW = 0;
   private texH = 0;
+  private layerScale = 1.0;
+  private tracerScale = 1.0;
 
   // Persistence ping-pong (Dual system)
   private persistAboveTextures  : [GPUTexture | null, GPUTexture | null] = [null, null];
@@ -255,15 +259,20 @@ export class WebGPURenderer {
     this.persistAboveTextures[0]?.destroy(); this.persistAboveTextures[1]?.destroy();
     this.persistBelowTextures[0]?.destroy(); this.persistBelowTextures[1]?.destroy();
 
-    // Layer intermediate textures (always 1x so compositor can sample them)
+    const layerW = Math.max(1, Math.round(w * this.layerScale));
+    const layerH = Math.max(1, Math.round(h * this.layerScale));
+    const tracerW = Math.max(1, Math.round(w * this.tracerScale));
+    const tracerH = Math.max(1, Math.round(h * this.tracerScale));
+
+    // Layer intermediate textures (scaled by layerScale)
     this.layerTextures = [0, 1, 2].map(() => this.device.createTexture({
-      size       : [w, h, 1],
+      size       : [layerW, layerH, 1],
       format     : this.format,
       usage      : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       sampleCount: 1,
     }));
 
-    // MSAA resolve target (only needed when AA is on)
+    // MSAA resolve target (always at full canvas resolution)
     if (this.sampleCount > 1) {
       this.msaaTexture = this.device.createTexture({
         size       : [w, h, 1],
@@ -275,9 +284,9 @@ export class WebGPURenderer {
       this.msaaTexture = null;
     }
 
-    // Persistence ping-pong textures — both start as RENDER_ATTACHMENT + TEXTURE_BINDING + COPY_SRC
+    // Persistence ping-pong textures — scaled by tracerScale
     const createPersistTex = () => this.device.createTexture({
-      size  : [w, h, 1], format: this.format,
+      size  : [tracerW, tracerH, 1], format: this.format,
       usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
     });
 
@@ -316,6 +325,8 @@ export class WebGPURenderer {
     this.persistBelowTextures = [null, null];
     this.texW = 0;
     this.texH = 0;
+    this.layerScale = 1.0;
+    this.tracerScale = 1.0;
   }
 
   /**
@@ -358,6 +369,9 @@ export class WebGPURenderer {
 
   render(state: RendererState, fps = 30): void {
     if (!this.currentTexture) return;
+
+    this.layerScale = state.layerScale ?? 1.0;
+    this.tracerScale = state.tracerScale ?? 1.0;
 
     const canvasTex = this.context.getCurrentTexture();
     this.ensureTextures(canvasTex.width, canvasTex.height);
