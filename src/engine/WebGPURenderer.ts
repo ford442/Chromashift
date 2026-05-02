@@ -40,13 +40,6 @@ export interface RendererState {
   paused?              : boolean; // When true, tracer persistence stops decaying
 }
 
-/** Column-major mat3x3 for WGSL std140. */
-function buildRotationMat3(angleDeg: number): Float32Array {
-  const rad = (angleDeg * Math.PI) / 180;
-  const c = Math.cos(rad), s = Math.sin(rad);
-  return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0]);
-}
-
 /**
  * Convert tracerDuration (ms) and frameRate (fps) into a per-frame
  * decay multiplier so that after `duration` ms the value reaches ~1/255.
@@ -156,7 +149,7 @@ export class WebGPURenderer {
     });
 
     const rotationBuffer = device.createBuffer({
-      size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const fragUniformBuffer = device.createBuffer({
       size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -348,13 +341,12 @@ export class WebGPURenderer {
       const lp    = this.layerPipelines[i];
       const layer = state.layers[i];
 
-      const rotMat = buildRotationMat3(layer.angleDeg);
-      const flipX  = layer.flipX ? 1 : 0;
-      const flipY  = layer.flipY ? 1 : 0;
-      const rotBuf = new ArrayBuffer(64);
-      new Float32Array(rotBuf).set(rotMat);
-      new Uint32Array(rotBuf, 48).set([flipX, flipY]);
-      this.device.queue.writeBuffer(lp.rotationBuffer, 0, rotBuf);
+      const rad    = (layer.angleDeg * Math.PI) / 180;
+      const flipX  = layer.flipX ? 1.0 : 0.0;
+      const flipY  = layer.flipY ? 1.0 : 0.0;
+      const aspect = canvasTex.width / canvasTex.height;
+      this.device.queue.writeBuffer(lp.rotationBuffer, 0,
+        new Float32Array([rad, flipX, flipY, aspect]));
 
       const opacity = state.layerOpacity ?? 1.0;
       this.device.queue.writeBuffer(lp.fragUniformBuffer, 0,
@@ -433,12 +425,11 @@ export class WebGPURenderer {
       pass.setPipeline(this.persistPipeline); pass.setBindGroup(0, bg); pass.draw(6); pass.end();
     };
 
-    // Execute Below Pass
-    runPersistPass(state.tracerBelowDuration ?? 0, this.persistBelowUniformBuf, this.persistBelowTextures);
-    // Execute Above Pass
-    runPersistPass(state.tracerAboveDuration ?? 1000, this.persistAboveUniformBuf, this.persistAboveTextures);
-
-    this.persistPingPong = writeIdx;
+    if (!state.paused) {
+      runPersistPass(state.tracerBelowDuration ?? 0, this.persistBelowUniformBuf, this.persistBelowTextures);
+      runPersistPass(state.tracerAboveDuration ?? 1000, this.persistAboveUniformBuf, this.persistAboveTextures);
+      this.persistPingPong = writeIdx;
+    }
 
     // ── Pass 4: compositor ───────────
     const tracerAboveOp = state.tracerAboveIntensity ?? 0.85;
@@ -468,8 +459,8 @@ export class WebGPURenderer {
         { binding: 1, resource: this.layerTextures[0].createView() },
         { binding: 2, resource: this.layerTextures[1].createView() },
         { binding: 3, resource: this.layerTextures[2].createView() },
-        { binding: 4, resource: this.persistBelowTextures[writeIdx]!.createView() }, // Binding 4: Below
-        { binding: 5, resource: this.persistAboveTextures[writeIdx]!.createView() }, // Binding 5: Above
+        { binding: 4, resource: this.persistBelowTextures[this.persistPingPong]!.createView() }, // Binding 4: Below
+        { binding: 5, resource: this.persistAboveTextures[this.persistPingPong]!.createView() }, // Binding 5: Above
         { binding: 6, resource: { buffer: this.compositorUniformBuf } },
       ],
     });

@@ -358,7 +358,7 @@ export default function App() {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, tracerPreviewFrozen, isPaused]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     setLayerAngles((prev) => {
@@ -425,9 +425,9 @@ export default function App() {
       <div className="absolute bottom-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewTracerRef}
-          width={150}
-          height={150}
-          style={{ display: 'block', imageRendering: 'pixelated' }}
+          width={300}
+          height={300}
+          style={{ display: 'block', width: '150px', height: '150px', imageRendering: 'auto' }}
         />
         <div className="flex items-center justify-between px-2 py-1">
           <span className="text-xs text-amber-400 font-mono">Tracer</span>
