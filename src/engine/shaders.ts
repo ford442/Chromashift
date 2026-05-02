@@ -262,26 +262,33 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c2 = textureSample(layer2, cSampler, uv);
   let prev = textureSample(prevTex, cSampler, uv);
 
-  // Overlap detection: all 3 layers must have visible color
+  // Count how many layers have visible color at this pixel
+  var layerCount = 0u;
   let thresh = pu.colorThresh;
-  let allVisible = (c0.a > thresh) && (c1.a > thresh) && (c2.a > thresh);
+  if (c0.a > thresh) { layerCount = layerCount + 1u; }
+  if (c1.a > thresh) { layerCount = layerCount + 1u; }
+  if (c2.a > thresh) { layerCount = layerCount + 1u; }
 
   // Default to zero alpha (empty)
   var newColor = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
-  // Only stamp a new tracer ghost if the layers actually overlap here
-  if (allVisible) {
+  // Stamp a tracer ghost when 2+ layers overlap (much more likely than all 3)
+  if (layerCount >= 2u) {
+    let combined = (c0.rgb + c1.rgb + c2.rgb) / 3.0;
     if (pu.tracerMode == 1u) {
-      let combined = (c0.rgb + c1.rgb + c2.rgb) / 3.0;
       let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
-      newColor = vec4<f32>(vec3<f32>(lum), 1.0);
+      // Boost grey highlight for visibility
+      let boosted = min(lum * 2.0, 1.0);
+      newColor = vec4<f32>(vec3<f32>(boosted), 1.0);
     } else {
-      newColor = vec4<f32>((c0.rgb + c1.rgb + c2.rgb) / 3.0, 1.0);
+      // Brighten the combined color so tracer is visually distinct from raw layers
+      let brightened = min(combined * 1.8, vec3<f32>(1.0));
+      newColor = vec4<f32>(brightened, 1.0);
     }
   }
 
-  // Decay modifier
-  let decayMod = select(1.0, 1.5, allVisible);
+  // Decay modifier: decay faster when actively overlapping, slower otherwise
+  let decayMod = select(1.0, 1.5, layerCount >= 2u);
   let effectiveDecay = pow(pu.decayFactor, decayMod);
   let decayed = prev * effectiveDecay;
 
