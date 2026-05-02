@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { WebGPURenderer, type RendererState } from './engine/WebGPURenderer';
+import { WebGPURenderer, computeAverageLuminance, type RendererState } from './engine/WebGPURenderer';
 import { TextureManager } from './engine/TextureManager';
 import { NunifOverlay } from './components/NunifOverlay';
 
@@ -47,7 +47,7 @@ export default function App() {
   const [tracerAboveDuration, setTracerAboveDuration] = useState(500);
   const [tracerBelowDuration, setTracerBelowDuration] = useState(2000);
   const [squareCanvas, setSquareCanvas] = useState(true);
-  const [antialiasEnabled, setAntialiasEnabled] = useState(true);
+  const [antialiasEnabled, setAntialiasEnabled] = useState(false);
   const [tracerMode, setTracerMode] = useState(0); // 0 = combined colors, 1 = grey highlight
   const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
   const [layerBlendMode, setLayerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
@@ -154,7 +154,7 @@ export default function App() {
       const format = navigator.gpu.getPreferredCanvasFormat();
       context.configure({ device, format, alphaMode: 'opaque' });
 
-      const renderer = new WebGPURenderer(device, context, format);
+      const renderer = new WebGPURenderer(device, context, format, antialiasEnabled);
       const textureManager = new TextureManager(device);
 
       deviceRef.current = device;
@@ -182,7 +182,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [antialiasEnabled]);
 
   // Load texture whenever image index changes
   useEffect(() => {
@@ -205,6 +205,15 @@ export default function App() {
           if (img.height > 0) {
             setImageAspect(img.width / img.height);
           }
+
+          // Compute true average luminance from the actual image
+          let avgLum = 128;
+          try {
+            avgLum = computeAverageLuminance(img);
+          } catch (e) {
+            console.warn('Could not compute average luminance (CORS?):', e);
+          }
+          setAvgLuminance(Math.round(avgLum));
 
           const ctx = previewOrig.getContext('2d');
           if (ctx) {

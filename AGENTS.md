@@ -68,17 +68,32 @@ src/
 
 Luminance is calculated via ITU-R BT.709: `0.2126R + 0.7152G + 0.0722B`, scaled 0–255.
 
-| Layer | Luminance range | Output colour |
-|---|---|---|
-| 0 | 190–209 | Red |
-| 0 | 209–229 | Orange |
-| 0 | 229+ | Near-white highlight (yellow-tinted) |
-| 1 | 177–190 | Violet |
-| 1 | 158–177 | Blue |
-| 2 | 145–158 | Green |
-| 2 | 125–145 | Yellow |
+Each fragment shader first preprocesses the luminance with values derived from `avgLuminance`:
 
-The `avgLuminance` uniform (0–255, controlled by a slider) is passed to the fragment shaders but currently acts as a global parameter rather than directly modulating saturation (the shaders use fixed saturation values per band).
+```
+diff      = (avgLuminance / 255) * 32
+lightDark = 128 + abs(avgLuminance - 128) / 2
+rgb       = lum + lightDark / 2
+grey      = avgLuminance
+```
+
+Then each shader checks `rgb` against the original cr0p thresholds and outputs fixed RGB colours (not smooth gradients).
+
+| Band | Threshold | Layer | Colour (RGB 0–1) |
+|---|---|---|---|
+| Grey highlight | `rgb > 229` | 0 | `(grey+(rgb-229))/255` |
+| Orange | `209 < rgb ≤ 229` | 0 | `(255, 128-diff, 0)` |
+| Red | `193 < rgb ≤ 209` | 0 | `(255-diff, 0, 0)` |
+| Border red | `190 < rgb ≤ 193` | 0 | `(255, 0, 0)` |
+| Violet | `177 < rgb ≤ 190` | 1 | `(128-diff, 0, 255)` |
+| Blue | `161 < rgb ≤ 177` | 1 | `(0, 0, 255-diff)` |
+| Border blue | `158 < rgb ≤ 161` | 1 | `(0, 0, 255)` |
+| Green | `145 < rgb ≤ 158` | 2 | `(0, 255-diff, 0)` |
+| Yellow | `128 < rgb ≤ 145` | 2 | `(255, 255-diff, 0)` |
+| Border yellow | `125 < rgb ≤ 128` | 2 | `(255, 255, 0)` |
+| Dark / grey | `rgb ≤ 126` | All | `(grey-(rgb-128))/255` |
+
+The `avgLuminance` uniform is computed automatically from each loaded image via `computeAverageLuminance()` (ITU-R BT.709 average over all pixels). Users can still override it with the UI slider.
 
 ### Persistence / Tracer System
 

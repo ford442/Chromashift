@@ -41,6 +41,33 @@ export interface RendererState {
 }
 
 /**
+ * Compute the average ITU-R BT.709 luminance of an image.
+ * Returns a value in the range 0–255.
+ */
+export function computeAverageLuminance(image: HTMLImageElement): number {
+  const canvas = document.createElement('canvas');
+  // Downsample to avoid a full-resolution CPU readback on large images.
+  // 256 px on the long edge is plenty for a stable mean estimate.
+  const MAX_SIZE = 256;
+  const scale = Math.min(1, MAX_SIZE / Math.max(image.naturalWidth, image.naturalHeight));
+  canvas.width = Math.max(1, Math.floor(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.floor(image.naturalHeight * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return 128;
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imgData.data;
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    sum += r * 0.2126 + g * 0.7152 + b * 0.0722;
+  }
+  return sum / (data.length / 4);
+}
+
+/**
  * Convert tracerDuration (ms) and frameRate (fps) into a per-frame
  * decay multiplier so that after `duration` ms the value reaches ~1/255.
  *
@@ -94,7 +121,7 @@ export class WebGPURenderer {
   private compositorSampler   : GPUSampler;
   private compositorUniformBuf: GPUBuffer;
 
-  constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = true) {
+  constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = false) {
     this.device  = device;
     this.context = context;
     this.format  = format;
