@@ -2,6 +2,8 @@
  * NunifOverlay — NUNIF control panel
  */
 
+import { useRef } from 'react';
+
 interface Props {
   layerAngles                : [number, number, number];
   layerExtensions            : [number, number, number];
@@ -40,6 +42,8 @@ interface Props {
   onAutoPlayToggle           : (active: boolean) => void;
   imageChangeInterval        : number;
   onImageChangeIntervalChange: (seconds: number) => void;
+  onLoadSpecificImage        : (url: string) => void;
+  onLoadFile                 : (file: File) => void;
 }
 
 const LAYER_LABELS : [string, string, string] = ['Red/Orange', 'Violet/Blue', 'Green/Yellow'];
@@ -83,7 +87,10 @@ export function NunifOverlay({
   onAutoPlayToggle,
   imageChangeInterval,
   onImageChangeIntervalChange,
+  onLoadSpecificImage,
+  onLoadFile,
 }: Props) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="fixed left-0 top-1/2 -translate-y-1/2 z-50 w-72 bg-black/50 backdrop-blur-xl border-r border-amber-500/20 text-white p-3 select-none overflow-y-auto max-h-[80vh] rounded-r-lg shadow-[0_0_30px_rgba(245,158,11,0.1)]">
       <div className="space-y-3">
@@ -127,6 +134,42 @@ export function NunifOverlay({
               onChange={(e) => onImageChangeIntervalChange(Number(e.target.value))}
               className="flex-1 h-1 accent-amber-400 hover:accent-amber-300"
             />
+          </div>
+        </div>
+
+        {/* Load specific image */}
+        <div className="mb-3 p-2 bg-amber-950/30 border border-amber-500/20 rounded space-y-2">
+          <div className="text-[10px] text-amber-300 font-mono uppercase tracking-wider">Load Image</div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                const url = prompt('Enter image URL:', '');
+                if (url && url.trim()) onLoadSpecificImage(url.trim());
+              }}
+              className="flex-1 text-xs px-2 py-1 rounded bg-purple-700 hover:bg-purple-600 text-white transition-colors"
+            >
+              📷 URL
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex-1 text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 border border-amber-500/30 transition-colors"
+            >
+              📁 File
+            </button>
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onLoadFile(file);
+              e.target.value = '';
+            }}
+          />
+          <div className="text-[10px] text-amber-400/40 font-mono">
+            Or use <code className="text-amber-400/60">?img=URL</code>
           </div>
         </div>
 

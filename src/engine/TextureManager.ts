@@ -48,8 +48,6 @@ export class TextureManager {
       image.src = url;
     });
 
-    await image.decode();
-
     const imageBitmap = await createImageBitmap(image);
     const texture = this.device.createTexture({
       size: [imageBitmap.width, imageBitmap.height, 1],

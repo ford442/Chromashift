@@ -12,6 +12,11 @@ import { NunifOverlay } from './components/NunifOverlay';
 
 const IMAGES_ENDPOINT = './images.json';
 
+function getImageFromURLParams(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('img') || params.get('image') || params.get('url');
+}
+
 type LayerTriple<T> = [T, T, T];
 
 const DEFAULT_ANGLES: LayerTriple<number> = [0, 0, 0];
@@ -35,7 +40,6 @@ export default function App() {
 
   const [layerAngles, setLayerAngles] = useState<LayerTriple<number>>(DEFAULT_ANGLES);
   // layerExtensions is the per-frame step size for each layer (degrees/frame)
-  // Layer 0 subtracts (spins opposite), layers 1 & 2 add — matching original behaviour
   const [layerExtensions, setLayerExtensions] = useState<LayerTriple<number>>(DEFAULT_EXTENSIONS);
   const [frameRate, setFrameRate] = useState(DEFAULT_FPS);
   const [avgLuminance, setAvgLuminance] = useState(128);
@@ -56,12 +60,15 @@ export default function App() {
   const [isPaused, setIsPaused] = useState(false); // Pauses animation AND tracer decay
   const [layerScale, setLayerScale] = useState(1.0);
   const [tracerScale, setTracerScale] = useState(1.0);
+  const [specificImageError, setSpecificImageError] = useState<string | null>(null);
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
-  const hasUpdatedPreviewsForImage = useRef(false);
   const capturePreviewAfterRender = useRef(false);
+  const animAnglesRef = useRef<LayerTriple<number>>(DEFAULT_ANGLES);
+  const lastAngleSyncRef = useRef(0);
+  const loadGenRef = useRef(0);
 
   // Resize canvas: respect image aspect ratio unless "Square Canvas" is toggled
   useEffect(() => {
@@ -168,7 +175,42 @@ export default function App() {
         const urls = list.map((e) => e.url);
         setImageList(urls);
 
-        if (urls.length > 0) {
+        const specificUrl = getImageFromURLParams();
+        if (specificUrl) {
+          try {
+            const tex = await textureManager.loadTexture(specificUrl);
+            renderer.setTexture(tex);
+            if (!urls.includes(specificUrl)) {
+              urls.unshift(specificUrl);
+              setImageList([...urls]);
+            }
+            setCurrentImageIndex(urls.indexOf(specificUrl));
+
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+              if (cancelled) return;
+              if (img.height > 0) setImageAspect(img.width / img.height);
+              let avgLum = 128;
+              try { avgLum = computeAverageLuminance(img); } catch (e) { console.warn('CORS?', e); }
+              setAvgLuminance(Math.round(avgLum));
+              const previewOrig = previewOriginalRef.current;
+              if (previewOrig) {
+                const ctx = previewOrig.getContext('2d');
+                if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
+              }
+            };
+            img.onerror = () => console.warn('Failed to load preview image:', specificUrl);
+            img.src = specificUrl;
+          } catch (e) {
+            console.warn('Failed to load specific image from URL:', e);
+            setSpecificImageError(`Failed to load image: ${specificUrl}`);
+            if (urls.length > 0) {
+              const tex = await textureManager.loadTexture(urls[0]);
+              renderer.setTexture(tex);
+            }
+          }
+        } else if (urls.length > 0) {
           const tex = await textureManager.loadTexture(urls[0]);
           renderer.setTexture(tex);
         }
@@ -190,25 +232,24 @@ export default function App() {
   useEffect(() => {
     if (!gpuReady || imageList.length === 0) return;
     const url = imageList[currentImageIndex];
-    
+    const gen = ++loadGenRef.current;
+
     // Clear persistence when changing images so tracer starts fresh for new image
     rendererRef.current?.clearPersistence();
-    
+
     textureManagerRef.current?.loadTexture(url).then((tex) => {
+      if (gen !== loadGenRef.current) return;
       rendererRef.current?.setTexture(tex);
-      capturePreviewAfterRender.current = true;  // Capture separated preview after next render
+      capturePreviewAfterRender.current = true;
 
       const previewOrig = previewOriginalRef.current;
       if (previewOrig) {
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
-          // Capture the native aspect ratio
-          if (img.height > 0) {
-            setImageAspect(img.width / img.height);
-          }
+          if (gen !== loadGenRef.current) return;
+          if (img.height > 0) setImageAspect(img.width / img.height);
 
-          // Compute true average luminance from the actual image
           let avgLum = 128;
           try {
             avgLum = computeAverageLuminance(img);
@@ -218,13 +259,12 @@ export default function App() {
           setAvgLuminance(Math.round(avgLum));
 
           const ctx = previewOrig.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
-          }
+          if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
         };
+        img.onerror = () => console.warn('Failed to load preview image:', url);
         img.src = url;
       }
-    });
+    }).catch((e) => console.warn('Failed to load texture:', url, e));
   }, [gpuReady, imageList, currentImageIndex]);
 
   // Auto-play image rotation (random)
@@ -233,11 +273,7 @@ export default function App() {
     if (!isAutoPlayActive || isPaused || imageList.length === 0) return;
 
     const interval = setInterval(() => {
-      setCurrentImageIndex(() => {
-        hasUpdatedPreviewsForImage.current = false;
-        // Pick random image (may be same as current)
-        return Math.floor(Math.random() * imageList.length);
-      });
+      setCurrentImageIndex(() => Math.floor(Math.random() * imageList.length));
     }, imageChangeInterval * 1000);
 
     return () => clearInterval(interval);
@@ -249,21 +285,26 @@ export default function App() {
 
     const msPerFrame = 1000 / frameRate;
     let last = performance.now();
-    let angles: LayerTriple<number> = [...layerAngles] as LayerTriple<number>;
+    let lastTracerPreview = 0;
 
     function loop(now: number) {
       const delta = now - last;
       if (delta >= msPerFrame) {
         last = now - (delta % msPerFrame);
 
-        // Always advance layer angles (rotation continues even when paused)
-        // User can set angle sliders to 0 if they want to stop rotation
-        angles = [
-          (angles[0] + layerExtensions[0]) % 360,
-          (angles[1] + layerExtensions[1]) % 360,
-          (angles[2] + layerExtensions[2]) % 360,
+        // Advance angles using ref (avoids stale closure & unnecessary re-renders)
+        const angles: LayerTriple<number> = [
+          (animAnglesRef.current[0] + layerExtensions[0]) % 360,
+          (animAnglesRef.current[1] + layerExtensions[1]) % 360,
+          (animAnglesRef.current[2] + layerExtensions[2]) % 360,
         ];
-        setLayerAngles(angles);
+        animAnglesRef.current = angles;
+
+        // Sync to React state at ~5fps for UI display (not every frame)
+        if (now - lastAngleSyncRef.current > 200) {
+          lastAngleSyncRef.current = now;
+          setLayerAngles(angles);
+        }
 
         const state: RendererState = {
           layers: [
@@ -300,20 +341,18 @@ export default function App() {
           }
         }
 
-        // Tracer preview updates every frame to show live persistence buffer
-        // (unless frozen for "still" preview mode)
-        if (!tracerPreviewFrozen) {
+        // Tracer preview: throttle to ~5fps to avoid GPU pipeline stalls
+        if (!tracerPreviewFrozen && now - lastTracerPreview > 200) {
+          lastTracerPreview = now;
           const previewTracer = previewTracerRef.current;
           const persistenceTexture = rendererRef.current?.getPersistenceTexture();
           const device = deviceRef.current;
 
           if (previewTracer && persistenceTexture && device) {
-            // Copy persistence texture to buffer and display on preview canvas
             const texW = persistenceTexture.width;
             const texH = persistenceTexture.height;
-            const previewSize = previewTracer.width; // 150
+            const previewSize = previewTracer.width;
 
-            // bytesPerRow must be a multiple of 256
             const bytesPerRow = Math.ceil((texW * 4) / 256) * 256;
             const byteLength = bytesPerRow * texH;
 
@@ -334,7 +373,6 @@ export default function App() {
             stagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
               const fullData = new Uint8ClampedArray(stagingBuffer.getMappedRange());
 
-              // Downsample to preview size (150x150)
               const scaleX = texW / previewSize;
               const scaleY = texH / previewSize;
               const scaledData = new Uint8ClampedArray(previewSize * previewSize * 4);
@@ -370,10 +408,10 @@ export default function App() {
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
+    animAnglesRef.current[layer] = angle;
     setLayerAngles((prev) => {
       const next: LayerTriple<number> = [...prev] as LayerTriple<number>;
       next[layer] = angle;
@@ -390,10 +428,53 @@ export default function App() {
   }, []);
 
   const handleReset = useCallback(() => {
+    animAnglesRef.current = [...DEFAULT_ANGLES] as LayerTriple<number>;
     setLayerAngles([...DEFAULT_ANGLES] as LayerTriple<number>);
     setLayerExtensions([...DEFAULT_EXTENSIONS] as LayerTriple<number>);
     setFrameRate(DEFAULT_FPS);
   }, []);
+
+  const handleLoadSpecificImage = useCallback(async (url: string) => {
+    if (!textureManagerRef.current || !rendererRef.current) return;
+    setSpecificImageError(null);
+    try {
+      const tex = await textureManagerRef.current.loadTexture(url);
+      rendererRef.current.setTexture(tex);
+      rendererRef.current.clearPersistence();
+      capturePreviewAfterRender.current = true;
+
+      setImageList((prev) => {
+        if (!prev.includes(url)) return [url, ...prev];
+        return prev;
+      });
+      setCurrentImageIndex(0);
+
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        if (img.height > 0) setImageAspect(img.width / img.height);
+        let avgLum = 128;
+        try { avgLum = computeAverageLuminance(img); } catch (e) { console.warn('CORS?', e); }
+        setAvgLuminance(Math.round(avgLum));
+        const previewOrig = previewOriginalRef.current;
+        if (previewOrig) {
+          const ctx = previewOrig.getContext('2d');
+          if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
+        }
+      };
+      img.src = url;
+    } catch (e) {
+      console.error('Failed to load specific image:', e);
+      setSpecificImageError(`Failed to load: ${url}`);
+    }
+  }, []);
+
+  const handleLoadFile = useCallback((file: File) => {
+    const url = URL.createObjectURL(file);
+    handleLoadSpecificImage(url).finally(() => {
+      URL.revokeObjectURL(url);
+    });
+  }, [handleLoadSpecificImage]);
 
   return (
     <div
@@ -464,7 +545,7 @@ export default function App() {
           {imageList.map((_, idx) => (
             <button
               key={idx}
-              onClick={() => { hasUpdatedPreviewsForImage.current = false; setCurrentImageIndex(idx); }}
+              onClick={() => setCurrentImageIndex(idx)}
               className={`w-2.5 h-2.5 rounded-full transition-colors ${
                 idx === currentImageIndex ? 'bg-amber-400' : 'bg-amber-400/30 hover:bg-amber-400/60'
               }`}
@@ -557,7 +638,17 @@ export default function App() {
         onAutoPlayToggle={setIsAutoPlayActive}
         imageChangeInterval={imageChangeInterval}
         onImageChangeIntervalChange={setImageChangeInterval}
+        onLoadSpecificImage={handleLoadSpecificImage}
+        onLoadFile={handleLoadFile}
       />
+
+      {/* Specific image error toast */}
+      {specificImageError && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-50 bg-red-900/90 border border-red-500/50 rounded px-4 py-2 text-red-200 text-sm font-mono shadow-lg">
+          {specificImageError}
+          <button onClick={() => setSpecificImageError(null)} className="ml-3 text-red-400 hover:text-white">×</button>
+        </div>
+      )}
     </div>
   );
 }

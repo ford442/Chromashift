@@ -89,6 +89,8 @@ interface LayerPipeline {
   bindGroupLayout   : GPUBindGroupLayout;
   rotationBuffer    : GPUBuffer;
   fragUniformBuffer : GPUBuffer;
+  rotationData      : Float32Array;
+  fragData          : Float32Array;
 }
 
 export class WebGPURenderer {
@@ -118,6 +120,9 @@ export class WebGPURenderer {
   private persistBGL            : GPUBindGroupLayout;
   private persistAboveUniformBuf: GPUBuffer;
   private persistBelowUniformBuf: GPUBuffer;
+  private persistUniformData = new ArrayBuffer(16);
+  private persistF32 = new Float32Array(this.persistUniformData);
+  private persistU32 = new Uint32Array(this.persistUniformData);
 
   // Compositor
   private compositorPipeline  : GPURenderPipeline;
@@ -155,6 +160,10 @@ export class WebGPURenderer {
     });
   }
 
+  private compositorUniformData = new ArrayBuffer(32);
+  private compositorF32 = new Float32Array(this.compositorUniformData);
+  private compositorU32 = new Uint32Array(this.compositorUniformData);
+
   // ─── Layer pipeline ─────────────────────────────────────────────────────────
   private createLayerPipeline(fragmentSource: string): LayerPipeline {
     const device = this.device;
@@ -187,7 +196,7 @@ export class WebGPURenderer {
       size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer };
+    return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer, rotationData: new Float32Array(4), fragData: new Float32Array(4) };
   }
 
   // ─── Persistence pipeline ────────────────────────────────────────────────────
@@ -387,12 +396,12 @@ export class WebGPURenderer {
       const flipX  = layer.flipX ? 1.0 : 0.0;
       const flipY  = layer.flipY ? 1.0 : 0.0;
       const aspect = canvasTex.width / canvasTex.height;
-      this.device.queue.writeBuffer(lp.rotationBuffer, 0,
-        new Float32Array([rad, flipX, flipY, aspect]));
+      lp.rotationData.set([rad, flipX, flipY, aspect]);
+      this.device.queue.writeBuffer(lp.rotationBuffer, 0, lp.rotationData.buffer as ArrayBuffer, lp.rotationData.byteOffset, 16);
 
       const opacity = state.layerOpacity ?? 1.0;
-      this.device.queue.writeBuffer(lp.fragUniformBuffer, 0,
-        new Float32Array([state.avgLuminance, opacity, 0, 0]));
+      lp.fragData.set([state.avgLuminance, opacity, 0, 0]);
+      this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 16);
 
       const bindGroup = this.device.createBindGroup({
         layout : lp.bindGroupLayout,
@@ -434,16 +443,11 @@ export class WebGPURenderer {
     ) => {
       const decayFactor = durationToDecay(duration, fps);
 
-      // Strictly align Float32 and Uint32 to prevent WGSL memory corruption.
-      // Offset 0: decayFactor (f32)
-      // Offset 4: colorThresh (f32)
-      // Offset 8: tracerMode (u32)
-      // Offset 12: padding/reserved
-      const buf = new ArrayBuffer(16);
-      new Float32Array(buf, 0, 2).set([decayFactor, colorThresh]);
-      new Uint32Array(buf, 8, 2).set([tracerMode, 0]);
-
-      this.device.queue.writeBuffer(uniformBuf, 0, buf);
+      this.persistF32[0] = decayFactor;
+      this.persistF32[1] = colorThresh;
+      this.persistU32[2] = tracerMode;
+      this.persistU32[3] = 0;
+      this.device.queue.writeBuffer(uniformBuf, 0, this.persistUniformData);
 
       const bg = this.device.createBindGroup({
         layout : this.persistBGL,
@@ -480,19 +484,16 @@ export class WebGPURenderer {
     const tracerBlendMode = state.tracerBlendMode ?? 0;
     const layerOpacity = state.layerOpacity ?? 1.0;
 
-    const compositorUniforms = new ArrayBuffer(32);
-    const floatView = new Float32Array(compositorUniforms);
-    const uintView = new Uint32Array(compositorUniforms);
-    floatView[0] = tracerAboveOp;
-    floatView[1] = tracerBelowOp;
-    uintView[2] = layerBlendMode;
-    uintView[3] = tracerBlendMode;
-    floatView[4] = layerOpacity;
-    floatView[5] = layerOpacity;
-    floatView[6] = layerOpacity;
-    uintView[7] = state.outputMode ?? 0;
+    this.compositorF32[0] = tracerAboveOp;
+    this.compositorF32[1] = tracerBelowOp;
+    this.compositorU32[2] = layerBlendMode;
+    this.compositorU32[3] = tracerBlendMode;
+    this.compositorF32[4] = layerOpacity;
+    this.compositorF32[5] = layerOpacity;
+    this.compositorF32[6] = layerOpacity;
+    this.compositorU32[7] = state.outputMode ?? 0;
 
-    this.device.queue.writeBuffer(this.compositorUniformBuf, 0, compositorUniforms);
+    this.device.queue.writeBuffer(this.compositorUniformBuf, 0, this.compositorUniformData);
 
     const compBG = this.device.createBindGroup({
       layout : this.compositorBGL,

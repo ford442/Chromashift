@@ -58,11 +58,6 @@ fn main(@builtin(vertex_index) vi : u32) -> VertexOutput {
 }
 `;
 
-export const vertexShaderLayer0 = vertexShaderCommon;
-export const vertexShaderLayer1 = vertexShaderCommon;
-export const vertexShaderLayer2 = vertexShaderCommon;
-
-// Backward compatibility: vertexShaderSource was the old name
 export const vertexShaderSource = vertexShaderCommon;
 
 // ─── Fragment: Layer 0 – Red / Orange ──────────────────────────────────────────────
@@ -443,5 +438,4 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-// Keep old names as aliases so nothing else breaks during transition
-export const compositorVertexSource = fullscreenVertexSource;
+
