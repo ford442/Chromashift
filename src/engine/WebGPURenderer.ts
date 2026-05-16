@@ -94,6 +94,9 @@ interface LayerPipeline {
 }
 
 export class WebGPURenderer {
+  /** Size of the composited preview texture (fixed, independent of canvas/tracerScale). */
+  static readonly PREVIEW_SIZE = 256;
+
   private device      : GPUDevice;
   private context     : GPUCanvasContext;
   private format      : GPUTextureFormat;
@@ -129,6 +132,11 @@ export class WebGPURenderer {
   private compositorBGL       : GPUBindGroupLayout;
   private compositorSampler   : GPUSampler;
   private compositorUniformBuf: GPUBuffer;
+
+  // Small composited preview — fixed 256×256, independent of canvas/tracerScale
+  private previewTexture      : GPUTexture | null = null;
+  private previewStagingBuffer: GPUBuffer | null = null;
+  private previewReadPending  = false;
 
   constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = false) {
     this.device  = device;
@@ -341,9 +349,59 @@ export class WebGPURenderer {
   /**
    * Get the current persistence texture (the accumulated layer overlaps).
    * Returns null if textures haven't been initialized yet.
+   * @deprecated Use readPreviewPixels() for the preview, which shows the composited output.
    */
   getPersistenceTexture(): GPUTexture | null {
     return this.persistAboveTextures[this.persistPingPong];
+  }
+
+  // ─── Preview resources ────────────────────────────────────────────────────
+  /**
+   * Create the fixed-size composited preview texture and its reusable staging
+   * buffer.  Called lazily from render() the first time.
+   *
+   * PREVIEW_SIZE = 256 → bytesPerRow = 256×4 = 1024, which is already aligned
+   * to the required 256-byte boundary with zero padding.
+   */
+  private ensurePreviewResources(): void {
+    if (this.previewTexture && this.previewStagingBuffer) return;
+
+    const sz = WebGPURenderer.PREVIEW_SIZE;
+
+    this.previewTexture = this.device.createTexture({
+      size  : [sz, sz, 1],
+      format: this.format,
+      usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+
+    // bytesPerRow = 256 * 4 = 1024 (multiple of 256 ✓, no padding needed)
+    this.previewStagingBuffer = this.device.createBuffer({
+      size : sz * sz * 4,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+  }
+
+  /**
+   * Initiate an async read-back of the composited preview texture.
+   *
+   * The callback receives a copy of the pixel data (RGBA8, 256×256) once the
+   * GPU has finished and the buffer has been mapped.  Calls that arrive while
+   * a previous read is still in-flight are ignored (the preview updates at
+   * ~5 fps so this never causes visible stutter).
+   */
+  readPreviewPixels(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): void {
+    if (!this.previewStagingBuffer || this.previewReadPending) return;
+    this.previewReadPending = true;
+    this.previewStagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const mapped = this.previewStagingBuffer!.getMappedRange() as ArrayBuffer;
+      // Copy before unmap so the caller receives a stable buffer.
+      const data = new Uint8ClampedArray(mapped.slice(0) as ArrayBuffer);
+      this.previewStagingBuffer!.unmap();
+      this.previewReadPending = false;
+      callback(data);
+    }).catch(() => {
+      this.previewReadPending = false;
+    });
   }
 
   /**
@@ -521,6 +579,37 @@ export class WebGPURenderer {
     finalPass.draw(6);
     finalPass.end();
 
+    // ── Preview pass: compositor → small 256×256 texture + copy to staging ──
+    // Only runs when no readback is in-flight (can't write to a mapped buffer).
+    this.ensurePreviewResources();
+    if (this.previewTexture && this.previewStagingBuffer && !this.previewReadPending) {
+      const sz = WebGPURenderer.PREVIEW_SIZE;
+
+      // Render the same compositor output into the small preview texture.
+      // The compositor bind group (compBG) and pipeline are resolution-agnostic,
+      // so they work correctly at any output size.
+      const previewPass = enc.beginRenderPass({
+        colorAttachments: [{
+          view      : this.previewTexture.createView(),
+          loadOp    : 'clear',
+          storeOp   : 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        }],
+      });
+      previewPass.setPipeline(this.compositorPipeline);
+      previewPass.setBindGroup(0, compBG);
+      previewPass.draw(6);
+      previewPass.end();
+
+      // Copy the tiny result into the reusable staging buffer for CPU readback.
+      // bytesPerRow = 256 * 4 = 1024 (256-byte aligned ✓).
+      enc.copyTextureToBuffer(
+        { texture: this.previewTexture },
+        { buffer: this.previewStagingBuffer, bytesPerRow: sz * 4 },
+        [sz, sz, 1]
+      );
+    }
+
     this.device.queue.submit([enc.finish()]);
   }
 
@@ -538,5 +627,7 @@ export class WebGPURenderer {
     this.persistAboveUniformBuf.destroy();
     this.persistBelowUniformBuf.destroy();
     this.compositorUniformBuf.destroy();
+    this.previewTexture?.destroy();
+    this.previewStagingBuffer?.destroy();
   }
 }
