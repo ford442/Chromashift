@@ -341,61 +341,25 @@ export default function App() {
           }
         }
 
-        // Tracer preview: throttle to ~5fps to avoid GPU pipeline stalls
+        // Tracer preview: throttle to ~5fps, read back the small composited
+        // preview texture instead of the full-resolution persistence texture.
+        // No per-tick buffer allocation, no JS downscaling loop.
         if (!tracerPreviewFrozen && now - lastTracerPreview > 200) {
           lastTracerPreview = now;
           const previewTracer = previewTracerRef.current;
-          const persistenceTexture = rendererRef.current?.getPersistenceTexture();
-          const device = deviceRef.current;
-
-          if (previewTracer && persistenceTexture && device) {
-            const texW = persistenceTexture.width;
-            const texH = persistenceTexture.height;
-            const previewSize = previewTracer.width;
-
-            const bytesPerRow = Math.ceil((texW * 4) / 256) * 256;
-            const byteLength = bytesPerRow * texH;
-
-            const stagingBuffer = device.createBuffer({
-              size: byteLength,
-              usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-              mappedAtCreation: false,
-            });
-
-            const enc = device.createCommandEncoder();
-            enc.copyTextureToBuffer(
-              { texture: persistenceTexture },
-              { buffer: stagingBuffer, bytesPerRow },
-              [texW, texH, 1]
-            );
-            device.queue.submit([enc.finish()]);
-
-            stagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
-              const fullData = new Uint8ClampedArray(stagingBuffer.getMappedRange());
-
-              const scaleX = texW / previewSize;
-              const scaleY = texH / previewSize;
-              const scaledData = new Uint8ClampedArray(previewSize * previewSize * 4);
-              for (let y = 0; y < previewSize; y++) {
-                for (let x = 0; x < previewSize; x++) {
-                  const srcX = Math.floor(x * scaleX);
-                  const srcY = Math.floor(y * scaleY);
-                  const srcIdx = srcY * bytesPerRow + srcX * 4;
-                  const dstIdx = (y * previewSize + x) * 4;
-                  scaledData[dstIdx] = fullData[srcIdx];
-                  scaledData[dstIdx + 1] = fullData[srcIdx + 1];
-                  scaledData[dstIdx + 2] = fullData[srcIdx + 2];
-                  scaledData[dstIdx + 3] = fullData[srcIdx + 3];
+          if (previewTracer && rendererRef.current) {
+            const sz = WebGPURenderer.PREVIEW_SIZE;
+            rendererRef.current.readPreviewPixels((data) => {
+              // Scale the 256×256 GPU result to fill the preview canvas using
+              // createImageBitmap (browser-native, off-main-thread capable).
+              const imageData = new ImageData(data, sz, sz);
+              createImageBitmap(imageData).then((bmp) => {
+                const ctx = previewTracer.getContext('2d');
+                if (ctx) {
+                  ctx.drawImage(bmp, 0, 0, previewTracer.width, previewTracer.height);
                 }
-              }
-
-              const imageData = new ImageData(scaledData, previewSize, previewSize);
-              const ctx = previewTracer.getContext('2d');
-              if (ctx) {
-                ctx.putImageData(imageData, 0, 0);
-              }
-              stagingBuffer.unmap();
-              stagingBuffer.destroy();
+                bmp.close();
+              });
             });
           }
         }
