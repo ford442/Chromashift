@@ -97,11 +97,14 @@ export class WebGPURenderer {
   /** Size of the composited preview texture (fixed, independent of canvas/tracerScale). */
   static readonly PREVIEW_SIZE = 256;
 
-  private device      : GPUDevice;
-  private context     : GPUCanvasContext;
-  private format      : GPUTextureFormat;
-  private sampler     : GPUSampler;
-  private sampleCount : number = 4;
+  private device         : GPUDevice;
+  private context        : GPUCanvasContext;
+  private format         : GPUTextureFormat;
+  /** HDR format used for all intermediate textures (layers, persistence, MSAA).
+   *  rgba16float is renderable + blendable in WebGPU core — no feature flag needed. */
+  private internalFormat : GPUTextureFormat = 'rgba16float';
+  private sampler        : GPUSampler;
+  private sampleCount    : number = 4;
 
   // Layer passes
   private layerPipelines : LayerPipeline[] = [];
@@ -191,7 +194,7 @@ export class WebGPURenderer {
       fragment: {
         module     : device.createShaderModule({ code: fragmentSource }),
         entryPoint : 'main',
-        targets    : [{ format: this.format }],
+        targets    : [{ format: this.internalFormat }],
       },
       primitive  : { topology: 'triangle-list' },
       multisample: { count: this.sampleCount },
@@ -229,7 +232,7 @@ export class WebGPURenderer {
       fragment: {
         module     : device.createShaderModule({ code: persistenceFragmentSource }),
         entryPoint : 'main',
-        targets    : [{ format: this.format }],
+        targets    : [{ format: this.internalFormat }],
       },
       primitive  : { topology: 'triangle-list' },
       multisample: { count: 1 },
@@ -284,7 +287,7 @@ export class WebGPURenderer {
     // Layer intermediate textures (scaled by layerScale)
     this.layerTextures = [0, 1, 2].map(() => this.device.createTexture({
       size       : [layerW, layerH, 1],
-      format     : this.format,
+      format     : this.internalFormat,
       usage      : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       sampleCount: 1,
     }));
@@ -293,7 +296,7 @@ export class WebGPURenderer {
     if (this.sampleCount > 1) {
       this.msaaTexture = this.device.createTexture({
         size       : [w, h, 1],
-        format     : this.format,
+        format     : this.internalFormat,
         sampleCount: this.sampleCount,
         usage      : GPUTextureUsage.RENDER_ATTACHMENT,
       });
@@ -303,7 +306,7 @@ export class WebGPURenderer {
 
     // Persistence ping-pong textures — scaled by tracerScale
     const createPersistTex = () => this.device.createTexture({
-      size  : [tracerW, tracerH, 1], format: this.format,
+      size  : [tracerW, tracerH, 1], format: this.internalFormat,
       usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
     });
 

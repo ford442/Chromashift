@@ -65,6 +65,9 @@ export default function App() {
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
+  // Reusable 256×256 offscreen canvas — avoids createImageBitmap latency
+  // by letting us putImageData once and drawImage-scale to the visible canvas.
+  const tracerScratchRef = useRef<HTMLCanvasElement | null>(null);
   const capturePreviewAfterRender = useRef(false);
   const animAnglesRef = useRef<LayerTriple<number>>(DEFAULT_ANGLES);
   const lastAngleSyncRef = useRef(0);
@@ -285,7 +288,6 @@ export default function App() {
 
     const msPerFrame = 1000 / frameRate;
     let last = performance.now();
-    let lastTracerPreview = 0;
 
     function loop(now: number) {
       const delta = now - last;
@@ -341,25 +343,27 @@ export default function App() {
           }
         }
 
-        // Tracer preview: throttle to ~5fps, read back the small composited
-        // preview texture instead of the full-resolution persistence texture.
-        // No per-tick buffer allocation, no JS downscaling loop.
-        if (!tracerPreviewFrozen && now - lastTracerPreview > 200) {
-          lastTracerPreview = now;
+        // Tracer preview: issue a readback every frame. readPreviewPixels
+        // self-serializes via previewReadPending, so requests issued while a
+        // prior map is in flight are dropped cheaply — output rate naturally
+        // matches the GPU/readback latency rather than a fixed wall clock.
+        if (!tracerPreviewFrozen) {
           const previewTracer = previewTracerRef.current;
           if (previewTracer && rendererRef.current) {
             const sz = WebGPURenderer.PREVIEW_SIZE;
             rendererRef.current.readPreviewPixels((data) => {
-              // Scale the 256×256 GPU result to fill the preview canvas using
-              // createImageBitmap (browser-native, off-main-thread capable).
-              const imageData = new ImageData(data, sz, sz);
-              createImageBitmap(imageData).then((bmp) => {
-                const ctx = previewTracer.getContext('2d');
-                if (ctx) {
-                  ctx.drawImage(bmp, 0, 0, previewTracer.width, previewTracer.height);
-                }
-                bmp.close();
-              });
+              let scratch = tracerScratchRef.current;
+              if (!scratch) {
+                scratch = document.createElement('canvas');
+                scratch.width = sz;
+                scratch.height = sz;
+                tracerScratchRef.current = scratch;
+              }
+              const sctx = scratch.getContext('2d');
+              const dctx = previewTracer.getContext('2d');
+              if (!sctx || !dctx) return;
+              sctx.putImageData(new ImageData(data, sz, sz), 0, 0);
+              dctx.drawImage(scratch, 0, 0, previewTracer.width, previewTracer.height);
             });
           }
         }
