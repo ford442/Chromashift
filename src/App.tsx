@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { WebGPURenderer, computeAverageLuminance, type RendererState } from './engine/WebGPURenderer';
 import { TextureManager } from './engine/TextureManager';
+import { Upscaler, type UpscaleModel } from './engine/Upscaler';
 import { NunifOverlay } from './components/NunifOverlay';
 
 const IMAGES_ENDPOINT = './images.json';
@@ -61,6 +62,13 @@ export default function App() {
   const [layerScale, setLayerScale] = useState(1.0);
   const [tracerScale, setTracerScale] = useState(1.0);
   const [specificImageError, setSpecificImageError] = useState<string | null>(null);
+
+  // Upscaler
+  const upscalerRef = useRef<Upscaler | null>(null);
+  const [upscaleModel, setUpscaleModel] = useState('realesrgan:general_plus');
+  const [upscaleBusy, setUpscaleBusy] = useState(false);
+  const [upscaleProgress, setUpscaleProgress] = useState(0);
+  const [upscaleInfo, setUpscaleInfo] = useState('');
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
@@ -437,6 +445,142 @@ export default function App() {
     }
   }, []);
 
+  const parseUpscaleModel = useCallback((value: string): UpscaleModel => {
+    const parts = value.split(':');
+    if (parts[0] === 'realesrgan') {
+      return { kind: 'realesrgan', variant: parts[1] as UpscaleModel extends { kind: 'realesrgan'; variant: infer V } ? V : never };
+    }
+    return { kind: 'realcugan', factor: Number(parts[1]) as 2 | 4, denoise: parts[2] as 'conservative' | '0x' | '1x' | '2x' | '3x' };
+  }, []);
+
+  const handleUpscaleSource = useCallback(async () => {
+    if (!rendererRef.current || !textureManagerRef.current || !deviceRef.current) return;
+    if (upscalerRef.current?.isBusy()) return;
+
+    const url = imageList[currentImageIndex];
+    if (!url) return;
+
+    upscalerRef.current ??= new Upscaler();
+    setUpscaleBusy(true);
+    setUpscaleProgress(0);
+    setUpscaleInfo('Preparing…');
+
+    try {
+      // Decode image to RGBA pixels via an offscreen canvas.
+      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const i = new Image();
+        i.crossOrigin = 'anonymous';
+        i.onload = () => resolve(i);
+        i.onerror = () => reject(new Error('Failed to load image for upscaling'));
+        i.src = url;
+      });
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      const cx = c.getContext('2d');
+      if (!cx) throw new Error('2D context unavailable');
+      cx.drawImage(img, 0, 0);
+      const src = cx.getImageData(0, 0, c.width, c.height);
+
+      const result = await upscalerRef.current.upscale(
+        src.data, src.width, src.height, parseUpscaleModel(upscaleModel),
+        (p) => { setUpscaleProgress(p.progress); setUpscaleInfo(p.info); },
+      );
+
+      // Upload to a new GPU texture and swap into the renderer.
+      const tex = textureManagerRef.current.uploadPixels(`__upscaled__:${url}`, result.pixels, result.width, result.height);
+      rendererRef.current.setTexture(tex);
+      rendererRef.current.clearPersistence();
+
+      // Recompute avg luminance from the upscaled pixels (downsample inline).
+      const stride = Math.max(1, Math.floor(Math.max(result.width, result.height) / 256));
+      let sum = 0; let n = 0;
+      for (let y = 0; y < result.height; y += stride) {
+        for (let x = 0; x < result.width; x += stride) {
+          const o = (y * result.width + x) * 4;
+          sum += result.pixels[o] * 0.2126 + result.pixels[o + 1] * 0.7152 + result.pixels[o + 2] * 0.0722;
+          n++;
+        }
+      }
+      setAvgLuminance(Math.round(sum / Math.max(n, 1)));
+      // Aspect is unchanged for integer-scale upscales; nudge the resize observer
+      // by re-setting imageAspect so the canvas re-layouts at the new resolution.
+      setImageAspect(result.width / result.height);
+      capturePreviewAfterRender.current = true;
+
+      // Refresh the original preview with the upscaled image.
+      const previewOrig = previewOriginalRef.current;
+      if (previewOrig) {
+        const pctx = previewOrig.getContext('2d');
+        if (pctx) {
+          const tmp = document.createElement('canvas');
+          tmp.width = result.width;
+          tmp.height = result.height;
+          const buf = new Uint8ClampedArray(result.pixels.byteLength); buf.set(result.pixels);
+          tmp.getContext('2d')!.putImageData(new ImageData(buf, result.width, result.height), 0, 0);
+          pctx.drawImage(tmp, 0, 0, previewOrig.width, previewOrig.height);
+        }
+      }
+
+      setUpscaleInfo(`Done — ${result.width}×${result.height}`);
+    } catch (e) {
+      console.error('Upscale failed:', e);
+      setUpscaleInfo(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setUpscaleBusy(false);
+    }
+  }, [imageList, currentImageIndex, upscaleModel, parseUpscaleModel]);
+
+  const handleUpscaleOutput = useCallback(async () => {
+    if (!canvasRef.current) return;
+    if (upscalerRef.current?.isBusy()) return;
+
+    upscalerRef.current ??= new Upscaler();
+    setUpscaleBusy(true);
+    setUpscaleProgress(0);
+    setUpscaleInfo('Capturing canvas…');
+
+    try {
+      // Read pixels off the WebGPU canvas via a 2D scratch.
+      const canvas = canvasRef.current;
+      const scratch = document.createElement('canvas');
+      scratch.width = canvas.width;
+      scratch.height = canvas.height;
+      const sctx = scratch.getContext('2d');
+      if (!sctx) throw new Error('2D context unavailable');
+      sctx.drawImage(canvas, 0, 0);
+      const src = sctx.getImageData(0, 0, scratch.width, scratch.height);
+
+      const result = await upscalerRef.current.upscale(
+        src.data, src.width, src.height, parseUpscaleModel(upscaleModel),
+        (p) => { setUpscaleProgress(p.progress); setUpscaleInfo(p.info); },
+      );
+
+      // Save as PNG download.
+      const out = document.createElement('canvas');
+      out.width = result.width;
+      out.height = result.height;
+      const outBuf = new Uint8ClampedArray(result.pixels.byteLength); outBuf.set(result.pixels);
+      out.getContext('2d')!.putImageData(new ImageData(outBuf, result.width, result.height), 0, 0);
+      out.toBlob((blob) => {
+        if (!blob) return;
+        const dlUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = dlUrl;
+        a.download = `chromashift-upscaled-${result.width}x${result.height}.png`;
+        a.click();
+        URL.revokeObjectURL(dlUrl);
+      }, 'image/png');
+
+      setUpscaleInfo(`Saved — ${result.width}×${result.height}`);
+    } catch (e) {
+      console.error('Upscale output failed:', e);
+      setUpscaleInfo(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setUpscaleBusy(false);
+    }
+  }, [upscaleModel, parseUpscaleModel]);
+
   const handleLoadFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
     handleLoadSpecificImage(url).finally(() => {
@@ -461,8 +605,8 @@ export default function App() {
         }}
       />
 
-      {/* Preview: Original Image (Top-Left) */}
-      <div className="absolute top-3 left-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+      {/* Preview: Original Image (Top-Right, below Avg Lum) */}
+      <div className="absolute top-14 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewOriginalRef}
           width={300}
@@ -472,8 +616,8 @@ export default function App() {
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Original</div>
       </div>
 
-      {/* Preview: RGB Separated Output (Left-Center) */}
-      <div className="absolute left-3 top-1/2 -translate-y-1/2 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+      {/* Preview: RGB Separated Output (Right-Center) */}
+      <div className="absolute right-3 top-1/2 -translate-y-1/2 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewSeparatedRef}
           width={300}
@@ -608,6 +752,13 @@ export default function App() {
         onImageChangeIntervalChange={setImageChangeInterval}
         onLoadSpecificImage={handleLoadSpecificImage}
         onLoadFile={handleLoadFile}
+        upscaleModel={upscaleModel}
+        onUpscaleModelChange={setUpscaleModel}
+        upscaleBusy={upscaleBusy}
+        upscaleProgress={upscaleProgress}
+        upscaleInfo={upscaleInfo}
+        onUpscaleSource={handleUpscaleSource}
+        onUpscaleOutput={handleUpscaleOutput}
       />
 
       {/* Specific image error toast */}
