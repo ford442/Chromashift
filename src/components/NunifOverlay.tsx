@@ -45,6 +45,14 @@ interface Props {
   onImageChangeIntervalChange: (seconds: number) => void;
   onLoadSpecificImage        : (url: string) => void;
   onLoadFile                 : (file: File) => void;
+  // Upscaler
+  upscaleModel               : string;
+  onUpscaleModelChange       : (v: string) => void;
+  upscaleBusy                : boolean;
+  upscaleProgress            : number;
+  upscaleInfo                : string;
+  onUpscaleSource            : () => void;
+  onUpscaleOutput            : () => void;
 }
 
 const LAYER_LABELS : [string, string, string] = ['Red/Orange', 'Violet/Blue', 'Green/Yellow'];
@@ -90,6 +98,13 @@ export function NunifOverlay({
   onImageChangeIntervalChange,
   onLoadSpecificImage,
   onLoadFile,
+  upscaleModel,
+  onUpscaleModelChange,
+  upscaleBusy,
+  upscaleProgress,
+  upscaleInfo,
+  onUpscaleSource,
+  onUpscaleOutput,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -167,6 +182,53 @@ export function NunifOverlay({
             e.target.value = '';
           }}
         />
+      </div>
+
+      {/* ========== UPSCALE ========== */}
+      <div className="panel-3d space-y-2">
+        <div className="text-[10px] text-amber-300 font-mono uppercase tracking-wider">🔍 Upscale (Real-ESRGAN / Real-CUGAN)</div>
+        <select
+          value={upscaleModel}
+          onChange={(e) => onUpscaleModelChange(e.target.value)}
+          disabled={upscaleBusy}
+          className="w-full text-xs px-2 py-1 rounded bg-zinc-800 border border-amber-500/30 text-amber-200 disabled:opacity-50"
+        >
+          <option value="realesrgan:general_plus">Real-ESRGAN general_plus (4×, photo)</option>
+          <option value="realesrgan:general_fast">Real-ESRGAN general_fast (4×, photo, fast)</option>
+          <option value="realesrgan:anime_plus">Real-ESRGAN anime_plus (4×, anime)</option>
+          <option value="realesrgan:anime_fast">Real-ESRGAN anime_fast (4×, anime, fast)</option>
+          <option value="realcugan:2:conservative">Real-CUGAN 2× conservative</option>
+          <option value="realcugan:4:conservative">Real-CUGAN 4× conservative</option>
+        </select>
+        <div className="flex gap-2">
+          <button
+            onClick={onUpscaleSource}
+            disabled={upscaleBusy}
+            className="flex-1 text-xs px-2 py-1 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Upscale the loaded image and replace the source texture. Also recomputes Avg Lum."
+          >
+            Upscale Source
+          </button>
+          <button
+            onClick={onUpscaleOutput}
+            disabled={upscaleBusy}
+            className="flex-1 text-xs px-2 py-1 rounded bg-sky-700/80 hover:bg-sky-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Upscale the current composited output and download as PNG."
+          >
+            Upscale Output
+          </button>
+        </div>
+        {upscaleBusy && (
+          <div className="space-y-1">
+            <div className="h-1.5 bg-zinc-800 rounded overflow-hidden">
+              <div
+                className="h-full bg-amber-400 transition-[width] duration-150"
+                style={{ width: `${upscaleProgress}%` }}
+              />
+            </div>
+            <div className="text-[10px] text-amber-300/80 font-mono tabular-nums">{upscaleInfo}</div>
+          </div>
+        )}
       </div>
 
       {/* ========== PER-LAYER MODULES ========== */}

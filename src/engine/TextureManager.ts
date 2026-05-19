@@ -76,4 +76,36 @@ export class TextureManager {
     }
     this.textures.clear();
   }
+
+  /**
+   * Upload raw RGBA8 pixels into a new GPUTexture and register it under
+   * `cacheKey` (replacing any previous texture cached under that key). Used
+   * by the upscaler flow to swap in a higher-resolution version of an image.
+   */
+  uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): GPUTexture {
+    const prev = this.textures.get(cacheKey);
+    if (prev) prev.destroy();
+
+    const texture = this.device.createTexture({
+      size: [width, height, 1],
+      format: 'rgba8unorm',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    // Copy into a fresh ArrayBuffer-backed Uint8Array — writeTexture's
+    // signature in the WebGPU types requires a strict ArrayBuffer view, not
+    // a Uint8ClampedArray that may be backed by SharedArrayBuffer.
+    const bytes = new Uint8Array(pixels.byteLength);
+    bytes.set(pixels);
+    this.device.queue.writeTexture(
+      { texture },
+      bytes,
+      { bytesPerRow: width * 4, rowsPerImage: height },
+      [width, height, 1],
+    );
+    this.textures.set(cacheKey, texture);
+    return texture;
+  }
 }
