@@ -461,8 +461,8 @@ export default function App() {
         }}
       />
 
-      {/* Preview: Original Image (Top-Left) */}
-      <div className="absolute top-3 left-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+      {/* Preview: Original Image (Top-Right, below Avg Lum) */}
+      <div className="absolute top-14 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewOriginalRef}
           width={300}
@@ -472,8 +472,8 @@ export default function App() {
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Original</div>
       </div>
 
-      {/* Preview: RGB Separated Output (Left-Center) */}
-      <div className="absolute left-3 top-1/2 -translate-y-1/2 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+      {/* Preview: RGB Separated Output (Right-Center) */}
+      <div className="absolute right-3 top-1/2 -translate-y-1/2 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewSeparatedRef}
           width={300}
