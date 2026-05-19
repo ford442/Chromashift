@@ -461,19 +461,19 @@ export default function App() {
       <div className="absolute top-3 left-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewOriginalRef}
-          width={150}
-          height={150}
+          width={300}
+          height={300}
           style={{ display: 'block', imageRendering: 'pixelated' }}
         />
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Original</div>
       </div>
 
-      {/* Preview: RGB Separated Output (Top-Right) */}
-      <div className="absolute top-3 right-3 z-30 mt-24 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+      {/* Preview: RGB Separated Output (Left-Center) */}
+      <div className="absolute left-3 top-1/2 -translate-y-1/2 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewSeparatedRef}
-          width={150}
-          height={150}
+          width={300}
+          height={300}
           style={{ display: 'block', imageRendering: 'pixelated' }}
         />
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Separated</div>
@@ -485,7 +485,7 @@ export default function App() {
           ref={previewTracerRef}
           width={300}
           height={300}
-          style={{ display: 'block', width: '150px', height: '150px', imageRendering: 'auto' }}
+          style={{ display: 'block', width: '300px', height: '300px', imageRendering: 'auto' }}
         />
         <div className="flex items-center justify-between px-2 py-1">
           <span className="text-xs text-amber-400 font-mono">Tracer</span>
