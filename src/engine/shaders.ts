@@ -434,7 +434,11 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   }
 
-  return finalCol;
+    // Force opaque output. Without this, no-layer / no-tracer regions
+    // produce alpha=0 pixels and some browser/GPU combos let the OS
+    // compositor see through the canvas to whatever is behind the browser
+    // window, even though alphaMode is 'opaque' on the swapchain.
+    return vec4<f32>(finalCol.rgb, 1.0);
 }
 `;
 
