@@ -6,10 +6,16 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { WebGPURenderer, computeAverageLuminance, type RendererState } from './engine/WebGPURenderer';
+import { WebGPURenderer, type RendererState } from './engine/WebGPURenderer';
 import { TextureManager } from './engine/TextureManager';
 import { Upscaler, type UpscaleModel } from './engine/Upscaler';
 import { NunifOverlay } from './components/NunifOverlay';
+import {
+  type EngineKind,
+  loadWasmEngine,
+  isWasmReady,
+  computeAverageLuminanceWith,
+} from './engine/WasmEngine';
 
 const IMAGES_ENDPOINT = './images.json';
 
@@ -70,6 +76,13 @@ export default function App() {
   const [upscaleProgress, setUpscaleProgress] = useState(0);
   const [upscaleInfo, setUpscaleInfo] = useState('');
 
+  // Engine switcher — start on TS; switch to WASM once it loads
+  const [engineMode, setEngineMode] = useState<EngineKind>('ts');
+  const [wasmAvailable, setWasmAvailable] = useState(false);
+  // Ref mirrors engineMode so callbacks don't need it in their dependency arrays.
+  const engineModeRef = useRef<EngineKind>('ts');
+  useEffect(() => { engineModeRef.current = engineMode; }, [engineMode]);
+
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
@@ -80,6 +93,15 @@ export default function App() {
   const animAnglesRef = useRef<LayerTriple<number>>(DEFAULT_ANGLES);
   const lastAngleSyncRef = useRef(0);
   const loadGenRef = useRef(0);
+
+  // Attempt to load the C++ WASM engine in the background on first mount.
+  useEffect(() => {
+    loadWasmEngine().then((ok) => {
+      setWasmAvailable(ok);
+      if (ok) console.info('[Chromashift] C++ WASM engine loaded successfully.');
+      else     console.info('[Chromashift] C++ WASM engine unavailable — using TypeScript engine.');
+    });
+  }, []);
 
   // Resize canvas: respect image aspect ratio unless "Square Canvas" is toggled
   useEffect(() => {
@@ -214,7 +236,7 @@ export default function App() {
               if (cancelled) return;
               if (img.height > 0) setImageAspect(img.width / img.height);
               let avgLum = 128;
-              try { avgLum = computeAverageLuminance(img); } catch (e) { console.warn('CORS?', e); }
+              try { avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm'); } catch (e) { console.warn('CORS?', e); }
               setAvgLuminance(Math.round(avgLum));
               const previewOrig = previewOriginalRef.current;
               if (previewOrig) {
@@ -282,7 +304,7 @@ export default function App() {
 
           let avgLum = 128;
           try {
-            avgLum = computeAverageLuminance(img);
+            avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
           } catch (e) {
             console.warn('Could not compute average luminance (CORS?):', e);
           }
@@ -447,7 +469,7 @@ export default function App() {
       img.onload = () => {
         if (img.height > 0) setImageAspect(img.width / img.height);
         let avgLum = 128;
-        try { avgLum = computeAverageLuminance(img); } catch (e) { console.warn('CORS?', e); }
+        try { avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm'); } catch (e) { console.warn('CORS?', e); }
         setAvgLuminance(Math.round(avgLum));
         const previewOrig = previewOriginalRef.current;
         if (previewOrig) {
@@ -711,6 +733,14 @@ export default function App() {
           onChange={(e) => setAvgLuminance(Number(e.target.value))}
           className="w-28 h-1 accent-amber-400"
         />
+        {/* Active engine indicator */}
+        <span className={`text-[10px] font-mono mt-0.5 ${
+          engineMode === 'wasm' && wasmAvailable
+            ? 'text-cyan-400'
+            : 'text-amber-500/60'
+        }`}>
+          {engineMode === 'wasm' && wasmAvailable ? '⚡ C++ WASM' : '🔷 TS'}
+        </span>
       </div>
 
       {/* Error / no-WebGPU notice */}
@@ -776,6 +806,13 @@ export default function App() {
         upscaleInfo={upscaleInfo}
         onUpscaleSource={handleUpscaleSource}
         onUpscaleOutput={handleUpscaleOutput}
+        engineMode={engineMode}
+        wasmAvailable={wasmAvailable}
+        onEngineModeChange={(mode) => {
+          // Only allow switching to WASM if it actually loaded
+          if (mode === 'wasm' && !isWasmReady()) return;
+          setEngineMode(mode);
+        }}
       />
 
       {/* Specific image error toast */}

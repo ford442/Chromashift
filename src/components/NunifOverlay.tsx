@@ -53,6 +53,10 @@ interface Props {
   upscaleInfo                : string;
   onUpscaleSource            : () => void;
   onUpscaleOutput            : () => void;
+  // Engine switcher
+  engineMode                 : 'ts' | 'wasm';
+  wasmAvailable              : boolean;
+  onEngineModeChange         : (mode: 'ts' | 'wasm') => void;
 }
 
 const LAYER_LABELS : [string, string, string] = ['Red/Orange', 'Violet/Blue', 'Green/Yellow'];
@@ -105,6 +109,9 @@ export function NunifOverlay({
   upscaleInfo,
   onUpscaleSource,
   onUpscaleOutput,
+  engineMode,
+  wasmAvailable,
+  onEngineModeChange,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   return (
@@ -535,6 +542,55 @@ export function NunifOverlay({
         >
           ◆ MSAA 4x
         </button>
+      </div>
+
+      {/* ========== ENGINE SWITCHER ========== */}
+      <div className="panel-3d space-y-2">
+        <div className="section-header">⚡ Engine</div>
+
+        <div className="flex gap-1">
+          <button
+            onClick={() => onEngineModeChange('ts')}
+            className={`flex-1 text-xs px-2 py-1 rounded transition-all ${
+              engineMode === 'ts'
+                ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30 text-amber-300/70'
+            }`}
+            title="Use the TypeScript engine (always available)"
+          >
+            TS
+          </button>
+          <button
+            onClick={() => onEngineModeChange('wasm')}
+            disabled={!wasmAvailable}
+            className={`flex-1 text-xs px-2 py-1 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+              engineMode === 'wasm'
+                ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-[0_0_8px_rgba(6,182,212,0.4)]'
+                : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30 text-amber-300/70'
+            }`}
+            title={wasmAvailable ? 'Use the C++ WASM engine' : 'C++ WASM engine not built — run: cd cpp && make'}
+          >
+            C++ WASM
+          </button>
+        </div>
+
+        <div className={`text-[10px] font-mono text-center py-0.5 rounded ${
+          engineMode === 'wasm' && wasmAvailable
+            ? 'text-cyan-300 bg-cyan-900/30 border border-cyan-500/30'
+            : 'text-amber-400/60'
+        }`}>
+          {engineMode === 'wasm' && wasmAvailable
+            ? '⚡ C++ WASM active'
+            : engineMode === 'wasm' && !wasmAvailable
+              ? '⚠ WASM unavailable — using TS'
+              : '🔷 TypeScript active'}
+        </div>
+
+        {!wasmAvailable && (
+          <div className="text-[9px] text-zinc-500 font-mono leading-tight">
+            Build WASM: <span className="text-zinc-400">cd cpp &amp;&amp; make</span>
+          </div>
+        )}
       </div>
     </div>
   );
