@@ -574,7 +574,11 @@ export class WebGPURenderer {
         view      : canvasTex.createView(),
         loadOp    : 'clear',
         storeOp   : 'store',
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },  // Transparent background, not opaque black
+        // Opaque clear. alphaMode:'opaque' on the swapchain should already
+        // force this, but some browser+GPU combos don't honour it and let
+        // the compositor see straight through to whatever's behind the
+        // browser window when rendered alpha is 0.
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
       }],
     });
     finalPass.setPipeline(this.compositorPipeline);
