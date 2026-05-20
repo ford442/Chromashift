@@ -339,41 +339,39 @@ export default function App() {
 
         rendererRef.current?.render(state);
 
-        // Capture separated preview once after each new texture is rendered
-        if (capturePreviewAfterRender.current) {
-          capturePreviewAfterRender.current = false;
-          const previewSep = previewSeparatedRef.current;
-          if (previewSep && canvasRef.current) {
-            const ctx = previewSep.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(canvasRef.current, 0, 0, previewSep.width, previewSep.height);
-            }
-          }
-        }
+        // Snapshot the compositor output via GPU readback for both the Separated
+        // preview (once per image load) and the live Tracer preview. Using the
+        // GPU readback path for Separated avoids the cross-adapter drawImage
+        // failure that occurs when powerPreference:'high-performance' selects a
+        // discrete GPU while the 2D canvas runs on the integrated adapter.
+        const doCaptureSep = capturePreviewAfterRender.current;
+        if (doCaptureSep) capturePreviewAfterRender.current = false;
 
-        // Tracer preview: issue a readback every frame. readPreviewPixels
-        // self-serializes via previewReadPending, so requests issued while a
-        // prior map is in flight are dropped cheaply — output rate naturally
-        // matches the GPU/readback latency rather than a fixed wall clock.
-        if (!tracerPreviewFrozen) {
+        if ((!tracerPreviewFrozen || doCaptureSep) && rendererRef.current) {
           const previewTracer = previewTracerRef.current;
-          if (previewTracer && rendererRef.current) {
-            const sz = WebGPURenderer.PREVIEW_SIZE;
-            rendererRef.current.readPreviewPixels((data) => {
-              let scratch = tracerScratchRef.current;
-              if (!scratch) {
-                scratch = document.createElement('canvas');
-                scratch.width = sz;
-                scratch.height = sz;
-                tracerScratchRef.current = scratch;
-              }
-              const sctx = scratch.getContext('2d');
+          const previewSep    = previewSeparatedRef.current;
+          const sz = WebGPURenderer.PREVIEW_SIZE;
+          rendererRef.current.readPreviewPixels((data) => {
+            let scratch = tracerScratchRef.current;
+            if (!scratch) {
+              scratch = document.createElement('canvas');
+              scratch.width = sz;
+              scratch.height = sz;
+              tracerScratchRef.current = scratch;
+            }
+            const sctx = scratch.getContext('2d');
+            if (!sctx) return;
+            sctx.putImageData(new ImageData(data, sz, sz), 0, 0);
+
+            if (!tracerPreviewFrozen && previewTracer) {
               const dctx = previewTracer.getContext('2d');
-              if (!sctx || !dctx) return;
-              sctx.putImageData(new ImageData(data, sz, sz), 0, 0);
-              dctx.drawImage(scratch, 0, 0, previewTracer.width, previewTracer.height);
-            });
-          }
+              dctx?.drawImage(scratch, 0, 0, previewTracer.width, previewTracer.height);
+            }
+            if (doCaptureSep && previewSep) {
+              const dctx = previewSep.getContext('2d');
+              dctx?.drawImage(scratch, 0, 0, previewSep.width, previewSep.height);
+            }
+          });
         }
       }
 
@@ -599,7 +597,6 @@ export default function App() {
         ref={canvasRef}
         style={{
           position: 'absolute',
-          inset: 0,
           imageRendering: 'pixelated',
           display: 'block',
         }}
