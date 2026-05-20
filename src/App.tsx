@@ -148,6 +148,8 @@ export default function App() {
   // Initialise WebGPU
   useEffect(() => {
     let cancelled = false;
+    let localDevice: GPUDevice | null = null;
+    let localRenderer: WebGPURenderer | null = null;
 
     async function init() {
       if (!navigator.gpu) {
@@ -162,7 +164,13 @@ export default function App() {
       }
 
       const device = await adapter.requestDevice();
-      if (cancelled) return;
+
+      // If the component unmounted while we were requesting the device, destroy it immediately
+      if (cancelled) {
+        device.destroy();
+        return;
+      }
+      localDevice = device;
 
       const canvas = canvasRef.current!;
       const context = canvas.getContext('webgpu');
@@ -174,7 +182,10 @@ export default function App() {
       const format = navigator.gpu.getPreferredCanvasFormat();
       context.configure({ device, format, alphaMode: 'opaque' });
 
+      // Note: We use the initial state of antialiasEnabled here.
+      // Future toggles are handled directly via renderer.setAntialiasing().
       const renderer = new WebGPURenderer(device, context, format, antialiasEnabled);
+      localRenderer = renderer;
       const textureManager = new TextureManager(device);
 
       deviceRef.current = device;
@@ -236,8 +247,16 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      // Properly destroy the WebGPU allocations on unmount
+      if (localRenderer) localRenderer.destroy();
+      if (localDevice) localDevice.destroy();
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('webgpu');
+        if (ctx) ctx.unconfigure();
+      }
     };
-  }, [antialiasEnabled]);
+    // IMPORTANT: Leave the dependency array empty so it doesn't remount on UI toggles
+  }, []);
 
   // Load texture whenever image index changes
   useEffect(() => {

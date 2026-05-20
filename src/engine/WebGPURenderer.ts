@@ -115,6 +115,8 @@ export class WebGPURenderer {
   private msaaTexture   : GPUTexture | null = null;
   private texW = 0;
   private texH = 0;
+  private currentLayerScale = 1.0;
+  private currentTracerScale = 1.0;
   private layerScale = 1.0;
   private tracerScale = 1.0;
 
@@ -271,7 +273,14 @@ export class WebGPURenderer {
 
   // ─── Texture management ──────────────────────────────────────────────────────
   private ensureTextures(w: number, h: number): void {
-    if (this.texW === w && this.texH === h && this.layerTextures.length === 3) return;
+    // Check if both dimensions AND scales are identical
+    if (this.texW === w && this.texH === h &&
+        this.currentLayerScale === this.layerScale &&
+        this.currentTracerScale === this.tracerScale &&
+        this.layerTextures.length === 3) return;
+
+    this.currentLayerScale = this.layerScale;
+    this.currentTracerScale = this.tracerScale;
 
     // Destroy old textures
     for (const t of this.layerTextures) t.destroy();
@@ -292,10 +301,10 @@ export class WebGPURenderer {
       sampleCount: 1,
     }));
 
-    // MSAA resolve target (always at full canvas resolution)
+    // MSAA resolve target (must match layer texture resolution, NOT canvas resolution)
     if (this.sampleCount > 1) {
       this.msaaTexture = this.device.createTexture({
-        size       : [w, h, 1],
+        size       : [layerW, layerH, 1],
         format     : this.internalFormat,
         sampleCount: this.sampleCount,
         usage      : GPUTextureUsage.RENDER_ATTACHMENT,
