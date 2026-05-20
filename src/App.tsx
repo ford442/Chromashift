@@ -599,6 +599,7 @@ export default function App() {
           position: 'absolute',
           imageRendering: 'pixelated',
           display: 'block',
+          background: '#000',
         }}
       />
 
