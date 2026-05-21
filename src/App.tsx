@@ -67,6 +67,7 @@ export default function App() {
   const [isPaused, setIsPaused] = useState(false); // Pauses animation AND tracer decay
   const [layerScale, setLayerScale] = useState(1.0);
   const [tracerScale, setTracerScale] = useState(1.0);
+  const [colorMode, setColorMode] = useState(1); // 1 = Vivid Gradient, 0 = Fixed cr0p
   const [specificImageError, setSpecificImageError] = useState<string | null>(null);
 
   // Upscaler
@@ -372,6 +373,7 @@ export default function App() {
           tracerAboveDuration: tracerAboveDuration * (60 / frameRate),
           tracerBelowDuration: tracerBelowDuration * (60 / frameRate),
           tracerMode,
+          colorMode,
           layerBlendMode,
           tracerBlendMode,
           outputMode,
@@ -423,7 +425,7 @@ export default function App() {
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     animAnglesRef.current[layer] = angle;
@@ -787,6 +789,8 @@ export default function App() {
         onLayerBlendModeChange={setLayerBlendMode}
         onTracerBlendModeChange={setTracerBlendMode}
         onOutputModeChange={setOutputMode}
+        colorMode={colorMode}
+        onColorModeChange={setColorMode}
         onSquareCanvasToggle={setSquareCanvas}
         onAntialiasToggle={(enabled) => {
           setAntialiasEnabled(enabled);

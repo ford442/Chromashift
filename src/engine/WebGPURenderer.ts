@@ -36,6 +36,7 @@ export interface RendererState {
   tracerBelowDuration? : number;  // NEW
   tracerThreshold?     : number;
   tracerMode?          : number;  // 0 = combined colors, 1 = grey highlight
+  colorMode?           : number;  // 0 = Fixed (cr0p), 1 = Vivid (Chromashift)
   layerBlendMode?      : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   outputMode?          : number;  // 0 = mixed, 1 = tracer focus, 2 = tracer only
@@ -470,7 +471,8 @@ export class WebGPURenderer {
       this.device.queue.writeBuffer(lp.rotationBuffer, 0, lp.rotationData.buffer as ArrayBuffer, lp.rotationData.byteOffset, 16);
 
       const opacity = state.layerOpacity ?? 1.0;
-      lp.fragData.set([state.avgLuminance, opacity, 0, 0]);
+      const colorMode = state.colorMode ?? 1.0;
+      lp.fragData.set([state.avgLuminance, opacity, colorMode, 0]);
       this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 16);
 
       const bindGroup = this.device.createBindGroup({

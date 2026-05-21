@@ -20,6 +20,7 @@ interface Props {
   layerBlendMode             : number;
   tracerBlendMode            : number;
   outputMode                 : number;
+  colorMode                  : number;
   squareCanvas               : boolean;
   antialiasEnabled           : boolean;
   onAngleChange              : (layer: 0 | 1 | 2, angle: number) => void;
@@ -36,6 +37,7 @@ interface Props {
   onLayerBlendModeChange     : (v: number) => void;
   onTracerBlendModeChange    : (v: number) => void;
   onOutputModeChange         : (v: number) => void;
+  onColorModeChange          : (v: number) => void;
   onSquareCanvasToggle       : (v: boolean) => void;
   onAntialiasToggle          : (v: boolean) => void;
   onReset                    : () => void;
@@ -77,6 +79,7 @@ export function NunifOverlay({
   layerBlendMode,
   tracerBlendMode,
   outputMode,
+  colorMode,
   squareCanvas,
   antialiasEnabled,
   onAngleChange,
@@ -93,6 +96,7 @@ export function NunifOverlay({
   onLayerBlendModeChange,
   onTracerBlendModeChange,
   onOutputModeChange,
+  onColorModeChange,
   onSquareCanvasToggle,
   onAntialiasToggle,
   onReset,
@@ -306,6 +310,21 @@ export function NunifOverlay({
               onChange={(e) => onLayerOpacityChange(Number(e.target.value))}
               className="w-20 h-1 accent-amber-400"
             />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">Spectrum:</span>
+            <button
+              onClick={() => onColorModeChange(colorMode === 1 ? 0 : 1)}
+              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
+                colorMode === 1
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                  : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
+              }`}
+              title="Toggle between Vivid Gradients and cr0p Fixed Colors"
+            >
+              {colorMode === 1 ? '🌈 Vivid' : '🧱 Fixed'}
+            </button>
           </div>
 
           <div className="flex items-center gap-2">
