@@ -106,7 +106,70 @@ cd cpp && make clean
 
 ---
 
-## Runtime engine switching
+## SIMD status and browser support
+
+The WASM engine is compiled with `-msimd128 -msse2`, which enables the
+WebAssembly SIMD128 instruction set for pixel-processing loops.
+
+| Browser | SIMD128 support |
+|---|---|
+| Chrome 91+ / Edge 91+ | ✅ Full SIMD128 |
+| Chrome < 91 | ⚠️ Scalar (SIMD disabled) |
+| Firefox 89+ | ✅ Full SIMD128 |
+| Safari 16.4+ | ✅ Full SIMD128 |
+| Safari < 16.4 | ⚠️ Scalar (SIMD disabled) |
+
+**Feature detection:** `WasmEngine.ts` exports `isWasmSimdSupported()`, which
+probes the browser at runtime using `WebAssembly.validate` on a minimal SIMD
+instruction.  When the WASM engine loads, a message is written to the browser
+console:
+
+```
+[WasmEngine] C++ WASM engine loaded. SIMD128: ✅ supported
+```
+
+or, on older browsers:
+
+```
+[WasmEngine] C++ WASM engine loaded. SIMD128: ⚠️ not supported (scalar fallback)
+```
+
+> **Note:** Even when the browser does not support SIMD128, the WASM binary still
+> runs — Emscripten automatically falls back to scalar code.  There is no need for
+> a separate scalar build.
+
+---
+
+## Memory management
+
+The WASM linear memory starts at **64 MB** (`INITIAL_MEMORY=67108864`) and grows
+automatically as needed (`ALLOW_MEMORY_GROWTH=1`).
+
+### How pixel buffers are managed in `WasmEngine.ts`
+
+For functions that process image pixel data (luminance, classification, histogram),
+the bridge maintains a single **persistent heap buffer** that is grown on demand but
+never shrunk between calls.  This avoids repeated `_malloc` / `_free` overhead on
+consecutive calls with the same or smaller image sizes (the common case during
+auto-play).
+
+Separate small output buffers (histogram: 1 KB, band counts: 44 bytes) are still
+allocated per-call because they are fixed-size and inexpensive.
+
+### Guidelines for future WASM integrations
+
+- **Always free** temporary allocations (`_malloc` / `_free`) unless you are
+  intentionally keeping a persistent buffer.
+- **Do not hold** a heap pointer across `await` boundaries — memory may have moved
+  if `ALLOW_MEMORY_GROWTH` caused a reallocation.
+- **Prefer bulk operations** (`classifyPixelsBulkWith`) over per-pixel calls
+  (`classifyPixelWith`) to minimise JS↔WASM boundary crossings.
+- **Avoid accessing** `HEAPU8` / `HEAPF32` etc. after calling any function that
+  may trigger heap growth, as typed array views can be invalidated.
+
+---
+
+
 
 Once the WASM engine is built and served, users can switch between the TS and C++ engines
 at runtime using the **⚡ Engine** panel in the NUNIF control overlay (bottom of the left

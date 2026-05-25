@@ -40,7 +40,31 @@ npm run build
 npm run preview
 ```
 
-## Image Data Endpoint
+## Hybrid Engine (TypeScript + C++ WASM)
+
+Chromashift ships two parallel computation engines:
+
+| Engine | Source | Always available? |
+|---|---|---|
+| **TypeScript** | `src/engine/WasmEngine.ts` (fallback) | ✅ Yes |
+| **C++ WASM** | `cpp/chromashift_engine.cpp` | After building (requires Emscripten) |
+
+Both engines expose the same public API. The C++ engine is compiled with WebAssembly
+SIMD128 (`-msimd128 -msse2`) for accelerated pixel-processing. If the WASM binary
+has not been built, all calls fall back silently to the TypeScript implementation.
+
+To build the C++ engine:
+
+```bash
+# Install Emscripten: https://emscripten.org/docs/getting_started/downloads.html
+source /path/to/emsdk/emsdk_env.sh
+cd cpp && make
+```
+
+See [docs/wasm-engine.md](docs/wasm-engine.md) for full build instructions, SIMD
+browser support details, and memory management guidelines.
+
+
 
 Place a JSON file at `public/images.json` with the following shape:
 
