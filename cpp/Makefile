@@ -19,10 +19,11 @@ OUT_WASM := ../public/chromashift_engine.wasm
 # ─── Emscripten flags ────────────────────────────────────────────────────────
 EMFLAGS := \
   -O3 \
+  -msimd128 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s EXPORT_NAME="ChromashiftEngine" \
-  -s EXPORTED_FUNCTIONS='["_malloc","_free","_computeAverageLuminance","_classifyPixel","_classifyPixelsBulk","_computeLuminanceHistogram","_computeColorBandCounts","_durationToDecay","_advanceLayerAngles","_simulateTracerDecay"]' \
+  -s EXPORTED_FUNCTIONS='["_malloc","_free","_computeAverageLuminance","_computeAverageLuminanceStrided","_classifyPixel","_classifyPixelsBulk","_computeLuminanceHistogram","_computeColorBandCounts","_durationToDecay","_advanceLayerAngles","_simulateTracerDecay"]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32","HEAP32","HEAPF32"]' \
   -s ALLOW_MEMORY_GROWTH=1 \
   --bind

@@ -46,6 +46,34 @@ float computeAverageLuminance(const uint8_t* pixels, uint32_t length)
     return static_cast<float>(sum / static_cast<double>(pixel_count));
 }
 
+// ─── computeAverageLuminanceStrided ──────────────────────────────────────────
+
+extern "C" EMSCRIPTEN_KEEPALIVE
+float computeAverageLuminanceStrided(const uint8_t* pixels,
+                                     uint32_t width,
+                                     uint32_t height,
+                                     uint32_t stride)
+{
+    if (width == 0u || height == 0u) return 128.0f;
+    if (stride < 1u) stride = 1u;
+
+    double sum = 0.0;
+    uint32_t n = 0u;
+
+    for (uint32_t y = 0u; y < height; y += stride) {
+        const uint32_t row_base = y * width;
+        for (uint32_t x = 0u; x < width; x += stride) {
+            const uint32_t offset = (row_base + x) * 4u;
+            sum += static_cast<double>(pixels[offset])      * 0.2126
+                 + static_cast<double>(pixels[offset + 1u]) * 0.7152
+                 + static_cast<double>(pixels[offset + 2u]) * 0.0722;
+            ++n;
+        }
+    }
+
+    return n == 0u ? 128.0f : static_cast<float>(sum / static_cast<double>(n));
+}
+
 // ─── classifyPixel ───────────────────────────────────────────────────────────
 
 extern "C" EMSCRIPTEN_KEEPALIVE
@@ -185,6 +213,16 @@ EMSCRIPTEN_BINDINGS(chromashift_engine) {
         optional_override([](uintptr_t ptr, uint32_t length) -> float {
             return computeAverageLuminance(
                 reinterpret_cast<const uint8_t*>(ptr), length);
+        })
+    );
+
+    // computeAverageLuminanceStrided(ptr, width, height, stride)
+    // Preferred path for large upscaled images — samples with spatial stride.
+    function("computeAverageLuminanceStrided",
+        optional_override([](uintptr_t ptr, uint32_t width,
+                             uint32_t height, uint32_t stride) -> float {
+            return computeAverageLuminanceStrided(
+                reinterpret_cast<const uint8_t*>(ptr), width, height, stride);
         })
     );
 
