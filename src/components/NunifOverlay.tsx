@@ -312,19 +312,29 @@ export function NunifOverlay({
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">Spectrum:</span>
-            <button
-              onClick={() => onColorModeChange(colorMode === 1 ? 0 : 1)}
-              className={`text-xs px-2 py-0.5 rounded transition-colors whitespace-nowrap ${
-                colorMode === 1
-                  ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
-                  : 'bg-gray-800 hover:bg-gray-700 border border-amber-500/30'
-              }`}
-              title="Toggle between Vivid Gradients and cr0p Fixed Colors"
-            >
-              {colorMode === 1 ? '🌈 Vivid' : '🧱 Fixed'}
-            </button>
+          <div className="space-y-1">
+            <span className="text-xs text-amber-400/80 font-mono">Spectrum:</span>
+            <div className="grid grid-cols-4 gap-1">
+              {([
+                { value: 0, label: '🧱 Fixed', title: 'Fixed cr0p colors with luminance modulation' },
+                { value: 1, label: '🌈 Vivid', title: 'Vivid HSL gradients per luminance band' },
+                { value: 2, label: '🌿 CROP',  title: 'CROP mode — pure luminance-threshold palette (cr0p.1ink.us style)' },
+                { value: 3, label: '📺 N2',    title: 'CROP NUNIF2 variant — different opacity model and semi-transparent darks' },
+              ] as const).map(({ value, label, title }) => (
+                <button
+                  key={value}
+                  onClick={() => onColorModeChange(value)}
+                  className={`text-[10px] px-1 py-0.5 rounded transition-all ${
+                    colorMode === value
+                      ? 'bg-amber-600 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+                      : 'bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700'
+                  }`}
+                  title={title}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex items-center gap-2">

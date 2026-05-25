@@ -36,7 +36,7 @@ export interface RendererState {
   tracerBelowDuration? : number;  // NEW
   tracerThreshold?     : number;
   tracerMode?          : number;  // 0 = combined colors, 1 = grey highlight
-  colorMode?           : number;  // 0 = Fixed (cr0p), 1 = Vivid (Chromashift)
+  colorMode?           : number;  // 0 = Fixed (cr0p), 1 = Vivid (Chromashift gradient), 2 = CROP, 3 = CROP NUNIF2
   layerBlendMode?      : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   outputMode?          : number;  // 0 = mixed, 1 = tracer focus, 2 = tracer only
