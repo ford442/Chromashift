@@ -61,6 +61,74 @@ let wasmModule: ChromashiftWasmModule | null = null;
 let loadState: LoadState = 'idle';
 const pendingResolvers: Array<(ok: boolean) => void> = [];
 
+// ─── Persistent heap buffer ───────────────────────────────────────────────────
+
+/**
+ * A single reusable WASM heap allocation for input pixel buffers.
+ *
+ * Rather than calling `_malloc` / `_free` on every function call, we keep a
+ * persistent allocation and only grow it when a larger size is needed.  This
+ * eliminates allocator overhead for batch operations on identically-sized
+ * images and reduces GC pressure from repeated typed-array wrapping.
+ *
+ * The buffer is only freed when a new (larger) size is requested; it is never
+ * shrunk.  Because JavaScript is single-threaded there is no risk of
+ * concurrent access.
+ */
+let persistentBufPtr: number = 0;
+let persistentBufSize: number = 0;
+
+/**
+ * Return a persistent WASM heap pointer that can hold at least `size` bytes.
+ * Must only be called when `wasmModule` is non-null.
+ */
+function getPersistentBuf(size: number): number {
+  if (size <= persistentBufSize && persistentBufPtr !== 0) {
+    return persistentBufPtr;
+  }
+  if (persistentBufPtr !== 0) {
+    wasmModule!._free(persistentBufPtr);
+  }
+  persistentBufPtr = wasmModule!._malloc(size);
+  persistentBufSize = size;
+  return persistentBufPtr;
+}
+
+// ─── SIMD feature detection ───────────────────────────────────────────────────
+
+/**
+ * Probe the browser for WebAssembly SIMD (v128) support.
+ *
+ * Uses `WebAssembly.validate` on a minimal module containing a `v128.const`
+ * instruction.  This is the standard technique recommended by the
+ * WebAssembly/feature-detection working group.
+ *
+ * @returns `true` when the browser supports WASM SIMD128.
+ */
+export function isWasmSimdSupported(): boolean {
+  try {
+    // Minimal WASM binary: () -> v128, returns v128.const 0
+    // Sections: type(1), function(1), code(1 function body with v128.const + end)
+    return WebAssembly.validate(new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, // magic
+      0x01, 0x00, 0x00, 0x00, // version
+      // type section: 1 type, () -> v128
+      0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7b,
+      // function section: 1 function, type index 0
+      0x03, 0x02, 0x01, 0x00,
+      // code section: 1 body
+      0x0a, 0x0f, 0x01,       // section id, size, count
+      0x0d, 0x00,             // body size, local count
+      0xfd, 0x0c,             // v128.const
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x0b,                   // end
+    ]));
+  } catch {
+    return false;
+  }
+}
+
 // ─── Loader ───────────────────────────────────────────────────────────────────
 
 /**
@@ -90,6 +158,12 @@ export async function loadWasmEngine(): Promise<boolean> {
     const glue = await import(/* @vite-ignore */ engineUrl) as GlueModule;
     wasmModule = await glue.default();
     loadState = 'ready';
+
+    // Log SIMD availability so developers can confirm the accelerated path is active.
+    const simd = isWasmSimdSupported();
+    console.info(
+      `[WasmEngine] C++ WASM engine loaded. SIMD128: ${simd ? '✅ supported' : '⚠️ not supported (scalar fallback)'}`,
+    );
   } catch {
     // WASM assets not yet built — this is expected in the default repo state.
     loadState = 'unavailable';
@@ -165,11 +239,9 @@ export function computeAverageLuminanceWith(
     const bytes = getImageBytes(image);
     if (!bytes) return tsComputeAverageLuminance(image);
 
-    const ptr = wasmModule._malloc(bytes.length);
+    const ptr = getPersistentBuf(bytes.length);
     wasmModule.HEAPU8.set(bytes, ptr);
-    const result = wasmModule.computeAverageLuminance(ptr, bytes.length);
-    wasmModule._free(ptr);
-    return result;
+    return wasmModule.computeAverageLuminance(ptr, bytes.length);
   }
 
   return tsComputeAverageLuminance(image);
@@ -202,11 +274,9 @@ export function computeAverageLuminanceStridedWith(
 
   if (useWasm && wasmModule) {
     const byteLen = width * height * 4;
-    const ptr = wasmModule._malloc(byteLen);
+    const ptr = getPersistentBuf(byteLen);
     wasmModule.HEAPU8.set(pixels, ptr);
-    const result = wasmModule.computeAverageLuminanceStrided(ptr, width, height, safeStride);
-    wasmModule._free(ptr);
-    return result;
+    return wasmModule.computeAverageLuminanceStrided(ptr, width, height, safeStride);
   }
 
   // TypeScript fallback — mirrors the strided loop from App.tsx.
@@ -388,15 +458,14 @@ export function computeLuminanceHistogramWith(
   if (!bytes) return new Uint32Array(256);
 
   if (useWasm && wasmModule) {
-    const inPtr  = wasmModule._malloc(bytes.length);
-    const outPtr = wasmModule._malloc(256 * 4); // 256 uint32 values
+    const inPtr  = getPersistentBuf(bytes.length);
+    const outPtr = wasmModule._malloc(256 * 4); // 256 uint32 values — fixed small size
     wasmModule.HEAPU8.set(bytes, inPtr);
     wasmModule.computeLuminanceHistogram(inPtr, bytes.length, outPtr);
     const result = new Uint32Array(256);
     for (let i = 0; i < 256; i++) {
       result[i] = wasmModule.HEAPU32[(outPtr >> 2) + i];
     }
-    wasmModule._free(inPtr);
     wasmModule._free(outPtr);
     return result;
   }
@@ -432,15 +501,14 @@ export function computeColorBandCountsWith(
   if (!bytes) return new Uint32Array(11);
 
   if (useWasm && wasmModule) {
-    const inPtr  = wasmModule._malloc(bytes.length);
-    const outPtr = wasmModule._malloc(11 * 4); // 11 uint32 values
+    const inPtr  = getPersistentBuf(bytes.length);
+    const outPtr = wasmModule._malloc(11 * 4); // 11 uint32 values — fixed small size
     wasmModule.HEAPU8.set(bytes, inPtr);
     wasmModule.computeColorBandCounts(inPtr, bytes.length, Math.round(avgLum), outPtr);
     const result = new Uint32Array(11);
     for (let i = 0; i < 11; i++) {
       result[i] = wasmModule.HEAPU32[(outPtr >> 2) + i];
     }
-    wasmModule._free(inPtr);
     wasmModule._free(outPtr);
     return result;
   }
