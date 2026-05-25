@@ -15,12 +15,28 @@ the application always works.
 
 ## What is implemented in C++
 
-| Function | Description |
-|----------|-------------|
-| `computeAverageLuminance` | ITU-R BT.709 average luminance over an RGBA pixel buffer |
-| `classifyPixel` | Maps a pixel's RGB + avgLum to a Chromashift colour-band index (0–10) |
+### Luminance & colour analysis
 
-The classification logic is a direct port of the WGSL fragment-shader preprocessing:
+| C++ function | TS dispatcher | Description |
+|---|---|---|
+| `computeAverageLuminance` | `computeAverageLuminanceWith` | ITU-R BT.709 average luminance over an RGBA pixel buffer |
+| `classifyPixel` | `classifyPixelWith` | Maps a single pixel's RGB + avgLum to a colour-band index (0–10) |
+| `classifyPixelsBulk` | `classifyPixelsBulkWith` | Batch version of `classifyPixel` — one WASM call for the whole image |
+| `computeLuminanceHistogram` | `computeLuminanceHistogramWith` | 256-bucket ITU-R BT.709 luminance histogram |
+| `computeColorBandCounts` | `computeColorBandCountsWith` | 11-bucket pixel count per Chromashift colour band |
+
+### Frame timing & tracer helpers
+
+| C++ function | TS dispatcher | Description |
+|---|---|---|
+| `durationToDecay` | `durationToDecayWith` | Per-frame decay multiplier for tracer persistence timing |
+| `advanceLayerAngles` | `advanceAnglesBy` | Step 3 layer angles with 360° wrapping |
+| `simulateTracerDecay` | `simulateTracerDecayWith` | Apply per-frame decay to a Float32 RGBA buffer in-place (CPU-side tracer simulation) |
+
+### Colour band classification logic
+
+The classification pre-processing (shared by all per-pixel functions) replicates the WGSL
+fragment-shader logic exactly:
 
 ```
 diff      = (avgLuminance / 255) × 32
@@ -28,7 +44,21 @@ lightDark = 128 + |avgLuminance − 128| / 2
 rgb       = lum + lightDark / 2
 ```
 
-Then `rgb` is compared against the same thresholds used in the shaders.
+Then `rgb` is compared against the same thresholds used in the shaders:
+
+| Band | Threshold | Layer | Output colour |
+|---|---|---|---|
+| Grey highlight | `rgb > 229` | 0 | Near-white |
+| Orange | `209 < rgb ≤ 229` | 0 | Orange |
+| Red | `193 < rgb ≤ 209` | 0 | Red |
+| Border red | `190 < rgb ≤ 193` | 0 | Pure red |
+| Violet | `177 < rgb ≤ 190` | 1 | Violet |
+| Blue | `161 < rgb ≤ 177` | 1 | Blue |
+| Border blue | `158 < rgb ≤ 161` | 1 | Pure blue |
+| Green | `145 < rgb ≤ 158` | 2 | Green |
+| Yellow | `128 < rgb ≤ 145` | 2 | Yellow |
+| Border yellow | `125 < rgb ≤ 128` | 2 | Pure yellow |
+| Dark / grey | `rgb ≤ 126` | All | Dark grey |
 
 ---
 
@@ -95,7 +125,7 @@ The currently active engine is also shown in the top-right corner of the canvas
 ```
 cpp/
 ├── chromashift_engine.h     Header — exported C function declarations
-├── chromashift_engine.cpp   C++ implementation (luminance + pixel classification)
+├── chromashift_engine.cpp   C++ implementation (Phase 1 complete)
 └── Makefile                 Emscripten build recipe → public/*.{js,wasm}
 
 public/
@@ -109,10 +139,21 @@ src/engine/
 `WasmEngine.ts` is the single integration point consumed by `App.tsx`.  It:
 
 1. Tries `import('/chromashift_engine.js')` on first use.
-2. If successful, calls `Module._malloc` / `Module.computeAverageLuminance` / `Module._free`
-   with a WASM heap copy of the pixel data.
+2. If successful, calls `Module._malloc` / `Module.<function>` / `Module._free`
+   with WASM heap copies of pixel/float data.
 3. If the import fails (file not found), silently falls back to the TypeScript implementation.
 4. Exposes `isWasmReady()` so the UI can show the correct engine label.
+
+### Exported WASM heap views
+
+In addition to `HEAPU8` (byte-level access), the build now exports:
+
+| View | Type | Use |
+|---|---|---|
+| `HEAPU8` | `Uint8Array` | Read/write raw bytes (pixel input buffers) |
+| `HEAPU32` | `Uint32Array` | Read histogram / band-count output (uint32 arrays) |
+| `HEAP32` | `Int32Array` | Read bulk classification output (int32 arrays) |
+| `HEAPF32` | `Float32Array` | Read/write float angle and tracer buffers |
 
 ---
 
@@ -126,10 +167,24 @@ The WASM binary has not been built yet.  Run `cd cpp && make` (requires Emscript
 
 Not in the current phase.  The GPU pipeline (WebGPU / WGSL shaders) lives entirely in
 `WebGPURenderer.ts` and is not planned to be moved into WASM.  The C++ engine handles
-CPU-side computations (luminance analysis, pixel classification).
+CPU-side computations (luminance analysis, pixel classification, frame timing helpers).
+
+**Q: When should I use `classifyPixelsBulkWith` vs `classifyPixelWith`?**
+
+For analysis of a full image, always use `classifyPixelsBulkWith`.  It avoids `N` separate
+JS↔WASM boundary crossings and processes the entire buffer inside a single C++ call, which
+is significantly faster at high pixel counts.  Use `classifyPixelWith` only when you need
+to classify a handful of pixels on-demand.
+
+**Q: What is `simulateTracerDecayWith` useful for?**
+
+It provides a CPU-side equivalent of the WGSL persistence shader's decay step.  Useful for
+unit tests, offline thumbnail generation, or any scenario where the full GPU pipeline is not
+available.  For real-time rendering the GPU persistence pipeline in `WebGPURenderer.ts` is
+always more efficient.
 
 **Q: Does switching engines restart the current image/level?**
 
-No.  Engine switching only affects `computeAverageLuminance` and `classifyPixel` — both are
-stateless per-call functions.  The WebGPU rendering pipeline and all tracer/persistence state
-continue unaffected.
+No.  Engine switching is stateless — it only changes which implementation backs each
+computation call.  The WebGPU rendering pipeline and all tracer/persistence state continue
+unaffected.
