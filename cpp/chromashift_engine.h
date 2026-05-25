@@ -74,6 +74,24 @@ void classifyPixelsBulk(const uint8_t* pixels, uint32_t byteLen,
                         int avgLum, int* outBands);
 
 /**
+ * Compute a per-pixel Chromashift classification mask (band index 0–10).
+ *
+ * Unlike classifyPixelsBulk (int32 output), this writes a compact uint8 mask
+ * suitable for direct upload to an `r8uint` GPU texture.
+ *
+ * @param pixels    Tightly-packed RGBA bytes (4 bytes per pixel).
+ * @param width     Image width in pixels.
+ * @param height    Image height in pixels.
+ * @param avgLum    Per-image average luminance [0–255].
+ * @param outMask   Caller-allocated array of (width * height) uint8 values.
+ */
+void computeClassificationMask(const uint8_t* pixels,
+                               uint32_t width,
+                               uint32_t height,
+                               float avgLum,
+                               uint8_t* outMask);
+
+/**
  * Build a 256-bucket ITU-R BT.709 luminance histogram.
  *
  * @param pixels        Tightly-packed RGBA bytes.

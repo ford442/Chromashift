@@ -22,6 +22,7 @@ the application always works.
 | `computeAverageLuminance` | `computeAverageLuminanceWith` | ITU-R BT.709 average luminance over an RGBA pixel buffer |
 | `classifyPixel` | `classifyPixelWith` | Maps a single pixel's RGB + avgLum to a colour-band index (0–10) |
 | `classifyPixelsBulk` | `classifyPixelsBulkWith` | Batch version of `classifyPixel` — one WASM call for the whole image |
+| `computeClassificationMask` | `classifyImageMaskWith` | Generates compact uint8 band mask (`width × height`) for GPU `r8uint` texture upload |
 | `computeLuminanceHistogram` | `computeLuminanceHistogramWith` | 256-bucket ITU-R BT.709 luminance histogram |
 | `computeColorBandCounts` | `computeColorBandCountsWith` | 11-bucket pixel count per Chromashift colour band |
 
@@ -143,6 +144,19 @@ src/engine/
    with WASM heap copies of pixel/float data.
 3. If the import fails (file not found), silently falls back to the TypeScript implementation.
 4. Exposes `isWasmReady()` so the UI can show the correct engine label.
+
+### Classification mask data flow (optional runtime path)
+
+When the active engine is **C++ WASM**, Chromashift can precompute a per-pixel
+classification mask at image-load time and bind it to the layer shaders:
+
+1. `App.tsx` loads the image and computes `avgLuminance`.
+2. `classifyImageMaskWith(image, avgLum, true)` calls C++ `computeClassificationMask`.
+3. The returned `Uint8Array` (band index 0–10 per pixel) is uploaded as `r8uint`.
+4. `WebGPURenderer.setClassificationMaskTexture()` binds that mask as an optional
+   texture in all 3 layer pipelines.
+5. In fixed `cr0p` colour mode, shaders sample the mask to select per-layer bands;
+   when no mask is present they fall back to the original per-fragment threshold logic.
 
 ### Exported WASM heap views
 
