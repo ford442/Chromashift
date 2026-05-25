@@ -24,6 +24,27 @@ extern "C" {
 float computeAverageLuminance(const uint8_t* pixels, uint32_t length);
 
 /**
+ * Compute the average ITU-R BT.709 luminance of an RGBA pixel buffer using
+ * a spatial stride (sampling every `stride` pixels in both X and Y).
+ *
+ * This is the preferred path for large upscaled images (4K–8K) where
+ * sampling every pixel is prohibitively expensive.  A stride of 1 is
+ * equivalent to computeAverageLuminance().  The inner loop is written
+ * in a SIMD-friendly style so the compiler/Emscripten can auto-vectorise
+ * it when -msimd128 is enabled.
+ *
+ * @param pixels  Pointer to tightly-packed RGBA bytes (4 bytes per pixel).
+ * @param width   Image width in pixels.
+ * @param height  Image height in pixels.
+ * @param stride  Pixel step size (≥ 1) in both X and Y directions.
+ * @returns       Average luminance in range [0, 255].
+ */
+float computeAverageLuminanceStrided(const uint8_t* pixels,
+                                     uint32_t width,
+                                     uint32_t height,
+                                     uint32_t stride);
+
+/**
  * Classify a single pixel into a Chromashift colour band.
  *
  * Matches the WGSL fragment shader logic exactly, using the same luminance

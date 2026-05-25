@@ -15,6 +15,7 @@ import {
   loadWasmEngine,
   isWasmReady,
   computeAverageLuminanceWith,
+  computeAverageLuminanceStridedWith,
 } from './engine/WasmEngine';
 
 const IMAGES_ENDPOINT = './images.json';
@@ -533,17 +534,14 @@ export default function App() {
       rendererRef.current.setTexture(tex);
       rendererRef.current.clearPersistence();
 
-      // Recompute avg luminance from the upscaled pixels (downsample inline).
+      // Recompute avg luminance from the upscaled pixels via the WASM
+      // strided path (falls back to TS when WASM is not loaded).
       const stride = Math.max(1, Math.floor(Math.max(result.width, result.height) / 256));
-      let sum = 0; let n = 0;
-      for (let y = 0; y < result.height; y += stride) {
-        for (let x = 0; x < result.width; x += stride) {
-          const o = (y * result.width + x) * 4;
-          sum += result.pixels[o] * 0.2126 + result.pixels[o + 1] * 0.7152 + result.pixels[o + 2] * 0.0722;
-          n++;
-        }
-      }
-      setAvgLuminance(Math.round(sum / Math.max(n, 1)));
+      const avgLum = computeAverageLuminanceStridedWith(
+        result.pixels, result.width, result.height, stride,
+        engineModeRef.current === 'wasm',
+      );
+      setAvgLuminance(Math.round(avgLum));
       // Aspect is unchanged for integer-scale upscales; nudge the resize observer
       // by re-setting imageAspect so the canvas re-layouts at the new resolution.
       setImageAspect(result.width / result.height);

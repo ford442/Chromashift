@@ -19,6 +19,8 @@ export type EngineKind = 'ts' | 'wasm';
 interface ChromashiftWasmModule {
   /** Call the C++ computeAverageLuminance with a WASM heap pointer. */
   computeAverageLuminance(ptr: number, length: number): number;
+  /** Compute average luminance with spatial stride for large upscaled images. */
+  computeAverageLuminanceStrided(ptr: number, width: number, height: number, stride: number): number;
   /** Call the C++ classifyPixel. */
   classifyPixel(r: number, g: number, b: number, avgLum: number): number;
   /** Classify every pixel in a RGBA buffer.  outPtr points to pixelCount int32 values. */
@@ -157,6 +159,53 @@ export function computeAverageLuminanceWith(
   }
 
   return tsComputeAverageLuminance(image);
+}
+
+/**
+ * Compute the average ITU-R BT.709 luminance of a raw RGBA pixel buffer
+ * using a spatial stride (sampling every `stride` pixels in X and Y).
+ *
+ * This is the fast path for large upscaled images (4K–8K) where sampling
+ * every pixel would block the main thread.  When the WASM engine is loaded
+ * the computation runs in C++ with SIMD acceleration; otherwise the
+ * TypeScript strided loop is used as a fallback.
+ *
+ * @param pixels   Tightly-packed RGBA byte buffer (e.g. `result.pixels`).
+ * @param width    Image width in pixels.
+ * @param height   Image height in pixels.
+ * @param stride   Pixel step in X and Y (≥ 1).  A stride of 1 processes every pixel.
+ * @param useWasm  Attempt to use the C++ WASM engine.
+ * @returns        Average luminance in [0, 255].
+ */
+export function computeAverageLuminanceStridedWith(
+  pixels: Uint8Array | Uint8ClampedArray,
+  width: number,
+  height: number,
+  stride: number,
+  useWasm: boolean,
+): number {
+  const safeStride = Math.max(1, stride);
+
+  if (useWasm && wasmModule) {
+    const byteLen = width * height * 4;
+    const ptr = wasmModule._malloc(byteLen);
+    wasmModule.HEAPU8.set(pixels, ptr);
+    const result = wasmModule.computeAverageLuminanceStrided(ptr, width, height, safeStride);
+    wasmModule._free(ptr);
+    return result;
+  }
+
+  // TypeScript fallback — mirrors the strided loop from App.tsx.
+  let sum = 0;
+  let n = 0;
+  for (let y = 0; y < height; y += safeStride) {
+    for (let x = 0; x < width; x += safeStride) {
+      const o = (y * width + x) * 4;
+      sum += pixels[o] * 0.2126 + pixels[o + 1] * 0.7152 + pixels[o + 2] * 0.0722;
+      n++;
+    }
+  }
+  return n === 0 ? 128 : sum / n;
 }
 
 /**
