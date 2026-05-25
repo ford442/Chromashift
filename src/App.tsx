@@ -16,6 +16,7 @@ import {
   isWasmReady,
   computeAverageLuminanceWith,
   computeAverageLuminanceStridedWith,
+  classifyImageMaskWith,
 } from './engine/WasmEngine';
 
 const IMAGES_ENDPOINT = './images.json';
@@ -95,6 +96,7 @@ export default function App() {
   const animAnglesRef = useRef<LayerTriple<number>>(DEFAULT_ANGLES);
   const lastAngleSyncRef = useRef(0);
   const loadGenRef = useRef(0);
+  const maskTextureRef = useRef<GPUTexture | null>(null);
 
   // Attempt to load the C++ WASM engine in the background on first mount.
   useEffect(() => {
@@ -104,6 +106,47 @@ export default function App() {
       else     console.info('[Chromashift] C++ WASM engine unavailable — using TypeScript engine.');
     });
   }, []);
+
+  const clearClassificationMask = useCallback(() => {
+    rendererRef.current?.setClassificationMaskTexture(null);
+    maskTextureRef.current?.destroy();
+    maskTextureRef.current = null;
+  }, []);
+
+  const generateClassificationMaskTexture = useCallback((image: HTMLImageElement, avgLumValue: number) => {
+    if (engineModeRef.current !== 'wasm' || !isWasmReady()) {
+      clearClassificationMask();
+      return;
+    }
+
+    const device = deviceRef.current;
+    const renderer = rendererRef.current;
+    if (!device || !renderer) return;
+
+    const result = classifyImageMaskWith(image, avgLumValue, true);
+    if (!result) {
+      clearClassificationMask();
+      return;
+    }
+
+    const { mask, width, height } = result;
+    const texture = device.createTexture({
+      size: [width, height, 1],
+      format: 'r8uint',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    const bytes = new Uint8Array(mask.byteLength);
+    bytes.set(mask);
+    device.queue.writeTexture(
+      { texture },
+      bytes,
+      { bytesPerRow: width, rowsPerImage: height },
+      [width, height, 1],
+    );
+    maskTextureRef.current?.destroy();
+    maskTextureRef.current = texture;
+    renderer.setClassificationMaskTexture(texture);
+  }, [clearClassificationMask]);
 
   // Resize canvas: respect image aspect ratio unless "Square Canvas" is toggled
   useEffect(() => {
@@ -240,6 +283,12 @@ export default function App() {
               let avgLum = 128;
               try { avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm'); } catch (e) { console.warn('CORS?', e); }
               setAvgLuminance(Math.round(avgLum));
+              try {
+                generateClassificationMaskTexture(img, avgLum);
+              } catch (e) {
+                console.warn('Could not generate classification mask:', e);
+                clearClassificationMask();
+              }
               const previewOrig = previewOriginalRef.current;
               if (previewOrig) {
                 const ctx = previewOrig.getContext('2d');
@@ -271,6 +320,7 @@ export default function App() {
 
     return () => {
       cancelled = true;
+      clearClassificationMask();
       // Properly destroy the WebGPU allocations on unmount
       if (localRenderer) localRenderer.destroy();
       if (localDevice) localDevice.destroy();
@@ -280,13 +330,14 @@ export default function App() {
       }
     };
     // IMPORTANT: Leave the dependency array empty so it doesn't remount on UI toggles
-  }, []);
+  }, [clearClassificationMask, generateClassificationMaskTexture]);
 
   // Load texture whenever image index changes
   useEffect(() => {
     if (!gpuReady || imageList.length === 0) return;
     const url = imageList[currentImageIndex];
     const gen = ++loadGenRef.current;
+    clearClassificationMask();
 
     // Clear persistence when changing images so tracer starts fresh for new image
     rendererRef.current?.clearPersistence();
@@ -311,6 +362,12 @@ export default function App() {
             console.warn('Could not compute average luminance (CORS?):', e);
           }
           setAvgLuminance(Math.round(avgLum));
+          try {
+            generateClassificationMaskTexture(img, avgLum);
+          } catch (e) {
+            console.warn('Could not generate classification mask:', e);
+            clearClassificationMask();
+          }
 
           const ctx = previewOrig.getContext('2d');
           if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
@@ -319,7 +376,7 @@ export default function App() {
         img.src = url;
       }
     }).catch((e) => console.warn('Failed to load texture:', url, e));
-  }, [gpuReady, imageList, currentImageIndex]);
+  }, [gpuReady, imageList, currentImageIndex, clearClassificationMask, generateClassificationMaskTexture]);
 
   // Auto-play image rotation (random)
   useEffect(() => {
@@ -332,6 +389,29 @@ export default function App() {
 
     return () => clearInterval(interval);
   }, [isAutoPlayActive, isPaused, imageChangeInterval, imageList.length]);
+
+  useEffect(() => {
+    if (!gpuReady || imageList.length === 0) return;
+    if (engineMode !== 'wasm' || !isWasmReady()) {
+      clearClassificationMask();
+      return;
+    }
+    const url = imageList[currentImageIndex];
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        generateClassificationMaskTexture(img, avgLuminance);
+      } catch (e) {
+        console.warn('Could not refresh classification mask:', e);
+        clearClassificationMask();
+      }
+    };
+    img.onerror = () => {
+      clearClassificationMask();
+    };
+    img.src = url;
+  }, [gpuReady, imageList, currentImageIndex, engineMode, avgLuminance, clearClassificationMask, generateClassificationMaskTexture]);
 
   // Animation loop
   useEffect(() => {
@@ -459,6 +539,7 @@ export default function App() {
       const tex = await textureManagerRef.current.loadTexture(url);
       rendererRef.current.setTexture(tex);
       rendererRef.current.clearPersistence();
+      clearClassificationMask();
       capturePreviewAfterRender.current = true;
 
       setImageList((prev) => {
@@ -474,6 +555,12 @@ export default function App() {
         let avgLum = 128;
         try { avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm'); } catch (e) { console.warn('CORS?', e); }
         setAvgLuminance(Math.round(avgLum));
+        try {
+          generateClassificationMaskTexture(img, avgLum);
+        } catch (e) {
+          console.warn('Could not generate classification mask:', e);
+          clearClassificationMask();
+        }
         const previewOrig = previewOriginalRef.current;
         if (previewOrig) {
           const ctx = previewOrig.getContext('2d');
@@ -485,7 +572,7 @@ export default function App() {
       console.error('Failed to load specific image:', e);
       setSpecificImageError(`Failed to load: ${url}`);
     }
-  }, []);
+  }, [clearClassificationMask, generateClassificationMaskTexture]);
 
   const parseUpscaleModel = useCallback((value: string): UpscaleModel => {
     const parts = value.split(':');
@@ -533,6 +620,7 @@ export default function App() {
       const tex = textureManagerRef.current.uploadPixels(`__upscaled__:${url}`, result.pixels, result.width, result.height);
       rendererRef.current.setTexture(tex);
       rendererRef.current.clearPersistence();
+      clearClassificationMask();
 
       // Recompute avg luminance from the upscaled pixels via the WASM
       // strided path (falls back to TS when WASM is not loaded).
@@ -568,7 +656,7 @@ export default function App() {
     } finally {
       setUpscaleBusy(false);
     }
-  }, [imageList, currentImageIndex, upscaleModel, parseUpscaleModel]);
+  }, [imageList, currentImageIndex, upscaleModel, parseUpscaleModel, clearClassificationMask]);
 
   const handleUpscaleOutput = useCallback(async () => {
     if (!canvasRef.current) return;

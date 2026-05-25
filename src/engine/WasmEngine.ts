@@ -25,6 +25,8 @@ interface ChromashiftWasmModule {
   classifyPixel(r: number, g: number, b: number, avgLum: number): number;
   /** Classify every pixel in a RGBA buffer.  outPtr points to pixelCount int32 values. */
   classifyPixelsBulk(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
+  /** Build a compact uint8 classification mask (0–10 per pixel). */
+  computeClassificationMask(inPtr: number, width: number, height: number, avgLum: number, outPtr: number): void;
   /** Fill a 256-entry uint32 histogram at outPtr. */
   computeLuminanceHistogram(inPtr: number, byteLen: number, outPtr: number): void;
   /** Fill an 11-entry uint32 colour-band count array at outPtr. */
@@ -116,6 +118,18 @@ function getImageBytes(image: HTMLImageElement): Uint8ClampedArray | null {
   if (!ctx) return null;
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
   return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+}
+
+function getImageDataAtNaturalSize(image: HTMLImageElement): ImageData | null {
+  const width = Math.max(1, image.naturalWidth || image.width || 1);
+  const height = Math.max(1, image.naturalHeight || image.height || 1);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(image, 0, 0, width, height);
+  return ctx.getImageData(0, 0, width, height);
 }
 
 // ─── TypeScript fallback implementations ─────────────────────────────────────
@@ -315,6 +329,44 @@ export function classifyPixelsBulkWith(
     else                result[i] = 10;
   }
   return result;
+}
+
+/**
+ * Classify every pixel in an image into a compact uint8 mask texture payload.
+ *
+ * The returned mask stores one band index (0–10) per pixel and matches the
+ * source image dimensions. This is intended for upload to an `r8uint` WebGPU
+ * texture so layer shaders can sample precomputed classification results.
+ */
+export function classifyImageMaskWith(
+  image: HTMLImageElement,
+  avgLum: number,
+  useWasm: boolean,
+): { mask: Uint8Array; width: number; height: number } | null {
+  const imageData = getImageDataAtNaturalSize(image);
+  if (!imageData) return null;
+
+  const { data, width, height } = imageData;
+  const pixelCount = width * height;
+
+  if (useWasm && wasmModule) {
+    const inPtr = wasmModule._malloc(data.length);
+    const outPtr = wasmModule._malloc(pixelCount);
+    wasmModule.HEAPU8.set(data, inPtr);
+    wasmModule.computeClassificationMask(inPtr, width, height, avgLum, outPtr);
+    const mask = new Uint8Array(pixelCount);
+    mask.set(wasmModule.HEAPU8.subarray(outPtr, outPtr + pixelCount));
+    wasmModule._free(inPtr);
+    wasmModule._free(outPtr);
+    return { mask, width, height };
+  }
+
+  const bands = classifyPixelsBulkWith(imageData, avgLum, false);
+  const mask = new Uint8Array(pixelCount);
+  for (let i = 0; i < pixelCount; i++) {
+    mask[i] = bands[i];
+  }
+  return { mask, width, height };
 }
 
 /**

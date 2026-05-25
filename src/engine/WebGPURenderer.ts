@@ -110,6 +110,8 @@ export class WebGPURenderer {
   // Layer passes
   private layerPipelines : LayerPipeline[] = [];
   private currentTexture : GPUTexture | null = null;
+  private classificationMaskTexture: GPUTexture | null = null;
+  private fallbackMaskTexture: GPUTexture;
 
   // Intermediate per-layer render textures (scaled by layerScale)
   private layerTextures : GPUTexture[] = [];
@@ -154,6 +156,18 @@ export class WebGPURenderer {
       magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear',
     });
 
+    this.fallbackMaskTexture = device.createTexture({
+      size: [1, 1, 1],
+      format: 'r8uint',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    this.device.queue.writeTexture(
+      { texture: this.fallbackMaskTexture },
+      new Uint8Array([0]),
+      { bytesPerRow: 1, rowsPerImage: 1 },
+      [1, 1, 1],
+    );
+
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
     for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
 
@@ -188,6 +202,7 @@ export class WebGPURenderer {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
       ],
     });
 
@@ -333,6 +348,10 @@ export class WebGPURenderer {
     this.currentTexture = texture;
   }
 
+  setClassificationMaskTexture(texture: GPUTexture | null): void {
+    this.classificationMaskTexture = texture;
+  }
+
   setAntialiasing(enabled: boolean): void {
     const next = enabled ? 4 : 1;
     if (next === this.sampleCount) return;
@@ -472,7 +491,8 @@ export class WebGPURenderer {
 
       const opacity = state.layerOpacity ?? 1.0;
       const colorMode = state.colorMode ?? 1.0;
-      lp.fragData.set([state.avgLuminance, opacity, colorMode, 0]);
+      const useMask = this.classificationMaskTexture && colorMode === 0 ? 1 : 0;
+      lp.fragData.set([state.avgLuminance, opacity, colorMode, useMask]);
       this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 16);
 
       const bindGroup = this.device.createBindGroup({
@@ -482,6 +502,7 @@ export class WebGPURenderer {
           { binding: 1, resource: this.sampler },
           { binding: 2, resource: this.currentTexture.createView() },
           { binding: 3, resource: { buffer: lp.fragUniformBuffer } },
+          { binding: 4, resource: (this.classificationMaskTexture ?? this.fallbackMaskTexture).createView() },
         ],
       });
 
@@ -645,6 +666,7 @@ export class WebGPURenderer {
     this.persistAboveUniformBuf.destroy();
     this.persistBelowUniformBuf.destroy();
     this.compositorUniformBuf.destroy();
+    this.fallbackMaskTexture.destroy();
     this.previewTexture?.destroy();
     this.previewStagingBuffer?.destroy();
   }

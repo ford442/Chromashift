@@ -118,6 +118,26 @@ void classifyPixelsBulk(const uint8_t* pixels, uint32_t byteLen,
     }
 }
 
+// ─── computeClassificationMask ───────────────────────────────────────────────
+
+extern "C" EMSCRIPTEN_KEEPALIVE
+void computeClassificationMask(const uint8_t* pixels,
+                               uint32_t width,
+                               uint32_t height,
+                               float avgLum,
+                               uint8_t* outMask)
+{
+    const uint32_t pixelCount = width * height;
+    const int roundedAvgLum = static_cast<int>(std::lround(avgLum));
+    for (uint32_t i = 0; i < pixelCount; ++i) {
+        outMask[i] = static_cast<uint8_t>(classifyPixel(
+            static_cast<int>(pixels[i * 4u]),
+            static_cast<int>(pixels[i * 4u + 1u]),
+            static_cast<int>(pixels[i * 4u + 2u]),
+            roundedAvgLum));
+    }
+}
+
 // ─── computeLuminanceHistogram ───────────────────────────────────────────────
 
 extern "C" EMSCRIPTEN_KEEPALIVE
@@ -238,6 +258,17 @@ EMSCRIPTEN_BINDINGS(chromashift_engine) {
             classifyPixelsBulk(
                 reinterpret_cast<const uint8_t*>(inPtr), byteLen, avgLum,
                 reinterpret_cast<int*>(outPtr));
+        })
+    );
+
+    // computeClassificationMask(inPtr, width, height, avgLum, outPtr)
+    // outPtr must point to width * height uint8 values on the WASM heap.
+    function("computeClassificationMask",
+        optional_override([](uintptr_t inPtr, uint32_t width, uint32_t height,
+                             float avgLum, uintptr_t outPtr) {
+            computeClassificationMask(
+                reinterpret_cast<const uint8_t*>(inPtr), width, height, avgLum,
+                reinterpret_cast<uint8_t*>(outPtr));
         })
     );
 

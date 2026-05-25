@@ -88,12 +88,13 @@ export const fragmentShaderRedOrange = /* wgsl */ `
 ${WGSL_COLOR_HELPERS}
 @group(0) @binding(1) var texSampler : sampler;
 @group(0) @binding(2) var tex        : texture_2d<f32>;
+@group(0) @binding(4) var classMask  : texture_2d<u32>;
 
 struct FragUniforms {
   avgLuminance : f32,
   layerOpacity : f32,
   colorMode    : f32,
-  _pad1        : f32,
+  useMask      : f32,
 };
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
 
@@ -101,6 +102,10 @@ struct FragUniforms {
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample = textureSample(tex, texSampler, uv);
   let lum    = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
+  let dims   = vec2<f32>(textureDimensions(classMask));
+  let maskUv = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999994));
+  let maskPx = vec2<i32>(maskUv * dims);
+  let band   = textureLoad(classMask, maskPx, 0).r;
 
   var result = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
@@ -115,19 +120,36 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     let lightDark = 128.0 + (abs(fragUniforms.avgLuminance - 128.0) / 2.0);
     let rgb       = lum + lightDark / 2.0;
     let grey      = fragUniforms.avgLuminance;
+    let useMask   = fragUniforms.useMask > 0.5;
 
-    if (rgb > 229.0) {
-      let g = clamp((grey + (rgb - 229.0)) / 255.0, 0.0, 1.0);
-      result = vec4<f32>(g, g, g, 1.0);
-    } else if (rgb > 209.0) {
-      result = vec4<f32>(1.0, (128.0 - diff) / 255.0, 0.0, 1.0);
-    } else if (rgb > 193.0) {
-      result = vec4<f32>((255.0 - diff) / 255.0, 0.0, 0.0, 1.0);
-    } else if (rgb > 190.0) {
-      result = vec4<f32>(1.0, 0.0, 0.0, 1.0);
-    } else if (rgb <= 126.0) {
-      let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
-      result = vec4<f32>(g, g, g, 1.0);
+    if (useMask) {
+      if (band == 0u) {
+        let g = clamp((grey + (rgb - 229.0)) / 255.0, 0.0, 1.0);
+        result = vec4<f32>(g, g, g, 1.0);
+      } else if (band == 1u) {
+        result = vec4<f32>(1.0, (128.0 - diff) / 255.0, 0.0, 1.0);
+      } else if (band == 2u) {
+        result = vec4<f32>((255.0 - diff) / 255.0, 0.0, 0.0, 1.0);
+      } else if (band == 3u) {
+        result = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+      } else if (band == 10u) {
+        let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
+        result = vec4<f32>(g, g, g, 1.0);
+      }
+    } else {
+      if (rgb > 229.0) {
+        let g = clamp((grey + (rgb - 229.0)) / 255.0, 0.0, 1.0);
+        result = vec4<f32>(g, g, g, 1.0);
+      } else if (rgb > 209.0) {
+        result = vec4<f32>(1.0, (128.0 - diff) / 255.0, 0.0, 1.0);
+      } else if (rgb > 193.0) {
+        result = vec4<f32>((255.0 - diff) / 255.0, 0.0, 0.0, 1.0);
+      } else if (rgb > 190.0) {
+        result = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+      } else if (rgb <= 126.0) {
+        let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
+        result = vec4<f32>(g, g, g, 1.0);
+      }
     }
   }
 
@@ -139,12 +161,13 @@ export const fragmentShaderVioletBlue = /* wgsl */ `
 ${WGSL_COLOR_HELPERS}
 @group(0) @binding(1) var texSampler : sampler;
 @group(0) @binding(2) var tex        : texture_2d<f32>;
+@group(0) @binding(4) var classMask  : texture_2d<u32>;
 
 struct FragUniforms {
   avgLuminance : f32,
   layerOpacity : f32,
   colorMode    : f32,
-  _pad1        : f32,
+  useMask      : f32,
 };
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
 
@@ -152,6 +175,10 @@ struct FragUniforms {
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample = textureSample(tex, texSampler, uv);
   let lum    = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
+  let dims   = vec2<f32>(textureDimensions(classMask));
+  let maskUv = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999994));
+  let maskPx = vec2<i32>(maskUv * dims);
+  let band   = textureLoad(classMask, maskPx, 0).r;
 
   var result = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
@@ -165,16 +192,30 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     let lightDark = 128.0 + (abs(fragUniforms.avgLuminance - 128.0) / 2.0);
     let rgb       = lum + lightDark / 2.0;
     let grey      = fragUniforms.avgLuminance;
+    let useMask   = fragUniforms.useMask > 0.5;
 
-    if (rgb > 177.0 && rgb <= 190.0) {
-      result = vec4<f32>((128.0 - diff) / 255.0, 0.0, 1.0, 1.0);
-    } else if (rgb > 161.0 && rgb <= 177.0) {
-      result = vec4<f32>(0.0, 0.0, (255.0 - diff) / 255.0, 1.0);
-    } else if (rgb > 158.0 && rgb <= 161.0) {
-      result = vec4<f32>(0.0, 0.0, 1.0, 1.0);
-    } else if (rgb <= 126.0) {
-      let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
-      result = vec4<f32>(g, g, g, 1.0);
+    if (useMask) {
+      if (band == 4u) {
+        result = vec4<f32>((128.0 - diff) / 255.0, 0.0, 1.0, 1.0);
+      } else if (band == 5u) {
+        result = vec4<f32>(0.0, 0.0, (255.0 - diff) / 255.0, 1.0);
+      } else if (band == 6u) {
+        result = vec4<f32>(0.0, 0.0, 1.0, 1.0);
+      } else if (band == 10u) {
+        let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
+        result = vec4<f32>(g, g, g, 1.0);
+      }
+    } else {
+      if (rgb > 177.0 && rgb <= 190.0) {
+        result = vec4<f32>((128.0 - diff) / 255.0, 0.0, 1.0, 1.0);
+      } else if (rgb > 161.0 && rgb <= 177.0) {
+        result = vec4<f32>(0.0, 0.0, (255.0 - diff) / 255.0, 1.0);
+      } else if (rgb > 158.0 && rgb <= 161.0) {
+        result = vec4<f32>(0.0, 0.0, 1.0, 1.0);
+      } else if (rgb <= 126.0) {
+        let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
+        result = vec4<f32>(g, g, g, 1.0);
+      }
     }
   }
 
@@ -186,12 +227,13 @@ export const fragmentShaderGreenYellow = /* wgsl */ `
 ${WGSL_COLOR_HELPERS}
 @group(0) @binding(1) var texSampler : sampler;
 @group(0) @binding(2) var tex        : texture_2d<f32>;
+@group(0) @binding(4) var classMask  : texture_2d<u32>;
 
 struct FragUniforms {
   avgLuminance : f32,
   layerOpacity : f32,
   colorMode    : f32,
-  _pad1        : f32,
+  useMask      : f32,
 };
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
 
@@ -199,6 +241,10 @@ struct FragUniforms {
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let sample = textureSample(tex, texSampler, uv);
   let lum    = dot(sample.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)) * 255.0;
+  let dims   = vec2<f32>(textureDimensions(classMask));
+  let maskUv = clamp(uv, vec2<f32>(0.0), vec2<f32>(0.99999994));
+  let maskPx = vec2<i32>(maskUv * dims);
+  let band   = textureLoad(classMask, maskPx, 0).r;
 
   var result = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
@@ -212,16 +258,30 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     let lightDark = 128.0 + (abs(fragUniforms.avgLuminance - 128.0) / 2.0);
     let rgb       = lum + lightDark / 2.0;
     let grey      = fragUniforms.avgLuminance;
+    let useMask   = fragUniforms.useMask > 0.5;
 
-    if (rgb > 145.0 && rgb <= 158.0) {
-      result = vec4<f32>(0.0, (255.0 - diff) / 255.0, 0.0, 1.0);
-    } else if (rgb > 128.0 && rgb <= 145.0) {
-      result = vec4<f32>(1.0, (255.0 - diff) / 255.0, 0.0, 1.0);
-    } else if (rgb > 125.0 && rgb <= 128.0) {
-      result = vec4<f32>(1.0, 1.0, 0.0, 1.0);
-    } else if (rgb <= 126.0) {
-      let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
-      result = vec4<f32>(g, g, g, 1.0);
+    if (useMask) {
+      if (band == 7u) {
+        result = vec4<f32>(0.0, (255.0 - diff) / 255.0, 0.0, 1.0);
+      } else if (band == 8u) {
+        result = vec4<f32>(1.0, (255.0 - diff) / 255.0, 0.0, 1.0);
+      } else if (band == 9u) {
+        result = vec4<f32>(1.0, 1.0, 0.0, 1.0);
+      } else if (band == 10u) {
+        let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
+        result = vec4<f32>(g, g, g, 1.0);
+      }
+    } else {
+      if (rgb > 145.0 && rgb <= 158.0) {
+        result = vec4<f32>(0.0, (255.0 - diff) / 255.0, 0.0, 1.0);
+      } else if (rgb > 128.0 && rgb <= 145.0) {
+        result = vec4<f32>(1.0, (255.0 - diff) / 255.0, 0.0, 1.0);
+      } else if (rgb > 125.0 && rgb <= 128.0) {
+        result = vec4<f32>(1.0, 1.0, 0.0, 1.0);
+      } else if (rgb <= 126.0) {
+        let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
+        result = vec4<f32>(g, g, g, 1.0);
+      }
     }
   }
 
@@ -489,5 +549,4 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     return vec4<f32>(finalCol.rgb, 1.0);
 }
 `;
-
 
