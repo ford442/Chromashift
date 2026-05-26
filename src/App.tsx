@@ -150,14 +150,14 @@ export default function App() {
 
   // Resize canvas: respect image aspect ratio unless "Square Canvas" is toggled
   useEffect(() => {
-    const canvas = canvasRef.current;
+    const mainCanvas = previewTracerRef.current;
     const container = containerRef.current;
-    if (!canvas || !container) return;
+    if (!mainCanvas || !container) return;
 
     function resizeCanvas() {
       const container = containerRef.current;
-      const canvas = canvasRef.current;
-      if (!canvas || !container) return;
+      const mainCanvas = previewTracerRef.current;
+      if (!mainCanvas || !container) return;
 
       const maxSize = window.innerHeight * 0.95;
       const containerW = container.clientWidth;
@@ -190,15 +190,15 @@ export default function App() {
       const cssLeft = Math.floor((containerW - cssW) / 2);
       const cssTop  = Math.floor((containerH - cssH) / 2);
 
-      canvas.style.width  = `${cssW}px`;
-      canvas.style.height = `${cssH}px`;
-      canvas.style.left   = `${cssLeft}px`;
-      canvas.style.top    = `${cssTop}px`;
+      mainCanvas.style.width  = `${cssW}px`;
+      mainCanvas.style.height = `${cssH}px`;
+      mainCanvas.style.left   = `${cssLeft}px`;
+      mainCanvas.style.top    = `${cssTop}px`;
 
       // 2. Lock actual internal resolution strictly to integer * DPR
       const dpr = Math.max(1, window.devicePixelRatio || 1);
-      canvas.width  = Math.floor(cssW * dpr);
-      canvas.height = Math.floor(cssH * dpr);
+      mainCanvas.width  = Math.floor(cssW * dpr);
+      mainCanvas.height = Math.floor(cssH * dpr);
     }
 
     resizeCanvas();
@@ -472,7 +472,7 @@ export default function App() {
         if (doCaptureSep) capturePreviewAfterRender.current = false;
 
         if ((!tracerPreviewFrozen || doCaptureSep) && rendererRef.current) {
-          const previewTracer = previewTracerRef.current;
+          const mainTracer = previewTracerRef.current;
           const previewSep    = previewSeparatedRef.current;
           const sz = WebGPURenderer.PREVIEW_SIZE;
           rendererRef.current.readPreviewPixels((data) => {
@@ -487,9 +487,9 @@ export default function App() {
             if (!sctx) return;
             sctx.putImageData(new ImageData(data, sz, sz), 0, 0);
 
-            if (!tracerPreviewFrozen && previewTracer) {
-              const dctx = previewTracer.getContext('2d');
-              dctx?.drawImage(scratch, 0, 0, previewTracer.width, previewTracer.height);
+            if (!tracerPreviewFrozen && mainTracer) {
+              const dctx = mainTracer.getContext('2d');
+              dctx?.drawImage(scratch, 0, 0, mainTracer.width, mainTracer.height);
             }
             if (doCaptureSep && previewSep) {
               const dctx = previewSep.getContext('2d');
@@ -721,12 +721,12 @@ export default function App() {
       className="relative w-screen h-screen bg-gradient-to-br from-gray-900 via-amber-950 to-black overflow-hidden"
       id="chromashift-container"
     >
-      {/* WebGPU canvas */}
+      {/* Tracer/Ghost Output - Main Full-Screen Canvas */}
       <canvas
-        ref={canvasRef}
+        ref={previewTracerRef}
         style={{
           position: 'absolute',
-          imageRendering: 'pixelated',
+          imageRendering: 'auto',
           display: 'block',
           background: '#000',
         }}
@@ -754,16 +754,16 @@ export default function App() {
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Separated</div>
       </div>
 
-      {/* Preview: Tracer/Ghost Output (Bottom-Right) */}
+      {/* Preview: Main Layers Output (Bottom-Right) */}
       <div className="absolute bottom-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
-          ref={previewTracerRef}
+          ref={canvasRef}
           width={300}
           height={300}
-          style={{ display: 'block', width: '300px', height: '300px', imageRendering: 'auto' }}
+          style={{ display: 'block', width: '300px', height: '300px', imageRendering: 'pixelated' }}
         />
         <div className="flex items-center justify-between px-2 py-1">
-          <span className="text-xs text-amber-400 font-mono">Tracer</span>
+          <span className="text-xs text-amber-400 font-mono">Layers</span>
           <button
             onClick={() => setTracerPreviewFrozen(!tracerPreviewFrozen)}
             className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
