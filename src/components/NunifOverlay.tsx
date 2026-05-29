@@ -20,6 +20,8 @@ interface Props {
   layerBlendMode             : number;
   tracerBlendMode            : number;
   outputMode                 : number;
+  isViewingTracer            : boolean;
+  onTracerViewToggle         : (v: boolean) => void;
   colorMode                  : number;
   squareCanvas               : boolean;
   antialiasEnabled           : boolean;
@@ -79,6 +81,8 @@ export function NunifOverlay({
   layerBlendMode,
   tracerBlendMode,
   outputMode,
+  isViewingTracer,
+  onTracerViewToggle,
   colorMode,
   squareCanvas,
   antialiasEnabled,
@@ -452,7 +456,23 @@ export function NunifOverlay({
             </button>
           </div>
 
-          <div className="space-y-1">
+          {/* Prominent toggle for full-resolution centered tracer inspection on the main canvas.
+              This bypasses the normal compositor and renders the live persistence buffer
+              (Above) using an aspect-fit centered blit so trails can be examined at their
+              native internal resolution regardless of square-canvas or window shape. */}
+          <button
+            onClick={() => onTracerViewToggle(!isViewingTracer)}
+            className={`w-full text-xs px-3 py-1.5 rounded font-mono transition-all active:scale-[0.985] ${
+              isViewingTracer
+                ? 'bg-amber-500 hover:bg-amber-400 text-black shadow-[0_0_16px_rgba(245,158,11,0.6)]'
+                : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/40 text-amber-300'
+            }`}
+            title={isViewingTracer ? 'Exit full tracer view and return to normal composited output' : 'Switch main canvas to centered, native-resolution view of the accumulated tracer buffer (live updating)'}
+          >
+            {isViewingTracer ? '⬅ Exit Tracer View' : '🔬 Show Full Tracer'}
+          </button>
+
+          <div className="space-y-1 mt-1">
             <span className="text-xs text-amber-400/80 font-mono text-[10px]">Output:</span>
             <div className="grid grid-cols-3 gap-1">
               <button

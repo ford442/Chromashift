@@ -16,6 +16,7 @@ import {
   fullscreenVertexSource,
   persistenceFragmentSource,
   compositorFragmentSource,
+  tracerViewFragmentSource,
 } from './shaders';
 
 export interface LayerState {
@@ -41,6 +42,7 @@ export interface RendererState {
   tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   outputMode?          : number;  // 0 = mixed, 1 = tracer focus, 2 = tracer only
   paused?              : boolean; // When true, tracer persistence stops decaying
+  showTracerView?      : boolean; // When true, main canvas shows the persistence (tracer) buffer centered at native res instead of the normal compositor output
 }
 
 /**
@@ -141,6 +143,16 @@ export class WebGPURenderer {
   private compositorSampler   : GPUSampler;
   private compositorUniformBuf: GPUBuffer;
 
+  // ── Tracer View (full-res centered inspection of persistence buffer) ───────
+  /** Pipeline + resources for the dedicated "Show Full Tracer" display path.
+   *  Uses a simple aspect-fit blit so the tracer texture is always shown
+   *  centered, uncropped, with correct aspect ratio regardless of current
+   *  canvas shape (square vs. image-aspect) or window size. */
+  private tracerViewPipeline  : GPURenderPipeline;
+  private tracerViewBGL       : GPUBindGroupLayout;
+  private tracerViewUniformBuf: GPUBuffer;
+  private tracerViewSampler   : GPUSampler;
+
   // Small composited preview — fixed 256×256, independent of canvas/tracerScale
   private previewTexture      : GPUTexture | null = null;
   private previewStagingBuffer: GPUBuffer | null = null;
@@ -152,8 +164,17 @@ export class WebGPURenderer {
     this.format  = format;
     this.sampleCount = enableMSAA ? 4 : 1;
 
+    // High-quality sampler for the source image.
+    // - linear min/mag + mipmap linear: reduces aliasing during rotation/minification
+    //   (especially once mipmaps are generated on upload — see TextureManager).
+    // - explicit clamp-to-edge: prevents wrap-around artifacts at image borders
+    //   when layers rotate the UVs outside [0,1].
     this.sampler = device.createSampler({
-      magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear',
+      magFilter: 'linear',
+      minFilter: 'linear',
+      mipmapFilter: 'linear',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
     });
 
     this.fallbackMaskTexture = device.createTexture({
@@ -171,7 +192,15 @@ export class WebGPURenderer {
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
     for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
 
-    this.compositorSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+    // Sampler used for all intermediate layer + persistence textures.
+    // These are same-resolution render targets (no mips), so mipmapFilter is irrelevant.
+    // Linear gives smooth blending of the decaying tracers.
+    this.compositorSampler = device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+    });
 
     // Persistence pipeline
     this.persistBGL      = this.createPersistBGL();
@@ -186,11 +215,30 @@ export class WebGPURenderer {
       size: 32, // Accommodates the new struct layout
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
+    // Tracer View pipeline (aspect-fit centered blit of persistence texture)
+    this.tracerViewBGL      = this.createTracerViewBGL();
+    this.tracerViewPipeline = this.createTracerViewPipeline();
+    this.tracerViewUniformBuf = device.createBuffer({
+      size: 16, // 3xf32 + pad
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.tracerViewSampler = device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+      mipmapFilter: 'nearest', // persistence textures have no mips
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+    });
   }
 
   private compositorUniformData = new ArrayBuffer(32);
   private compositorF32 = new Float32Array(this.compositorUniformData);
   private compositorU32 = new Uint32Array(this.compositorUniformData);
+
+  // Tracer view uniform (canvasAspect, texAspect, exposure)
+  private tracerViewUniformData = new ArrayBuffer(16);
+  private tracerViewF32 = new Float32Array(this.tracerViewUniformData);
 
   // ─── Layer pipeline ─────────────────────────────────────────────────────────
   private createLayerPipeline(fragmentSource: string): LayerPipeline {
@@ -279,6 +327,32 @@ export class WebGPURenderer {
       vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
         module     : device.createShaderModule({ code: compositorFragmentSource }),
+        entryPoint : 'main',
+        targets    : [{ format: this.format }],
+      },
+      primitive  : { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  // ── Tracer View pipeline helpers (for "Show Full Tracer" button) ────────────
+  private createTracerViewBGL(): GPUBindGroupLayout {
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+  }
+
+  private createTracerViewPipeline(): GPURenderPipeline {
+    const device = this.device;
+    return device.createRenderPipeline({
+      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.tracerViewBGL] }),
+      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module     : device.createShaderModule({ code: tracerViewFragmentSource }),
         entryPoint : 'main',
         targets    : [{ format: this.format }],
       },
@@ -601,25 +675,78 @@ export class WebGPURenderer {
       ],
     });
 
-    const finalPass = enc.beginRenderPass({
-      colorAttachments: [{
-        view      : canvasTex.createView(),
-        loadOp    : 'clear',
-        storeOp   : 'store',
-        // Opaque clear. alphaMode:'opaque' on the swapchain should already
-        // force this, but some browser+GPU combos don't honour it and let
-        // the compositor see straight through to whatever's behind the
-        // browser window when rendered alpha is 0.
-        clearValue: { r: 0, g: 0, b: 0, a: 1 },
-      }],
-    });
-    finalPass.setPipeline(this.compositorPipeline);
-    finalPass.setBindGroup(0, compBG);
-    finalPass.draw(6);
-    finalPass.end();
+    // ── Final output to main canvas ─────────────────────────────────────────
+    // Two paths:
+    //   • Normal: full 5-pass compositor (layers + dual tracers + blend modes)
+    //   • Tracer View (new): direct high-quality aspect-fit blit of the live
+    //     persistence buffer (Above) so user can inspect the accumulated
+    //     trails/feedback at native internal resolution, centered, letterboxed
+    //     if the current canvas shape doesn't match the tracer tex aspect.
+    const showTracerView = state.showTracerView ?? false;
+
+    if (showTracerView) {
+      // Compute aspects for robust centering (usually identical, but protects
+      // against squareCanvas toggles or rapid resizes that haven't yet
+      // recreated textures).
+      const cW = canvasTex.width;
+      const cH = canvasTex.height;
+      const pTex = this.persistAboveTextures[this.persistPingPong];
+      const tW = pTex ? pTex.width : cW;
+      const tH = pTex ? pTex.height : cH;
+      const canvasAspect = cW / Math.max(1, cH);
+      const texAspect    = tW / Math.max(1, tH);
+
+      this.tracerViewF32[0] = canvasAspect;
+      this.tracerViewF32[1] = texAspect;
+      // Gentle exposure lift so faint decayed tracers are visible when
+      // blown up to full canvas size. 1.15–1.25 is a good perceptual range.
+      this.tracerViewF32[2] = 1.20;
+      this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniformData);
+
+      const tvBG = this.device.createBindGroup({
+        layout : this.tracerViewBGL,
+        entries: [
+          { binding: 0, resource: this.tracerViewSampler },
+          { binding: 1, resource: pTex!.createView() },
+          { binding: 2, resource: { buffer: this.tracerViewUniformBuf } },
+        ],
+      });
+
+      const tvPass = enc.beginRenderPass({
+        colorAttachments: [{
+          view      : canvasTex.createView(),
+          loadOp    : 'clear',
+          storeOp   : 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        }],
+      });
+      tvPass.setPipeline(this.tracerViewPipeline);
+      tvPass.setBindGroup(0, tvBG);
+      tvPass.draw(6);
+      tvPass.end();
+    } else {
+      const finalPass = enc.beginRenderPass({
+        colorAttachments: [{
+          view      : canvasTex.createView(),
+          loadOp    : 'clear',
+          storeOp   : 'store',
+          // Opaque clear. alphaMode:'opaque' on the swapchain should already
+          // force this, but some browser+GPU combos don't honour it and let
+          // the compositor see straight through to whatever's behind the browser
+          // window when rendered alpha is 0.
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        }],
+      });
+      finalPass.setPipeline(this.compositorPipeline);
+      finalPass.setBindGroup(0, compBG);
+      finalPass.draw(6);
+      finalPass.end();
+    }
 
     // ── Preview pass: compositor → small 256×256 texture + copy to staging ──
-    // Only runs when no readback is in-flight (can't write to a mapped buffer).
+    // Always renders the *normal* artistic composite (never the pure tracer view).
+    // This keeps the "Separated" and live "Tracer" preview panels useful for
+    // comparison while the main canvas is in inspection mode.
     this.ensurePreviewResources();
     if (this.previewTexture && this.previewStagingBuffer && !this.previewReadPending) {
       const sz = WebGPURenderer.PREVIEW_SIZE;
@@ -666,6 +793,7 @@ export class WebGPURenderer {
     this.persistAboveUniformBuf.destroy();
     this.persistBelowUniformBuf.destroy();
     this.compositorUniformBuf.destroy();
+    this.tracerViewUniformBuf.destroy();
     this.fallbackMaskTexture.destroy();
     this.previewTexture?.destroy();
     this.previewStagingBuffer?.destroy();

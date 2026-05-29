@@ -67,6 +67,7 @@ export default function App() {
   const [tracerBlendMode, setTracerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
   const [outputMode, setOutputMode] = useState(0); // 0=mixed, 1=tracer focus, 2=tracer only
   const [isPaused, setIsPaused] = useState(false); // Pauses animation AND tracer decay
+  const [isViewingTracer, setIsViewingTracer] = useState(false); // Toggles main canvas to centered full-res tracer inspection view
   const [layerScale, setLayerScale] = useState(1.0);
   const [tracerScale, setTracerScale] = useState(1.0);
   const [colorMode, setColorMode] = useState(1); // 1 = Vivid Gradient, 0 = Fixed cr0p
@@ -459,6 +460,7 @@ export default function App() {
           tracerBlendMode,
           outputMode,
           paused: isPaused,
+          showTracerView: isViewingTracer,
         };
 
         rendererRef.current?.render(state);
@@ -506,7 +508,7 @@ export default function App() {
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused, isViewingTracer]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     animAnglesRef.current[layer] = angle;
@@ -859,6 +861,8 @@ export default function App() {
         layerBlendMode={layerBlendMode}
         tracerBlendMode={tracerBlendMode}
         outputMode={outputMode}
+        isViewingTracer={isViewingTracer}
+        onTracerViewToggle={setIsViewingTracer}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}

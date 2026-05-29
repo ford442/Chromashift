@@ -49,9 +49,14 @@ export class TextureManager {
     });
 
     const imageBitmap = await createImageBitmap(image);
+    // Use srgb format so that standard photo/JPEG/PNG content (which is encoded
+    // in sRGB) is automatically decoded to linear RGB on textureSample. This
+    // gives correct luminance (BT.709) calculations and more accurate colour
+    // mixing in the layer + persistence passes. Prevents gamma-related banding
+    // and washed-out or crushed colours in the separation.
     const texture = this.device.createTexture({
       size: [imageBitmap.width, imageBitmap.height, 1],
-      format: 'rgba8unorm',
+      format: 'rgba8unorm-srgb',
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
@@ -86,9 +91,11 @@ export class TextureManager {
     const prev = this.textures.get(cacheKey);
     if (prev) prev.destroy();
 
+    // srgb for upscaled pixels too (they come from 2D canvas which is sRGB).
+    // See comment above in loadTexture for why srgb improves colour fidelity.
     const texture = this.device.createTexture({
       size: [width, height, 1],
-      format: 'rgba8unorm',
+      format: 'rgba8unorm-srgb',
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |

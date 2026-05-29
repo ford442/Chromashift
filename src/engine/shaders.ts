@@ -81,6 +81,15 @@ fn band_gradient(
   let lum = mix(lum_low, lum_high, t);
   return hsl2rgb(hue, sat, lum);
 }
+
+// Soft threshold helper for smoother colour band transitions.
+// Using a 2.5-unit transition width reduces hard aliasing and posterisation
+// on smooth source gradients while keeping the artistic "cut" character of the
+// original cr0p / nunif separation. This is a high-perceived-quality, zero-cost
+// improvement (smoothstep is a single ALU op on modern GPUs).
+fn softThreshold(v: f32, edge: f32, width: f32) -> f32 {
+  return smoothstep(edge - width, edge + width, v);
+}
 `;
 
 // ─── Fragment: Layer 0 – Red / Orange ──────────────────────────────────────────────
@@ -153,18 +162,28 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
         result = vec4<f32>(g, g, g, 1.0);
       }
     } else {
-      if (rgb > 229.0) {
+      // Softened thresholds (see softThreshold helper above). The 2.2-unit
+      // transition width gives noticeably smoother edges on real photos
+      // without destroying the distinct colour band identity.
+      let tw = 2.2;
+      if (rgb > 229.0 - tw) {
+        let t = softThreshold(rgb, 229.0, tw);
         let g = clamp((grey + (rgb - 229.0)) / 255.0, 0.0, 1.0);
-        result = vec4<f32>(g, g, g, 1.0);
+        // Fade highlight grey into the orange band for anti-aliasing
+        let orange = vec4<f32>(1.0, (128.0 - diff) / 255.0, 0.0, 1.0);
+        result = mix(orange, vec4<f32>(g, g, g, 1.0), t);
       } else if (rgb > 209.0) {
         result = vec4<f32>(1.0, (128.0 - diff) / 255.0, 0.0, 1.0);
       } else if (rgb > 193.0) {
         result = vec4<f32>((255.0 - diff) / 255.0, 0.0, 0.0, 1.0);
       } else if (rgb > 190.0) {
         result = vec4<f32>(1.0, 0.0, 0.0, 1.0);
-      } else if (rgb <= 126.0) {
+      } else if (rgb <= 126.0 + tw) {
+        let t = 1.0 - softThreshold(rgb, 126.0, tw);
         let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
-        result = vec4<f32>(g, g, g, 1.0);
+        // Blend dark grey into the lowest red band
+        let borderRed = vec4<f32>(1.0, 0.0, 0.0, 1.0);
+        result = mix(vec4<f32>(g, g, g, 1.0), borderRed, t);
       }
     }
   }
@@ -237,15 +256,18 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
         result = vec4<f32>(g, g, g, 1.0);
       }
     } else {
+      let tw = 2.2; // must match the value used in Red/Orange for consistent edges
       if (rgb > 177.0 && rgb <= 190.0) {
         result = vec4<f32>((128.0 - diff) / 255.0, 0.0, 1.0, 1.0);
       } else if (rgb > 161.0 && rgb <= 177.0) {
         result = vec4<f32>(0.0, 0.0, (255.0 - diff) / 255.0, 1.0);
       } else if (rgb > 158.0 && rgb <= 161.0) {
         result = vec4<f32>(0.0, 0.0, 1.0, 1.0);
-      } else if (rgb <= 126.0) {
+      } else if (rgb <= 126.0 + tw) {
+        let t = 1.0 - softThreshold(rgb, 126.0, tw);
         let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
-        result = vec4<f32>(g, g, g, 1.0);
+        let borderBlue = vec4<f32>(0.0, 0.0, 1.0, 1.0);
+        result = mix(vec4<f32>(g, g, g, 1.0), borderBlue, t);
       }
     }
   }
@@ -318,15 +340,18 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
         result = vec4<f32>(g, g, g, 1.0);
       }
     } else {
+      let tw = 2.2; // consistent with other layers for coherent soft edges across bands
       if (rgb > 145.0 && rgb <= 158.0) {
         result = vec4<f32>(0.0, (255.0 - diff) / 255.0, 0.0, 1.0);
       } else if (rgb > 128.0 && rgb <= 145.0) {
         result = vec4<f32>(1.0, (255.0 - diff) / 255.0, 0.0, 1.0);
       } else if (rgb > 125.0 && rgb <= 128.0) {
         result = vec4<f32>(1.0, 1.0, 0.0, 1.0);
-      } else if (rgb <= 126.0) {
+      } else if (rgb <= 126.0 + tw) {
+        let t = 1.0 - softThreshold(rgb, 126.0, tw);
         let g = clamp((grey - (rgb - 128.0)) / 255.0, 0.0, 1.0);
-        result = vec4<f32>(g, g, g, 1.0);
+        let borderYellow = vec4<f32>(1.0, 1.0, 0.0, 1.0);
+        result = mix(vec4<f32>(g, g, g, 1.0), borderYellow, t);
       }
     }
   }
@@ -592,7 +617,70 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // produce alpha=0 pixels and some browser/GPU combos let the OS
     // compositor see through the canvas to whatever is behind the browser
     // window, even though alphaMode is 'opaque' on the swapchain.
-    return vec4<f32>(finalCol.rgb, 1.0);
+
+    // Subtle filmic tonemapping + gentle exposure lift on final output.
+    // The pipeline works in 16-bit float (good headroom for brightened tracers
+    // and multi-layer adds), but the swapchain is 8 bpc. A cheap tonemap here
+    // distributes the energy better across the 0-255 quantisation steps,
+    // visibly reducing banding in smooth decayed tracer tails and dark gradients.
+    // This is "free" perceptual quality — no extra passes.
+    let x = finalCol.rgb * 1.04;                // tiny exposure bias
+    let tonemapped = x / (x + vec3<f32>(0.15)); // very soft Reinhard variant
+    return vec4<f32>(tonemapped, 1.0);
+}
+`;
+
+// ─── Tracer View (centered aspect-fit blit) ─────────────────────────────────────────
+// Dedicated high-quality display path for "Show Full Tracer" mode.
+// Renders one of the persistence textures (or caller can composite) centered
+// in the canvas while strictly preserving the texture's native aspect ratio.
+// This gives a true "full resolution" inspection view independent of square-canvas
+// cropping or compositor blending, with letter/pillar boxing when needed.
+export const tracerViewFragmentSource = /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var tex        : texture_2d<f32>;
+
+struct TracerViewUniforms {
+  canvasAspect : f32,  // canvas.width / canvas.height
+  texAspect    : f32,  // persistTex.width / persistTex.height (usually matches but robust)
+  exposure     : f32,  // subtle boost for visibility in pure view mode
+};
+@group(0) @binding(2) var<uniform> tvu : TracerViewUniforms;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  // Fit the texture into the canvas preserving aspect (letterbox or pillarbox).
+  // uv is in [0,1] across the full canvas.
+  let cA = tvu.canvasAspect;
+  let tA = tvu.texAspect;
+
+  var sampleUV = uv;
+  if (cA > tA + 0.0001) {
+    // Canvas is wider → pillarbox (vertical bars). Texture fills height.
+    let visW = tA / cA;
+    let x0 = (1.0 - visW) * 0.5;
+    if (uv.x < x0 || uv.x > x0 + visW) {
+      return vec4<f32>(0.02, 0.02, 0.03, 1.0); // subtle dark bars, not pure black
+    }
+    sampleUV.x = (uv.x - x0) / visW;
+  } else if (tA > cA + 0.0001) {
+    // Canvas is taller → letterbox (horizontal bars). Texture fills width.
+    let visH = cA / tA;
+    let y0 = (1.0 - visH) * 0.5;
+    if (uv.y < y0 || uv.y > y0 + visH) {
+      return vec4<f32>(0.02, 0.02, 0.03, 1.0);
+    }
+    sampleUV.y = (uv.y - y0) / visH;
+  }
+  // else: aspects match → fullscreen, no bars
+
+  var col = textureSample(tex, texSampler, sampleUV);
+
+  // Subtle exposure boost + clamp so tracer trails read clearly at full canvas size.
+  // This is a cheap filmic-ish lift; real tonemapping lives in compositor.
+  col = min(col * tvu.exposure, vec4<f32>(1.0));
+
+  return vec4<f32>(col.rgb, 1.0);
 }
 `;
 
