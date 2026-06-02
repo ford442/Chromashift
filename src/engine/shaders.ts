@@ -125,16 +125,19 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     else if (lum > 190.0) { result = vec4<f32>(band_gradient(lum, 190.0, 209.0, 0.0, 10.0, 1.0, 0.40, 0.55), 1.0); }
   } else if (fragUniforms.colorMode >= 1.5) {
     // --- CROP MODE (2.0) / CROP NUNIF2 (3.0) ---
-    // Luminance adjustment: lum += (128 + |avgLum - 128| / 2) / 2
-    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
     let isNunif2  = fragUniforms.colorMode > 2.5;
+    // CR0P (mode 2) maps pixels straight from raw luminance so its bands line up
+    // exactly with the go.1ink.us/chromashift reference. NUNIF2 (mode 3) keeps the
+    // luminance lift: lum += (128 + |avgLum - 128| / 2) / 2.
+    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
+    let bandLum   = select(lum, adj, isNunif2);
     let nonAlpha  = select(1.0, 0.5, isNunif2);   // NUNIF2 Layer 1 opacity = 0.5
     let darkAlpha = select(0.0, 0.1, isNunif2);
-    if (adj >= 229.0) {
+    if (bandLum >= 229.0) {
       result = vec4<f32>(0.753, 0.753, 0.753, nonAlpha);
-    } else if (adj >= 209.0) {
+    } else if (bandLum >= 209.0) {
       result = vec4<f32>(1.0, 0.627, 0.0, nonAlpha);
-    } else if (adj >= 190.0) {
+    } else if (bandLum >= 190.0) {
       result = vec4<f32>(1.0, 0.0, 0.0, nonAlpha);
     } else {
       result = vec4<f32>(0.0, 0.0, 0.0, darkAlpha);
@@ -223,15 +226,18 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     else if (lum > 158.0 && lum <= 177.0) { result = vec4<f32>(band_gradient(lum, 158.0, 177.0, 220.0, 255.0, 1.0, 0.38, 0.50), 1.0); }
   } else if (fragUniforms.colorMode >= 1.5) {
     // --- CROP MODE (2.0) / CROP NUNIF2 (3.0) ---
-    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
     let isNunif2  = fragUniforms.colorMode > 2.5;
+    // CR0P (mode 2) uses raw luminance to match the go.1ink.us/chromashift reference;
+    // NUNIF2 (mode 3) keeps its luminance lift.
+    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
+    let bandLum   = select(lum, adj, isNunif2);
     let nonAlpha  = select(1.0, 0.777, isNunif2);  // NUNIF2 Layer 2 opacity = 0.777
     let darkAlpha = select(0.0, 0.1, isNunif2);
-    if (adj >= 177.0 && adj < 190.0) {
+    if (bandLum >= 177.0 && bandLum < 190.0) {
       result = vec4<f32>(0.502, 0.0, 0.502, nonAlpha);
-    } else if (adj >= 161.0 && adj < 177.0) {
+    } else if (bandLum >= 161.0 && bandLum < 177.0) {
       result = vec4<f32>(0.0, 0.0, 0.545, nonAlpha);
-    } else if (adj >= 158.0 && adj < 161.0) {
+    } else if (bandLum >= 158.0 && bandLum < 161.0) {
       result = vec4<f32>(0.0, 0.0, 1.0, nonAlpha);
     } else {
       result = vec4<f32>(0.0, 0.0, 0.0, darkAlpha);
@@ -307,15 +313,18 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     else if (lum > 125.0 && lum <= 145.0) { result = vec4<f32>(band_gradient(lum, 125.0, 145.0, 50.0, 90.0, 1.0, 0.40, 0.52), 1.0); }
   } else if (fragUniforms.colorMode >= 1.5) {
     // --- CROP MODE (2.0) / CROP NUNIF2 (3.0) ---
-    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
     let isNunif2  = fragUniforms.colorMode > 2.5;
+    // CR0P (mode 2) uses raw luminance to match the go.1ink.us/chromashift reference;
+    // NUNIF2 (mode 3) keeps its luminance lift.
+    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
+    let bandLum   = select(lum, adj, isNunif2);
     let nonAlpha  = select(1.0, 0.777, isNunif2);  // NUNIF2 Layer 3 opacity = 0.777
     let darkAlpha = select(0.0, 0.1, isNunif2);
-    if (adj >= 145.0 && adj < 158.0) {
+    if (bandLum >= 145.0 && bandLum < 158.0) {
       result = vec4<f32>(0.0, 0.502, 0.0, nonAlpha);
-    } else if (adj >= 128.0 && adj < 145.0) {
+    } else if (bandLum >= 128.0 && bandLum < 145.0) {
       result = vec4<f32>(0.502, 1.0, 0.0, nonAlpha);
-    } else if (adj >= 125.0 && adj < 128.0) {
+    } else if (bandLum >= 125.0 && bandLum < 128.0) {
       result = vec4<f32>(1.0, 1.0, 0.0, nonAlpha);
     } else {
       result = vec4<f32>(0.0, 0.0, 0.0, darkAlpha);
