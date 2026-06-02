@@ -89,11 +89,16 @@ export default function App() {
 
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
+  // previewTracerRef is the main full-screen WebGPU canvas (issue #49).
+  // The WebGPU context is configured on it in init(); its width/height are
+  // managed by the ResizeObserver in the resize effect below.
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
   // Reusable 256×256 offscreen canvas — avoids createImageBitmap latency
   // by letting us putImageData once and drawImage-scale to the visible canvas.
   const tracerScratchRef = useRef<HTMLCanvasElement | null>(null);
   const capturePreviewAfterRender = useRef(false);
+  // Last timestamp a GPU→CPU readback was dispatched (issue #50: throttle to ≤15fps).
+  const lastReadbackMsRef = useRef(0);
   const animAnglesRef = useRef<LayerTriple<number>>(DEFAULT_ANGLES);
   const lastAngleSyncRef = useRef(0);
   const loadGenRef = useRef(0);
@@ -240,7 +245,9 @@ export default function App() {
       }
       localDevice = device;
 
-      const canvas = canvasRef.current!;
+      // Issue #49: use the large centered canvas as the primary WebGPU target
+      // so all rendering happens at full display resolution instead of 300×300.
+      const canvas = previewTracerRef.current!;
       const context = canvas.getContext('webgpu');
       if (!context) {
         setError('Failed to get WebGPU context from canvas.');
@@ -325,8 +332,8 @@ export default function App() {
       // Properly destroy the WebGPU allocations on unmount
       if (localRenderer) localRenderer.destroy();
       if (localDevice) localDevice.destroy();
-      if (canvasRef.current) {
-        const ctx = canvasRef.current.getContext('webgpu');
+      if (previewTracerRef.current) {
+        const ctx = previewTracerRef.current.getContext('webgpu');
         if (ctx) ctx.unconfigure();
       }
     };
@@ -466,16 +473,19 @@ export default function App() {
         rendererRef.current?.render(state);
 
         // Snapshot the compositor output via GPU readback for both the Separated
-        // preview (once per image load) and the live Tracer preview. Using the
-        // GPU readback path for Separated avoids the cross-adapter drawImage
-        // failure that occurs when powerPreference:'high-performance' selects a
-        // discrete GPU while the 2D canvas runs on the integrated adapter.
+        // preview (once per image load) and the live Output thumbnail (canvasRef).
+        // Issue #49: previewTracerRef is now the WebGPU canvas and auto-updates —
+        // GPU readback only feeds the small 300px thumbnail panels.
+        // Issue #50: throttle live readback to ≤15 fps to reduce pipeline stalls.
         const doCaptureSep = capturePreviewAfterRender.current;
         if (doCaptureSep) capturePreviewAfterRender.current = false;
 
-        if ((!tracerPreviewFrozen || doCaptureSep) && rendererRef.current) {
-          const mainTracer = previewTracerRef.current;
-          const previewSep    = previewSeparatedRef.current;
+        const readbackIntervalMs = 1000 / 15;
+        const wantReadback = !tracerPreviewFrozen && (now - lastReadbackMsRef.current >= readbackIntervalMs);
+        if ((wantReadback || doCaptureSep) && rendererRef.current) {
+          if (wantReadback) lastReadbackMsRef.current = now;
+          const thumbCanvas = canvasRef.current;
+          const previewSep  = previewSeparatedRef.current;
           const sz = WebGPURenderer.PREVIEW_SIZE;
           rendererRef.current.readPreviewPixels((data) => {
             let scratch = tracerScratchRef.current;
@@ -489,9 +499,9 @@ export default function App() {
             if (!sctx) return;
             sctx.putImageData(new ImageData(data, sz, sz), 0, 0);
 
-            if (!tracerPreviewFrozen && mainTracer) {
-              const dctx = mainTracer.getContext('2d');
-              dctx?.drawImage(scratch, 0, 0, mainTracer.width, mainTracer.height);
+            if (wantReadback && thumbCanvas) {
+              const dctx = thumbCanvas.getContext('2d');
+              dctx?.drawImage(scratch, 0, 0, thumbCanvas.width, thumbCanvas.height);
             }
             if (doCaptureSep && previewSep) {
               const dctx = previewSep.getContext('2d');
@@ -766,7 +776,7 @@ export default function App() {
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Separated</div>
       </div>
 
-      {/* Preview: Main Layers Output (Bottom-Right) */}
+      {/* Preview: Compositor Output thumbnail (Bottom-Right, 2D canvas fed by GPU readback) */}
       <div className="absolute bottom-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={canvasRef}
@@ -775,7 +785,7 @@ export default function App() {
           style={{ display: 'block', width: '300px', height: '300px', imageRendering: 'pixelated' }}
         />
         <div className="flex items-center justify-between px-2 py-1">
-          <span className="text-xs text-amber-400 font-mono">Layers</span>
+          <span className="text-xs text-amber-400 font-mono">Output</span>
           <button
             onClick={() => setTracerPreviewFrozen(!tracerPreviewFrozen)}
             className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
@@ -783,26 +793,34 @@ export default function App() {
                 ? 'bg-red-600 hover:bg-red-500 text-white'
                 : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
             }`}
-            title={tracerPreviewFrozen ? 'Unfreeze preview' : 'Freeze preview'}
+            title={tracerPreviewFrozen ? 'Unfreeze thumbnail' : 'Freeze thumbnail'}
           >
             {tracerPreviewFrozen ? '⏸ Frozen' : 'Live'}
           </button>
         </div>
       </div>
 
-      {/* Image switcher dots */}
+      {/* Image navigation — issue #53: prev/next instead of one-dot-per-image */}
       {imageList.length > 1 && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-2 z-40">
-          {imageList.map((_, idx) => (
-            <button
-              key={idx}
-              onClick={() => setCurrentImageIndex(idx)}
-              className={`w-2.5 h-2.5 rounded-full transition-colors ${
-                idx === currentImageIndex ? 'bg-amber-400' : 'bg-amber-400/30 hover:bg-amber-400/60'
-              }`}
-              aria-label={`Show image ${idx + 1}`}
-            />
-          ))}
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-40 bg-black/40 backdrop-blur-md rounded px-3 py-1.5 border border-amber-500/20">
+          <button
+            onClick={() => setCurrentImageIndex(i => Math.max(0, i - 1))}
+            disabled={currentImageIndex === 0}
+            className="text-amber-400 hover:text-amber-200 font-mono text-sm disabled:opacity-30 transition-colors"
+          >◀</button>
+          <span className="text-amber-300 font-mono text-xs tabular-nums select-none">
+            {currentImageIndex + 1} / {imageList.length}
+          </span>
+          <button
+            onClick={() => setCurrentImageIndex(i => Math.min(imageList.length - 1, i + 1))}
+            disabled={currentImageIndex === imageList.length - 1}
+            className="text-amber-400 hover:text-amber-200 font-mono text-sm disabled:opacity-30 transition-colors"
+          >▶</button>
+          <button
+            onClick={() => setCurrentImageIndex(() => Math.floor(Math.random() * imageList.length))}
+            className="text-amber-400/60 hover:text-amber-300 font-mono text-xs ml-1 transition-colors"
+            title="Random image"
+          >⚄</button>
         </div>
       )}
 

@@ -480,31 +480,12 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-// ─── Compositor fragment shader ─────────────────────────────────────────────────────────────────────
-//
-// Blends the "Below" persistence texture, then the 3 live layers,
-// then the "Above" persistence texture on top.
-//
-export const compositorFragmentSource = /* wgsl */ `
-@group(0) @binding(0) var cSampler       : sampler;
-@group(0) @binding(1) var layer0         : texture_2d<f32>;
-@group(0) @binding(2) var layer1         : texture_2d<f32>;
-@group(0) @binding(3) var layer2         : texture_2d<f32>;
-@group(0) @binding(4) var persistBelow   : texture_2d<f32>;
-@group(0) @binding(5) var persistAbove   : texture_2d<f32>;
-
-struct CompositorUniforms {
-  tracerAboveOpacity : f32,
-  tracerBelowOpacity : f32,
-  layerBlendMode     : u32,
-  tracerBlendMode    : u32,
-  layerOpacity0      : f32,
-  layerOpacity1      : f32,
-  layerOpacity2      : f32,
-  outputMode         : u32,
-};
-@group(0) @binding(6) var<uniform> cu : CompositorUniforms;
-
+// ─── Shared blend helpers (compositor + tracer-view) ─────────────────────────
+// Extracted so both shaders use identical blend math and Reinhard tonemap.
+// Issue #60: Add mode (1) moved into the switch with proper unpremultiply +
+// clamp — the previous `return src + dst` operated on premultiplied colours
+// without clamping, producing different results to all other modes.
+const WGSL_BLEND_HELPERS = /* wgsl */ `
 const BLEND_EPSILON : f32 = 0.0001;
 
 fn scale_premultiplied(color: vec4<f32>, opacity: f32) -> vec4<f32> {
@@ -521,23 +502,15 @@ fn alpha_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
 }
 
 fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
-  if (mode == 0u) {
-    return alpha_blend(dst, src);
-  }
-
-  if (mode == 1u) {
-    return src + dst;
-  }
-
-  if (mode > 12u) {
-    return alpha_blend(dst, src);
-  }
+  if (mode == 0u) { return alpha_blend(dst, src); }
+  if (mode > 12u) { return alpha_blend(dst, src); }
 
   let s = unpremultiply(src);
   let d = unpremultiply(dst);
   var rgb = vec3<f32>(0.0);
 
   switch (mode) {
+    case 1u:  { rgb = min(d.rgb + s.rgb, vec3<f32>(1.0)); }
     case 2u:  { rgb = max(d.rgb - s.rgb, vec3<f32>(0.0)); }
     case 3u:  { rgb = d.rgb * s.rgb; }
     case 4u:  { rgb = 1.0 - (1.0 - d.rgb) * (1.0 - s.rgb); }
@@ -567,20 +540,46 @@ fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
         s.rgb < vec3<f32>(0.5)
       );
     }
-    default:  { rgb = s.rgb; }
+    default: { rgb = s.rgb; }
   }
 
   let outAlpha = s.a + d.a * (1.0 - s.a);
   if (outAlpha < BLEND_EPSILON) { return vec4<f32>(0.0); }
-
   let outRgb = (
     s.rgb * s.a * (1.0 - d.a) +
     d.rgb * d.a * (1.0 - s.a) +
     rgb * s.a * d.a
   ) / outAlpha;
-
   return vec4<f32>(outRgb * outAlpha, outAlpha);
 }
+`;
+
+// ─── Compositor fragment shader ─────────────────────────────────────────────────────────────────────
+//
+// Blends the "Below" persistence texture, then the 3 live layers,
+// then the "Above" persistence texture on top.
+//
+export const compositorFragmentSource = /* wgsl */ `
+${WGSL_BLEND_HELPERS}
+
+@group(0) @binding(0) var cSampler       : sampler;
+@group(0) @binding(1) var layer0         : texture_2d<f32>;
+@group(0) @binding(2) var layer1         : texture_2d<f32>;
+@group(0) @binding(3) var layer2         : texture_2d<f32>;
+@group(0) @binding(4) var persistBelow   : texture_2d<f32>;
+@group(0) @binding(5) var persistAbove   : texture_2d<f32>;
+
+struct CompositorUniforms {
+  tracerAboveOpacity : f32,
+  tracerBelowOpacity : f32,
+  layerBlendMode     : u32,
+  tracerBlendMode    : u32,
+  layerOpacity0      : f32,
+  layerOpacity1      : f32,
+  layerOpacity2      : f32,
+  outputMode         : u32,
+};
+@group(0) @binding(6) var<uniform> cu : CompositorUniforms;
 
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
@@ -622,58 +621,58 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   }
 
-    // Force opaque output. Without this, no-layer / no-tracer regions
-    // produce alpha=0 pixels and some browser/GPU combos let the OS
-    // compositor see through the canvas to whatever is behind the browser
-    // window, even though alphaMode is 'opaque' on the swapchain.
-
-    // Subtle filmic tonemapping + gentle exposure lift on final output.
-    // The pipeline works in 16-bit float (good headroom for brightened tracers
-    // and multi-layer adds), but the swapchain is 8 bpc. A cheap tonemap here
-    // distributes the energy better across the 0-255 quantisation steps,
-    // visibly reducing banding in smooth decayed tracer tails and dark gradients.
-    // This is "free" perceptual quality — no extra passes.
-    let x = finalCol.rgb * 1.04;                // tiny exposure bias
-    let tonemapped = x / (x + vec3<f32>(0.15)); // very soft Reinhard variant
-    return vec4<f32>(tonemapped, 1.0);
+  // Force opaque output. Without this, no-layer / no-tracer regions produce
+  // alpha=0 pixels and some browser/GPU combos let the OS compositor see
+  // through the canvas even though alphaMode is 'opaque' on the swapchain.
+  // Subtle filmic tonemapping + gentle exposure lift. The pipeline works in
+  // 16-bit float, but the swapchain is 8 bpc — a cheap tonemap here
+  // distributes energy better across quantisation steps, reducing banding.
+  let x = finalCol.rgb * 1.04;                // tiny exposure bias
+  let tonemapped = x / (x + vec3<f32>(0.15)); // very soft Reinhard variant
+  return vec4<f32>(tonemapped, 1.0);
 }
 `;
 
-// ─── Tracer View (centered aspect-fit blit) ─────────────────────────────────────────
-// Dedicated high-quality display path for "Show Full Tracer" mode.
-// Renders one of the persistence textures (or caller can composite) centered
-// in the canvas while strictly preserving the texture's native aspect ratio.
-// This gives a true "full resolution" inspection view independent of square-canvas
-// cropping or compositor blending, with letter/pillar boxing when needed.
+// ─── Tracer View (centered aspect-fit blit, issues #58/#59/#61) ──────────────
+// "Show Full Tracer" inspection path. Previously bypassed the compositor
+// entirely, causing mismatched hue/brightness and ignoring user controls.
+// Now uses the same blend helpers and Reinhard tonemap, respects
+// tracerAboveOpacity/tracerBelowOpacity/tracerBlendMode, and still preserves
+// the aspect-fit letterboxing for non-1.0 tracerScale values.
 export const tracerViewFragmentSource = /* wgsl */ `
-@group(0) @binding(0) var texSampler : sampler;
-@group(0) @binding(1) var tex        : texture_2d<f32>;
+${WGSL_BLEND_HELPERS}
+
+@group(0) @binding(0) var texSampler  : sampler;
+@group(0) @binding(1) var persistAbove: texture_2d<f32>;
+@group(0) @binding(2) var persistBelow: texture_2d<f32>;
 
 struct TracerViewUniforms {
-  canvasAspect : f32,  // canvas.width / canvas.height
-  texAspect    : f32,  // persistTex.width / persistTex.height (usually matches but robust)
-  exposure     : f32,  // subtle boost for visibility in pure view mode
+  canvasAspect       : f32,
+  texAspect          : f32,
+  tracerAboveOpacity : f32,
+  tracerBelowOpacity : f32,
+  tracerBlendMode    : u32,
+  _pad0              : u32,
+  _pad1              : u32,
+  _pad2              : u32,
 };
-@group(0) @binding(2) var<uniform> tvu : TracerViewUniforms;
+@group(0) @binding(3) var<uniform> tvu : TracerViewUniforms;
 
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  // Fit the texture into the canvas preserving aspect (letterbox or pillarbox).
-  // uv is in [0,1] across the full canvas.
+  // Aspect-fit letterboxing so tracerScale != 1.0 still looks correct.
   let cA = tvu.canvasAspect;
   let tA = tvu.texAspect;
 
   var sampleUV = uv;
   if (cA > tA + 0.0001) {
-    // Canvas is wider → pillarbox (vertical bars). Texture fills height.
     let visW = tA / cA;
     let x0 = (1.0 - visW) * 0.5;
     if (uv.x < x0 || uv.x > x0 + visW) {
-      return vec4<f32>(0.02, 0.02, 0.03, 1.0); // subtle dark bars, not pure black
+      return vec4<f32>(0.02, 0.02, 0.03, 1.0);
     }
     sampleUV.x = (uv.x - x0) / visW;
   } else if (tA > cA + 0.0001) {
-    // Canvas is taller → letterbox (horizontal bars). Texture fills width.
     let visH = cA / tA;
     let y0 = (1.0 - visH) * 0.5;
     if (uv.y < y0 || uv.y > y0 + visH) {
@@ -681,15 +680,21 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     }
     sampleUV.y = (uv.y - y0) / visH;
   }
-  // else: aspects match → fullscreen, no bars
 
-  var col = textureSample(tex, texSampler, sampleUV);
+  let pAbove = textureSample(persistAbove, texSampler, sampleUV);
+  let pBelow = textureSample(persistBelow, texSampler, sampleUV);
 
-  // Subtle exposure boost + clamp so tracer trails read clearly at full canvas size.
-  // This is a cheap filmic-ish lift; real tonemapping lives in compositor.
-  col = min(col * tvu.exposure, vec4<f32>(1.0));
+  let pAboveScaled = scale_premultiplied(pAbove, tvu.tracerAboveOpacity);
+  let pBelowScaled = scale_premultiplied(pBelow, tvu.tracerBelowOpacity);
 
-  return vec4<f32>(col.rgb, 1.0);
+  var col = vec4<f32>(0.0);
+  col = blend(col, pBelowScaled, tvu.tracerBlendMode);
+  col = blend(col, pAboveScaled, tvu.tracerBlendMode);
+
+  // Identical Reinhard tonemap as compositor — fixes hue/brightness mismatch.
+  let x = col.rgb * 1.04;
+  let tonemapped = x / (x + vec3<f32>(0.15));
+  return vec4<f32>(tonemapped, 1.0);
 }
 `;
 

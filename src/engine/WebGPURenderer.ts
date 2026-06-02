@@ -143,11 +143,11 @@ export class WebGPURenderer {
   private compositorSampler   : GPUSampler;
   private compositorUniformBuf: GPUBuffer;
 
-  // ── Tracer View (full-res centered inspection of persistence buffer) ───────
+  // ── Tracer View (full-res centered inspection of persistence buffers) ──────
   /** Pipeline + resources for the dedicated "Show Full Tracer" display path.
-   *  Uses a simple aspect-fit blit so the tracer texture is always shown
-   *  centered, uncropped, with correct aspect ratio regardless of current
-   *  canvas shape (square vs. image-aspect) or window size. */
+   *  Renders both persistence buffers (Above + Below) with the user's current
+   *  intensity/blend settings and the same Reinhard tonemap as the compositor,
+   *  with aspect-fit letterboxing for non-1.0 tracerScale values. */
   private tracerViewPipeline  : GPURenderPipeline;
   private tracerViewBGL       : GPUBindGroupLayout;
   private tracerViewUniformBuf: GPUBuffer;
@@ -216,11 +216,11 @@ export class WebGPURenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    // Tracer View pipeline (aspect-fit centered blit of persistence texture)
+    // Tracer View pipeline (aspect-fit blit of both persistence textures)
     this.tracerViewBGL      = this.createTracerViewBGL();
     this.tracerViewPipeline = this.createTracerViewPipeline();
     this.tracerViewUniformBuf = device.createBuffer({
-      size: 16, // 3xf32 + pad
+      size: 32, // canvasAspect, texAspect, aboveOpacity, belowOpacity, blendMode, 3×pad
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.tracerViewSampler = device.createSampler({
@@ -236,9 +236,10 @@ export class WebGPURenderer {
   private compositorF32 = new Float32Array(this.compositorUniformData);
   private compositorU32 = new Uint32Array(this.compositorUniformData);
 
-  // Tracer view uniform (canvasAspect, texAspect, exposure)
-  private tracerViewUniformData = new ArrayBuffer(16);
+  // Tracer view uniform (canvasAspect, texAspect, aboveOpacity, belowOpacity, blendMode, 3×pad)
+  private tracerViewUniformData = new ArrayBuffer(32);
   private tracerViewF32 = new Float32Array(this.tracerViewUniformData);
+  private tracerViewU32 = new Uint32Array(this.tracerViewUniformData);
 
   // ─── Layer pipeline ─────────────────────────────────────────────────────────
   private createLayerPipeline(fragmentSource: string): LayerPipeline {
@@ -340,8 +341,9 @@ export class WebGPURenderer {
     return this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // persistAbove
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // persistBelow
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
   }
@@ -685,30 +687,27 @@ export class WebGPURenderer {
     const showTracerView = state.showTracerView ?? false;
 
     if (showTracerView) {
-      // Compute aspects for robust centering (usually identical, but protects
-      // against squareCanvas toggles or rapid resizes that haven't yet
-      // recreated textures).
       const cW = canvasTex.width;
       const cH = canvasTex.height;
-      const pTex = this.persistAboveTextures[this.persistPingPong];
-      const tW = pTex ? pTex.width : cW;
-      const tH = pTex ? pTex.height : cH;
-      const canvasAspect = cW / Math.max(1, cH);
-      const texAspect    = tW / Math.max(1, tH);
+      const pTexAbove = this.persistAboveTextures[this.persistPingPong];
+      const pTexBelow = this.persistBelowTextures[this.persistPingPong];
+      const tW = pTexAbove ? pTexAbove.width : cW;
+      const tH = pTexAbove ? pTexAbove.height : cH;
 
-      this.tracerViewF32[0] = canvasAspect;
-      this.tracerViewF32[1] = texAspect;
-      // Gentle exposure lift so faint decayed tracers are visible when
-      // blown up to full canvas size. 1.15–1.25 is a good perceptual range.
-      this.tracerViewF32[2] = 1.20;
+      this.tracerViewF32[0] = cW / Math.max(1, cH);      // canvasAspect
+      this.tracerViewF32[1] = tW / Math.max(1, tH);      // texAspect
+      this.tracerViewF32[2] = tracerAboveOp;              // tracerAboveOpacity
+      this.tracerViewF32[3] = tracerBelowOp;              // tracerBelowOpacity
+      this.tracerViewU32[4] = tracerBlendMode;            // tracerBlendMode
       this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniformData);
 
       const tvBG = this.device.createBindGroup({
         layout : this.tracerViewBGL,
         entries: [
           { binding: 0, resource: this.tracerViewSampler },
-          { binding: 1, resource: pTex!.createView() },
-          { binding: 2, resource: { buffer: this.tracerViewUniformBuf } },
+          { binding: 1, resource: pTexAbove!.createView() },
+          { binding: 2, resource: pTexBelow!.createView() },
+          { binding: 3, resource: { buffer: this.tracerViewUniformBuf } },
         ],
       });
 
