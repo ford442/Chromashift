@@ -581,6 +581,16 @@ export default function App() {
     if (parts[0] === 'realesrgan') {
       return { kind: 'realesrgan', variant: parts[1] as UpscaleModel extends { kind: 'realesrgan'; variant: infer V } ? V : never };
     }
+    if (parts[0] === 'swin_unet') {
+      // swin_unet:<style>:<scale>:<noise>
+      return {
+        kind: 'swin_unet',
+        style: parts[1] as 'art' | 'art_scan' | 'photo',
+        scale: Number(parts[2]) as 1 | 2 | 4,
+        noise: Number(parts[3]) as -1 | 0 | 1 | 2 | 3,
+        tileSize: 256,
+      };
+    }
     return { kind: 'realcugan', factor: Number(parts[1]) as 2 | 4, denoise: parts[2] as 'conservative' | '0x' | '1x' | '2x' | '3x' };
   }, []);
 
