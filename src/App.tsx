@@ -7,9 +7,11 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { WebGPURenderer, type RendererState } from './engine/WebGPURenderer';
-import { TextureManager } from './engine/TextureManager';
+import { TextureManager, type ImageEntry } from './engine/TextureManager';
 import { Upscaler, type UpscaleModel } from './engine/Upscaler';
 import { NunifOverlay } from './components/NunifOverlay';
+import { ImageStrip } from './components/ImageStrip';
+import { MAIN_VIEW_MODES, type MainViewMode } from './engine/viewModes';
 import {
   type EngineKind,
   loadWasmEngine,
@@ -32,6 +34,8 @@ const DEFAULT_ANGLES: LayerTriple<number> = [0, 0, 0];
 // Step sizes per frame matching original: 130°, 230°, 330°
 const DEFAULT_EXTENSIONS: LayerTriple<number> = [130, 230, 330];
 const DEFAULT_FPS = 30;
+const PREVIEW_TARGET_LIVE = 1;
+const PREVIEW_TARGET_SEPARATED = 2;
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,11 +44,17 @@ export default function App() {
   const deviceRef = useRef<GPUDevice | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const mainViewportRef = useRef<HTMLDivElement>(null);
 
   const [gpuReady, setGpuReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [imageList, setImageList] = useState<string[]>([]);
+  const [imageList, setImageList] = useState<ImageEntry[]>([]);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [referenceImage, setReferenceImage] = useState<ImageEntry | null>(null);
+  const [previousImage, setPreviousImage] = useState<ImageEntry | null>(null);
+  const [isImageStripOpen, setIsImageStripOpen] = useState(false);
+  const [referenceBlendMode, setReferenceBlendMode] = useState<'hidden' | 'overlay' | 'split' | 'checker' | 'difference' | 'edge'>('hidden');
+  const [referenceOpacity, setReferenceOpacity] = useState(0.22);
   const [imageAspect, setImageAspect] = useState(1);
 
   const [layerAngles, setLayerAngles] = useState<LayerTriple<number>>(DEFAULT_ANGLES);
@@ -55,6 +65,7 @@ export default function App() {
   const [isAutoPlayActive, setIsAutoPlayActive] = useState(true);
   const [imageChangeInterval, setImageChangeInterval] = useState(5);
   const [layerOpacity, setLayerOpacity] = useState(1.0);
+  const [layerOpacities, setLayerOpacities] = useState<LayerTriple<number>>([1, 1, 1]);
   const [tracerAboveIntensity, setTracerAboveIntensity] = useState(0.85);
   const [tracerBelowIntensity, setTracerBelowIntensity] = useState(0.30);
   const [tracerAboveDuration, setTracerAboveDuration] = useState(500);
@@ -63,15 +74,36 @@ export default function App() {
   const [antialiasEnabled, setAntialiasEnabled] = useState(false);
   const [tracerMode, setTracerMode] = useState(0); // 0 = combined colors, 1 = grey highlight
   const [tracerPreviewFrozen, setTracerPreviewFrozen] = useState(false);
+  const [livePreviewEnabled, setLivePreviewEnabled] = useState(true);
   const [layerBlendMode, setLayerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
   const [tracerBlendMode, setTracerBlendMode] = useState(0); // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen
   const [outputMode, setOutputMode] = useState(0); // 0=mixed, 1=tracer focus, 2=tracer only
+  const [diagnosticsMode, setDiagnosticsMode] = useState(false);
+  const [diagnosticsOpacity, setDiagnosticsOpacity] = useState(0.55);
+  const [stampBoost, setStampBoost] = useState(1.8);
+  const [peakCollisionsOnly, setPeakCollisionsOnly] = useState(false);
   const [isPaused, setIsPaused] = useState(false); // Pauses animation AND tracer decay
-  const [isViewingTracer, setIsViewingTracer] = useState(false); // Toggles main canvas to centered full-res tracer inspection view
+  const [mainViewMode, setMainViewMode] = useState<MainViewMode>(MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
+  const [tracerInspectHeatmap, setTracerInspectHeatmap] = useState(false);
+  const [tracerInspectZoom, setTracerInspectZoom] = useState(1);
+  const [tracerInspectPan, setTracerInspectPan] = useState({ x: 0, y: 0 });
+  const [tracerInspectExposure, setTracerInspectExposure] = useState(1.04);
+  const [tracerInspectTonemap, setTracerInspectTonemap] = useState(true);
+  const [tracerInspectShowLayers, setTracerInspectShowLayers] = useState(false);
+  const [exportingTracer, setExportingTracer] = useState(false);
   const [layerScale, setLayerScale] = useState(1.0);
   const [tracerScale, setTracerScale] = useState(1.0);
   const [colorMode, setColorMode] = useState(1); // 1 = Vivid Gradient, 0 = Fixed cr0p
   const [specificImageError, setSpecificImageError] = useState<string | null>(null);
+  const [renderCpuTiming, setRenderCpuTiming] = useState({ last: 0, avg: 0 });
+  const [collisionStats, setCollisionStats] = useState({
+    sampledPixels: 0,
+    twoOverlapPixels: 0,
+    threeOverlapPixels: 0,
+    dominantLayerWins: [0, 0, 0] as LayerTriple<number>,
+    averageCollision: 0,
+  });
+  const isViewingTracer = mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER;
 
   // Upscaler
   const upscalerRef = useRef<Upscaler | null>(null);
@@ -93,16 +125,22 @@ export default function App() {
   // The WebGPU context is configured on it in init(); its width/height are
   // managed by the ResizeObserver in the resize effect below.
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
-  // Reusable 256×256 offscreen canvas — avoids createImageBitmap latency
+  // Reusable thumbnail scratch canvas — avoids createImageBitmap latency
   // by letting us putImageData once and drawImage-scale to the visible canvas.
   const tracerScratchRef = useRef<HTMLCanvasElement | null>(null);
   const capturePreviewAfterRender = useRef(false);
-  // Last timestamp a GPU→CPU readback was dispatched (issue #50: throttle to ≤15fps).
+  const pendingPreviewTargetsRef = useRef(0);
+  // Last timestamp a GPU→CPU readback was requested for the live thumbnail.
   const lastReadbackMsRef = useRef(0);
+  const tracerDragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const animAnglesRef = useRef<LayerTriple<number>>(DEFAULT_ANGLES);
   const lastAngleSyncRef = useRef(0);
+  const lastRenderMetricSyncRef = useRef(0);
   const loadGenRef = useRef(0);
   const maskTextureRef = useRef<GPUTexture | null>(null);
+  const imageListRef = useRef<ImageEntry[]>([]);
+  const currentImageIndexRef = useRef(0);
+  const ownedObjectUrlsRef = useRef<string[]>([]);
 
   // Attempt to load the C++ WASM engine in the background on first mount.
   useEffect(() => {
@@ -154,16 +192,40 @@ export default function App() {
     renderer.setClassificationMaskTexture(texture);
   }, [clearClassificationMask]);
 
+  const ensureReferenceImage = useCallback((list: ImageEntry[], preferredCurrentIndex: number) => {
+    if (list.length <= 1) return null;
+    return preferredCurrentIndex === 0 ? list[1] : list[0];
+  }, []);
+
+  const selectSourceIndex = useCallback((nextIndex: number) => {
+    const list = imageListRef.current;
+    const currentIndexValue = currentImageIndexRef.current;
+    if (nextIndex < 0 || nextIndex >= list.length || nextIndex === currentIndexValue) return;
+    const currentEntry = list[currentIndexValue];
+    if (currentEntry) setPreviousImage(currentEntry);
+    setCurrentImageIndex(nextIndex);
+  }, []);
+
+  useEffect(() => {
+    imageListRef.current = imageList;
+  }, [imageList]);
+
+  useEffect(() => {
+    currentImageIndexRef.current = currentImageIndex;
+  }, [currentImageIndex]);
+
   // Resize canvas: respect image aspect ratio unless "Square Canvas" is toggled
   useEffect(() => {
     const mainCanvas = previewTracerRef.current;
     const container = containerRef.current;
-    if (!mainCanvas || !container) return;
+    const mainViewport = mainViewportRef.current;
+    if (!mainCanvas || !container || !mainViewport) return;
 
     function resizeCanvas() {
       const container = containerRef.current;
       const mainCanvas = previewTracerRef.current;
-      if (!mainCanvas || !container) return;
+      const mainViewport = mainViewportRef.current;
+      if (!mainCanvas || !container || !mainViewport) return;
 
       const maxSize = window.innerHeight * 0.95;
       const containerW = container.clientWidth;
@@ -196,10 +258,10 @@ export default function App() {
       const cssLeft = Math.floor((containerW - cssW) / 2);
       const cssTop  = Math.floor((containerH - cssH) / 2);
 
-      mainCanvas.style.width  = `${cssW}px`;
-      mainCanvas.style.height = `${cssH}px`;
-      mainCanvas.style.left   = `${cssLeft}px`;
-      mainCanvas.style.top    = `${cssTop}px`;
+      mainViewport.style.width  = `${cssW}px`;
+      mainViewport.style.height = `${cssH}px`;
+      mainViewport.style.left   = `${cssLeft}px`;
+      mainViewport.style.top    = `${cssTop}px`;
 
       // 2. Lock actual internal resolution strictly to integer * DPR
       const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -269,19 +331,24 @@ export default function App() {
 
       try {
         const list = await textureManager.fetchImageList(IMAGES_ENDPOINT);
-        const urls = list.map((e) => e.url);
-        setImageList(urls);
+        const entries = [...list];
+        setImageList(entries);
 
         const specificUrl = getImageFromURLParams();
         if (specificUrl) {
           try {
             const tex = await textureManager.loadTexture(specificUrl);
             renderer.setTexture(tex);
-            if (!urls.includes(specificUrl)) {
-              urls.unshift(specificUrl);
-              setImageList([...urls]);
+            const existingIndex = entries.findIndex((entry) => entry.url === specificUrl);
+            if (existingIndex === -1) {
+              entries.push({ url: specificUrl, label: 'Query Image' });
+              setImageList([...entries]);
+              setCurrentImageIndex(entries.length - 1);
+              setReferenceImage(ensureReferenceImage(entries, entries.length - 1));
+            } else {
+              setCurrentImageIndex(existingIndex);
+              setReferenceImage(ensureReferenceImage(entries, existingIndex));
             }
-            setCurrentImageIndex(urls.indexOf(specificUrl));
 
             const img = new Image();
             img.crossOrigin = 'anonymous';
@@ -308,14 +375,16 @@ export default function App() {
           } catch (e) {
             console.warn('Failed to load specific image from URL:', e);
             setSpecificImageError(`Failed to load image: ${specificUrl}`);
-            if (urls.length > 0) {
-              const tex = await textureManager.loadTexture(urls[0]);
+            if (entries.length > 0) {
+              const tex = await textureManager.loadTexture(entries[0].url);
               renderer.setTexture(tex);
+              setReferenceImage(ensureReferenceImage(entries, 0));
             }
           }
-        } else if (urls.length > 0) {
-          const tex = await textureManager.loadTexture(urls[0]);
+        } else if (entries.length > 0) {
+          const tex = await textureManager.loadTexture(entries[0].url);
           renderer.setTexture(tex);
+          setReferenceImage(ensureReferenceImage(entries, 0));
         }
       } catch (e) {
         console.warn('Could not load image list:', e);
@@ -329,6 +398,8 @@ export default function App() {
     return () => {
       cancelled = true;
       clearClassificationMask();
+      for (const objectUrl of ownedObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
+      ownedObjectUrlsRef.current = [];
       // Properly destroy the WebGPU allocations on unmount
       if (localRenderer) localRenderer.destroy();
       if (localDevice) localDevice.destroy();
@@ -343,7 +414,9 @@ export default function App() {
   // Load texture whenever image index changes
   useEffect(() => {
     if (!gpuReady || imageList.length === 0) return;
-    const url = imageList[currentImageIndex];
+    const activeImage = imageList[currentImageIndex];
+    if (!activeImage) return;
+    const url = activeImage.url;
     const gen = ++loadGenRef.current;
     clearClassificationMask();
 
@@ -392,11 +465,11 @@ export default function App() {
     if (!isAutoPlayActive || isPaused || imageList.length === 0) return;
 
     const interval = setInterval(() => {
-      setCurrentImageIndex(() => Math.floor(Math.random() * imageList.length));
+      selectSourceIndex(Math.floor(Math.random() * imageList.length));
     }, imageChangeInterval * 1000);
 
     return () => clearInterval(interval);
-  }, [isAutoPlayActive, isPaused, imageChangeInterval, imageList.length]);
+  }, [isAutoPlayActive, isPaused, imageChangeInterval, imageList.length, selectSourceIndex]);
 
   useEffect(() => {
     if (!gpuReady || imageList.length === 0) return;
@@ -404,7 +477,9 @@ export default function App() {
       clearClassificationMask();
       return;
     }
-    const url = imageList[currentImageIndex];
+    const activeImage = imageList[currentImageIndex];
+    if (!activeImage) return;
+    const url = activeImage.url;
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
@@ -455,6 +530,7 @@ export default function App() {
           ],
           avgLuminance,
           layerOpacity,
+          layerOpacities,
           layerScale,
           tracerScale,
           tracerAboveIntensity,
@@ -467,27 +543,53 @@ export default function App() {
           tracerBlendMode,
           outputMode,
           paused: isPaused,
+          mainViewMode,
           showTracerView: isViewingTracer,
+          tracerInspectZoom,
+          tracerInspectPanX: tracerInspectPan.x,
+          tracerInspectPanY: tracerInspectPan.y,
+          tracerInspectHeatmap,
+          tracerInspectExposure,
+          tracerInspectTonemap,
+          tracerInspectShowLayers,
+          diagnosticsMode,
+          diagnosticsOpacity,
+          stampBoost,
+          peakCollisionsOnly,
         };
 
         rendererRef.current?.render(state);
+        if (now - lastRenderMetricSyncRef.current > 500) {
+          lastRenderMetricSyncRef.current = now;
+          const timing = rendererRef.current?.getRenderTiming();
+          if (timing) {
+            setRenderCpuTiming({ last: timing.lastCpuMs, avg: timing.averageCpuMs });
+          }
+        }
 
-        // Snapshot the compositor output via GPU readback for both the Separated
-        // preview (once per image load) and the live Output thumbnail (canvasRef).
-        // Issue #49: previewTracerRef is now the WebGPU canvas and auto-updates —
-        // GPU readback only feeds the small 300px thumbnail panels.
-        // Issue #50: throttle live readback to ≤15 fps to reduce pipeline stalls.
-        const doCaptureSep = capturePreviewAfterRender.current;
-        if (doCaptureSep) capturePreviewAfterRender.current = false;
+        // Thumbnail preview readback is explicitly queued instead of piggybacking
+        // on every render. This keeps the main GPU path free of preview work
+        // unless a live refresh or one-shot capture is actually needed.
+        if (capturePreviewAfterRender.current) {
+          pendingPreviewTargetsRef.current |= PREVIEW_TARGET_SEPARATED;
+          capturePreviewAfterRender.current = false;
+        }
 
-        const readbackIntervalMs = 1000 / 15;
-        const wantReadback = !tracerPreviewFrozen && (now - lastReadbackMsRef.current >= readbackIntervalMs);
-        if ((wantReadback || doCaptureSep) && rendererRef.current) {
-          if (wantReadback) lastReadbackMsRef.current = now;
+        const readbackIntervalMs = 1000 / 5;
+        const wantLiveReadback = livePreviewEnabled
+          && !tracerPreviewFrozen
+          && (now - lastReadbackMsRef.current >= readbackIntervalMs);
+        if (wantLiveReadback) {
+          lastReadbackMsRef.current = now;
+          pendingPreviewTargetsRef.current |= PREVIEW_TARGET_LIVE;
+        }
+
+        if (pendingPreviewTargetsRef.current !== 0 && rendererRef.current) {
+          const captureTargets = pendingPreviewTargetsRef.current;
           const thumbCanvas = canvasRef.current;
           const previewSep  = previewSeparatedRef.current;
           const sz = WebGPURenderer.PREVIEW_SIZE;
-          rendererRef.current.readPreviewPixels((data) => {
+          const queued = rendererRef.current.requestPreviewReadback((data) => {
             let scratch = tracerScratchRef.current;
             if (!scratch) {
               scratch = document.createElement('canvas');
@@ -499,15 +601,16 @@ export default function App() {
             if (!sctx) return;
             sctx.putImageData(new ImageData(data, sz, sz), 0, 0);
 
-            if (wantReadback && thumbCanvas) {
+            if ((captureTargets & PREVIEW_TARGET_LIVE) !== 0 && thumbCanvas) {
               const dctx = thumbCanvas.getContext('2d');
               dctx?.drawImage(scratch, 0, 0, thumbCanvas.width, thumbCanvas.height);
             }
-            if (doCaptureSep && previewSep) {
+            if ((captureTargets & PREVIEW_TARGET_SEPARATED) !== 0 && previewSep) {
               const dctx = previewSep.getContext('2d');
               dctx?.drawImage(scratch, 0, 0, previewSep.width, previewSep.height);
             }
           });
+          if (queued) pendingPreviewTargetsRef.current = 0;
         }
       }
 
@@ -518,7 +621,93 @@ export default function App() {
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, isPaused, isViewingTracer]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerOpacities, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, livePreviewEnabled, isPaused, isViewingTracer, mainViewMode, tracerInspectZoom, tracerInspectPan, tracerInspectHeatmap, tracerInspectExposure, tracerInspectTonemap, tracerInspectShowLayers, diagnosticsMode, diagnosticsOpacity, stampBoost, peakCollisionsOnly]);
+
+  useEffect(() => {
+    const canvas = previewTracerRef.current;
+    if (!canvas || !isPaused || mainViewMode !== MAIN_VIEW_MODES.FULL_RES_TRACER) return;
+
+    const clampPan = (x: number, y: number, zoom: number) => {
+      const limit = (zoom - 1) / (2 * zoom);
+      return {
+        x: Math.max(-limit, Math.min(limit, x)),
+        y: Math.max(-limit, Math.min(limit, y)),
+      };
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setTracerInspectZoom((prev) => Math.max(1, Math.min(12, prev * (event.deltaY > 0 ? 0.9 : 1.1))));
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      tracerDragRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+      canvas.setPointerCapture(event.pointerId);
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = tracerDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      drag.x = event.clientX;
+      drag.y = event.clientY;
+      setTracerInspectPan((prev) => {
+        const next = clampPan(
+          prev.x - dx / (canvas.clientWidth * tracerInspectZoom),
+          prev.y - dy / (canvas.clientHeight * tracerInspectZoom),
+          tracerInspectZoom,
+        );
+        return next;
+      });
+    };
+
+    const releasePointer = (event: PointerEvent) => {
+      if (tracerDragRef.current?.pointerId === event.pointerId) {
+        tracerDragRef.current = null;
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        setTracerInspectZoom((prev) => Math.min(12, prev * 1.15));
+      } else if (event.key === '-' || event.key === '_') {
+        event.preventDefault();
+        setTracerInspectZoom((prev) => Math.max(1, prev / 1.15));
+      } else if (event.key === '0') {
+        setTracerInspectZoom(1);
+        setTracerInspectPan({ x: 0, y: 0 });
+      } else if (event.key === 'h' || event.key === 'H') {
+        setTracerInspectHeatmap((prev) => !prev);
+      } else if (event.key.startsWith('Arrow')) {
+        event.preventDefault();
+        const step = 0.03 / tracerInspectZoom;
+        setTracerInspectPan((prev) => {
+          const deltaX = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
+          const deltaY = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
+          return clampPan(prev.x + deltaX, prev.y + deltaY, tracerInspectZoom);
+        });
+      }
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    canvas.addEventListener('pointermove', handlePointerMove);
+    canvas.addEventListener('pointerup', releasePointer);
+    canvas.addEventListener('pointercancel', releasePointer);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel);
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      canvas.removeEventListener('pointermove', handlePointerMove);
+      canvas.removeEventListener('pointerup', releasePointer);
+      canvas.removeEventListener('pointercancel', releasePointer);
+      window.removeEventListener('keydown', handleKeyDown);
+      tracerDragRef.current = null;
+    };
+  }, [isPaused, mainViewMode, tracerInspectZoom]);
 
   const handleAngleChange = useCallback((layer: 0 | 1 | 2, angle: number) => {
     animAnglesRef.current[layer] = angle;
@@ -544,7 +733,7 @@ export default function App() {
     setFrameRate(DEFAULT_FPS);
   }, []);
 
-  const handleLoadSpecificImage = useCallback(async (url: string) => {
+  const handleLoadSpecificImage = useCallback(async (url: string, label = 'External Image') => {
     if (!textureManagerRef.current || !rendererRef.current) return;
     setSpecificImageError(null);
     try {
@@ -553,12 +742,21 @@ export default function App() {
       rendererRef.current.clearPersistence();
       clearClassificationMask();
       capturePreviewAfterRender.current = true;
-
+      const currentEntry = imageListRef.current[currentImageIndexRef.current];
+      if (currentEntry) setPreviousImage(currentEntry);
       setImageList((prev) => {
-        if (!prev.includes(url)) return [url, ...prev];
-        return prev;
+        const existingIndex = prev.findIndex((entry) => entry.url === url);
+        if (existingIndex !== -1) {
+          setCurrentImageIndex(existingIndex);
+          return prev;
+        }
+        const next = [...prev, { url, label }];
+        setCurrentImageIndex(next.length - 1);
+        if (referenceImage === null) {
+          setReferenceImage(ensureReferenceImage(next, next.length - 1));
+        }
+        return next;
       });
-      setCurrentImageIndex(0);
 
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -584,7 +782,21 @@ export default function App() {
       console.error('Failed to load specific image:', e);
       setSpecificImageError(`Failed to load: ${url}`);
     }
-  }, [clearClassificationMask, generateClassificationMaskTexture]);
+  }, [clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, referenceImage]);
+
+  const swapSourceAndReference = useCallback(() => {
+    if (!referenceImage) return;
+    const corpusIndex = imageList.findIndex((entry) => entry.url === referenceImage.url);
+    if (corpusIndex !== -1) {
+      const currentEntry = imageList[currentImageIndex];
+      if (currentEntry) setReferenceImage(currentEntry);
+      selectSourceIndex(corpusIndex);
+      return;
+    }
+    const currentEntry = imageList[currentImageIndex];
+    if (currentEntry) setReferenceImage(currentEntry);
+    void handleLoadSpecificImage(referenceImage.url, referenceImage.label ?? 'Reference Image');
+  }, [currentImageIndex, handleLoadSpecificImage, imageList, referenceImage, selectSourceIndex]);
 
   const parseUpscaleModel = useCallback((value: string): UpscaleModel => {
     const parts = value.split(':');
@@ -608,7 +820,8 @@ export default function App() {
     if (!rendererRef.current || !textureManagerRef.current || !deviceRef.current) return;
     if (upscalerRef.current?.isBusy()) return;
 
-    const url = imageList[currentImageIndex];
+    const activeImage = imageList[currentImageIndex];
+    const url = activeImage?.url;
     if (!url) return;
 
     upscalerRef.current ??= new Upscaler();
@@ -681,7 +894,7 @@ export default function App() {
   }, [imageList, currentImageIndex, upscaleModel, parseUpscaleModel, clearClassificationMask]);
 
   const handleUpscaleOutput = useCallback(async () => {
-    if (!canvasRef.current) return;
+    if (!previewTracerRef.current) return;
     if (upscalerRef.current?.isBusy()) return;
 
     upscalerRef.current ??= new Upscaler();
@@ -691,7 +904,7 @@ export default function App() {
 
     try {
       // Read pixels off the WebGPU canvas via a 2D scratch.
-      const canvas = canvasRef.current;
+      const canvas = previewTracerRef.current;
       const scratch = document.createElement('canvas');
       scratch.width = canvas.width;
       scratch.height = canvas.height;
@@ -732,10 +945,143 @@ export default function App() {
 
   const handleLoadFile = useCallback((file: File) => {
     const url = URL.createObjectURL(file);
-    handleLoadSpecificImage(url).finally(() => {
-      URL.revokeObjectURL(url);
-    });
+    ownedObjectUrlsRef.current.push(url);
+    handleLoadSpecificImage(url, file.name);
   }, [handleLoadSpecificImage]);
+
+  const handleLoadReferenceImage = useCallback((url: string, label = 'Reference Image') => {
+    setReferenceImage({ url, label });
+  }, []);
+
+  const handleLoadReferenceFile = useCallback((file: File) => {
+    const url = URL.createObjectURL(file);
+    ownedObjectUrlsRef.current.push(url);
+    handleLoadReferenceImage(url, file.name);
+  }, [handleLoadReferenceImage]);
+
+  const handleFreezeInspect = useCallback(() => {
+    setIsPaused(true);
+    setMainViewMode(MAIN_VIEW_MODES.FULL_RES_TRACER);
+  }, []);
+
+  const handleResetInspectView = useCallback(() => {
+    setTracerInspectZoom(1);
+    setTracerInspectPan({ x: 0, y: 0 });
+  }, []);
+
+  const handleExportTracer = useCallback(async () => {
+    const renderer = rendererRef.current;
+    if (!renderer || exportingTracer) return;
+    setExportingTracer(true);
+    try {
+      const mainCanvas = previewTracerRef.current;
+      const baseWidth = Math.max(1, Math.round(mainCanvas?.width ?? 2048));
+      const baseHeight = Math.max(1, Math.round(mainCanvas?.height ?? 2048));
+      const longestEdge = Math.max(baseWidth, baseHeight);
+      const exportScale = Math.max(1, 3840 / longestEdge);
+      const width = Math.max(1, Math.round(baseWidth * exportScale));
+      const height = Math.max(1, Math.round(baseHeight * exportScale));
+      const result = await renderer.exportTracerView({
+        width,
+        height,
+        tracerAboveOpacity: tracerAboveIntensity,
+        tracerBelowOpacity: tracerBelowIntensity,
+        tracerBlendMode,
+        inspectZoom: tracerInspectZoom,
+        inspectPanX: tracerInspectPan.x,
+        inspectPanY: tracerInspectPan.y,
+        showHeatmap: tracerInspectHeatmap,
+        exposure: tracerInspectExposure,
+        applyTonemap: tracerInspectTonemap,
+        showLayers: tracerInspectShowLayers,
+        layerBlendMode,
+        layerOpacity0: layerOpacities[0],
+        layerOpacity1: layerOpacities[1],
+        layerOpacity2: layerOpacities[2],
+      });
+      if (!result) return;
+
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = result.width;
+      exportCanvas.height = result.height;
+      const exportCtx = exportCanvas.getContext('2d');
+      if (!exportCtx) return;
+      exportCtx.putImageData(new ImageData(result.data, result.width, result.height), 0, 0);
+      exportCanvas.toBlob((blob) => {
+        if (!blob) return;
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = `chromashift-tracer-${result.width}x${result.height}.png`;
+        link.click();
+        URL.revokeObjectURL(href);
+      }, 'image/png');
+    } finally {
+      setExportingTracer(false);
+    }
+  }, [exportingTracer, tracerAboveIntensity, tracerBelowIntensity, tracerBlendMode, tracerInspectZoom, tracerInspectPan, tracerInspectHeatmap, tracerInspectExposure, tracerInspectTonemap, tracerInspectShowLayers, layerBlendMode, layerOpacities]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      if (target?.isContentEditable || tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT') {
+        return;
+      }
+
+      if (event.key === '[') {
+        event.preventDefault();
+        selectSourceIndex(Math.max(0, currentImageIndexRef.current - 1));
+      } else if (event.key === ']') {
+        event.preventDefault();
+        selectSourceIndex(Math.min(imageListRef.current.length - 1, currentImageIndexRef.current + 1));
+      } else if (event.key === ' ') {
+        event.preventDefault();
+        setIsPaused((prev) => !prev);
+      } else if (event.key === 'r' || event.key === 'R') {
+        event.preventDefault();
+        if (imageListRef.current.length > 0) {
+          selectSourceIndex(Math.floor(Math.random() * imageListRef.current.length));
+        }
+      } else if (event.key === 's' || event.key === 'S') {
+        event.preventDefault();
+        swapSourceAndReference();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectSourceIndex, swapSourceAndReference]);
+
+  useEffect(() => {
+    if (!gpuReady || !rendererRef.current) return;
+    let cancelled = false;
+
+    const requestStats = () => {
+      const renderer = rendererRef.current;
+      if (!renderer) return;
+      renderer.requestCollisionStats((stats) => {
+        if (!cancelled) setCollisionStats(stats);
+      });
+    };
+
+    requestStats();
+    const interval = window.setInterval(requestStats, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [gpuReady]);
+
+  const currentImage = imageList[currentImageIndex] ?? null;
+  const photoModeImage =
+    mainViewMode === MAIN_VIEW_MODES.SOURCE_IMAGE ? currentImage
+      : mainViewMode === MAIN_VIEW_MODES.REFERENCE_IMAGE ? referenceImage
+        : mainViewMode === MAIN_VIEW_MODES.PREVIOUS_IMAGE ? previousImage
+          : null;
+  const isReferenceCompareMode = mainViewMode === MAIN_VIEW_MODES.COMPARE_REFERENCE_COMPOSITE && !!referenceImage;
+  const showCanvasMainView = photoModeImage === null;
+  const showReferenceOverlay = showCanvasMainView && referenceImage && referenceBlendMode !== 'hidden';
 
   return (
     <div
@@ -743,16 +1089,80 @@ export default function App() {
       className="relative w-screen h-screen bg-gradient-to-br from-gray-900 via-amber-950 to-black overflow-hidden"
       id="chromashift-container"
     >
-      {/* Tracer/Ghost Output - Main Full-Screen Canvas */}
-      <canvas
-        ref={previewTracerRef}
-        style={{
-          position: 'absolute',
-          imageRendering: 'auto',
-          display: 'block',
-          background: '#000',
-        }}
-      />
+      {/* Main display viewport */}
+      <div
+        ref={mainViewportRef}
+        style={{ position: 'absolute' }}
+      >
+        <canvas
+          ref={previewTracerRef}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            imageRendering: 'auto',
+            display: showCanvasMainView ? 'block' : 'none',
+            background: '#000',
+            cursor: isPaused && mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER ? 'grab' : 'default',
+            clipPath: isReferenceCompareMode ? 'inset(0 50% 0 0)' : 'none',
+          }}
+        />
+        {(photoModeImage || isReferenceCompareMode) && (
+          <div
+            className="absolute inset-0 overflow-hidden bg-black"
+            style={{ clipPath: isReferenceCompareMode ? 'inset(0 0 0 50%)' : 'none' }}
+          >
+            <img
+              src={(isReferenceCompareMode ? referenceImage : photoModeImage)?.url}
+              alt={(isReferenceCompareMode ? referenceImage : photoModeImage)?.label ?? 'Reference'}
+              className="w-full h-full object-contain"
+              draggable={false}
+            />
+          </div>
+        )}
+        {isReferenceCompareMode && (
+          <div className="absolute top-0 bottom-0 left-1/2 w-px bg-amber-300/80 shadow-[0_0_12px_rgba(245,158,11,0.65)]" />
+        )}
+        {showReferenceOverlay && referenceImage && (
+          <div
+            className="absolute inset-0 overflow-hidden pointer-events-none"
+            style={{
+              clipPath: referenceBlendMode === 'split' ? 'inset(0 0 0 50%)' : 'none',
+              opacity: referenceBlendMode === 'difference' ? 1 : referenceOpacity,
+              mixBlendMode:
+                referenceBlendMode === 'difference' ? 'difference'
+                  : referenceBlendMode === 'edge' ? 'screen'
+                    : 'normal',
+              maskImage:
+                referenceBlendMode === 'checker'
+                  ? 'linear-gradient(45deg,#000 25%,transparent 25%,transparent 75%,#000 75%,#000),linear-gradient(45deg,#000 25%,transparent 25%,transparent 75%,#000 75%,#000)'
+                  : undefined,
+              maskSize: referenceBlendMode === 'checker' ? '48px 48px' : undefined,
+              maskPosition: referenceBlendMode === 'checker' ? '0 0,24px 24px' : undefined,
+              WebkitMaskImage:
+                referenceBlendMode === 'checker'
+                  ? 'linear-gradient(45deg,#000 25%,transparent 25%,transparent 75%,#000 75%,#000),linear-gradient(45deg,#000 25%,transparent 25%,transparent 75%,#000 75%,#000)'
+                  : undefined,
+              WebkitMaskSize: referenceBlendMode === 'checker' ? '48px 48px' : undefined,
+              WebkitMaskPosition: referenceBlendMode === 'checker' ? '0 0,24px 24px' : undefined,
+            }}
+          >
+            <img
+              src={referenceImage.url}
+              alt={referenceImage.label ?? 'Reference overlay'}
+              className="w-full h-full object-contain"
+              style={{
+                filter:
+                  referenceBlendMode === 'edge'
+                    ? 'grayscale(1) contrast(3) brightness(1.2)'
+                    : 'none',
+              }}
+              draggable={false}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Preview: Original Image (Top-Right, below Avg Lum) */}
       <div className="absolute top-14 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
@@ -776,7 +1186,7 @@ export default function App() {
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Separated</div>
       </div>
 
-      {/* Preview: Compositor Output thumbnail (Bottom-Right, 2D canvas fed by GPU readback) */}
+      {/* Preview: Composite thumbnail (Bottom-Right, 2D canvas fed by throttled GPU readback) */}
       <div className="absolute bottom-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={canvasRef}
@@ -785,18 +1195,31 @@ export default function App() {
           style={{ display: 'block', width: '300px', height: '300px', imageRendering: 'pixelated' }}
         />
         <div className="flex items-center justify-between px-2 py-1">
-          <span className="text-xs text-amber-400 font-mono">Output</span>
-          <button
-            onClick={() => setTracerPreviewFrozen(!tracerPreviewFrozen)}
-            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
-              tracerPreviewFrozen
-                ? 'bg-red-600 hover:bg-red-500 text-white'
-                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-            }`}
-            title={tracerPreviewFrozen ? 'Unfreeze thumbnail' : 'Freeze thumbnail'}
-          >
-            {tracerPreviewFrozen ? '⏸ Frozen' : 'Live'}
-          </button>
+          <span className="text-xs text-amber-400 font-mono">Composite</span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setTracerPreviewFrozen(!tracerPreviewFrozen)}
+              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                tracerPreviewFrozen
+                  ? 'bg-red-600 hover:bg-red-500 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              }`}
+              title={tracerPreviewFrozen ? 'Unfreeze thumbnail' : 'Freeze thumbnail'}
+            >
+              {tracerPreviewFrozen ? '⏸ Frozen' : 'Live'}
+            </button>
+            <button
+              onClick={() => setLivePreviewEnabled(!livePreviewEnabled)}
+              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                livePreviewEnabled
+                  ? 'bg-amber-700 hover:bg-amber-600 text-amber-100'
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+              }`}
+              title={livePreviewEnabled ? 'Disable live thumbnail updates' : 'Enable live thumbnail updates'}
+            >
+              {livePreviewEnabled ? 'Preview On' : 'Preview Off'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -804,7 +1227,7 @@ export default function App() {
       {imageList.length > 1 && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-40 bg-black/40 backdrop-blur-md rounded px-3 py-1.5 border border-amber-500/20">
           <button
-            onClick={() => setCurrentImageIndex(i => Math.max(0, i - 1))}
+            onClick={() => selectSourceIndex(Math.max(0, currentImageIndex - 1))}
             disabled={currentImageIndex === 0}
             className="text-amber-400 hover:text-amber-200 font-mono text-sm disabled:opacity-30 transition-colors"
           >◀</button>
@@ -812,12 +1235,12 @@ export default function App() {
             {currentImageIndex + 1} / {imageList.length}
           </span>
           <button
-            onClick={() => setCurrentImageIndex(i => Math.min(imageList.length - 1, i + 1))}
+            onClick={() => selectSourceIndex(Math.min(imageList.length - 1, currentImageIndex + 1))}
             disabled={currentImageIndex === imageList.length - 1}
             className="text-amber-400 hover:text-amber-200 font-mono text-sm disabled:opacity-30 transition-colors"
           >▶</button>
           <button
-            onClick={() => setCurrentImageIndex(() => Math.floor(Math.random() * imageList.length))}
+            onClick={() => selectSourceIndex(Math.floor(Math.random() * imageList.length))}
             className="text-amber-400/60 hover:text-amber-300 font-mono text-xs ml-1 transition-colors"
             title="Random image"
           >⚄</button>
@@ -837,6 +1260,21 @@ export default function App() {
           {isPaused ? '▶ Resume' : '⏸ Pause'}
         </button>
       </div>
+
+      <ImageStrip
+        images={imageList}
+        currentIndex={currentImageIndex}
+        referenceUrl={referenceImage?.url ?? null}
+        isOpen={isImageStripOpen}
+        onToggleOpen={() => setIsImageStripOpen((prev) => !prev)}
+        onSelectSource={(index) => {
+          selectSourceIndex(index);
+          setMainViewMode(MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
+        }}
+        onSelectReference={(index) => {
+          setReferenceImage(imageList[index] ?? null);
+        }}
+      />
 
       {/* Average luminance control */}
       <div className="absolute top-3 right-3 z-40 bg-black/40 backdrop-blur-md rounded p-2 flex flex-col items-end gap-1 border border-amber-500/30">
@@ -859,6 +1297,15 @@ export default function App() {
         }`}>
           {engineMode === 'wasm' && wasmAvailable ? '⚡ C++ WASM' : '🔷 TS'}
         </span>
+        <span className="text-[10px] font-mono text-emerald-300/80">
+          CPU {renderCpuTiming.last.toFixed(2)} / {renderCpuTiming.avg.toFixed(2)} ms
+        </span>
+        <span className="text-[10px] font-mono text-cyan-300/80">
+          2+ {collisionStats.twoOverlapPixels} | 3 {collisionStats.threeOverlapPixels}
+        </span>
+        <span className="text-[10px] font-mono text-cyan-200/70">
+          Win {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]}
+        </span>
       </div>
 
       {/* Error / no-WebGPU notice */}
@@ -879,6 +1326,7 @@ export default function App() {
         layerExtensions={layerExtensions}
         frameRate={frameRate}
         layerOpacity={layerOpacity}
+        layerOpacities={layerOpacities}
         layerScale={layerScale}
         tracerScale={tracerScale}
         tracerAboveIntensity={tracerAboveIntensity}
@@ -889,14 +1337,54 @@ export default function App() {
         layerBlendMode={layerBlendMode}
         tracerBlendMode={tracerBlendMode}
         outputMode={outputMode}
+        diagnosticsMode={diagnosticsMode}
+        diagnosticsOpacity={diagnosticsOpacity}
+        stampBoost={stampBoost}
+        peakCollisionsOnly={peakCollisionsOnly}
+        collisionStats={collisionStats}
+        mainViewMode={mainViewMode}
         isViewingTracer={isViewingTracer}
-        onTracerViewToggle={setIsViewingTracer}
+        isPaused={isPaused}
+        tracerInspectHeatmap={tracerInspectHeatmap}
+        tracerInspectZoom={tracerInspectZoom}
+        tracerInspectExposure={tracerInspectExposure}
+        tracerInspectTonemap={tracerInspectTonemap}
+        tracerInspectShowLayers={tracerInspectShowLayers}
+        exportingTracer={exportingTracer}
+        currentImageLabel={currentImage?.label ?? currentImage?.url ?? null}
+        referenceImageLabel={referenceImage?.label ?? referenceImage?.url ?? null}
+        isImageStripOpen={isImageStripOpen}
+        referenceBlendMode={referenceBlendMode}
+        referenceOpacity={referenceOpacity}
+        onTracerViewToggle={(next) => setMainViewMode(
+          next ? MAIN_VIEW_MODES.FULL_RES_TRACER : MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
+        )}
+        onMainViewModeChange={(mode) => setMainViewMode(mode as MainViewMode)}
+        onToggleImageStrip={() => setIsImageStripOpen((prev) => !prev)}
+        onSwapSourceReference={swapSourceAndReference}
+        onReferenceBlendModeChange={setReferenceBlendMode}
+        onReferenceOpacityChange={setReferenceOpacity}
+        onFreezeInspect={handleFreezeInspect}
+        onTracerInspectHeatmapToggle={setTracerInspectHeatmap}
+        onTracerInspectZoomChange={setTracerInspectZoom}
+        onTracerInspectExposureChange={setTracerInspectExposure}
+        onTracerInspectTonemapToggle={setTracerInspectTonemap}
+        onTracerInspectShowLayersToggle={setTracerInspectShowLayers}
+        onResetInspectView={handleResetInspectView}
+        onExportTracer={handleExportTracer}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         onAngleChange={handleAngleChange}
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
         onLayerOpacityChange={setLayerOpacity}
+        onLayerOpacityPerLayerChange={(layer, opacity) => {
+          setLayerOpacities((prev) => {
+            const next = [...prev] as LayerTriple<number>;
+            next[layer] = opacity;
+            return next;
+          });
+        }}
         onLayerScaleChange={setLayerScale}
         onTracerScaleChange={setTracerScale}
         onTracerAboveIntensityChange={setTracerAboveIntensity}
@@ -907,6 +1395,10 @@ export default function App() {
         onLayerBlendModeChange={setLayerBlendMode}
         onTracerBlendModeChange={setTracerBlendMode}
         onOutputModeChange={setOutputMode}
+        onDiagnosticsModeChange={setDiagnosticsMode}
+        onDiagnosticsOpacityChange={setDiagnosticsOpacity}
+        onStampBoostChange={setStampBoost}
+        onPeakCollisionsOnlyChange={setPeakCollisionsOnly}
         colorMode={colorMode}
         onColorModeChange={setColorMode}
         onSquareCanvasToggle={setSquareCanvas}
@@ -921,6 +1413,8 @@ export default function App() {
         onImageChangeIntervalChange={setImageChangeInterval}
         onLoadSpecificImage={handleLoadSpecificImage}
         onLoadFile={handleLoadFile}
+        onLoadReferenceImage={handleLoadReferenceImage}
+        onLoadReferenceFile={handleLoadReferenceFile}
         upscaleModel={upscaleModel}
         onUpscaleModelChange={setUpscaleModel}
         upscaleBusy={upscaleBusy}

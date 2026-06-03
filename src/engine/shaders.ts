@@ -403,8 +403,8 @@ fn main(@builtin(vertex_index) vi : u32) -> VertexOutput {
 // Uniforms layout (std140-ish, WGSL explicit offsets):
 //   0: decayFactor (f32) – 0.99 = slow fade, 0.5 = fast fade
 //   4: colorThresh  (f32) – minimum alpha to consider a "collision"
-//   8: tracerMode   (u32)  – 0 = combined colors, 1 = grey highlight
-//  12: _reserved    (u32)
+//   8: stampBoost   (f32) – boost applied only to fresh collision stamps
+//  12: tracerMode   (u32)  – 0 = combined colors, 1 = grey highlight
 //
 // Keep the uniform definition in sync with WebGPURenderer.ts
 
@@ -418,13 +418,22 @@ export const persistenceFragmentSource = /* wgsl */ `
 struct PersistUniforms {
   decayFactor : f32,
   colorThresh : f32,
+  stampBoost  : f32,
   tracerMode  : u32,
-  _reserved   : u32,
+  peakMode    : u32,
+  _pad0       : u32,
+  _pad1       : u32,
+  _pad2       : u32,
 };
 @group(0) @binding(5) var<uniform> pu : PersistUniforms;
 
+struct FragmentOutputs {
+  @location(0) persistence : vec4<f32>,
+  @location(1) diagnostic  : vec4<f32>,
+};
+
 @fragment
-fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+fn main(@location(0) uv : vec2<f32>) -> FragmentOutputs {
   let c0 = textureSample(layer0, cSampler, uv);
   let c1 = textureSample(layer1, cSampler, uv);
   let c2 = textureSample(layer2, cSampler, uv);
@@ -439,6 +448,8 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
   // Default to zero alpha (empty)
   var newColor = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  var dominantLayer = 0u;
+  var stampVariance = 0.0;
 
   // Stamp a tracer ghost when 2+ layers overlap (much more likely than all 3).
   // Skip when all active layers are the same colour — this prevents full-image
@@ -455,16 +466,32 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     if (c0.a > thresh) { variance = variance + length(c0.rgb - combined); }
     if (c1.a > thresh) { variance = variance + length(c1.rgb - combined); }
     if (c2.a > thresh) { variance = variance + length(c2.rgb - combined); }
+    stampVariance = variance;
 
     if (variance > 0.01) {
+      // Determine which layer contributed most to the combined colour
+      var maxLum = 0.0;
+      if (c0.a > thresh) {
+        let lum = dot(c0.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        if (lum > maxLum) { maxLum = lum; dominantLayer = 0u; }
+      }
+      if (c1.a > thresh) {
+        let lum = dot(c1.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        if (lum > maxLum) { maxLum = lum; dominantLayer = 1u; }
+      }
+      if (c2.a > thresh) {
+        let lum = dot(c2.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        if (lum > maxLum) { maxLum = lum; dominantLayer = 2u; }
+      }
+
       if (pu.tracerMode == 1u) {
         let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
         // Boost grey highlight for visibility
-        let boosted = min(lum * 2.0, 1.0);
+        let boosted = min(lum * pu.stampBoost, 1.0);
         newColor = vec4<f32>(vec3<f32>(boosted), 1.0);
       } else {
         // Brighten the combined color so tracer is visually distinct from raw layers
-        let brightened = min(combined * 1.8, vec3<f32>(1.0));
+        let brightened = min(combined * pu.stampBoost, vec3<f32>(1.0));
         newColor = vec4<f32>(brightened, 1.0);
       }
     }
@@ -473,28 +500,81 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // Decay modifier: decay faster when actively overlapping, slower otherwise
   let decayMod = select(1.0, 1.5, layerCount >= 2u);
   let effectiveDecay = pow(pu.decayFactor, decayMod);
-  let decayed = prev * effectiveDecay;
+  var decayed = prev * effectiveDecay;
+  if (pu.peakMode == 1u) {
+    decayed = vec4<f32>(0.0);
+  }
 
   // Keep the stronger one (new collision beats old ghost)
-  return select(decayed, newColor, newColor.a > decayed.a);
+  let outColor = select(decayed, newColor, newColor.a > decayed.a);
+
+  // Diagnostic output: encode stamp metadata for CPU readback / visualisation
+  var diag = vec4<f32>(0.0);
+  if (newColor.a > 0.5) {
+    diag.r = f32(dominantLayer) / 2.0;
+    diag.g = select(0.5, 1.0, layerCount >= 3u);
+    diag.b = clamp(stampVariance * 10.0, 0.0, 1.0);
+    diag.a = 1.0;
+  }
+
+  var out : FragmentOutputs;
+  out.persistence = outColor;
+  out.diagnostic = diag;
+  return out;
 }
 `;
 
 // ─── Shared blend helpers (compositor + tracer-view) ─────────────────────────
-// Extracted so both shaders use identical blend math and Reinhard tonemap.
-// Issue #60: Add mode (1) moved into the switch with proper unpremultiply +
-// clamp — the previous `return src + dst` operated on premultiplied colours
-// without clamping, producing different results to all other modes.
+//
+// Blend-math convention: W3C Compositing and Blending Level 1
+// (https://www.w3.org/TR/compositing-1/#blending).
+//
+// Every input to blend() must be *premultiplied*.  Layer shaders that output
+// semi-transparent colours (e.g. CROP NUNIF2 with alpha=0.5/0.777) are
+// premultiplied by scale_premultiplied() before they reach blend(), so
+// unpremultiply() always recovers the original [0,1] colour.
+//
+// Reconstruction after the custom blend uses the standard "blend + over"
+// formula from the spec:
+//   outAlpha = s.a + d.a * (1 - s.a)
+//   outRgb   = (s.rgb*s.a*(1-d.a) + d.rgb*d.a*(1-s.a) + B(d,s)*s.a*d.a) / outAlpha
+//
+// When either source or destination has alpha < 1 the result can look darker
+// or more saturated than a naive A-over-B because the W3C model composites
+// the raw source colour where the backdrop is transparent.  This is the
+// standard browser/Canvas2D behaviour, not a bug.
+//
+// ─── Blend mode quick-reference (all formulas operate on UN-premultiplied RGB)
+//   0 Alpha        – Porter-Duff source-over on premultiplied colours
+//   1 Add          – min(d + s, 1)
+//   2 Subtract     – max(d - s, 0)
+//   3 Multiply     – d * s
+//   4 Screen       – 1 - (1-d)*(1-s)
+//   5 Lighten      – max(d, s)
+//   6 Darken       – min(d, s)
+//   7 Overlay      – Photoshop-style; destination controls the branch
+//   8 Color Dodge  – clamp(d / (1-s), 0, 1)
+//   9 Color Burn   – clamp(1 - (1-d)/s, 0, 1)
+//  10 Difference   – abs(d - s)
+//  11 Exclusion    – d + s - 2*d*s   (self-clamping in [0,1])
+//  12 Hard Light   – Photoshop-style; source controls the branch
+// ─────────────────────────────────────────────────────────────────────────────
 const WGSL_BLEND_HELPERS = /* wgsl */ `
 const BLEND_EPSILON : f32 = 0.0001;
 
+// Issue #60 / #62: scale_premultiplied now *actually* premultiplies.
+// Previously it just scaled the whole vec4 by opacity, which left
+// NUNIF2 semi-transparent layers (alpha=0.5/0.777) in non-premultiplied
+// form.  blend()'s unpremultiply() then divided by that alpha, inflating
+// RGB beyond [0,1] and producing incorrect results for Multiply, Overlay,
+// etc.  The new formula:  (rgb * alpha * opacity, alpha * opacity).
 fn scale_premultiplied(color: vec4<f32>, opacity: f32) -> vec4<f32> {
-  return color * opacity;
+  return vec4<f32>(color.rgb * color.a * opacity, color.a * opacity);
 }
 
 fn unpremultiply(color: vec4<f32>) -> vec4<f32> {
   if (color.a < BLEND_EPSILON) { return vec4<f32>(0.0); }
-  return vec4<f32>(color.rgb / color.a, color.a);
+  return vec4<f32>(clamp(color.rgb / color.a, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
 }
 
 fn alpha_blend(dst: vec4<f32>, src: vec4<f32>) -> vec4<f32> {
@@ -517,6 +597,8 @@ fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
     case 5u:  { rgb = max(d.rgb, s.rgb); }
     case 6u:  { rgb = min(d.rgb, s.rgb); }
     case 7u:  {
+      // Overlay = HardLight with swapped arguments (W3C § 7.2).
+      // Destination controls the branch, matching Photoshop Overlay.
       rgb = select(
         1.0 - 2.0 * (1.0 - d.rgb) * (1.0 - s.rgb),
         2.0 * d.rgb * s.rgb,
@@ -524,16 +606,19 @@ fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
       );
     }
     case 8u:  {
+      // Color Dodge: if s==1 → 1, if d==0 → 0, else min(1, d/(1-s))
       let safeDenom = max(vec3<f32>(1.0) - s.rgb, vec3<f32>(BLEND_EPSILON));
       rgb = clamp(d.rgb / safeDenom, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     case 9u:  {
+      // Color Burn: if s==0 → 0, if d==1 → 1, else 1 - min(1, (1-d)/s)
       let safeSrc = max(s.rgb, vec3<f32>(BLEND_EPSILON));
       rgb = clamp(vec3<f32>(1.0) - (vec3<f32>(1.0) - d.rgb) / safeSrc, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     case 10u: { rgb = abs(d.rgb - s.rgb); }
     case 11u: { rgb = d.rgb + s.rgb - 2.0 * d.rgb * s.rgb; }
     case 12u: {
+      // Hard Light: source controls the branch, matching Photoshop Hard Light.
       rgb = select(
         1.0 - 2.0 * (1.0 - s.rgb) * (1.0 - d.rgb),
         2.0 * s.rgb * d.rgb,
@@ -577,7 +662,12 @@ struct CompositorUniforms {
   layerOpacity0      : f32,
   layerOpacity1      : f32,
   layerOpacity2      : f32,
+  diagnosticsOpacity : f32,
+  stampBoost         : f32,
   outputMode         : u32,
+  tracerMode         : u32,
+  diagnosticsMode    : u32,
+  _pad0              : u32,
 };
 @group(0) @binding(6) var<uniform> cu : CompositorUniforms;
 
@@ -602,6 +692,37 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   layerCol = blend(layerCol, c1Opaque, cu.layerBlendMode);
   layerCol = blend(layerCol, c0Opaque, cu.layerBlendMode);
 
+  let thresh = 0.05;
+  var layerCount = 0u;
+  if (c0Opaque.a > thresh) { layerCount = layerCount + 1u; }
+  if (c1Opaque.a > thresh) { layerCount = layerCount + 1u; }
+  if (c2Opaque.a > thresh) { layerCount = layerCount + 1u; }
+
+  var stamp = vec4<f32>(0.0);
+  if (layerCount >= 2u) {
+    var sum = vec3<f32>(0.0);
+    if (c0Opaque.a > thresh) { sum = sum + c0Opaque.rgb; }
+    if (c1Opaque.a > thresh) { sum = sum + c1Opaque.rgb; }
+    if (c2Opaque.a > thresh) { sum = sum + c2Opaque.rgb; }
+    let combined = sum / f32(layerCount);
+
+    var variance = 0.0;
+    if (c0Opaque.a > thresh) { variance = variance + length(c0Opaque.rgb - combined); }
+    if (c1Opaque.a > thresh) { variance = variance + length(c1Opaque.rgb - combined); }
+    if (c2Opaque.a > thresh) { variance = variance + length(c2Opaque.rgb - combined); }
+
+    if (variance > 0.01) {
+      if (cu.tracerMode == 1u) {
+        let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let boosted = min(lum * cu.stampBoost, 1.0);
+        stamp = vec4<f32>(vec3<f32>(boosted), 1.0);
+      } else {
+        let brightened = min(combined * cu.stampBoost, vec3<f32>(1.0));
+        stamp = vec4<f32>(brightened, 1.0);
+      }
+    }
+  }
+
   // 2. Build the final depth stack based on output mode
   var finalCol = vec4<f32>(0.0);
 
@@ -614,6 +735,8 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // Tracer Only: suppress live layers
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
+  } else if (cu.outputMode == 3u) {
+    finalCol = stamp;
   } else {
     // Mixed (default): Below -> Layers -> Above
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
@@ -628,7 +751,22 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // 16-bit float, but the swapchain is 8 bpc — a cheap tonemap here
   // distributes energy better across quantisation steps, reducing banding.
   let x = finalCol.rgb * 1.04;                // tiny exposure bias
-  let tonemapped = x / (x + vec3<f32>(0.15)); // very soft Reinhard variant
+  var tonemapped = x / (x + vec3<f32>(0.15)); // very soft Reinhard variant
+  if (cu.diagnosticsMode == 1u) {
+    let diagBase = vec3<f32>(
+      clamp(c0Opaque.a, 0.0, 1.0),
+      clamp(c1Opaque.a, 0.0, 1.0),
+      clamp(c2Opaque.a, 0.0, 1.0)
+    );
+    var collisionTint = vec3<f32>(0.0);
+    if (layerCount == 2u) {
+      collisionTint = vec3<f32>(1.0, 0.82, 0.18);
+    } else if (layerCount >= 3u) {
+      collisionTint = vec3<f32>(1.0, 1.0, 1.0);
+    }
+    let diagOverlay = max(diagBase, collisionTint * stamp.a);
+    tonemapped = mix(tonemapped, diagOverlay, clamp(cu.diagnosticsOpacity, 0.0, 1.0));
+  }
   return vec4<f32>(tonemapped, 1.0);
 }
 `;
@@ -645,6 +783,9 @@ ${WGSL_BLEND_HELPERS}
 @group(0) @binding(0) var texSampler  : sampler;
 @group(0) @binding(1) var persistAbove: texture_2d<f32>;
 @group(0) @binding(2) var persistBelow: texture_2d<f32>;
+@group(0) @binding(3) var layer0      : texture_2d<f32>;
+@group(0) @binding(4) var layer1      : texture_2d<f32>;
+@group(0) @binding(5) var layer2      : texture_2d<f32>;
 
 struct TracerViewUniforms {
   canvasAspect       : f32,
@@ -652,11 +793,20 @@ struct TracerViewUniforms {
   tracerAboveOpacity : f32,
   tracerBelowOpacity : f32,
   tracerBlendMode    : u32,
-  _pad0              : u32,
-  _pad1              : u32,
-  _pad2              : u32,
+  showHeatmap        : u32,
+  zoom               : f32,
+  panX               : f32,
+  panY               : f32,
+  heatmapOpacity     : f32,
+  exposure           : f32,
+  applyTonemap       : u32,
+  showLayers         : u32,
+  layerBlendMode     : u32,
+  layerOpacity0      : f32,
+  layerOpacity1      : f32,
+  layerOpacity2      : f32,
 };
-@group(0) @binding(3) var<uniform> tvu : TracerViewUniforms;
+@group(0) @binding(6) var<uniform> tvu : TracerViewUniforms;
 
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
@@ -669,16 +819,22 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     let visW = tA / cA;
     let x0 = (1.0 - visW) * 0.5;
     if (uv.x < x0 || uv.x > x0 + visW) {
-      return vec4<f32>(0.02, 0.02, 0.03, 1.0);
+      return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     sampleUV.x = (uv.x - x0) / visW;
   } else if (tA > cA + 0.0001) {
     let visH = cA / tA;
     let y0 = (1.0 - visH) * 0.5;
     if (uv.y < y0 || uv.y > y0 + visH) {
-      return vec4<f32>(0.02, 0.02, 0.03, 1.0);
+      return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     sampleUV.y = (uv.y - y0) / visH;
+  }
+
+  let zoom = max(tvu.zoom, 1.0);
+  sampleUV = (sampleUV - vec2<f32>(0.5, 0.5)) / zoom + vec2<f32>(0.5 + tvu.panX, 0.5 + tvu.panY);
+  if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
   }
 
   let pAbove = textureSample(persistAbove, texSampler, sampleUV);
@@ -691,10 +847,314 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   col = blend(col, pBelowScaled, tvu.tracerBlendMode);
   col = blend(col, pAboveScaled, tvu.tracerBlendMode);
 
-  // Identical Reinhard tonemap as compositor — fixes hue/brightness mismatch.
-  let x = col.rgb * 1.04;
+  // When showLayers is enabled, composite the live layers on top of the
+  // tracers using the same layerBlendMode the main compositor uses.
+  // This makes the tracer inspector match the artistic output as closely
+  // as possible (modulo stampBoost and diagnostics overlays).
+  if (tvu.showLayers == 1u) {
+    let c0 = textureSample(layer0, texSampler, sampleUV);
+    let c1 = textureSample(layer1, texSampler, sampleUV);
+    let c2 = textureSample(layer2, texSampler, sampleUV);
+    let c0s = scale_premultiplied(c0, tvu.layerOpacity0);
+    let c1s = scale_premultiplied(c1, tvu.layerOpacity1);
+    let c2s = scale_premultiplied(c2, tvu.layerOpacity2);
+    col = blend(col, c2s, tvu.layerBlendMode);
+    col = blend(col, c1s, tvu.layerBlendMode);
+    col = blend(col, c0s, tvu.layerBlendMode);
+  }
+
+  if (tvu.showHeatmap == 1u) {
+    let c0 = textureSample(layer0, texSampler, sampleUV);
+    let c1 = textureSample(layer1, texSampler, sampleUV);
+    let c2 = textureSample(layer2, texSampler, sampleUV);
+    var count = 0u;
+    if (c0.a > 0.05) { count = count + 1u; }
+    if (c1.a > 0.05) { count = count + 1u; }
+    if (c2.a > 0.05) { count = count + 1u; }
+    var overlay = vec3<f32>(0.0);
+    if (count == 2u) {
+      overlay = vec3<f32>(1.0, 0.92, 0.18);
+    } else if (count >= 3u) {
+      overlay = vec3<f32>(1.0, 1.0, 1.0);
+    }
+    col.rgb = max(col.rgb, mix(col.rgb, overlay, tvu.heatmapOpacity));
+  }
+
+  // Apply the same exposure + Reinhard tonemap as the compositor.
+  // exposure defaults to 1.04 and can be adjusted in the inspector controls.
+  if (tvu.applyTonemap == 1u) {
+    let x = col.rgb * tvu.exposure;
+    let tonemapped = x / (x + vec3<f32>(0.15));
+    return vec4<f32>(tonemapped, 1.0);
+  }
+  return vec4<f32>(col.rgb, 1.0);
+}
+`;
+
+export const displayTextureFragmentSource = /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var tex        : texture_2d<f32>;
+
+struct DisplayUniforms {
+  canvasAspect : f32,
+  texAspect    : f32,
+  tonemap      : u32,
+  _pad0        : u32,
+};
+@group(0) @binding(2) var<uniform> du : DisplayUniforms;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  var sampleUV = uv;
+  if (du.canvasAspect > du.texAspect + 0.0001) {
+    let visW = du.texAspect / du.canvasAspect;
+    let x0 = (1.0 - visW) * 0.5;
+    if (uv.x < x0 || uv.x > x0 + visW) {
+      return vec4<f32>(0.02, 0.02, 0.03, 1.0);
+    }
+    sampleUV.x = (uv.x - x0) / visW;
+  } else if (du.texAspect > du.canvasAspect + 0.0001) {
+    let visH = du.canvasAspect / du.texAspect;
+    let y0 = (1.0 - visH) * 0.5;
+    if (uv.y < y0 || uv.y > y0 + visH) {
+      return vec4<f32>(0.02, 0.02, 0.03, 1.0);
+    }
+    sampleUV.y = (uv.y - y0) / visH;
+  }
+
+  let sampleColor = textureSample(tex, texSampler, sampleUV);
+  if (du.tonemap == 0u) {
+    return vec4<f32>(sampleColor.rgb, 1.0);
+  }
+
+  let x = sampleColor.rgb * 1.04;
   let tonemapped = x / (x + vec3<f32>(0.15));
   return vec4<f32>(tonemapped, 1.0);
 }
 `;
 
+export const coincidenceHeatmapFragmentSource = /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var layer0     : texture_2d<f32>;
+@group(0) @binding(2) var layer1     : texture_2d<f32>;
+@group(0) @binding(3) var layer2     : texture_2d<f32>;
+
+struct HeatmapUniforms {
+  threshold : f32,
+  _pad0     : f32,
+  _pad1     : u32,
+  _pad2     : u32,
+};
+@group(0) @binding(4) var<uniform> hu : HeatmapUniforms;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c0 = textureSample(layer0, texSampler, uv);
+  let c1 = textureSample(layer1, texSampler, uv);
+  let c2 = textureSample(layer2, texSampler, uv);
+
+  var count = 0u;
+  if (c0.a > hu.threshold) { count = count + 1u; }
+  if (c1.a > hu.threshold) { count = count + 1u; }
+  if (c2.a > hu.threshold) { count = count + 1u; }
+
+  if (count < 2u) {
+    let maxBand = max(max(c0.rgb, c1.rgb), c2.rgb) * 0.22;
+    return vec4<f32>(maxBand, 1.0);
+  }
+
+  let combined = c0.rgb + c1.rgb + c2.rgb;
+  if (count == 2u) {
+    let warm = normalize(max(combined, vec3<f32>(0.0001))) * vec3<f32>(1.0, 0.9, 0.25);
+    return vec4<f32>(warm, 1.0);
+  }
+
+  let hot = vec3<f32>(1.0, 0.98, 0.98) + combined * 0.15;
+  return vec4<f32>(min(hot, vec3<f32>(1.0)), 1.0);
+}
+`;
+
+export const diagnosticFragmentSource = /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var layer0     : texture_2d<f32>;
+@group(0) @binding(2) var layer1     : texture_2d<f32>;
+@group(0) @binding(3) var layer2     : texture_2d<f32>;
+
+struct DiagnosticUniforms {
+  threshold : f32,
+  opacity0  : f32,
+  opacity1  : f32,
+  opacity2  : f32,
+};
+@group(0) @binding(4) var<uniform> du : DiagnosticUniforms;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c0 = textureSample(layer0, texSampler, uv);
+  let c1 = textureSample(layer1, texSampler, uv);
+  let c2 = textureSample(layer2, texSampler, uv);
+
+  let a0 = c0.a * du.opacity0;
+  let a1 = c1.a * du.opacity1;
+  let a2 = c2.a * du.opacity2;
+
+  var count = 0u;
+  if (a0 > du.threshold) { count = count + 1u; }
+  if (a1 > du.threshold) { count = count + 1u; }
+  if (a2 > du.threshold) { count = count + 1u; }
+
+  let collision = select(0.0, select(0.67, 1.0, count >= 3u), count >= 2u);
+  return vec4<f32>(clamp(vec3<f32>(a0, a1, a2), vec3<f32>(0.0), vec3<f32>(1.0)), collision);
+}
+`;
+
+export const persistDiagnosticBlitFragmentSource = /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var diagTex    : texture_2d<f32>;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  return textureSample(diagTex, texSampler, uv);
+}
+`;
+
+export const stampDiagnosticViewFragmentSource = /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var diagTex    : texture_2d<f32>;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let d = textureSample(diagTex, texSampler, uv);
+  if (d.a < 0.5) {
+    return vec4<f32>(0.02, 0.02, 0.03, 1.0);
+  }
+
+  var color = vec3<f32>(0.0);
+  if (d.r < 0.33) {
+    color = vec3<f32>(1.0, 0.0, 0.0);       // Layer 0 — Red
+  } else if (d.r < 0.66) {
+    color = vec3<f32>(0.5, 0.0, 1.0);       // Layer 1 — Violet
+  } else {
+    color = vec3<f32>(0.0, 1.0, 0.0);       // Layer 2 — Green
+  }
+
+  let intensity = 0.3 + 0.7 * d.b;
+  return vec4<f32>(color * intensity, 1.0);
+}
+`;
+
+export const compareFragmentSource = /* wgsl */ `
+${WGSL_BLEND_HELPERS}
+
+@group(0) @binding(0) var cSampler       : sampler;
+@group(0) @binding(1) var sourceTex      : texture_2d<f32>;
+@group(0) @binding(2) var layer0         : texture_2d<f32>;
+@group(0) @binding(3) var layer1         : texture_2d<f32>;
+@group(0) @binding(4) var layer2         : texture_2d<f32>;
+@group(0) @binding(5) var persistBelow   : texture_2d<f32>;
+@group(0) @binding(6) var persistAbove   : texture_2d<f32>;
+
+struct CompareUniforms {
+  sourceAspect       : f32,
+  tracerAboveOpacity : f32,
+  tracerBelowOpacity : f32,
+  layerBlendMode     : u32,
+  tracerBlendMode    : u32,
+  layerOpacity0      : f32,
+  layerOpacity1      : f32,
+  layerOpacity2      : f32,
+  stampBoost         : f32,
+  dividerWidth       : f32,
+  outputMode         : u32,
+  tracerMode         : u32,
+};
+@group(0) @binding(7) var<uniform> cu : CompareUniforms;
+
+fn compositeAt(uv : vec2<f32>) -> vec3<f32> {
+  let c0 = scale_premultiplied(textureSample(layer0, cSampler, uv), cu.layerOpacity0);
+  let c1 = scale_premultiplied(textureSample(layer1, cSampler, uv), cu.layerOpacity1);
+  let c2 = scale_premultiplied(textureSample(layer2, cSampler, uv), cu.layerOpacity2);
+  let pBelow = scale_premultiplied(textureSample(persistBelow, cSampler, uv), cu.tracerBelowOpacity);
+  let pAbove = scale_premultiplied(textureSample(persistAbove, cSampler, uv), cu.tracerAboveOpacity);
+
+  var layerCol = vec4<f32>(0.0);
+  layerCol = blend(layerCol, c2, cu.layerBlendMode);
+  layerCol = blend(layerCol, c1, cu.layerBlendMode);
+  layerCol = blend(layerCol, c0, cu.layerBlendMode);
+
+  var finalCol = vec4<f32>(0.0);
+  if (cu.outputMode == 1u) {
+    finalCol = alpha_blend(finalCol, layerCol);
+    finalCol = blend(finalCol, pBelow, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pAbove, cu.tracerBlendMode);
+  } else if (cu.outputMode == 2u) {
+    finalCol = blend(finalCol, pBelow, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pAbove, cu.tracerBlendMode);
+  } else if (cu.outputMode == 3u) {
+    let thresh = 0.05;
+    var layerCount = 0u;
+    if (c0.a > thresh) { layerCount = layerCount + 1u; }
+    if (c1.a > thresh) { layerCount = layerCount + 1u; }
+    if (c2.a > thresh) { layerCount = layerCount + 1u; }
+    if (layerCount >= 2u) {
+      var sum = vec3<f32>(0.0);
+      if (c0.a > thresh) { sum = sum + c0.rgb; }
+      if (c1.a > thresh) { sum = sum + c1.rgb; }
+      if (c2.a > thresh) { sum = sum + c2.rgb; }
+      let combined = sum / f32(layerCount);
+      if (cu.tracerMode == 1u) {
+        let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
+        finalCol = vec4<f32>(vec3<f32>(min(lum * cu.stampBoost, 1.0)), 1.0);
+      } else {
+        finalCol = vec4<f32>(min(combined * cu.stampBoost, vec3<f32>(1.0)), 1.0);
+      }
+    }
+  } else {
+    finalCol = blend(finalCol, pBelow, cu.tracerBlendMode);
+    finalCol = alpha_blend(finalCol, layerCol);
+    finalCol = blend(finalCol, pAbove, cu.tracerBlendMode);
+  }
+
+  let x = finalCol.rgb * 1.04;
+  return x / (x + vec3<f32>(0.15));
+}
+
+fn sampleSourceFitted(uv : vec2<f32>) -> vec3<f32> {
+  let halfAspect = 0.5 * cu.sourceAspect;
+  var sampleUV = vec2<f32>(uv.x * 2.0, uv.y);
+
+  if (halfAspect > 1.0 + 0.0001) {
+    let visH = 1.0 / halfAspect;
+    let y0 = (1.0 - visH) * 0.5;
+    if (uv.y < y0 || uv.y > y0 + visH) {
+      return vec3<f32>(0.02, 0.02, 0.03);
+    }
+    sampleUV.y = (uv.y - y0) / visH;
+  } else if (1.0 > halfAspect + 0.0001) {
+    let visW = halfAspect;
+    let x0 = (1.0 - visW) * 0.5;
+    let localX = uv.x * 2.0;
+    if (localX < x0 || localX > x0 + visW) {
+      return vec3<f32>(0.02, 0.02, 0.03);
+    }
+    sampleUV.x = (localX - x0) / visW;
+  }
+
+  return textureSample(sourceTex, cSampler, sampleUV).rgb;
+}
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let dividerHalf = max(0.001, cu.dividerWidth * 0.5);
+  if (abs(uv.x - 0.5) < dividerHalf) {
+    return vec4<f32>(0.96, 0.78, 0.22, 1.0);
+  }
+
+  if (uv.x < 0.5) {
+    return vec4<f32>(sampleSourceFitted(uv), 1.0);
+  }
+
+  let rightUV = vec2<f32>((uv.x - 0.5) * 2.0, uv.y);
+  return vec4<f32>(compositeAt(rightUV), 1.0);
+}
+`;

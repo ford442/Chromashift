@@ -17,7 +17,13 @@ import {
   persistenceFragmentSource,
   compositorFragmentSource,
   tracerViewFragmentSource,
+  displayTextureFragmentSource,
+  coincidenceHeatmapFragmentSource,
+  compareFragmentSource,
+  persistDiagnosticBlitFragmentSource,
+  stampDiagnosticViewFragmentSource,
 } from './shaders';
+import { MAIN_VIEW_MODES } from './viewModes';
 
 export interface LayerState {
   angleDeg : number;
@@ -29,6 +35,7 @@ export interface RendererState {
   layers               : [LayerState, LayerState, LayerState];
   avgLuminance         : number;
   layerOpacity?        : number;
+  layerOpacities?      : [number, number, number];
   layerScale?          : number;  // 0.1–2.0, default 1.0
   tracerScale?         : number;  // 0.1–2.0, default 1.0
   tracerAboveIntensity?: number;  // NEW
@@ -43,6 +50,26 @@ export interface RendererState {
   outputMode?          : number;  // 0 = mixed, 1 = tracer focus, 2 = tracer only
   paused?              : boolean; // When true, tracer persistence stops decaying
   showTracerView?      : boolean; // When true, main canvas shows the persistence (tracer) buffer centered at native res instead of the normal compositor output
+  mainViewMode?        : number;  // 0 = composite, 1 = tracer, 2 = source, 3-5 = layers, 6 = heatmap, 7 = compare
+  tracerInspectZoom?   : number;
+  tracerInspectPanX?   : number;
+  tracerInspectPanY?   : number;
+  tracerInspectHeatmap?: boolean;
+  tracerInspectExposure? : number;
+  tracerInspectTonemap?: boolean;
+  tracerInspectShowLayers?: boolean;
+  diagnosticsMode?     : boolean;
+  diagnosticsOpacity?  : number;
+  stampBoost?          : number;
+  peakCollisionsOnly?  : boolean;
+}
+
+export interface CollisionStats {
+  sampledPixels: number;
+  twoOverlapPixels: number;
+  threeOverlapPixels: number;
+  dominantLayerWins: [number, number, number];
+  averageCollision: number;
 }
 
 /**
@@ -96,9 +123,33 @@ interface LayerPipeline {
   fragData          : Float32Array;
 }
 
+interface LayerBindGroupCacheEntry {
+  bindGroup: GPUBindGroup | null;
+  texture: GPUTexture | null;
+  maskTexture: GPUTexture | null;
+}
+
+interface TexturePairBindGroupCacheEntry {
+  bindGroup: GPUBindGroup | null;
+  layer0: GPUTexture | null;
+  layer1: GPUTexture | null;
+  layer2: GPUTexture | null;
+  textureA: object | null;
+  textureB: object | null;
+}
+
+interface HeatmapBindGroupCacheEntry {
+  bindGroup: GPUBindGroup | null;
+  layer0: GPUTexture | null;
+  layer1: GPUTexture | null;
+  layer2: GPUTexture | null;
+  uniformBuf: GPUBuffer | null;
+}
+
 export class WebGPURenderer {
   /** Size of the composited preview texture (fixed, independent of canvas/tracerScale). */
-  static readonly PREVIEW_SIZE = 256;
+  static readonly PREVIEW_SIZE = 128;
+  static readonly DIAGNOSTIC_SIZE = 64;
 
   private device         : GPUDevice;
   private context        : GPUCanvasContext;
@@ -128,12 +179,13 @@ export class WebGPURenderer {
   // Persistence ping-pong (Dual system)
   private persistAboveTextures  : [GPUTexture | null, GPUTexture | null] = [null, null];
   private persistBelowTextures  : [GPUTexture | null, GPUTexture | null] = [null, null];
+  private persistDiagnosticTextures: [GPUTexture | null, GPUTexture | null] = [null, null];
   private persistPingPong       : 0 | 1 = 0;  // shared index
   private persistPipeline       : GPURenderPipeline;
   private persistBGL            : GPUBindGroupLayout;
   private persistAboveUniformBuf: GPUBuffer;
   private persistBelowUniformBuf: GPUBuffer;
-  private persistUniformData = new ArrayBuffer(16);
+  private persistUniformData = new ArrayBuffer(32);
   private persistF32 = new Float32Array(this.persistUniformData);
   private persistU32 = new Uint32Array(this.persistUniformData);
 
@@ -152,11 +204,82 @@ export class WebGPURenderer {
   private tracerViewBGL       : GPUBindGroupLayout;
   private tracerViewUniformBuf: GPUBuffer;
   private tracerViewSampler   : GPUSampler;
+  private displayPipeline     : GPURenderPipeline;
+  private displayBGL          : GPUBindGroupLayout;
+  private displayUniformBuf   : GPUBuffer;
+  private heatmapPipeline     : GPURenderPipeline;
+  private heatmapBGL          : GPUBindGroupLayout;
+  private heatmapUniformBuf   : GPUBuffer;
+
+  private comparePipeline     : GPURenderPipeline;
+  private compareBGL          : GPUBindGroupLayout;
+  private compareUniformBuf   : GPUBuffer;
+
+  // Persist diagnostic blit (for CPU readback) + stamp diagnostic view
+  private persistDiagnosticBlitPipeline  : GPURenderPipeline;
+  private persistDiagnosticBlitBGL       : GPUBindGroupLayout;
+  private persistDiagnosticSampler       : GPUSampler;
+  private stampDiagnosticViewPipeline    : GPURenderPipeline;
+  private stampDiagnosticViewBGL         : GPUBindGroupLayout;
+  private stampDiagnosticViewSampler     : GPUSampler;
 
   // Small composited preview — fixed 256×256, independent of canvas/tracerScale
   private previewTexture      : GPUTexture | null = null;
   private previewStagingBuffer: GPUBuffer | null = null;
   private previewReadPending  = false;
+  private previewCaptureQueued = false;
+  private previewReadCallback: ((data: Uint8ClampedArray<ArrayBuffer>) => void) | null = null;
+  private diagnosticTexture: GPUTexture | null = null;
+  private diagnosticStagingBuffer: GPUBuffer | null = null;
+  private diagnosticReadPending = false;
+  private diagnosticCaptureQueued = false;
+  private diagnosticReadCallback: ((stats: CollisionStats) => void) | null = null;
+  private layerBindGroupCache: LayerBindGroupCacheEntry[] = [0, 1, 2].map(() => ({
+    bindGroup: null,
+    texture: null,
+    maskTexture: null,
+  }));
+  private persistBelowBindGroupCache: TexturePairBindGroupCacheEntry[] = [0, 1].map(() => ({
+    bindGroup: null,
+    layer0: null,
+    layer1: null,
+    layer2: null,
+    textureA: null,
+    textureB: null,
+  }));
+  private persistAboveBindGroupCache: TexturePairBindGroupCacheEntry[] = [0, 1].map(() => ({
+    bindGroup: null,
+    layer0: null,
+    layer1: null,
+    layer2: null,
+    textureA: null,
+    textureB: null,
+  }));
+  private compositorBindGroupCache: TexturePairBindGroupCacheEntry[] = [0, 1].map(() => ({
+    bindGroup: null,
+    layer0: null,
+    layer1: null,
+    layer2: null,
+    textureA: null,
+    textureB: null,
+  }));
+  private tracerViewBindGroupCache: TexturePairBindGroupCacheEntry[] = [0, 1].map(() => ({
+    bindGroup: null,
+    layer0: null,
+    layer1: null,
+    layer2: null,
+    textureA: null,
+    textureB: null,
+  }));
+  private heatmapBindGroupCache: HeatmapBindGroupCacheEntry = {
+    bindGroup: null,
+    layer0: null,
+    layer1: null,
+    layer2: null,
+    uniformBuf: null,
+  };
+  private lastRenderCpuMs = 0;
+  private averageRenderCpuMs = 0;
 
   constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = false) {
     this.device  = device;
@@ -205,14 +328,14 @@ export class WebGPURenderer {
     // Persistence pipeline
     this.persistBGL      = this.createPersistBGL();
     this.persistPipeline = this.createPersistPipeline();
-    this.persistAboveUniformBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this.persistBelowUniformBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.persistAboveUniformBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.persistBelowUniformBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     // Compositor pipeline
     this.compositorBGL      = this.createCompositorBGL();
     this.compositorPipeline = this.createCompositorPipeline();
     this.compositorUniformBuf = device.createBuffer({
-      size: 32, // Accommodates the new struct layout
+      size: 48,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -220,7 +343,7 @@ export class WebGPURenderer {
     this.tracerViewBGL      = this.createTracerViewBGL();
     this.tracerViewPipeline = this.createTracerViewPipeline();
     this.tracerViewUniformBuf = device.createBuffer({
-      size: 32, // canvasAspect, texAspect, aboveOpacity, belowOpacity, blendMode, 3×pad
+      size: 80,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.tracerViewSampler = device.createSampler({
@@ -230,16 +353,97 @@ export class WebGPURenderer {
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
     });
+
+    this.displayBGL = this.createDisplayBGL();
+    this.displayPipeline = this.createDisplayPipeline();
+    this.displayUniformBuf = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    this.heatmapBGL = this.createHeatmapBGL();
+    this.heatmapPipeline = this.createHeatmapPipeline();
+    this.heatmapUniformBuf = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    this.compareBGL = this.createCompareBGL();
+    this.comparePipeline = this.createComparePipeline();
+    this.compareUniformBuf = device.createBuffer({
+      size: 48,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // Persist diagnostic blit pipeline (nearest sampler to preserve encoded values)
+    this.persistDiagnosticBlitBGL = this.createPersistDiagnosticBlitBGL();
+    this.persistDiagnosticBlitPipeline = this.createPersistDiagnosticBlitPipeline();
+    this.persistDiagnosticSampler = device.createSampler({
+      magFilter: 'nearest',
+      minFilter: 'nearest',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+    });
+
+    // Stamp diagnostic view pipeline
+    this.stampDiagnosticViewBGL = this.createStampDiagnosticViewBGL();
+    this.stampDiagnosticViewPipeline = this.createStampDiagnosticViewPipeline();
+    this.stampDiagnosticViewSampler = device.createSampler({
+      magFilter: 'linear',
+      minFilter: 'linear',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+    });
   }
 
-  private compositorUniformData = new ArrayBuffer(32);
+  private compositorUniformData = new ArrayBuffer(48);
   private compositorF32 = new Float32Array(this.compositorUniformData);
   private compositorU32 = new Uint32Array(this.compositorUniformData);
 
-  // Tracer view uniform (canvasAspect, texAspect, aboveOpacity, belowOpacity, blendMode, 3×pad)
-  private tracerViewUniformData = new ArrayBuffer(32);
+  // Tracer view uniform
+  private tracerViewUniformData = new ArrayBuffer(80);
   private tracerViewF32 = new Float32Array(this.tracerViewUniformData);
   private tracerViewU32 = new Uint32Array(this.tracerViewUniformData);
+  private displayUniformData = new ArrayBuffer(16);
+  private displayF32 = new Float32Array(this.displayUniformData);
+  private displayU32 = new Uint32Array(this.displayUniformData);
+  private heatmapUniformData = new ArrayBuffer(16);
+  private heatmapF32 = new Float32Array(this.heatmapUniformData);
+  private compareUniformData = new ArrayBuffer(48);
+  private compareF32 = new Float32Array(this.compareUniformData);
+  private compareU32 = new Uint32Array(this.compareUniformData);
+
+  getRenderTiming(): { lastCpuMs: number; averageCpuMs: number } {
+    return { lastCpuMs: this.lastRenderCpuMs, averageCpuMs: this.averageRenderCpuMs };
+  }
+
+  private invalidateBindGroupCaches(): void {
+    for (const entry of this.layerBindGroupCache) {
+      entry.bindGroup = null;
+      entry.texture = null;
+      entry.maskTexture = null;
+    }
+    for (const entries of [
+      this.persistBelowBindGroupCache,
+      this.persistAboveBindGroupCache,
+      this.compositorBindGroupCache,
+      this.tracerViewBindGroupCache,
+    ]) {
+      for (const entry of entries) {
+        entry.bindGroup = null;
+        entry.layer0 = null;
+        entry.layer1 = null;
+        entry.layer2 = null;
+        entry.textureA = null;
+        entry.textureB = null;
+      }
+    }
+    this.heatmapBindGroupCache.bindGroup = null;
+    this.heatmapBindGroupCache.layer0 = null;
+    this.heatmapBindGroupCache.layer1 = null;
+    this.heatmapBindGroupCache.layer2 = null;
+    this.heatmapBindGroupCache.uniformBuf = null;
+  }
 
   // ─── Layer pipeline ─────────────────────────────────────────────────────────
   private createLayerPipeline(fragmentSource: string): LayerPipeline {
@@ -299,7 +503,10 @@ export class WebGPURenderer {
       fragment: {
         module     : device.createShaderModule({ code: persistenceFragmentSource }),
         entryPoint : 'main',
-        targets    : [{ format: this.internalFormat }],
+        targets    : [
+          { format: this.internalFormat },   // @location(0) persistence colour
+          { format: 'rgba8unorm' },          // @location(1) diagnostic stamp info
+        ],
       },
       primitive  : { topology: 'triangle-list' },
       multisample: { count: 1 },
@@ -343,7 +550,10 @@ export class WebGPURenderer {
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // persistAbove
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // persistBelow
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer0
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer1
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer2
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
   }
@@ -359,6 +569,195 @@ export class WebGPURenderer {
         targets    : [{ format: this.format }],
       },
       primitive  : { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  private encodeTracerViewPass(
+    enc: GPUCommandEncoder,
+    targetView: GPUTextureView,
+    canvasWidth: number,
+    canvasHeight: number,
+    tracerAboveOpacity: number,
+    tracerBelowOpacity: number,
+    tracerBlendMode: number,
+    inspectZoom = 1,
+    inspectPanX = 0,
+    inspectPanY = 0,
+    showHeatmap = false,
+    exposure = 1.04,
+    applyTonemap = true,
+    showLayers = false,
+    layerBlendMode = 0,
+    layerOpacity0 = 1,
+    layerOpacity1 = 1,
+    layerOpacity2 = 1,
+  ): void {
+    const pTexAbove = this.persistAboveTextures[this.persistPingPong];
+    const pTexBelow = this.persistBelowTextures[this.persistPingPong];
+    if (!pTexAbove || !pTexBelow) return;
+
+    const tW = pTexAbove.width;
+    const tH = pTexAbove.height;
+
+    this.tracerViewF32[0] = canvasWidth / Math.max(1, canvasHeight);
+    this.tracerViewF32[1] = tW / Math.max(1, tH);
+    this.tracerViewF32[2] = tracerAboveOpacity;
+    this.tracerViewF32[3] = tracerBelowOpacity;
+    this.tracerViewU32[4] = tracerBlendMode;
+    this.tracerViewU32[5] = showHeatmap ? 1 : 0;
+    this.tracerViewF32[6] = Math.max(1, inspectZoom);
+    this.tracerViewF32[7] = inspectPanX;
+    this.tracerViewF32[8] = inspectPanY;
+    this.tracerViewF32[9] = 0.82;
+    this.tracerViewF32[10] = exposure;
+    this.tracerViewU32[11] = applyTonemap ? 1 : 0;
+    this.tracerViewU32[12] = showLayers ? 1 : 0;
+    this.tracerViewU32[13] = layerBlendMode;
+    this.tracerViewF32[14] = layerOpacity0;
+    this.tracerViewF32[15] = layerOpacity1;
+    this.tracerViewF32[16] = layerOpacity2;
+    this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniformData);
+
+    const tvBG = this.getTracerViewBindGroup();
+
+    const tvPass = enc.beginRenderPass({
+      colorAttachments: [{
+        view      : targetView,
+        loadOp    : 'clear',
+        storeOp   : 'store',
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+      }],
+    });
+    tvPass.setPipeline(this.tracerViewPipeline);
+    tvPass.setBindGroup(0, tvBG);
+    tvPass.draw(6);
+    tvPass.end();
+  }
+
+  private createDisplayBGL(): GPUBindGroupLayout {
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+  }
+
+  private createDisplayPipeline(): GPURenderPipeline {
+    return this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.displayBGL] }),
+      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module: this.device.createShaderModule({ code: displayTextureFragmentSource }),
+        entryPoint: 'main',
+        targets: [{ format: this.format }],
+      },
+      primitive: { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  private createHeatmapBGL(): GPUBindGroupLayout {
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+  }
+
+  private createHeatmapPipeline(): GPURenderPipeline {
+    return this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.heatmapBGL] }),
+      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module: this.device.createShaderModule({ code: coincidenceHeatmapFragmentSource }),
+        entryPoint: 'main',
+        targets: [{ format: this.format }],
+      },
+      primitive: { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  private createCompareBGL(): GPUBindGroupLayout {
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+  }
+
+  private createComparePipeline(): GPURenderPipeline {
+    return this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.compareBGL] }),
+      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module: this.device.createShaderModule({ code: compareFragmentSource }),
+        entryPoint: 'main',
+        targets: [{ format: this.format }],
+      },
+      primitive: { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  // ─── Persist diagnostic blit pipeline (for CPU readback) ─────────────────────
+  private createPersistDiagnosticBlitBGL(): GPUBindGroupLayout {
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ],
+    });
+  }
+
+  private createPersistDiagnosticBlitPipeline(): GPURenderPipeline {
+    return this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.persistDiagnosticBlitBGL] }),
+      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module: this.device.createShaderModule({ code: persistDiagnosticBlitFragmentSource }),
+        entryPoint: 'main',
+        targets: [{ format: 'rgba8unorm' }],
+      },
+      primitive: { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  // ─── Stamp diagnostic view pipeline (dominant-layer colour map) ──────────────
+  private createStampDiagnosticViewBGL(): GPUBindGroupLayout {
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ],
+    });
+  }
+
+  private createStampDiagnosticViewPipeline(): GPURenderPipeline {
+    return this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.stampDiagnosticViewBGL] }),
+      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module: this.device.createShaderModule({ code: stampDiagnosticViewFragmentSource }),
+        entryPoint: 'main',
+        targets: [{ format: this.format }],
+      },
+      primitive: { topology: 'triangle-list' },
       multisample: { count: 1 },
     });
   }
@@ -379,6 +778,7 @@ export class WebGPURenderer {
     this.msaaTexture?.destroy();
     this.persistAboveTextures[0]?.destroy(); this.persistAboveTextures[1]?.destroy();
     this.persistBelowTextures[0]?.destroy(); this.persistBelowTextures[1]?.destroy();
+    this.persistDiagnosticTextures[0]?.destroy(); this.persistDiagnosticTextures[1]?.destroy();
 
     const layerW = Math.max(1, Math.round(w * this.layerScale));
     const layerH = Math.max(1, Math.round(h * this.layerScale));
@@ -414,18 +814,33 @@ export class WebGPURenderer {
     this.persistAboveTextures = [createPersistTex(), createPersistTex()] as [GPUTexture, GPUTexture];
     this.persistBelowTextures = [createPersistTex(), createPersistTex()] as [GPUTexture, GPUTexture];
 
+    const createDiagnosticTex = () => this.device.createTexture({
+      size  : [tracerW, tracerH, 1], format: 'rgba8unorm',
+      usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+    });
+    this.persistDiagnosticTextures = [createDiagnosticTex(), createDiagnosticTex()] as [GPUTexture, GPUTexture];
+
     this.persistPingPong = 0;
     this.texW = w;
     this.texH = h;
+    this.invalidateBindGroupCaches();
   }
 
   // ─── Public API ──────────────────────────────────────────────────────────────
   setTexture(texture: GPUTexture): void {
     this.currentTexture = texture;
+    for (const entry of this.layerBindGroupCache) {
+      entry.bindGroup = null;
+      entry.texture = null;
+    }
   }
 
   setClassificationMaskTexture(texture: GPUTexture | null): void {
     this.classificationMaskTexture = texture;
+    for (const entry of this.layerBindGroupCache) {
+      entry.bindGroup = null;
+      entry.maskTexture = null;
+    }
   }
 
   setAntialiasing(enabled: boolean): void {
@@ -446,18 +861,21 @@ export class WebGPURenderer {
     this.msaaTexture = null;
     this.persistAboveTextures[0]?.destroy(); this.persistAboveTextures[1]?.destroy();
     this.persistBelowTextures[0]?.destroy(); this.persistBelowTextures[1]?.destroy();
+    this.persistDiagnosticTextures[0]?.destroy(); this.persistDiagnosticTextures[1]?.destroy();
     this.persistAboveTextures = [null, null];
     this.persistBelowTextures = [null, null];
+    this.persistDiagnosticTextures = [null, null];
     this.texW = 0;
     this.texH = 0;
     this.layerScale = 1.0;
     this.tracerScale = 1.0;
+    this.invalidateBindGroupCaches();
   }
 
   /**
    * Get the current persistence texture (the accumulated layer overlaps).
    * Returns null if textures haven't been initialized yet.
-   * @deprecated Use readPreviewPixels() for the preview, which shows the composited output.
+   * @deprecated Use requestPreviewReadback() for preview thumbnails.
    */
   getPersistenceTexture(): GPUTexture | null {
     return this.persistAboveTextures[this.persistPingPong];
@@ -468,7 +886,7 @@ export class WebGPURenderer {
    * Create the fixed-size composited preview texture and its reusable staging
    * buffer.  Called lazily from render() the first time.
    *
-   * PREVIEW_SIZE = 256 → bytesPerRow = 256×4 = 1024, which is already aligned
+   * PREVIEW_SIZE = 128 → bytesPerRow = 128×4 = 512, which is already aligned
    * to the required 256-byte boundary with zero padding.
    */
   private ensurePreviewResources(): void {
@@ -482,23 +900,51 @@ export class WebGPURenderer {
       usage : GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
 
-    // bytesPerRow = 256 * 4 = 1024 (multiple of 256 ✓, no padding needed)
+    // bytesPerRow = 128 * 4 = 512 (multiple of 256 ✓, no padding needed)
     this.previewStagingBuffer = this.device.createBuffer({
       size : sz * sz * 4,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
   }
 
+  private ensureDiagnosticResources(): void {
+    if (this.diagnosticTexture && this.diagnosticStagingBuffer) return;
+
+    const sz = WebGPURenderer.DIAGNOSTIC_SIZE;
+    this.diagnosticTexture = this.device.createTexture({
+      size: [sz, sz, 1],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+    this.diagnosticStagingBuffer = this.device.createBuffer({
+      size: sz * sz * 4,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+  }
+
   /**
-   * Initiate an async read-back of the composited preview texture.
-   *
-   * The callback receives a copy of the pixel data (RGBA8, 256×256) once the
-   * GPU has finished and the buffer has been mapped.  Calls that arrive while
-   * a previous read is still in-flight are ignored (the preview updates at
-   * ~5 fps so this never causes visible stutter).
+   * Queue a single preview capture. The actual compositor preview pass and
+   * GPU->CPU copy only happen during the next render() call, so the main render
+   * loop avoids preview work entirely when nobody asked for a thumbnail update.
    */
-  readPreviewPixels(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): void {
-    if (!this.previewStagingBuffer || this.previewReadPending) return;
+  requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean {
+    if (this.previewReadPending || this.previewCaptureQueued || this.previewReadCallback) return false;
+    this.previewReadCallback = callback;
+    this.previewCaptureQueued = true;
+    return true;
+  }
+
+  requestCollisionStats(callback: (stats: CollisionStats) => void): boolean {
+    if (this.diagnosticReadPending || this.diagnosticCaptureQueued || this.diagnosticReadCallback) return false;
+    this.diagnosticReadCallback = callback;
+    this.diagnosticCaptureQueued = true;
+    return true;
+  }
+
+  private beginPreviewReadback(): void {
+    if (!this.previewStagingBuffer || !this.previewReadCallback || this.previewReadPending) return;
+    const callback = this.previewReadCallback;
+    this.previewReadCallback = null;
     this.previewReadPending = true;
     this.previewStagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
       const mapped = this.previewStagingBuffer!.getMappedRange() as ArrayBuffer;
@@ -509,6 +955,54 @@ export class WebGPURenderer {
       callback(data);
     }).catch(() => {
       this.previewReadPending = false;
+      this.previewReadCallback = null;
+    });
+  }
+
+  private beginDiagnosticReadback(): void {
+    if (!this.diagnosticStagingBuffer || !this.diagnosticReadCallback || this.diagnosticReadPending) return;
+    const callback = this.diagnosticReadCallback;
+    this.diagnosticReadCallback = null;
+    this.diagnosticReadPending = true;
+    this.diagnosticStagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const mapped = new Uint8Array(this.diagnosticStagingBuffer!.getMappedRange());
+      const stats: CollisionStats = {
+        sampledPixels: WebGPURenderer.DIAGNOSTIC_SIZE * WebGPURenderer.DIAGNOSTIC_SIZE,
+        twoOverlapPixels: 0,
+        threeOverlapPixels: 0,
+        dominantLayerWins: [0, 0, 0],
+        averageCollision: 0,
+      };
+      let collisionSum = 0;
+      for (let i = 0; i < mapped.length; i += 4) {
+        const r = mapped[i] / 255;
+        const g = mapped[i + 1] / 255;
+        const a = mapped[i + 3] / 255;
+        collisionSum += a;
+        if (a > 0.5) {
+          // Decode layerCount from green channel: 0.5 = 2-overlap, 1.0 = 3-overlap
+          if (g >= 0.75) {
+            stats.threeOverlapPixels += 1;
+          } else {
+            stats.twoOverlapPixels += 1;
+          }
+          // Decode dominant layer from red channel: 0.0 = L0, 0.5 = L1, 1.0 = L2
+          if (r < 0.33) {
+            stats.dominantLayerWins[0] += 1;
+          } else if (r < 0.66) {
+            stats.dominantLayerWins[1] += 1;
+          } else {
+            stats.dominantLayerWins[2] += 1;
+          }
+        }
+      }
+      stats.averageCollision = collisionSum / stats.sampledPixels;
+      this.diagnosticStagingBuffer!.unmap();
+      this.diagnosticReadPending = false;
+      callback(stats);
+    }).catch(() => {
+      this.diagnosticReadPending = false;
+      this.diagnosticReadCallback = null;
     });
   }
 
@@ -519,10 +1013,11 @@ export class WebGPURenderer {
   clearPersistence(): void {
     const enc = this.device.createCommandEncoder();
     
-    // Clear all 4 persistence textures
+    // Clear all persistence and diagnostic textures
     const allTextures = [
       this.persistAboveTextures[0], this.persistAboveTextures[1],
-      this.persistBelowTextures[0], this.persistBelowTextures[1]
+      this.persistBelowTextures[0], this.persistBelowTextures[1],
+      this.persistDiagnosticTextures[0], this.persistDiagnosticTextures[1],
     ];
     
     for (const tex of allTextures) {
@@ -542,8 +1037,182 @@ export class WebGPURenderer {
     this.persistPingPong = 0;
   }
 
+  private getLayerBindGroup(index: number): GPUBindGroup {
+    const lp = this.layerPipelines[index];
+    const entry = this.layerBindGroupCache[index];
+    const maskTexture = this.classificationMaskTexture ?? this.fallbackMaskTexture;
+    if (
+      entry.bindGroup &&
+      entry.texture === this.currentTexture &&
+      entry.maskTexture === maskTexture
+    ) {
+      return entry.bindGroup;
+    }
+
+    const bindGroup = this.device.createBindGroup({
+      layout : lp.bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: lp.rotationBuffer } },
+        { binding: 1, resource: this.sampler },
+        { binding: 2, resource: this.currentTexture!.createView() },
+        { binding: 3, resource: { buffer: lp.fragUniformBuffer } },
+        { binding: 4, resource: maskTexture.createView() },
+      ],
+    });
+    entry.bindGroup = bindGroup;
+    entry.texture = this.currentTexture;
+    entry.maskTexture = maskTexture;
+    return bindGroup;
+  }
+
+  private getPersistenceBindGroup(
+    cache: TexturePairBindGroupCacheEntry[],
+    readIdx: 0 | 1,
+    textures: [GPUTexture | null, GPUTexture | null],
+    uniformBuf: GPUBuffer,
+  ): GPUBindGroup {
+    const entry = cache[readIdx];
+    const prevTexture = textures[readIdx]!;
+    if (
+      entry.bindGroup &&
+      entry.layer0 === this.layerTextures[0] &&
+      entry.layer1 === this.layerTextures[1] &&
+      entry.layer2 === this.layerTextures[2] &&
+      entry.textureA === prevTexture &&
+      entry.textureB === uniformBuf
+    ) {
+      return entry.bindGroup;
+    }
+
+    const bindGroup = this.device.createBindGroup({
+      layout : this.persistBGL,
+      entries: [
+        { binding: 0, resource: this.compositorSampler },
+        { binding: 1, resource: this.layerTextures[0].createView() },
+        { binding: 2, resource: this.layerTextures[1].createView() },
+        { binding: 3, resource: this.layerTextures[2].createView() },
+        { binding: 4, resource: prevTexture.createView() },
+        { binding: 5, resource: { buffer: uniformBuf } },
+      ],
+    });
+    entry.bindGroup = bindGroup;
+    entry.layer0 = this.layerTextures[0];
+    entry.layer1 = this.layerTextures[1];
+    entry.layer2 = this.layerTextures[2];
+    entry.textureA = prevTexture;
+    entry.textureB = uniformBuf;
+    return bindGroup;
+  }
+
+  private getCompositorBindGroup(): GPUBindGroup {
+    const entry = this.compositorBindGroupCache[this.persistPingPong];
+    const persistBelow = this.persistBelowTextures[this.persistPingPong]!;
+    const persistAbove = this.persistAboveTextures[this.persistPingPong]!;
+    if (
+      entry.bindGroup &&
+      entry.layer0 === this.layerTextures[0] &&
+      entry.layer1 === this.layerTextures[1] &&
+      entry.layer2 === this.layerTextures[2] &&
+      entry.textureA === persistBelow &&
+      entry.textureB === persistAbove
+    ) {
+      return entry.bindGroup;
+    }
+
+    const bindGroup = this.device.createBindGroup({
+      layout : this.compositorBGL,
+      entries: [
+        { binding: 0, resource: this.compositorSampler },
+        { binding: 1, resource: this.layerTextures[0].createView() },
+        { binding: 2, resource: this.layerTextures[1].createView() },
+        { binding: 3, resource: this.layerTextures[2].createView() },
+        { binding: 4, resource: persistBelow.createView() },
+        { binding: 5, resource: persistAbove.createView() },
+        { binding: 6, resource: { buffer: this.compositorUniformBuf } },
+      ],
+    });
+    entry.bindGroup = bindGroup;
+    entry.layer0 = this.layerTextures[0];
+    entry.layer1 = this.layerTextures[1];
+    entry.layer2 = this.layerTextures[2];
+    entry.textureA = persistBelow;
+    entry.textureB = persistAbove;
+    return bindGroup;
+  }
+
+  private getTracerViewBindGroup(): GPUBindGroup {
+    const entry = this.tracerViewBindGroupCache[this.persistPingPong];
+    const persistAbove = this.persistAboveTextures[this.persistPingPong]!;
+    const persistBelow = this.persistBelowTextures[this.persistPingPong]!;
+    if (
+      entry.bindGroup &&
+      entry.layer0 === this.layerTextures[0] &&
+      entry.layer1 === this.layerTextures[1] &&
+      entry.layer2 === this.layerTextures[2] &&
+      entry.textureA === persistAbove &&
+      entry.textureB === persistBelow
+    ) {
+      return entry.bindGroup;
+    }
+
+    const bindGroup = this.device.createBindGroup({
+      layout : this.tracerViewBGL,
+      entries: [
+        { binding: 0, resource: this.tracerViewSampler },
+        { binding: 1, resource: persistAbove.createView() },
+        { binding: 2, resource: persistBelow.createView() },
+        { binding: 3, resource: this.layerTextures[0].createView() },
+        { binding: 4, resource: this.layerTextures[1].createView() },
+        { binding: 5, resource: this.layerTextures[2].createView() },
+        { binding: 6, resource: { buffer: this.tracerViewUniformBuf } },
+      ],
+    });
+    entry.bindGroup = bindGroup;
+    entry.layer0 = this.layerTextures[0];
+    entry.layer1 = this.layerTextures[1];
+    entry.layer2 = this.layerTextures[2];
+    entry.textureA = persistAbove;
+    entry.textureB = persistBelow;
+    return bindGroup;
+  }
+
+  private getHeatmapBindGroup(): GPUBindGroup {
+    return this.getLayerTextureBindGroup(this.heatmapBGL, this.heatmapUniformBuf);
+  }
+
+  private getLayerTextureBindGroup(layout: GPUBindGroupLayout, uniformBuf: GPUBuffer): GPUBindGroup {
+    const entry = this.heatmapBindGroupCache;
+    if (
+      entry.bindGroup &&
+      entry.layer0 === this.layerTextures[0] &&
+      entry.layer1 === this.layerTextures[1] &&
+      entry.layer2 === this.layerTextures[2] &&
+      entry.uniformBuf === uniformBuf
+    ) {
+      return entry.bindGroup;
+    }
+
+    const bindGroup = this.device.createBindGroup({
+      layout,
+      entries: [
+        { binding: 0, resource: this.compositorSampler },
+        { binding: 1, resource: this.layerTextures[0].createView() },
+        { binding: 2, resource: this.layerTextures[1].createView() },
+        { binding: 3, resource: this.layerTextures[2].createView() },
+        { binding: 4, resource: { buffer: uniformBuf } },
+      ],
+    });
+    entry.bindGroup = bindGroup;
+    entry.layer0 = this.layerTextures[0];
+    entry.layer1 = this.layerTextures[1];
+    entry.layer2 = this.layerTextures[2];
+    entry.uniformBuf = uniformBuf;
+    return bindGroup;
+  }
+
   render(state: RendererState, fps = 30): void {
     if (!this.currentTexture) return;
+    const renderStart = performance.now();
 
     this.layerScale = state.layerScale ?? 1.0;
     this.tracerScale = state.tracerScale ?? 1.0;
@@ -552,6 +1221,14 @@ export class WebGPURenderer {
     this.ensureTextures(canvasTex.width, canvasTex.height);
 
     const enc = this.device.createCommandEncoder();
+    const globalLayerOpacity = state.layerOpacity ?? 1.0;
+    const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
+    const layerOpacities: [number, number, number] = [
+      globalLayerOpacity * sourceLayerOpacities[0],
+      globalLayerOpacity * sourceLayerOpacities[1],
+      globalLayerOpacity * sourceLayerOpacities[2],
+    ];
+    const stampBoost = state.stampBoost ?? 1.8;
 
     // ── Passes 0-2: render each colour layer ──────────────────────────────
     for (let i = 0; i < 3; i++) {
@@ -565,22 +1242,12 @@ export class WebGPURenderer {
       lp.rotationData.set([rad, flipX, flipY, aspect]);
       this.device.queue.writeBuffer(lp.rotationBuffer, 0, lp.rotationData.buffer as ArrayBuffer, lp.rotationData.byteOffset, 16);
 
-      const opacity = state.layerOpacity ?? 1.0;
       const colorMode = state.colorMode ?? 1.0;
       const useMask = this.classificationMaskTexture && colorMode === 0 ? 1 : 0;
-      lp.fragData.set([state.avgLuminance, opacity, colorMode, useMask]);
+      lp.fragData.set([state.avgLuminance, layerOpacities[i], colorMode, useMask]);
       this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 16);
 
-      const bindGroup = this.device.createBindGroup({
-        layout : lp.bindGroupLayout,
-        entries: [
-          { binding: 0, resource: { buffer: lp.rotationBuffer } },
-          { binding: 1, resource: this.sampler },
-          { binding: 2, resource: this.currentTexture.createView() },
-          { binding: 3, resource: { buffer: lp.fragUniformBuffer } },
-          { binding: 4, resource: (this.classificationMaskTexture ?? this.fallbackMaskTexture).createView() },
-        ],
-      });
+      const bindGroup = this.getLayerBindGroup(i);
 
       const usesMSAA = this.sampleCount > 1 && this.msaaTexture !== null;
       const pass = enc.beginRenderPass({
@@ -604,6 +1271,8 @@ export class WebGPURenderer {
     const readIdx  : 0 | 1 = this.persistPingPong;
     const writeIdx : 0 | 1 = readIdx === 0 ? 1 : 0;
 
+    const peakMode = state.peakCollisionsOnly ? 1 : 0;
+
     // Helper to run a persistence pass
     const runPersistPass = (
       duration: number,
@@ -614,28 +1283,31 @@ export class WebGPURenderer {
 
       this.persistF32[0] = decayFactor;
       this.persistF32[1] = colorThresh;
-      this.persistU32[2] = tracerMode;
-      this.persistU32[3] = 0;
+      this.persistF32[2] = stampBoost;
+      this.persistU32[3] = tracerMode;
+      this.persistU32[4] = peakMode;
       this.device.queue.writeBuffer(uniformBuf, 0, this.persistUniformData);
 
-      const bg = this.device.createBindGroup({
-        layout : this.persistBGL,
-        entries: [
-          { binding: 0, resource: this.compositorSampler },
-          { binding: 1, resource: this.layerTextures[0].createView() },
-          { binding: 2, resource: this.layerTextures[1].createView() },
-          { binding: 3, resource: this.layerTextures[2].createView() },
-          { binding: 4, resource: textures[readIdx]!.createView() },
-          { binding: 5, resource: { buffer: uniformBuf } },
-        ],
-      });
+      const bg = this.getPersistenceBindGroup(
+        textures === this.persistBelowTextures ? this.persistBelowBindGroupCache : this.persistAboveBindGroupCache,
+        readIdx,
+        textures,
+        uniformBuf,
+      );
 
       const pass = enc.beginRenderPass({
-        colorAttachments: [{
-          view      : textures[writeIdx]!.createView(),
-          loadOp    : 'clear', storeOp   : 'store',
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-        }],
+        colorAttachments: [
+          {
+            view      : textures[writeIdx]!.createView(),
+            loadOp    : 'clear', storeOp   : 'store',
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+          {
+            view      : this.persistDiagnosticTextures[writeIdx]!.createView(),
+            loadOp    : 'clear', storeOp   : 'store',
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
       });
       pass.setPipeline(this.persistPipeline); pass.setBindGroup(0, bg); pass.draw(6); pass.end();
     };
@@ -651,31 +1323,23 @@ export class WebGPURenderer {
     const tracerBelowOp = state.tracerBelowIntensity ?? 0.30;
     const layerBlendMode = state.layerBlendMode ?? 0;
     const tracerBlendMode = state.tracerBlendMode ?? 0;
-    const layerOpacity = state.layerOpacity ?? 1.0;
 
     this.compositorF32[0] = tracerAboveOp;
     this.compositorF32[1] = tracerBelowOp;
     this.compositorU32[2] = layerBlendMode;
     this.compositorU32[3] = tracerBlendMode;
-    this.compositorF32[4] = layerOpacity;
-    this.compositorF32[5] = layerOpacity;
-    this.compositorF32[6] = layerOpacity;
-    this.compositorU32[7] = state.outputMode ?? 0;
+    this.compositorF32[4] = layerOpacities[0];
+    this.compositorF32[5] = layerOpacities[1];
+    this.compositorF32[6] = layerOpacities[2];
+    this.compositorF32[7] = state.diagnosticsOpacity ?? 0.55;
+    this.compositorF32[8] = stampBoost;
+    this.compositorU32[9] = state.outputMode ?? 0;
+    this.compositorU32[10] = tracerMode;
+    this.compositorU32[11] = state.diagnosticsMode ? 1 : 0;
 
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0, this.compositorUniformData);
 
-    const compBG = this.device.createBindGroup({
-      layout : this.compositorBGL,
-      entries: [
-        { binding: 0, resource: this.compositorSampler },
-        { binding: 1, resource: this.layerTextures[0].createView() },
-        { binding: 2, resource: this.layerTextures[1].createView() },
-        { binding: 3, resource: this.layerTextures[2].createView() },
-        { binding: 4, resource: this.persistBelowTextures[this.persistPingPong]!.createView() }, // Binding 4: Below
-        { binding: 5, resource: this.persistAboveTextures[this.persistPingPong]!.createView() }, // Binding 5: Above
-        { binding: 6, resource: { buffer: this.compositorUniformBuf } },
-      ],
-    });
+    const compBG = this.getCompositorBindGroup();
 
     // ── Final output to main canvas ─────────────────────────────────────────
     // Two paths:
@@ -684,45 +1348,176 @@ export class WebGPURenderer {
     //     persistence buffer (Above) so user can inspect the accumulated
     //     trails/feedback at native internal resolution, centered, letterboxed
     //     if the current canvas shape doesn't match the tracer tex aspect.
-    const showTracerView = state.showTracerView ?? false;
+    const mainViewMode = state.mainViewMode ?? (
+      (state.showTracerView ?? false)
+        ? MAIN_VIEW_MODES.FULL_RES_TRACER
+        : MAIN_VIEW_MODES.PROCESSED_COMPOSITE
+    );
 
-    if (showTracerView) {
-      const cW = canvasTex.width;
-      const cH = canvasTex.height;
-      const pTexAbove = this.persistAboveTextures[this.persistPingPong];
-      const pTexBelow = this.persistBelowTextures[this.persistPingPong];
-      const tW = pTexAbove ? pTexAbove.width : cW;
-      const tH = pTexAbove ? pTexAbove.height : cH;
+    if (mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER) {
+      this.encodeTracerViewPass(
+        enc,
+        canvasTex.createView(),
+        canvasTex.width,
+        canvasTex.height,
+        tracerAboveOp,
+        tracerBelowOp,
+        tracerBlendMode,
+        state.tracerInspectZoom ?? 1,
+        state.tracerInspectPanX ?? 0,
+        state.tracerInspectPanY ?? 0,
+        state.tracerInspectHeatmap ?? false,
+        state.tracerInspectExposure ?? 1.04,
+        state.tracerInspectTonemap ?? true,
+        state.tracerInspectShowLayers ?? false,
+        layerBlendMode,
+        layerOpacities[0],
+        layerOpacities[1],
+        layerOpacities[2],
+      );
+    } else if (mainViewMode === MAIN_VIEW_MODES.SOURCE_IMAGE) {
+      this.displayF32[0] = canvasTex.width / Math.max(1, canvasTex.height);
+      this.displayF32[1] = this.currentTexture.width / Math.max(1, this.currentTexture.height);
+      this.displayU32[2] = 0;
+      this.displayU32[3] = 0;
+      this.device.queue.writeBuffer(this.displayUniformBuf, 0, this.displayUniformData);
 
-      this.tracerViewF32[0] = cW / Math.max(1, cH);      // canvasAspect
-      this.tracerViewF32[1] = tW / Math.max(1, tH);      // texAspect
-      this.tracerViewF32[2] = tracerAboveOp;              // tracerAboveOpacity
-      this.tracerViewF32[3] = tracerBelowOp;              // tracerBelowOpacity
-      this.tracerViewU32[4] = tracerBlendMode;            // tracerBlendMode
-      this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniformData);
-
-      const tvBG = this.device.createBindGroup({
-        layout : this.tracerViewBGL,
+      const displayBG = this.device.createBindGroup({
+        layout: this.displayBGL,
         entries: [
-          { binding: 0, resource: this.tracerViewSampler },
-          { binding: 1, resource: pTexAbove!.createView() },
-          { binding: 2, resource: pTexBelow!.createView() },
-          { binding: 3, resource: { buffer: this.tracerViewUniformBuf } },
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: this.currentTexture.createView() },
+          { binding: 2, resource: { buffer: this.displayUniformBuf } },
         ],
       });
 
-      const tvPass = enc.beginRenderPass({
+      const pass = enc.beginRenderPass({
         colorAttachments: [{
-          view      : canvasTex.createView(),
-          loadOp    : 'clear',
-          storeOp   : 'store',
+          view: canvasTex.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
         }],
       });
-      tvPass.setPipeline(this.tracerViewPipeline);
-      tvPass.setBindGroup(0, tvBG);
-      tvPass.draw(6);
-      tvPass.end();
+      pass.setPipeline(this.displayPipeline);
+      pass.setBindGroup(0, displayBG);
+      pass.draw(6);
+      pass.end();
+    } else if (mainViewMode >= MAIN_VIEW_MODES.LAYER_0 && mainViewMode <= MAIN_VIEW_MODES.LAYER_2) {
+      const layerIndex = mainViewMode - MAIN_VIEW_MODES.LAYER_0;
+      const layerTexture = this.layerTextures[layerIndex];
+      this.displayF32[0] = 1.0;
+      this.displayF32[1] = 1.0;
+      this.displayU32[2] = 1;
+      this.displayU32[3] = 0;
+      this.device.queue.writeBuffer(this.displayUniformBuf, 0, this.displayUniformData);
+
+      const displayBG = this.device.createBindGroup({
+        layout: this.displayBGL,
+        entries: [
+          { binding: 0, resource: this.compositorSampler },
+          { binding: 1, resource: layerTexture.createView() },
+          { binding: 2, resource: { buffer: this.displayUniformBuf } },
+        ],
+      });
+
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{
+          view: canvasTex.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        }],
+      });
+      pass.setPipeline(this.displayPipeline);
+      pass.setBindGroup(0, displayBG);
+      pass.draw(6);
+      pass.end();
+    } else if (mainViewMode === MAIN_VIEW_MODES.COINCIDENCE_HEATMAP) {
+      this.heatmapF32[0] = colorThresh;
+      this.heatmapF32[1] = 0;
+      this.heatmapF32[2] = 0;
+      this.heatmapF32[3] = 0;
+      this.device.queue.writeBuffer(this.heatmapUniformBuf, 0, this.heatmapUniformData);
+
+      const heatmapBG = this.getHeatmapBindGroup();
+
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{
+          view: canvasTex.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        }],
+      });
+      pass.setPipeline(this.heatmapPipeline);
+      pass.setBindGroup(0, heatmapBG);
+      pass.draw(6);
+      pass.end();
+    } else if (mainViewMode === MAIN_VIEW_MODES.COMPARE_SOURCE_COMPOSITE) {
+      this.compareF32[0] = this.currentTexture.width / Math.max(1, this.currentTexture.height);
+      this.compareF32[1] = tracerAboveOp;
+      this.compareF32[2] = tracerBelowOp;
+      this.compareU32[3] = layerBlendMode;
+      this.compareU32[4] = tracerBlendMode;
+      this.compareF32[5] = layerOpacities[0];
+      this.compareF32[6] = layerOpacities[1];
+      this.compareF32[7] = layerOpacities[2];
+      this.compareF32[8] = stampBoost;
+      this.compareF32[9] = 0.004;
+      this.compareU32[10] = state.outputMode ?? 0;
+      this.compareU32[11] = tracerMode;
+      this.device.queue.writeBuffer(this.compareUniformBuf, 0, this.compareUniformData);
+
+      const compareBG = this.device.createBindGroup({
+        layout: this.compareBGL,
+        entries: [
+          { binding: 0, resource: this.sampler },
+          { binding: 1, resource: this.currentTexture.createView() },
+          { binding: 2, resource: this.layerTextures[0].createView() },
+          { binding: 3, resource: this.layerTextures[1].createView() },
+          { binding: 4, resource: this.layerTextures[2].createView() },
+          { binding: 5, resource: this.persistBelowTextures[this.persistPingPong]!.createView() },
+          { binding: 6, resource: this.persistAboveTextures[this.persistPingPong]!.createView() },
+          { binding: 7, resource: { buffer: this.compareUniformBuf } },
+        ],
+      });
+
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{
+          view: canvasTex.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        }],
+      });
+      pass.setPipeline(this.comparePipeline);
+      pass.setBindGroup(0, compareBG);
+      pass.draw(6);
+      pass.end();
+    } else if (mainViewMode === MAIN_VIEW_MODES.STAMP_DIAGNOSTICS) {
+      const persistDiagTex = this.persistDiagnosticTextures[this.persistPingPong];
+      if (persistDiagTex) {
+        const stampDiagBG = this.device.createBindGroup({
+          layout: this.stampDiagnosticViewBGL,
+          entries: [
+            { binding: 0, resource: this.stampDiagnosticViewSampler },
+            { binding: 1, resource: persistDiagTex.createView() },
+          ],
+        });
+        const pass = enc.beginRenderPass({
+          colorAttachments: [{
+            view: canvasTex.createView(),
+            loadOp: 'clear',
+            storeOp: 'store',
+            clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          }],
+        });
+        pass.setPipeline(this.stampDiagnosticViewPipeline);
+        pass.setBindGroup(0, stampDiagBG);
+        pass.draw(6);
+        pass.end();
+      }
     } else {
       const finalPass = enc.beginRenderPass({
         colorAttachments: [{
@@ -742,12 +1537,18 @@ export class WebGPURenderer {
       finalPass.end();
     }
 
-    // ── Preview pass: compositor → small 256×256 texture + copy to staging ──
-    // Always renders the *normal* artistic composite (never the pure tracer view).
-    // This keeps the "Separated" and live "Tracer" preview panels useful for
-    // comparison while the main canvas is in inspection mode.
-    this.ensurePreviewResources();
-    if (this.previewTexture && this.previewStagingBuffer && !this.previewReadPending) {
+    // ── Preview pass: compositor → small thumbnail texture + copy to staging ──
+    // This is opt-in. When no thumbnail refresh was requested, render() skips
+    // the extra compositor pass and GPU readback entirely.
+    let shouldStartPreviewReadback = false;
+    let shouldStartDiagnosticReadback = false;
+    if (this.previewCaptureQueued && !this.previewReadPending) {
+      this.ensurePreviewResources();
+    }
+    if (this.diagnosticCaptureQueued && !this.diagnosticReadPending) {
+      this.ensureDiagnosticResources();
+    }
+    if (this.previewCaptureQueued && this.previewTexture && this.previewStagingBuffer && this.previewReadCallback) {
       const sz = WebGPURenderer.PREVIEW_SIZE;
 
       // Render the same compositor output into the small preview texture.
@@ -767,15 +1568,142 @@ export class WebGPURenderer {
       previewPass.end();
 
       // Copy the tiny result into the reusable staging buffer for CPU readback.
-      // bytesPerRow = 256 * 4 = 1024 (256-byte aligned ✓).
+      // bytesPerRow = PREVIEW_SIZE * 4, aligned by construction.
       enc.copyTextureToBuffer(
         { texture: this.previewTexture },
         { buffer: this.previewStagingBuffer, bytesPerRow: sz * 4 },
         [sz, sz, 1]
       );
+      this.previewCaptureQueued = false;
+      shouldStartPreviewReadback = true;
+    }
+
+    if (this.diagnosticCaptureQueued && this.diagnosticTexture && this.diagnosticStagingBuffer && this.diagnosticReadCallback) {
+      const sz = WebGPURenderer.DIAGNOSTIC_SIZE;
+
+      // Blit from the persist diagnostic texture (actual stamp data) into the
+      // 64×64 readback texture, replacing the old live-layer approximation.
+      const persistDiagTex = this.persistDiagnosticTextures[writeIdx];
+      if (persistDiagTex) {
+        const blitBG = this.device.createBindGroup({
+          layout: this.persistDiagnosticBlitBGL,
+          entries: [
+            { binding: 0, resource: this.persistDiagnosticSampler },
+            { binding: 1, resource: persistDiagTex.createView() },
+          ],
+        });
+        const blitPass = enc.beginRenderPass({
+          colorAttachments: [{
+            view: this.diagnosticTexture.createView(),
+            loadOp: 'clear',
+            storeOp: 'store',
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          }],
+        });
+        blitPass.setPipeline(this.persistDiagnosticBlitPipeline);
+        blitPass.setBindGroup(0, blitBG);
+        blitPass.draw(6);
+        blitPass.end();
+      }
+
+      enc.copyTextureToBuffer(
+        { texture: this.diagnosticTexture },
+        { buffer: this.diagnosticStagingBuffer, bytesPerRow: sz * 4 },
+        [sz, sz, 1],
+      );
+      this.diagnosticCaptureQueued = false;
+      shouldStartDiagnosticReadback = true;
     }
 
     this.device.queue.submit([enc.finish()]);
+    this.lastRenderCpuMs = performance.now() - renderStart;
+    this.averageRenderCpuMs = this.averageRenderCpuMs === 0
+      ? this.lastRenderCpuMs
+      : this.averageRenderCpuMs * 0.9 + this.lastRenderCpuMs * 0.1;
+    if (shouldStartPreviewReadback) this.beginPreviewReadback();
+    if (shouldStartDiagnosticReadback) this.beginDiagnosticReadback();
+  }
+
+  async exportTracerView(options: {
+    width?: number;
+    height?: number;
+    tracerAboveOpacity?: number;
+    tracerBelowOpacity?: number;
+    tracerBlendMode?: number;
+    inspectZoom?: number;
+    inspectPanX?: number;
+    inspectPanY?: number;
+    showHeatmap?: boolean;
+    exposure?: number;
+    applyTonemap?: boolean;
+    showLayers?: boolean;
+    layerBlendMode?: number;
+    layerOpacity0?: number;
+    layerOpacity1?: number;
+    layerOpacity2?: number;
+  }): Promise<{ width: number; height: number; data: Uint8ClampedArray<ArrayBuffer> } | null> {
+    const pTexAbove = this.persistAboveTextures[this.persistPingPong];
+    if (!pTexAbove) return null;
+
+    const width = Math.max(1, Math.floor(options.width ?? pTexAbove.width));
+    const height = Math.max(1, Math.floor(options.height ?? pTexAbove.height));
+    const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
+    const output = this.device.createTexture({
+      size: [width, height, 1],
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+    const staging = this.device.createBuffer({
+      size: bytesPerRow * height,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    const enc = this.device.createCommandEncoder();
+    this.encodeTracerViewPass(
+      enc,
+      output.createView(),
+      width,
+      height,
+      options.tracerAboveOpacity ?? 0.85,
+      options.tracerBelowOpacity ?? 0.30,
+      options.tracerBlendMode ?? 0,
+      options.inspectZoom ?? 1,
+      options.inspectPanX ?? 0,
+      options.inspectPanY ?? 0,
+      options.showHeatmap ?? false,
+      options.exposure ?? 1.04,
+      options.applyTonemap ?? true,
+      options.showLayers ?? false,
+      options.layerBlendMode ?? 0,
+      options.layerOpacity0 ?? 1,
+      options.layerOpacity1 ?? 1,
+      options.layerOpacity2 ?? 1,
+    );
+    enc.copyTextureToBuffer(
+      { texture: output },
+      { buffer: staging, bytesPerRow },
+      [width, height, 1],
+    );
+    this.device.queue.submit([enc.finish()]);
+
+    try {
+      await staging.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(staging.getMappedRange());
+      const packed = new Uint8ClampedArray(width * height * 4);
+      for (let y = 0; y < height; y++) {
+        const srcOffset = y * bytesPerRow;
+        const dstOffset = y * width * 4;
+        packed.set(mapped.subarray(srcOffset, srcOffset + width * 4), dstOffset);
+      }
+      staging.unmap();
+      output.destroy();
+      staging.destroy();
+      return { width, height, data: packed };
+    } catch {
+      output.destroy();
+      staging.destroy();
+      return null;
+    }
   }
 
   destroy(): void {
@@ -789,12 +1717,19 @@ export class WebGPURenderer {
     this.persistAboveTextures[1]?.destroy();
     this.persistBelowTextures[0]?.destroy();
     this.persistBelowTextures[1]?.destroy();
+    this.persistDiagnosticTextures[0]?.destroy();
+    this.persistDiagnosticTextures[1]?.destroy();
     this.persistAboveUniformBuf.destroy();
     this.persistBelowUniformBuf.destroy();
     this.compositorUniformBuf.destroy();
     this.tracerViewUniformBuf.destroy();
+    this.displayUniformBuf.destroy();
+    this.heatmapUniformBuf.destroy();
+    this.compareUniformBuf.destroy();
     this.fallbackMaskTexture.destroy();
     this.previewTexture?.destroy();
     this.previewStagingBuffer?.destroy();
+    this.diagnosticTexture?.destroy();
+    this.diagnosticStagingBuffer?.destroy();
   }
 }
