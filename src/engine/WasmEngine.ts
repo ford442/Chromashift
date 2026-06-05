@@ -154,7 +154,8 @@ export async function loadWasmEngine(): Promise<boolean> {
     // The Emscripten glue lives in /public/ and is served as a static asset; it is
     // not part of the Vite module graph.
     type GlueModule = { default: (opts?: Record<string, unknown>) => Promise<ChromashiftWasmModule> };
-    const engineUrl = `${window.location.origin}/chromashift_engine.js`;
+    const assetBaseUrl = new URL(import.meta.env.BASE_URL || './', window.location.href);
+    const engineUrl = new URL('chromashift_engine.js', assetBaseUrl).href;
     const glue = await import(/* @vite-ignore */ engineUrl) as GlueModule;
     wasmModule = await glue.default();
     loadState = 'ready';

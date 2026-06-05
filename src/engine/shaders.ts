@@ -429,7 +429,7 @@ struct PersistUniforms {
 
 struct FragmentOutputs {
   @location(0) persistence : vec4<f32>,
-  @location(1) diagnostic  : vec4<f32>,
+  @location(1) stampDiagnostic : vec4<f32>,
 };
 
 @fragment
@@ -519,7 +519,7 @@ fn main(@location(0) uv : vec2<f32>) -> FragmentOutputs {
 
   var out : FragmentOutputs;
   out.persistence = outColor;
-  out.diagnostic = diag;
+  out.stampDiagnostic = diag;
   return out;
 }
 `;
@@ -837,8 +837,8 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0, 0.0, 0.0, 1.0);
   }
 
-  let pAbove = textureSample(persistAbove, texSampler, sampleUV);
-  let pBelow = textureSample(persistBelow, texSampler, sampleUV);
+  let pAbove = textureSampleLevel(persistAbove, texSampler, sampleUV, 0.0);
+  let pBelow = textureSampleLevel(persistBelow, texSampler, sampleUV, 0.0);
 
   let pAboveScaled = scale_premultiplied(pAbove, tvu.tracerAboveOpacity);
   let pBelowScaled = scale_premultiplied(pBelow, tvu.tracerBelowOpacity);
@@ -852,9 +852,9 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // This makes the tracer inspector match the artistic output as closely
   // as possible (modulo stampBoost and diagnostics overlays).
   if (tvu.showLayers == 1u) {
-    let c0 = textureSample(layer0, texSampler, sampleUV);
-    let c1 = textureSample(layer1, texSampler, sampleUV);
-    let c2 = textureSample(layer2, texSampler, sampleUV);
+    let c0 = textureSampleLevel(layer0, texSampler, sampleUV, 0.0);
+    let c1 = textureSampleLevel(layer1, texSampler, sampleUV, 0.0);
+    let c2 = textureSampleLevel(layer2, texSampler, sampleUV, 0.0);
     let c0s = scale_premultiplied(c0, tvu.layerOpacity0);
     let c1s = scale_premultiplied(c1, tvu.layerOpacity1);
     let c2s = scale_premultiplied(c2, tvu.layerOpacity2);
@@ -864,9 +864,9 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   }
 
   if (tvu.showHeatmap == 1u) {
-    let c0 = textureSample(layer0, texSampler, sampleUV);
-    let c1 = textureSample(layer1, texSampler, sampleUV);
-    let c2 = textureSample(layer2, texSampler, sampleUV);
+    let c0 = textureSampleLevel(layer0, texSampler, sampleUV, 0.0);
+    let c1 = textureSampleLevel(layer1, texSampler, sampleUV, 0.0);
+    let c2 = textureSampleLevel(layer2, texSampler, sampleUV, 0.0);
     var count = 0u;
     if (c0.a > 0.05) { count = count + 1u; }
     if (c1.a > 0.05) { count = count + 1u; }
@@ -922,7 +922,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     sampleUV.y = (uv.y - y0) / visH;
   }
 
-  let sampleColor = textureSample(tex, texSampler, sampleUV);
+  let sampleColor = textureSampleLevel(tex, texSampler, sampleUV, 0.0);
   if (du.tonemap == 0u) {
     return vec4<f32>(sampleColor.rgb, 1.0);
   }
@@ -1071,11 +1071,11 @@ struct CompareUniforms {
 @group(0) @binding(7) var<uniform> cu : CompareUniforms;
 
 fn compositeAt(uv : vec2<f32>) -> vec3<f32> {
-  let c0 = scale_premultiplied(textureSample(layer0, cSampler, uv), cu.layerOpacity0);
-  let c1 = scale_premultiplied(textureSample(layer1, cSampler, uv), cu.layerOpacity1);
-  let c2 = scale_premultiplied(textureSample(layer2, cSampler, uv), cu.layerOpacity2);
-  let pBelow = scale_premultiplied(textureSample(persistBelow, cSampler, uv), cu.tracerBelowOpacity);
-  let pAbove = scale_premultiplied(textureSample(persistAbove, cSampler, uv), cu.tracerAboveOpacity);
+  let c0 = scale_premultiplied(textureSampleLevel(layer0, cSampler, uv, 0.0), cu.layerOpacity0);
+  let c1 = scale_premultiplied(textureSampleLevel(layer1, cSampler, uv, 0.0), cu.layerOpacity1);
+  let c2 = scale_premultiplied(textureSampleLevel(layer2, cSampler, uv, 0.0), cu.layerOpacity2);
+  let pBelow = scale_premultiplied(textureSampleLevel(persistBelow, cSampler, uv, 0.0), cu.tracerBelowOpacity);
+  let pAbove = scale_premultiplied(textureSampleLevel(persistAbove, cSampler, uv, 0.0), cu.tracerAboveOpacity);
 
   var layerCol = vec4<f32>(0.0);
   layerCol = blend(layerCol, c2, cu.layerBlendMode);
@@ -1140,7 +1140,7 @@ fn sampleSourceFitted(uv : vec2<f32>) -> vec3<f32> {
     sampleUV.x = (localX - x0) / visW;
   }
 
-  return textureSample(sourceTex, cSampler, sampleUV).rgb;
+  return textureSampleLevel(sourceTex, cSampler, sampleUV, 0.0).rgb;
 }
 
 @fragment
