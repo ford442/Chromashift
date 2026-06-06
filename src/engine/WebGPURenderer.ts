@@ -335,7 +335,7 @@ export class WebGPURenderer {
     this.compositorBGL      = this.createCompositorBGL();
     this.compositorPipeline = this.createCompositorPipeline();
     this.compositorUniformBuf = device.createBuffer({
-      size: 48,
+      size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -396,7 +396,7 @@ export class WebGPURenderer {
     });
   }
 
-  private compositorUniformData = new ArrayBuffer(48);
+  private compositorUniformData = new ArrayBuffer(64);
   private compositorF32 = new Float32Array(this.compositorUniformData);
   private compositorU32 = new Uint32Array(this.compositorUniformData);
 
