@@ -45,6 +45,8 @@ export interface RendererState {
   tracerThreshold?     : number;
   tracerMode?          : number;  // 0 = combined colors, 1 = grey highlight
   colorMode?           : number;  // 0 = Fixed (cr0p), 1 = Vivid (Chromashift gradient), 2 = CROP, 3 = CROP NUNIF2
+  sobelEnabled?        : boolean; // Sobel edge boost on luminance before band assignment
+  softCropEnabled?     : boolean; // Soft band edges in CROP / NUNIF2 (hard cuts when false)
   layerBlendMode?      : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   tracerBlendMode?     : number;  // 0=alpha, 1=add, 2=subtract, 3=multiply, 4=screen, 5=lighten, 6=darken, 7=overlay, 8=color dodge, 9=color burn, 10=difference, 11=exclusion, 12=hard light
   outputMode?          : number;  // 0 = mixed, 1 = tracer focus, 2 = tracer only
@@ -475,10 +477,10 @@ export class WebGPURenderer {
       size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const fragUniformBuffer = device.createBuffer({
-      size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer, rotationData: new Float32Array(4), fragData: new Float32Array(4) };
+    return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer, rotationData: new Float32Array(4), fragData: new Float32Array(8) };
   }
 
   // ─── Persistence pipeline ────────────────────────────────────────────────────
@@ -1244,8 +1246,13 @@ export class WebGPURenderer {
 
       const colorMode = state.colorMode ?? 1.0;
       const useMask = this.classificationMaskTexture && colorMode === 0 ? 1 : 0;
-      lp.fragData.set([state.avgLuminance, layerOpacities[i], colorMode, useMask]);
-      this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 16);
+      const sobelEnabled = state.sobelEnabled ? 1 : 0;
+      const softCropEnabled = state.softCropEnabled ? 1 : 0;
+      lp.fragData.set([
+        state.avgLuminance, layerOpacities[i], colorMode, useMask,
+        sobelEnabled, softCropEnabled, 0, 0,
+      ]);
+      this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 32);
 
       const bindGroup = this.getLayerBindGroup(i);
 
