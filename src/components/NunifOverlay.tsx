@@ -62,6 +62,10 @@ interface Props {
   onResetInspectView         : () => void;
   onExportTracer             : () => void;
   colorMode                  : number;
+  sobelEnabled               : boolean;
+  onSobelEnabledToggle       : (v: boolean) => void;
+  softCropEnabled            : boolean;
+  onSoftCropEnabledToggle    : (v: boolean) => void;
   squareCanvas               : boolean;
   antialiasEnabled           : boolean;
   onAngleChange              : (layer: 0 | 1 | 2, angle: number) => void;
@@ -162,6 +166,10 @@ export function NunifOverlay({
   onResetInspectView,
   onExportTracer,
   colorMode,
+  sobelEnabled,
+  onSobelEnabledToggle,
+  softCropEnabled,
+  onSoftCropEnabledToggle,
   squareCanvas,
   antialiasEnabled,
   onAngleChange,
@@ -545,6 +553,36 @@ export function NunifOverlay({
                   {label}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <span className="text-xs text-amber-400/80 font-mono">Band shaping:</span>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={() => onSobelEnabledToggle(!sobelEnabled)}
+                className={`flex-1 text-[10px] px-1 py-1 rounded transition-all ${
+                  sobelEnabled
+                    ? 'bg-emerald-600 text-white shadow-[0_0_8px_rgba(16,185,129,0.4)]'
+                    : 'bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700'
+                }`}
+                title="Sobel edge boost on luminance before band assignment. Off = raw luminance (CROP reference parity)."
+              >
+                {sobelEnabled ? '◎ Sobel ON' : '○ Sobel'}
+              </button>
+              <button
+                type="button"
+                onClick={() => onSoftCropEnabledToggle(!softCropEnabled)}
+                className={`flex-1 text-[10px] px-1 py-1 rounded transition-all ${
+                  softCropEnabled
+                    ? 'bg-sky-600 text-white shadow-[0_0_8px_rgba(56,189,248,0.4)]'
+                    : 'bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700'
+                }`}
+                title="Soft band edges in CROP / N2 modes. Off = hard thresholds matching the go.1ink.us CROP reference."
+              >
+                {softCropEnabled ? '≈ Soft ON' : '≈ Soft'}
+              </button>
             </div>
           </div>
 

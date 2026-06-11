@@ -94,6 +94,8 @@ export default function App() {
   const [layerScale, setLayerScale] = useState(1.0);
   const [tracerScale, setTracerScale] = useState(1.0);
   const [colorMode, setColorMode] = useState(1); // 1 = Vivid Gradient, 0 = Fixed cr0p
+  const [sobelEnabled, setSobelEnabled] = useState(false);
+  const [softCropEnabled, setSoftCropEnabled] = useState(false);
   const [specificImageError, setSpecificImageError] = useState<string | null>(null);
   const [renderCpuTiming, setRenderCpuTiming] = useState({ last: 0, avg: 0 });
   const [collisionStats, setCollisionStats] = useState({
@@ -539,6 +541,8 @@ export default function App() {
           tracerBelowDuration: tracerBelowDuration * (60 / frameRate),
           tracerMode,
           colorMode,
+          sobelEnabled,
+          softCropEnabled,
           layerBlendMode,
           tracerBlendMode,
           outputMode,
@@ -621,7 +625,7 @@ export default function App() {
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerOpacities, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, livePreviewEnabled, isPaused, isViewingTracer, mainViewMode, tracerInspectZoom, tracerInspectPan, tracerInspectHeatmap, tracerInspectExposure, tracerInspectTonemap, tracerInspectShowLayers, diagnosticsMode, diagnosticsOpacity, stampBoost, peakCollisionsOnly]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerOpacities, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, sobelEnabled, softCropEnabled, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, livePreviewEnabled, isPaused, isViewingTracer, mainViewMode, tracerInspectZoom, tracerInspectPan, tracerInspectHeatmap, tracerInspectExposure, tracerInspectTonemap, tracerInspectShowLayers, diagnosticsMode, diagnosticsOpacity, stampBoost, peakCollisionsOnly]);
 
   useEffect(() => {
     const canvas = previewTracerRef.current;
@@ -1401,6 +1405,10 @@ export default function App() {
         onPeakCollisionsOnlyChange={setPeakCollisionsOnly}
         colorMode={colorMode}
         onColorModeChange={setColorMode}
+        sobelEnabled={sobelEnabled}
+        onSobelEnabledToggle={setSobelEnabled}
+        softCropEnabled={softCropEnabled}
+        onSoftCropEnabledToggle={setSoftCropEnabled}
         onSquareCanvasToggle={setSquareCanvas}
         onAntialiasToggle={(enabled) => {
           setAntialiasEnabled(enabled);
