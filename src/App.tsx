@@ -1,3 +1,5 @@
+import { AppUI } from './components/AppUI';
+import { useAppWebGPUInit } from './hooks/useAppWebGPUInit';
 /**
  * Chromashift – WebGPU-based visual engine
  *
@@ -9,8 +11,6 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { WebGPURenderer, type RendererState } from './engine/WebGPURenderer';
 import { TextureManager, type ImageEntry } from './engine/TextureManager';
 import { Upscaler, type UpscaleModel } from './engine/Upscaler';
-import { NunifOverlay } from './components/NunifOverlay';
-import { ImageStrip } from './components/ImageStrip';
 import { MAIN_VIEW_MODES, type MainViewMode } from './engine/viewModes';
 import {
   type EngineKind,
@@ -21,12 +21,6 @@ import {
   classifyImageMaskWith,
 } from './engine/WasmEngine';
 
-const IMAGES_ENDPOINT = './images.json';
-
-function getImageFromURLParams(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('img') || params.get('image') || params.get('url');
-}
 
 type LayerTriple<T> = [T, T, T];
 
@@ -282,136 +276,12 @@ export default function App() {
     };
   }, [squareCanvas, imageAspect]);
 
-  // Initialise WebGPU
-  useEffect(() => {
-    let cancelled = false;
-    let localDevice: GPUDevice | null = null;
-    let localRenderer: WebGPURenderer | null = null;
-
-    async function init() {
-      if (!navigator.gpu) {
-        setError('WebGPU is not supported in this browser.');
-        return;
-      }
-
-      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-      if (!adapter) {
-        setError('No WebGPU adapter found.');
-        return;
-      }
-
-      const device = await adapter.requestDevice();
-
-      // If the component unmounted while we were requesting the device, destroy it immediately
-      if (cancelled) {
-        device.destroy();
-        return;
-      }
-      localDevice = device;
-
-      // Issue #49: use the large centered canvas as the primary WebGPU target
-      // so all rendering happens at full display resolution instead of 300×300.
-      const canvas = previewTracerRef.current!;
-      const context = canvas.getContext('webgpu');
-      if (!context) {
-        setError('Failed to get WebGPU context from canvas.');
-        return;
-      }
-
-      const format = navigator.gpu.getPreferredCanvasFormat();
-      context.configure({ device, format, alphaMode: 'opaque' });
-
-      // Note: We use the initial state of antialiasEnabled here.
-      // Future toggles are handled directly via renderer.setAntialiasing().
-      const renderer = new WebGPURenderer(device, context, format, antialiasEnabled);
-      localRenderer = renderer;
-      const textureManager = new TextureManager(device);
-
-      deviceRef.current = device;
-      rendererRef.current = renderer;
-      textureManagerRef.current = textureManager;
-
-      try {
-        const list = await textureManager.fetchImageList(IMAGES_ENDPOINT);
-        const entries = [...list];
-        setImageList(entries);
-
-        const specificUrl = getImageFromURLParams();
-        if (specificUrl) {
-          try {
-            const tex = await textureManager.loadTexture(specificUrl);
-            renderer.setTexture(tex);
-            const existingIndex = entries.findIndex((entry) => entry.url === specificUrl);
-            if (existingIndex === -1) {
-              entries.push({ url: specificUrl, label: 'Query Image' });
-              setImageList([...entries]);
-              setCurrentImageIndex(entries.length - 1);
-              setReferenceImage(ensureReferenceImage(entries, entries.length - 1));
-            } else {
-              setCurrentImageIndex(existingIndex);
-              setReferenceImage(ensureReferenceImage(entries, existingIndex));
-            }
-
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.onload = () => {
-              if (cancelled) return;
-              if (img.height > 0) setImageAspect(img.width / img.height);
-              let avgLum = 128;
-              try { avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm'); } catch (e) { console.warn('CORS?', e); }
-              setAvgLuminance(Math.round(avgLum));
-              try {
-                generateClassificationMaskTexture(img, avgLum);
-              } catch (e) {
-                console.warn('Could not generate classification mask:', e);
-                clearClassificationMask();
-              }
-              const previewOrig = previewOriginalRef.current;
-              if (previewOrig) {
-                const ctx = previewOrig.getContext('2d');
-                if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
-              }
-            };
-            img.onerror = () => console.warn('Failed to load preview image:', specificUrl);
-            img.src = specificUrl;
-          } catch (e) {
-            console.warn('Failed to load specific image from URL:', e);
-            setSpecificImageError(`Failed to load image: ${specificUrl}`);
-            if (entries.length > 0) {
-              const tex = await textureManager.loadTexture(entries[0].url);
-              renderer.setTexture(tex);
-              setReferenceImage(ensureReferenceImage(entries, 0));
-            }
-          }
-        } else if (entries.length > 0) {
-          const tex = await textureManager.loadTexture(entries[0].url);
-          renderer.setTexture(tex);
-          setReferenceImage(ensureReferenceImage(entries, 0));
-        }
-      } catch (e) {
-        console.warn('Could not load image list:', e);
-      }
-
-      setGpuReady(true);
-    }
-
-    init().catch((e) => setError(String(e)));
-
-    return () => {
-      cancelled = true;
-      clearClassificationMask();
-      for (const objectUrl of ownedObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
-      ownedObjectUrlsRef.current = [];
-      // Properly destroy the WebGPU allocations on unmount
-      if (localRenderer) localRenderer.destroy();
-      if (localDevice) localDevice.destroy();
-      if (previewTracerRef.current) {
-        const ctx = previewTracerRef.current.getContext('webgpu');
-        if (ctx) ctx.unconfigure();
-      }
-    };
-    // IMPORTANT: Leave the dependency array empty so it doesn't remount on UI toggles
-  }, [clearClassificationMask, generateClassificationMaskTexture]);
+  useAppWebGPUInit({
+    previewTracerRef, antialiasEnabled, setError, deviceRef, rendererRef, textureManagerRef,
+    setImageList, setReferenceImage, ensureReferenceImage, setCurrentImageIndex, setImageAspect,
+    setAvgLuminance, clearClassificationMask, generateClassificationMaskTexture, engineModeRef,
+    previewOriginalRef, setGpuReady, setSpecificImageError, ownedObjectUrlsRef
+  });
 
   // Load texture whenever image index changes
   useEffect(() => {
@@ -1087,6 +957,7 @@ export default function App() {
   const showCanvasMainView = photoModeImage === null;
   const showReferenceOverlay = showCanvasMainView && referenceImage && referenceBlendMode !== 'hidden';
 
+  return <AppUI {...{ containerRef, mainViewportRef, previewTracerRef, photoModeImage, isReferenceCompareMode, referenceImage, showCanvasMainView, isPaused, mainViewMode, MAIN_VIEW_MODES, showReferenceOverlay, referenceBlendMode, referenceOpacity, previewOriginalRef, previewSeparatedRef, error, gpuReady, collisionStats, isAutoPlayActive, setIsAutoPlayActive, isImageStripOpen, setIsImageStripOpen, imageList, currentImageIndex, selectSourceIndex, handleLoadFile, handleLoadSpecificImage, handleLoadReferenceFile, setReferenceImage, swapSourceAndReference, setReferenceBlendMode, setReferenceOpacity, handleFreezeInspect, tracerInspectZoom, setTracerInspectZoom, tracerInspectPan, tracerInspectHeatmap, setTracerInspectHeatmap, tracerInspectExposure, setTracerInspectExposure, tracerInspectTonemap, setTracerInspectTonemap, tracerInspectShowLayers, setTracerInspectShowLayers, handleResetInspectView, exportingTracer, handleExportTracer, layerAngles, handleAngleChange, layerExtensions, handleExtensionChange, frameRate, setFrameRate, DEFAULT_FPS, layerOpacity, setLayerOpacity, layerOpacities, setLayerOpacities, layerScale, setLayerScale, tracerScale, setTracerScale, tracerAboveIntensity, setTracerAboveIntensity, tracerBelowIntensity, setTracerBelowIntensity, tracerAboveDuration, setTracerAboveDuration, tracerBelowDuration, setTracerBelowDuration, tracerMode, setTracerMode, layerBlendMode, setLayerBlendMode, tracerBlendMode, setTracerBlendMode, outputMode, setOutputMode, diagnosticsMode, setDiagnosticsMode, diagnosticsOpacity, setDiagnosticsOpacity, stampBoost, setStampBoost, peakCollisionsOnly, setPeakCollisionsOnly, colorMode, setColorMode, squareCanvas, setSquareCanvas, antialiasEnabled, setAntialiasEnabled, handleReset, imageChangeInterval, setImageChangeInterval, upscaleModel, setUpscaleModel, handleUpscaleSource, handleUpscaleOutput, upscaleBusy, upscaleProgress, upscaleInfo, engineMode, setEngineMode, wasmAvailable, specificImageError, renderCpuTiming, avgLuminance, canvasRef, setTracerPreviewFrozen, tracerPreviewFrozen, setLivePreviewEnabled, livePreviewEnabled, setIsPaused, setMainViewMode, setAvgLuminance, isViewingTracer, currentImage, rendererRef, handleLoadReferenceImage, isWasmReady, setSpecificImageError }} />;
   return (
     <div
       ref={containerRef}

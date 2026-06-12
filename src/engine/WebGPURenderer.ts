@@ -1,3 +1,9 @@
+import {
+  fragmentShaderRedOrange,
+  fragmentShaderVioletBlue,
+  fragmentShaderGreenYellow
+} from './shaders';
+import { WebGPUPipelines, type LayerPipeline } from './WebGPUPipelines';
 /**
  * WebGPURenderer
  *
@@ -8,21 +14,6 @@
  *   Pass 4   : Compositor — live layers + persistence overlay → canvas
  */
 
-import {
-  vertexShaderSource,
-  fragmentShaderRedOrange,
-  fragmentShaderVioletBlue,
-  fragmentShaderGreenYellow,
-  fullscreenVertexSource,
-  persistenceFragmentSource,
-  compositorFragmentSource,
-  tracerViewFragmentSource,
-  displayTextureFragmentSource,
-  coincidenceHeatmapFragmentSource,
-  compareFragmentSource,
-  persistDiagnosticBlitFragmentSource,
-  stampDiagnosticViewFragmentSource,
-} from './shaders';
 import { MAIN_VIEW_MODES } from './viewModes';
 
 export interface LayerState {
@@ -116,15 +107,6 @@ function durationToDecay(durationMs: number, fps: number): number {
   return Math.pow(0.1, 1 / frames);
 }
 
-interface LayerPipeline {
-  pipeline          : GPURenderPipeline;
-  bindGroupLayout   : GPUBindGroupLayout;
-  rotationBuffer    : GPUBuffer;
-  fragUniformBuffer : GPUBuffer;
-  rotationData      : Float32Array;
-  fragData          : Float32Array;
-}
-
 interface LayerBindGroupCacheEntry {
   bindGroup: GPUBindGroup | null;
   texture: GPUTexture | null;
@@ -159,7 +141,8 @@ export class WebGPURenderer {
   /** HDR format used for all intermediate textures (layers, persistence, MSAA).
    *  rgba16float is renderable + blendable in WebGPU core — no feature flag needed. */
   private internalFormat : GPUTextureFormat = 'rgba16float';
-  private sampler        : GPUSampler;
+  public pipelines: WebGPUPipelines;
+  public sampler        : GPUSampler;
   private sampleCount    : number = 4;
 
   // Layer passes
@@ -288,6 +271,7 @@ export class WebGPURenderer {
     this.context = context;
     this.format  = format;
     this.sampleCount = enableMSAA ? 4 : 1;
+    this.pipelines = new WebGPUPipelines(device, format, this.internalFormat);
 
     // High-quality sampler for the source image.
     // - linear min/mag + mipmap linear: reduces aliasing during rotation/minification
@@ -315,7 +299,7 @@ export class WebGPURenderer {
     );
 
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
-    for (const src of fragSources) this.layerPipelines.push(this.createLayerPipeline(src));
+    for (const src of fragSources) this.layerPipelines.push(this.pipelines.createLayerPipeline(src));
 
     // Sampler used for all intermediate layer + persistence textures.
     // These are same-resolution render targets (no mips), so mipmapFilter is irrelevant.
@@ -328,22 +312,22 @@ export class WebGPURenderer {
     });
 
     // Persistence pipeline
-    this.persistBGL      = this.createPersistBGL();
-    this.persistPipeline = this.createPersistPipeline();
+    this.persistBGL      = this.pipelines.persistBGL;
+    this.persistPipeline = this.pipelines.createPersistPipeline();
     this.persistAboveUniformBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.persistBelowUniformBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     // Compositor pipeline
-    this.compositorBGL      = this.createCompositorBGL();
-    this.compositorPipeline = this.createCompositorPipeline();
+    this.compositorBGL      = this.pipelines.compositorBGL;
+    this.compositorPipeline = this.pipelines.createCompositorPipeline();
     this.compositorUniformBuf = device.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     // Tracer View pipeline (aspect-fit blit of both persistence textures)
-    this.tracerViewBGL      = this.createTracerViewBGL();
-    this.tracerViewPipeline = this.createTracerViewPipeline();
+    this.tracerViewBGL      = this.pipelines.tracerViewBGL;
+    this.tracerViewPipeline = this.pipelines.createTracerViewPipeline();
     this.tracerViewUniformBuf = device.createBuffer({
       size: 80,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -356,30 +340,30 @@ export class WebGPURenderer {
       addressModeV: 'clamp-to-edge',
     });
 
-    this.displayBGL = this.createDisplayBGL();
-    this.displayPipeline = this.createDisplayPipeline();
+    this.displayBGL = this.pipelines.displayBGL;
+    this.displayPipeline = this.pipelines.createDisplayPipeline();
     this.displayUniformBuf = device.createBuffer({
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    this.heatmapBGL = this.createHeatmapBGL();
-    this.heatmapPipeline = this.createHeatmapPipeline();
+    this.heatmapBGL = this.pipelines.heatmapBGL;
+    this.heatmapPipeline = this.pipelines.createHeatmapPipeline();
     this.heatmapUniformBuf = device.createBuffer({
       size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    this.compareBGL = this.createCompareBGL();
-    this.comparePipeline = this.createComparePipeline();
+    this.compareBGL = this.pipelines.compareBGL;
+    this.comparePipeline = this.pipelines.createComparePipeline();
     this.compareUniformBuf = device.createBuffer({
       size: 48,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     // Persist diagnostic blit pipeline (nearest sampler to preserve encoded values)
-    this.persistDiagnosticBlitBGL = this.createPersistDiagnosticBlitBGL();
-    this.persistDiagnosticBlitPipeline = this.createPersistDiagnosticBlitPipeline();
+    this.persistDiagnosticBlitBGL = this.pipelines.persistDiagnosticBlitBGL;
+    this.persistDiagnosticBlitPipeline = this.pipelines.createPersistDiagnosticBlitPipeline();
     this.persistDiagnosticSampler = device.createSampler({
       magFilter: 'nearest',
       minFilter: 'nearest',
@@ -388,8 +372,8 @@ export class WebGPURenderer {
     });
 
     // Stamp diagnostic view pipeline
-    this.stampDiagnosticViewBGL = this.createStampDiagnosticViewBGL();
-    this.stampDiagnosticViewPipeline = this.createStampDiagnosticViewPipeline();
+    this.stampDiagnosticViewBGL = this.pipelines.stampDiagnosticViewBGL;
+    this.stampDiagnosticViewPipeline = this.pipelines.createStampDiagnosticViewPipeline();
     this.stampDiagnosticViewSampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
@@ -484,96 +468,13 @@ export class WebGPURenderer {
   }
 
   // ─── Persistence pipeline ────────────────────────────────────────────────────
-  private createPersistBGL(): GPUBindGroupLayout {
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-      ],
-    });
-  }
 
-  private createPersistPipeline(): GPURenderPipeline {
-    const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: persistenceFragmentSource }),
-        entryPoint : 'main',
-        targets    : [
-          { format: this.internalFormat },   // @location(0) persistence colour
-          { format: 'rgba8unorm' },          // @location(1) diagnostic stamp info
-        ],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
 
   // ─── Compositor pipeline ─────────────────────────────────────────────────────
-  private createCompositorBGL(): GPUBindGroupLayout {
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // NEW: persistAbove
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },      // MOVED to 6
-      ],
-    });
-  }
 
-  private createCompositorPipeline(): GPURenderPipeline {
-    const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.compositorBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: compositorFragmentSource }),
-        entryPoint : 'main',
-        targets    : [{ format: this.format }],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
 
   // ── Tracer View pipeline helpers (for "Show Full Tracer" button) ────────────
-  private createTracerViewBGL(): GPUBindGroupLayout {
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // persistAbove
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // persistBelow
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer0
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer1
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer2
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-      ],
-    });
-  }
 
-  private createTracerViewPipeline(): GPURenderPipeline {
-    const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.tracerViewBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: tracerViewFragmentSource }),
-        entryPoint : 'main',
-        targets    : [{ format: this.format }],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
 
   private encodeTracerViewPass(
     enc: GPUCommandEncoder,
@@ -637,132 +538,17 @@ export class WebGPURenderer {
     tvPass.end();
   }
 
-  private createDisplayBGL(): GPUBindGroupLayout {
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-      ],
-    });
-  }
 
-  private createDisplayPipeline(): GPURenderPipeline {
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.displayBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: displayTextureFragmentSource }),
-        entryPoint: 'main',
-        targets: [{ format: this.format }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
 
-  private createHeatmapBGL(): GPUBindGroupLayout {
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-      ],
-    });
-  }
 
-  private createHeatmapPipeline(): GPURenderPipeline {
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.heatmapBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: coincidenceHeatmapFragmentSource }),
-        entryPoint: 'main',
-        targets: [{ format: this.format }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
 
-  private createCompareBGL(): GPUBindGroupLayout {
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 7, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-      ],
-    });
-  }
 
-  private createComparePipeline(): GPURenderPipeline {
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.compareBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: compareFragmentSource }),
-        entryPoint: 'main',
-        targets: [{ format: this.format }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
 
   // ─── Persist diagnostic blit pipeline (for CPU readback) ─────────────────────
-  private createPersistDiagnosticBlitBGL(): GPUBindGroupLayout {
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-      ],
-    });
-  }
 
-  private createPersistDiagnosticBlitPipeline(): GPURenderPipeline {
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.persistDiagnosticBlitBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: persistDiagnosticBlitFragmentSource }),
-        entryPoint: 'main',
-        targets: [{ format: 'rgba8unorm' }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
 
   // ─── Stamp diagnostic view pipeline (dominant-layer colour map) ──────────────
-  private createStampDiagnosticViewBGL(): GPUBindGroupLayout {
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-      ],
-    });
-  }
 
-  private createStampDiagnosticViewPipeline(): GPURenderPipeline {
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.stampDiagnosticViewBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: stampDiagnosticViewFragmentSource }),
-        entryPoint: 'main',
-        targets: [{ format: this.format }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
 
   // ─── Texture management ──────────────────────────────────────────────────────
   private ensureTextures(w: number, h: number): void {
@@ -853,7 +639,7 @@ export class WebGPURenderer {
     // Rebuild layer pipelines with new sample count
     this.layerPipelines = [];
     for (const src of [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow]) {
-      this.layerPipelines.push(this.createLayerPipeline(src));
+      this.layerPipelines.push(this.pipelines.createLayerPipeline(src));
     }
 
     // Force texture recreation
