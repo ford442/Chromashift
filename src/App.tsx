@@ -88,6 +88,8 @@ export default function App() {
   const [layerScale, setLayerScale] = useState(1.0);
   const [tracerScale, setTracerScale] = useState(1.0);
   const [colorMode, setColorMode] = useState(1); // 1 = Vivid Gradient, 0 = Fixed cr0p
+  const [sobelEnabled, setSobelEnabled] = useState(false);
+  const [softCropEnabled, setSoftCropEnabled] = useState(false);
   const [specificImageError, setSpecificImageError] = useState<string | null>(null);
   const [renderCpuTiming, setRenderCpuTiming] = useState({ last: 0, avg: 0 });
   const [collisionStats, setCollisionStats] = useState({
@@ -409,6 +411,8 @@ export default function App() {
           tracerBelowDuration: tracerBelowDuration * (60 / frameRate),
           tracerMode,
           colorMode,
+          sobelEnabled,
+          softCropEnabled,
           layerBlendMode,
           tracerBlendMode,
           outputMode,
@@ -491,7 +495,7 @@ export default function App() {
     return () => {
       if (animFrameRef.current !== null) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerOpacities, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, livePreviewEnabled, isPaused, isViewingTracer, mainViewMode, tracerInspectZoom, tracerInspectPan, tracerInspectHeatmap, tracerInspectExposure, tracerInspectTonemap, tracerInspectShowLayers, diagnosticsMode, diagnosticsOpacity, stampBoost, peakCollisionsOnly]);
+  }, [gpuReady, frameRate, layerExtensions, avgLuminance, layerOpacity, layerOpacities, layerScale, tracerScale, tracerAboveIntensity, tracerBelowIntensity, tracerAboveDuration, tracerBelowDuration, tracerMode, colorMode, sobelEnabled, softCropEnabled, layerBlendMode, tracerBlendMode, outputMode, tracerPreviewFrozen, livePreviewEnabled, isPaused, isViewingTracer, mainViewMode, tracerInspectZoom, tracerInspectPan, tracerInspectHeatmap, tracerInspectExposure, tracerInspectTonemap, tracerInspectShowLayers, diagnosticsMode, diagnosticsOpacity, stampBoost, peakCollisionsOnly]);
 
   useEffect(() => {
     const canvas = previewTracerRef.current;
@@ -954,4 +958,365 @@ export default function App() {
   const showReferenceOverlay = showCanvasMainView && referenceImage && referenceBlendMode !== 'hidden';
 
   return <AppUI {...{ containerRef, mainViewportRef, previewTracerRef, photoModeImage, isReferenceCompareMode, referenceImage, showCanvasMainView, isPaused, mainViewMode, MAIN_VIEW_MODES, showReferenceOverlay, referenceBlendMode, referenceOpacity, previewOriginalRef, previewSeparatedRef, error, gpuReady, collisionStats, isAutoPlayActive, setIsAutoPlayActive, isImageStripOpen, setIsImageStripOpen, imageList, currentImageIndex, selectSourceIndex, handleLoadFile, handleLoadSpecificImage, handleLoadReferenceFile, setReferenceImage, swapSourceAndReference, setReferenceBlendMode, setReferenceOpacity, handleFreezeInspect, tracerInspectZoom, setTracerInspectZoom, tracerInspectPan, tracerInspectHeatmap, setTracerInspectHeatmap, tracerInspectExposure, setTracerInspectExposure, tracerInspectTonemap, setTracerInspectTonemap, tracerInspectShowLayers, setTracerInspectShowLayers, handleResetInspectView, exportingTracer, handleExportTracer, layerAngles, handleAngleChange, layerExtensions, handleExtensionChange, frameRate, setFrameRate, DEFAULT_FPS, layerOpacity, setLayerOpacity, layerOpacities, setLayerOpacities, layerScale, setLayerScale, tracerScale, setTracerScale, tracerAboveIntensity, setTracerAboveIntensity, tracerBelowIntensity, setTracerBelowIntensity, tracerAboveDuration, setTracerAboveDuration, tracerBelowDuration, setTracerBelowDuration, tracerMode, setTracerMode, layerBlendMode, setLayerBlendMode, tracerBlendMode, setTracerBlendMode, outputMode, setOutputMode, diagnosticsMode, setDiagnosticsMode, diagnosticsOpacity, setDiagnosticsOpacity, stampBoost, setStampBoost, peakCollisionsOnly, setPeakCollisionsOnly, colorMode, setColorMode, squareCanvas, setSquareCanvas, antialiasEnabled, setAntialiasEnabled, handleReset, imageChangeInterval, setImageChangeInterval, upscaleModel, setUpscaleModel, handleUpscaleSource, handleUpscaleOutput, upscaleBusy, upscaleProgress, upscaleInfo, engineMode, setEngineMode, wasmAvailable, specificImageError, renderCpuTiming, avgLuminance, canvasRef, setTracerPreviewFrozen, tracerPreviewFrozen, setLivePreviewEnabled, livePreviewEnabled, setIsPaused, setMainViewMode, setAvgLuminance, isViewingTracer, currentImage, rendererRef, handleLoadReferenceImage, isWasmReady, setSpecificImageError }} />;
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-screen h-screen bg-gradient-to-br from-gray-900 via-amber-950 to-black overflow-hidden"
+      id="chromashift-container"
+    >
+      {/* Main display viewport */}
+      <div
+        ref={mainViewportRef}
+        style={{ position: 'absolute' }}
+      >
+        <canvas
+          ref={previewTracerRef}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            imageRendering: 'auto',
+            display: showCanvasMainView ? 'block' : 'none',
+            background: '#000',
+            cursor: isPaused && mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER ? 'grab' : 'default',
+            clipPath: isReferenceCompareMode ? 'inset(0 50% 0 0)' : 'none',
+          }}
+        />
+        {(photoModeImage || isReferenceCompareMode) && (
+          <div
+            className="absolute inset-0 overflow-hidden bg-black"
+            style={{ clipPath: isReferenceCompareMode ? 'inset(0 0 0 50%)' : 'none' }}
+          >
+            <img
+              src={(isReferenceCompareMode ? referenceImage : photoModeImage)?.url}
+              alt={(isReferenceCompareMode ? referenceImage : photoModeImage)?.label ?? 'Reference'}
+              className="w-full h-full object-contain"
+              draggable={false}
+            />
+          </div>
+        )}
+        {isReferenceCompareMode && (
+          <div className="absolute top-0 bottom-0 left-1/2 w-px bg-amber-300/80 shadow-[0_0_12px_rgba(245,158,11,0.65)]" />
+        )}
+        {showReferenceOverlay && referenceImage && (
+          <div
+            className="absolute inset-0 overflow-hidden pointer-events-none"
+            style={{
+              clipPath: referenceBlendMode === 'split' ? 'inset(0 0 0 50%)' : 'none',
+              opacity: referenceBlendMode === 'difference' ? 1 : referenceOpacity,
+              mixBlendMode:
+                referenceBlendMode === 'difference' ? 'difference'
+                  : referenceBlendMode === 'edge' ? 'screen'
+                    : 'normal',
+              maskImage:
+                referenceBlendMode === 'checker'
+                  ? 'linear-gradient(45deg,#000 25%,transparent 25%,transparent 75%,#000 75%,#000),linear-gradient(45deg,#000 25%,transparent 25%,transparent 75%,#000 75%,#000)'
+                  : undefined,
+              maskSize: referenceBlendMode === 'checker' ? '48px 48px' : undefined,
+              maskPosition: referenceBlendMode === 'checker' ? '0 0,24px 24px' : undefined,
+              WebkitMaskImage:
+                referenceBlendMode === 'checker'
+                  ? 'linear-gradient(45deg,#000 25%,transparent 25%,transparent 75%,#000 75%,#000),linear-gradient(45deg,#000 25%,transparent 25%,transparent 75%,#000 75%,#000)'
+                  : undefined,
+              WebkitMaskSize: referenceBlendMode === 'checker' ? '48px 48px' : undefined,
+              WebkitMaskPosition: referenceBlendMode === 'checker' ? '0 0,24px 24px' : undefined,
+            }}
+          >
+            <img
+              src={referenceImage.url}
+              alt={referenceImage.label ?? 'Reference overlay'}
+              className="w-full h-full object-contain"
+              style={{
+                filter:
+                  referenceBlendMode === 'edge'
+                    ? 'grayscale(1) contrast(3) brightness(1.2)'
+                    : 'none',
+              }}
+              draggable={false}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Preview: Original Image (Top-Right, below Avg Lum) */}
+      <div className="absolute top-14 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+        <canvas
+          ref={previewOriginalRef}
+          width={300}
+          height={300}
+          style={{ display: 'block', imageRendering: 'pixelated' }}
+        />
+        <div className="text-xs text-amber-400 px-2 py-1 font-mono">Original</div>
+      </div>
+
+      {/* Preview: RGB Separated Output (Right-Center) */}
+      <div className="absolute right-3 top-1/2 -translate-y-1/2 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+        <canvas
+          ref={previewSeparatedRef}
+          width={300}
+          height={300}
+          style={{ display: 'block', imageRendering: 'pixelated' }}
+        />
+        <div className="text-xs text-amber-400 px-2 py-1 font-mono">Separated</div>
+      </div>
+
+      {/* Preview: Composite thumbnail (Bottom-Right, 2D canvas fed by throttled GPU readback) */}
+      <div className="absolute bottom-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
+        <canvas
+          ref={canvasRef}
+          width={300}
+          height={300}
+          style={{ display: 'block', width: '300px', height: '300px', imageRendering: 'pixelated' }}
+        />
+        <div className="flex items-center justify-between px-2 py-1">
+          <span className="text-xs text-amber-400 font-mono">Composite</span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setTracerPreviewFrozen(!tracerPreviewFrozen)}
+              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                tracerPreviewFrozen
+                  ? 'bg-red-600 hover:bg-red-500 text-white'
+                  : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+              }`}
+              title={tracerPreviewFrozen ? 'Unfreeze thumbnail' : 'Freeze thumbnail'}
+            >
+              {tracerPreviewFrozen ? '⏸ Frozen' : 'Live'}
+            </button>
+            <button
+              onClick={() => setLivePreviewEnabled(!livePreviewEnabled)}
+              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                livePreviewEnabled
+                  ? 'bg-amber-700 hover:bg-amber-600 text-amber-100'
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+              }`}
+              title={livePreviewEnabled ? 'Disable live thumbnail updates' : 'Enable live thumbnail updates'}
+            >
+              {livePreviewEnabled ? 'Preview On' : 'Preview Off'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Image navigation — issue #53: prev/next instead of one-dot-per-image */}
+      {imageList.length > 1 && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-40 bg-black/40 backdrop-blur-md rounded px-3 py-1.5 border border-amber-500/20">
+          <button
+            onClick={() => selectSourceIndex(Math.max(0, currentImageIndex - 1))}
+            disabled={currentImageIndex === 0}
+            className="text-amber-400 hover:text-amber-200 font-mono text-sm disabled:opacity-30 transition-colors"
+          >◀</button>
+          <span className="text-amber-300 font-mono text-xs tabular-nums select-none">
+            {currentImageIndex + 1} / {imageList.length}
+          </span>
+          <button
+            onClick={() => selectSourceIndex(Math.min(imageList.length - 1, currentImageIndex + 1))}
+            disabled={currentImageIndex === imageList.length - 1}
+            className="text-amber-400 hover:text-amber-200 font-mono text-sm disabled:opacity-30 transition-colors"
+          >▶</button>
+          <button
+            onClick={() => selectSourceIndex(Math.floor(Math.random() * imageList.length))}
+            className="text-amber-400/60 hover:text-amber-300 font-mono text-xs ml-1 transition-colors"
+            title="Random image"
+          >⚄</button>
+        </div>
+      )}
+
+      {/* Pause button */}
+      <div className="absolute bottom-3 left-3 z-40">
+        <button
+          onClick={() => setIsPaused(!isPaused)}
+          className={`px-3 py-1.5 rounded font-mono text-sm transition-colors ${
+            isPaused
+              ? 'bg-amber-500 hover:bg-amber-400 text-black'
+              : 'bg-gray-800 hover:bg-gray-700 text-amber-400 border border-amber-500/50'
+          }`}
+        >
+          {isPaused ? '▶ Resume' : '⏸ Pause'}
+        </button>
+      </div>
+
+      <ImageStrip
+        images={imageList}
+        currentIndex={currentImageIndex}
+        referenceUrl={referenceImage?.url ?? null}
+        isOpen={isImageStripOpen}
+        onToggleOpen={() => setIsImageStripOpen((prev) => !prev)}
+        onSelectSource={(index) => {
+          selectSourceIndex(index);
+          setMainViewMode(MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
+        }}
+        onSelectReference={(index) => {
+          setReferenceImage(imageList[index] ?? null);
+        }}
+      />
+
+      {/* Average luminance control */}
+      <div className="absolute top-3 right-3 z-40 bg-black/40 backdrop-blur-md rounded p-2 flex flex-col items-end gap-1 border border-amber-500/30">
+        <span className="text-xs text-amber-400 font-mono">
+          Avg Lum: <span className="tabular-nums text-amber-200">{avgLuminance}</span>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={255}
+          value={avgLuminance}
+          onChange={(e) => setAvgLuminance(Number(e.target.value))}
+          className="w-28 h-1 accent-amber-400"
+        />
+        {/* Active engine indicator */}
+        <span className={`text-[10px] font-mono mt-0.5 ${
+          engineMode === 'wasm' && wasmAvailable
+            ? 'text-cyan-400'
+            : 'text-amber-500/60'
+        }`}>
+          {engineMode === 'wasm' && wasmAvailable ? '⚡ C++ WASM' : '🔷 TS'}
+        </span>
+        <span className="text-[10px] font-mono text-emerald-300/80">
+          CPU {renderCpuTiming.last.toFixed(2)} / {renderCpuTiming.avg.toFixed(2)} ms
+        </span>
+        <span className="text-[10px] font-mono text-cyan-300/80">
+          2+ {collisionStats.twoOverlapPixels} | 3 {collisionStats.threeOverlapPixels}
+        </span>
+        <span className="text-[10px] font-mono text-cyan-200/70">
+          Win {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]}
+        </span>
+      </div>
+
+      {/* Error / no-WebGPU notice */}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80 backdrop-blur-sm">
+          <div className="bg-gray-900/90 backdrop-blur-md border border-red-500/50 rounded-lg p-6 max-w-md text-center shadow-2xl shadow-red-900/20">
+            <p className="text-red-400 font-mono text-sm">{error}</p>
+            <p className="text-amber-200/70 text-xs mt-2">
+              Chromashift requires a browser with WebGPU support (Chrome 113+, Edge 113+).
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* NUNIF control overlay */}
+      <NunifOverlay
+        layerAngles={layerAngles}
+        layerExtensions={layerExtensions}
+        frameRate={frameRate}
+        layerOpacity={layerOpacity}
+        layerOpacities={layerOpacities}
+        layerScale={layerScale}
+        tracerScale={tracerScale}
+        tracerAboveIntensity={tracerAboveIntensity}
+        tracerBelowIntensity={tracerBelowIntensity}
+        tracerAboveDuration={tracerAboveDuration}
+        tracerBelowDuration={tracerBelowDuration}
+        tracerMode={tracerMode}
+        layerBlendMode={layerBlendMode}
+        tracerBlendMode={tracerBlendMode}
+        outputMode={outputMode}
+        diagnosticsMode={diagnosticsMode}
+        diagnosticsOpacity={diagnosticsOpacity}
+        stampBoost={stampBoost}
+        peakCollisionsOnly={peakCollisionsOnly}
+        collisionStats={collisionStats}
+        mainViewMode={mainViewMode}
+        isViewingTracer={isViewingTracer}
+        isPaused={isPaused}
+        tracerInspectHeatmap={tracerInspectHeatmap}
+        tracerInspectZoom={tracerInspectZoom}
+        tracerInspectExposure={tracerInspectExposure}
+        tracerInspectTonemap={tracerInspectTonemap}
+        tracerInspectShowLayers={tracerInspectShowLayers}
+        exportingTracer={exportingTracer}
+        currentImageLabel={currentImage?.label ?? currentImage?.url ?? null}
+        referenceImageLabel={referenceImage?.label ?? referenceImage?.url ?? null}
+        isImageStripOpen={isImageStripOpen}
+        referenceBlendMode={referenceBlendMode}
+        referenceOpacity={referenceOpacity}
+        onTracerViewToggle={(next) => setMainViewMode(
+          next ? MAIN_VIEW_MODES.FULL_RES_TRACER : MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
+        )}
+        onMainViewModeChange={(mode) => setMainViewMode(mode as MainViewMode)}
+        onToggleImageStrip={() => setIsImageStripOpen((prev) => !prev)}
+        onSwapSourceReference={swapSourceAndReference}
+        onReferenceBlendModeChange={setReferenceBlendMode}
+        onReferenceOpacityChange={setReferenceOpacity}
+        onFreezeInspect={handleFreezeInspect}
+        onTracerInspectHeatmapToggle={setTracerInspectHeatmap}
+        onTracerInspectZoomChange={setTracerInspectZoom}
+        onTracerInspectExposureChange={setTracerInspectExposure}
+        onTracerInspectTonemapToggle={setTracerInspectTonemap}
+        onTracerInspectShowLayersToggle={setTracerInspectShowLayers}
+        onResetInspectView={handleResetInspectView}
+        onExportTracer={handleExportTracer}
+        squareCanvas={squareCanvas}
+        antialiasEnabled={antialiasEnabled}
+        onAngleChange={handleAngleChange}
+        onExtensionChange={handleExtensionChange}
+        onFrameRateChange={setFrameRate}
+        onLayerOpacityChange={setLayerOpacity}
+        onLayerOpacityPerLayerChange={(layer, opacity) => {
+          setLayerOpacities((prev) => {
+            const next = [...prev] as LayerTriple<number>;
+            next[layer] = opacity;
+            return next;
+          });
+        }}
+        onLayerScaleChange={setLayerScale}
+        onTracerScaleChange={setTracerScale}
+        onTracerAboveIntensityChange={setTracerAboveIntensity}
+        onTracerBelowIntensityChange={setTracerBelowIntensity}
+        onTracerAboveDurationChange={setTracerAboveDuration}
+        onTracerBelowDurationChange={setTracerBelowDuration}
+        onTracerModeChange={setTracerMode}
+        onLayerBlendModeChange={setLayerBlendMode}
+        onTracerBlendModeChange={setTracerBlendMode}
+        onOutputModeChange={setOutputMode}
+        onDiagnosticsModeChange={setDiagnosticsMode}
+        onDiagnosticsOpacityChange={setDiagnosticsOpacity}
+        onStampBoostChange={setStampBoost}
+        onPeakCollisionsOnlyChange={setPeakCollisionsOnly}
+        colorMode={colorMode}
+        onColorModeChange={setColorMode}
+        sobelEnabled={sobelEnabled}
+        onSobelEnabledToggle={setSobelEnabled}
+        softCropEnabled={softCropEnabled}
+        onSoftCropEnabledToggle={setSoftCropEnabled}
+        onSquareCanvasToggle={setSquareCanvas}
+        onAntialiasToggle={(enabled) => {
+          setAntialiasEnabled(enabled);
+          rendererRef.current?.setAntialiasing(enabled);
+        }}
+        onReset={handleReset}
+        isAutoPlayActive={isAutoPlayActive}
+        onAutoPlayToggle={setIsAutoPlayActive}
+        imageChangeInterval={imageChangeInterval}
+        onImageChangeIntervalChange={setImageChangeInterval}
+        onLoadSpecificImage={handleLoadSpecificImage}
+        onLoadFile={handleLoadFile}
+        onLoadReferenceImage={handleLoadReferenceImage}
+        onLoadReferenceFile={handleLoadReferenceFile}
+        upscaleModel={upscaleModel}
+        onUpscaleModelChange={setUpscaleModel}
+        upscaleBusy={upscaleBusy}
+        upscaleProgress={upscaleProgress}
+        upscaleInfo={upscaleInfo}
+        onUpscaleSource={handleUpscaleSource}
+        onUpscaleOutput={handleUpscaleOutput}
+        engineMode={engineMode}
+        wasmAvailable={wasmAvailable}
+        onEngineModeChange={(mode) => {
+          // Only allow switching to WASM if it actually loaded
+          if (mode === 'wasm' && !isWasmReady()) return;
+          setEngineMode(mode);
+        }}
+      />
+
+      {/* Specific image error toast */}
+      {specificImageError && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-50 bg-red-900/90 border border-red-500/50 rounded px-4 py-2 text-red-200 text-sm font-mono shadow-lg">
+          {specificImageError}
+          <button onClick={() => setSpecificImageError(null)} className="ml-3 text-red-400 hover:text-white">×</button>
+        </div>
+      )}
+    </div>
+  );
 }
