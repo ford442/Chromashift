@@ -1,16 +1,22 @@
 import { useEffect, useCallback, type MutableRefObject } from 'react';
 import { WebGPURenderer } from '../engine/WebGPURenderer';
 import { TextureManager } from '../engine/TextureManager';
+import { WebGLRenderer } from '../engine/WebGLRenderer';
+import { WebGLTextureManager } from '../engine/WebGLTextureManager';
 import { computeAverageLuminanceWith } from '../engine/WasmEngine';
 import type { ImageEntry } from '../engine/TextureManager';
+import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/RendererTypes';
+import { getRendererPreference, publishRendererBreadcrumbs } from '../engine/rendererMode';
 
 export interface UseAppWebGPUInitProps {
   previewTracerRef: MutableRefObject<HTMLCanvasElement | null>;
   antialiasEnabled: boolean;
   setError: (err: string) => void;
   deviceRef: MutableRefObject<GPUDevice | null>;
-  rendererRef: MutableRefObject<WebGPURenderer | null>;
-  textureManagerRef: MutableRefObject<TextureManager | null>;
+  rendererRef: MutableRefObject<ChromashiftRenderer | null>;
+  textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>;
+  setRendererBackend: (backend: RendererBackend) => void;
+  setRendererFallbackReason: (reason: string | null) => void;
   setImageList: (list: ImageEntry[]) => void;
   setReferenceImage: (img: ImageEntry | null) => void;
   ensureReferenceImage: (list: ImageEntry[], index: number) => ImageEntry | null;
@@ -33,6 +39,8 @@ export function useAppWebGPUInit({
   deviceRef,
   rendererRef,
   textureManagerRef,
+  setRendererBackend,
+  setRendererFallbackReason,
   setImageList,
   setReferenceImage,
   ensureReferenceImage,
@@ -49,48 +57,94 @@ export function useAppWebGPUInit({
 }: UseAppWebGPUInitProps) {
 
   const init = useCallback(async () => {
+      const canvas = previewTracerRef.current;
+      if (!canvas) return undefined;
+
       const cancelled = false;
       let localDevice: GPUDevice | null = null;
-      let localRenderer: WebGPURenderer | null = null;
-      if (!navigator.gpu) {
-        setError('WebGPU is not supported in this browser.');
-        return;
+      let localRenderer: ChromashiftRenderer | null = null;
+      let localTextureManager: ChromashiftTextureManager | null = null;
+      let backend: RendererBackend = getRendererPreference();
+      let fallbackReason: string | null = null;
+
+      async function createWebGPU(): Promise<{
+        renderer: WebGPURenderer;
+        textureManager: TextureManager;
+        device: GPUDevice;
+      }> {
+        if (!navigator.gpu) throw new Error('WebGPU is not supported in this browser.');
+        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+        if (!adapter) throw new Error('No WebGPU adapter found.');
+        const device = await adapter.requestDevice();
+        const context = canvas!.getContext('webgpu');
+        if (!context) {
+          device.destroy();
+          throw new Error('Failed to get WebGPU context from canvas.');
+        }
+        const format = navigator.gpu.getPreferredCanvasFormat();
+        context.configure({ device, format, alphaMode: 'opaque' });
+        return {
+          renderer: new WebGPURenderer(device, context, format, antialiasEnabled),
+          textureManager: new TextureManager(device),
+          device,
+        };
       }
 
-      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-      if (!adapter) {
-        setError('No WebGPU adapter found.');
-        return;
+      function createWebGL(): {
+        renderer: WebGLRenderer;
+        textureManager: WebGLTextureManager;
+      } {
+        const gl = canvas!.getContext('webgl2', {
+          alpha: false,
+          antialias: antialiasEnabled,
+          preserveDrawingBuffer: true,
+        });
+        if (!gl) throw new Error('WebGL2 is not supported in this browser.');
+        return {
+          renderer: new WebGLRenderer(canvas!, gl),
+          textureManager: new WebGLTextureManager(gl),
+        };
       }
-
-      const device = await adapter.requestDevice();
-
-      if (cancelled) {
-        device.destroy();
-        return;
-      }
-      localDevice = device;
-
-      const canvas = previewTracerRef.current!;
-      const context = canvas.getContext('webgpu');
-      if (!context) {
-        setError('Failed to get WebGPU context from canvas.');
-        return;
-      }
-
-      const format = navigator.gpu.getPreferredCanvasFormat();
-      context.configure({ device, format, alphaMode: 'opaque' });
-
-      const renderer = new WebGPURenderer(device, context, format, antialiasEnabled);
-      localRenderer = renderer;
-      const textureManager = new TextureManager(device);
-
-      deviceRef.current = device;
-      rendererRef.current = renderer;
-      textureManagerRef.current = textureManager;
 
       try {
-        const list = await textureManager.fetchImageList('./images.json');
+        if (backend === 'webgl') {
+          const created = createWebGL();
+          localRenderer = created.renderer;
+          localTextureManager = created.textureManager;
+        } else {
+          const created = await createWebGPU();
+          localRenderer = created.renderer;
+          localTextureManager = created.textureManager;
+          localDevice = created.device;
+        }
+      } catch (primaryError) {
+        if (backend === 'webgpu') {
+          fallbackReason = primaryError instanceof Error ? primaryError.message : String(primaryError);
+          const created = createWebGL();
+          backend = 'webgl';
+          localRenderer = created.renderer;
+          localTextureManager = created.textureManager;
+        } else {
+          throw primaryError;
+        }
+      }
+
+      if (cancelled) {
+        localRenderer.destroy();
+        localTextureManager.destroy();
+        localDevice?.destroy();
+        return { localRenderer, localTextureManager, localDevice, backend, cancelled };
+      }
+
+      deviceRef.current = localDevice;
+      rendererRef.current = localRenderer;
+      textureManagerRef.current = localTextureManager;
+      setRendererBackend(backend);
+      setRendererFallbackReason(fallbackReason);
+      publishRendererBreadcrumbs(backend, fallbackReason);
+
+      try {
+        const list = await localTextureManager.fetchImageList('./images.json');
         const entries = [...list];
         setImageList(entries);
 
@@ -99,8 +153,8 @@ export function useAppWebGPUInit({
         const specificUrl = imgUrl ? decodeURIComponent(imgUrl) : null;
         if (specificUrl) {
           try {
-            const tex = await textureManager.loadTexture(specificUrl);
-            renderer.setTexture(tex);
+            const tex = await localTextureManager.loadTexture(specificUrl);
+            localRenderer.setTexture(tex);
             const existingIndex = entries.findIndex((entry) => entry.url === specificUrl);
             if (existingIndex === -1) {
               entries.push({ url: specificUrl, label: 'Query Image' });
@@ -138,14 +192,14 @@ export function useAppWebGPUInit({
             console.warn('Failed to load specific image from URL:', e);
             setSpecificImageError(`Failed to load image: ${specificUrl}`);
             if (entries.length > 0) {
-              const tex = await textureManager.loadTexture(entries[0].url);
-              renderer.setTexture(tex);
+              const tex = await localTextureManager.loadTexture(entries[0].url);
+              localRenderer.setTexture(tex);
               setReferenceImage(ensureReferenceImage(entries, 0));
             }
           }
         } else if (entries.length > 0) {
-          const tex = await textureManager.loadTexture(entries[0].url);
-          renderer.setTexture(tex);
+          const tex = await localTextureManager.loadTexture(entries[0].url);
+          localRenderer.setTexture(tex);
           setReferenceImage(ensureReferenceImage(entries, 0));
         }
       } catch (e) {
@@ -153,12 +207,18 @@ export function useAppWebGPUInit({
       }
 
       setGpuReady(true);
-      return { localRenderer, localDevice, cancelled };
-  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, setError, deviceRef, rendererRef, textureManagerRef, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, previewTracerRef]);
+      return { localRenderer, localTextureManager, localDevice, backend, cancelled };
+  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, deviceRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, previewTracerRef]);
 
   useEffect(() => {
     const canvas = previewTracerRef.current;
-    let localData: { localRenderer: WebGPURenderer | null; localDevice: GPUDevice | null; cancelled: boolean } | undefined;
+    let localData: {
+      localRenderer: ChromashiftRenderer | null;
+      localTextureManager: ChromashiftTextureManager | null;
+      localDevice: GPUDevice | null;
+      backend: RendererBackend;
+      cancelled: boolean;
+    } | undefined;
 
     init().then(res => {
       localData = res;
@@ -172,8 +232,9 @@ export function useAppWebGPUInit({
       for (const objectUrl of ownedObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
       ownedObjectUrlsRef.current = [];
       if (localData?.localRenderer) localData.localRenderer.destroy();
+      if (localData?.localTextureManager) localData.localTextureManager.destroy();
       if (localData?.localDevice) localData.localDevice.destroy();
-      if (canvas) {
+      if (canvas && localData?.backend === 'webgpu') {
         const ctx = canvas.getContext('webgpu');
         if (ctx) ctx.unconfigure();
       }

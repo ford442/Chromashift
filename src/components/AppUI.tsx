@@ -1,12 +1,15 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { ImageStrip } from './ImageStrip';
 import { NunifOverlay } from './NunifOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
+import { switchRendererPreference } from '../engine/rendererMode';
 
 export function AppUI(props: any) {
   const {
     containerRef, mainViewportRef, previewTracerRef, photoModeImage, isReferenceCompareMode,
     referenceImage, showCanvasMainView, isPaused, mainViewMode, showReferenceOverlay,
     referenceBlendMode, referenceOpacity, previewOriginalRef, previewSeparatedRef, error,
+    rendererBackend, rendererFallbackReason, webglDebugMode, setWebglDebugMode,
     collisionStats, isAutoPlayActive, setIsAutoPlayActive, isImageStripOpen,
     setIsImageStripOpen, imageList, currentImageIndex, selectSourceIndex, handleLoadFile,
     handleLoadSpecificImage, handleLoadReferenceFile, setReferenceImage, swapSourceAndReference,
@@ -22,7 +25,8 @@ export function AppUI(props: any) {
     layerBlendMode, setLayerBlendMode, tracerBlendMode, setTracerBlendMode, outputMode, setOutputMode,
     diagnosticsMode, setDiagnosticsMode, diagnosticsOpacity, setDiagnosticsOpacity, stampBoost,
     setStampBoost, peakCollisionsOnly, setPeakCollisionsOnly, colorMode, setColorMode, squareCanvas,
-    setSquareCanvas, antialiasEnabled, setAntialiasEnabled, handleReset, imageChangeInterval,
+    setSobelEnabled, sobelEnabled, setSoftCropEnabled, softCropEnabled, setSquareCanvas,
+    antialiasEnabled, setAntialiasEnabled, handleReset, imageChangeInterval,
     setImageChangeInterval, upscaleModel, setUpscaleModel, handleUpscaleSource, handleUpscaleOutput,
     upscaleBusy, upscaleProgress, upscaleInfo, engineMode, setEngineMode, wasmAvailable,
     specificImageError, renderCpuTiming, avgLuminance, canvasRef, setTracerPreviewFrozen,
@@ -262,7 +266,7 @@ export function AppUI(props: any) {
           <div className="bg-gray-900/90 backdrop-blur-md border border-red-500/50 rounded-lg p-6 max-w-md text-center shadow-2xl shadow-red-900/20">
             <p className="text-red-400 font-mono text-sm">{error}</p>
             <p className="text-amber-200/70 text-xs mt-2">
-              Chromashift requires a browser with WebGPU support (Chrome 113+, Edge 113+).
+              Use Chrome/Edge with WebGPU, or open with <code>?renderer=webgl</code> for the WebGL2 fallback.
             </p>
           </div>
         </div>
@@ -290,6 +294,11 @@ export function AppUI(props: any) {
         stampBoost={stampBoost}
         peakCollisionsOnly={peakCollisionsOnly}
         collisionStats={collisionStats}
+        rendererBackend={rendererBackend}
+        rendererFallbackReason={rendererFallbackReason}
+        webglDebugMode={webglDebugMode}
+        onRendererBackendChange={switchRendererPreference}
+        onWebglDebugModeChange={setWebglDebugMode}
         mainViewMode={mainViewMode}
         isViewingTracer={isViewingTracer}
         isPaused={isPaused}
@@ -308,7 +317,7 @@ export function AppUI(props: any) {
           next ? MAIN_VIEW_MODES.FULL_RES_TRACER : MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
         )}
         onMainViewModeChange={setMainViewMode}
-        onEngineModeChange={(mode: any) => {
+        onEngineModeChange={(mode: 'ts' | 'wasm') => {
           if (mode === 'wasm' && !isWasmReady()) return;
           setEngineMode(mode);
         }}
@@ -331,8 +340,8 @@ export function AppUI(props: any) {
         onFrameRateChange={setFrameRate}
         onLayerOpacityChange={setLayerOpacity}
         onLayerOpacityPerLayerChange={(layer, opacity) => {
-          setLayerOpacities((prev: number[]) => {
-            const next = [...prev] as any;
+          setLayerOpacities((prev: [number, number, number]) => {
+            const next = [...prev] as [number, number, number];
             next[layer] = opacity;
             return next;
           });
@@ -353,6 +362,10 @@ export function AppUI(props: any) {
         onPeakCollisionsOnlyChange={setPeakCollisionsOnly}
         colorMode={colorMode}
         onColorModeChange={setColorMode}
+        sobelEnabled={sobelEnabled}
+        onSobelEnabledToggle={setSobelEnabled}
+        softCropEnabled={softCropEnabled}
+        onSoftCropEnabledToggle={setSoftCropEnabled}
         onSquareCanvasToggle={setSquareCanvas}
         onAntialiasToggle={(enabled) => {
           setAntialiasEnabled(enabled);

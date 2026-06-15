@@ -1,12 +1,13 @@
 # Chromashift
 
-A WebGPU-based visual engine that performs real-time RGB colour separation and independent layer rotation — replacing a legacy Canvas 2D / Emscripten slideshow.
+A WebGPU-based visual engine that performs real-time RGB colour separation and independent layer rotation — replacing a legacy Canvas 2D / Emscripten slideshow. A toggleable WebGL2 fallback is available for visual debugging, automated screenshots, and shader-porting reference work.
 
 ## Features
 
-- **3-layer WebGPU rendering pipeline** — Red/Orange, Violet/Blue, Green/Yellow colour bands, each composited with alpha blending on the GPU.
+- **3-layer GPU rendering pipeline** — Red/Orange, Violet/Blue, Green/Yellow colour bands, each composited with alpha blending on the GPU.
 - **GPU-only colour separation** — luminance-based colour masking is computed entirely in WGSL fragment shaders; zero CPU-side pixel manipulation.
 - **Independent layer rotation** — each layer has its own rotation angle and rate, driven by a `mat3x3` rotation matrix uploaded as a vertex-shader uniform.
+- **WebGL2 fallback renderer** — opt in with `?renderer=webgl`, the NUNIF renderer control, or `localStorage.chromashift.renderer = "webgl"` for Playwright-friendly output and GLSL shader debugging.
 - **TextureManager** — fetches image URLs from a JSON endpoint (simulating the PHP backend) and uploads decoded images directly to GPU textures via `copyExternalImageToTexture`.
 - **NUNIF control overlay** — minimal Tailwind CSS UI for adjusting per-layer rotation angle, rotation rate, global frame rate, and average luminance.
 
@@ -17,11 +18,12 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 | Bundler | [Vite](https://vite.dev/) |
 | UI framework | [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) |
 | Styling | [Tailwind CSS v4](https://tailwindcss.com/) |
-| GPU | [WebGPU](https://gpuweb.github.io/gpuweb/) (WGSL shaders) |
+| GPU | [WebGPU](https://gpuweb.github.io/gpuweb/) (WGSL shaders), WebGL2 fallback (GLSL ES 3.00) |
 
 ## Requirements
 
 - A browser with WebGPU support: **Chrome 113+**, **Edge 113+**, or Chrome Canary.
+- For fallback/debug mode: any browser with WebGL2 support.
 - Node.js 18+
 
 ## Getting Started
@@ -32,6 +34,16 @@ npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
+
+Renderer selection:
+
+```bash
+http://localhost:5173/?renderer=webgpu  # primary WebGPU renderer
+http://localhost:5173/?renderer=webgl   # WebGL2 fallback/reference renderer
+http://localhost:5173/?webgl            # shorthand for WebGL2
+```
+
+The NUNIF panel has a Renderer control that persists the choice in localStorage and reloads with the matching URL parameter. Runtime breadcrumbs are also exposed for automation: `window.rendererType`, `window.usingWebGPU`, `window.usingWebGL`, and `window.rendererFallbackReason`.
 
 ## Build
 
@@ -83,9 +95,14 @@ The `TextureManager` fetches this file on startup and loads each image into a GP
 src/
   engine/
     WebGPURenderer.ts   # 3-layer GPU pipeline, rotation uniforms, render loop
+    WebGLRenderer.ts    # WebGL2 fallback with shared RendererState + debug modes
+    rendererMode.ts     # URL/localStorage/backend breadcrumb selection
     TextureManager.ts   # JSON fetch + GPU texture upload
+    WebGLTextureManager.ts # JSON fetch + WebGL texture upload
     shaders.ts          # WGSL vertex + 3 fragment shaders
   components/
     NunifOverlay.tsx    # Tailwind CSS control panel
   App.tsx               # React root, WebGPU init, animation loop
 ```
+
+See [docs/webgl-fallback.md](docs/webgl-fallback.md) for fallback scope, debug helpers, and WebGL-to-WebGPU shader porting notes.

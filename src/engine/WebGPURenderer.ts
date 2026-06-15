@@ -55,6 +55,7 @@ export interface RendererState {
   diagnosticsOpacity?  : number;
   stampBoost?          : number;
   peakCollisionsOnly?  : boolean;
+  webglDebugMode?      : number;  // WebGL-only: 0=normal, 1=luminance, 2=rotation UV, 3=mask
 }
 
 export interface CollisionStats {
@@ -131,6 +132,7 @@ interface HeatmapBindGroupCacheEntry {
 }
 
 export class WebGPURenderer {
+  readonly backend = 'webgpu' as const;
   /** Size of the composited preview texture (fixed, independent of canvas/tracerScale). */
   static readonly PREVIEW_SIZE = 128;
   static readonly DIAGNOSTIC_SIZE = 64;
@@ -431,42 +433,6 @@ export class WebGPURenderer {
     this.heatmapBindGroupCache.uniformBuf = null;
   }
 
-  // ─── Layer pipeline ─────────────────────────────────────────────────────────
-  private createLayerPipeline(fragmentSource: string): LayerPipeline {
-    const device = this.device;
-
-    const bindGroupLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'uniform' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
-      ],
-    });
-
-    const pipeline = device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-      vertex  : { module: device.createShaderModule({ code: vertexShaderSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: fragmentSource }),
-        entryPoint : 'main',
-        targets    : [{ format: this.internalFormat }],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: this.sampleCount },
-    });
-
-    const rotationBuffer = device.createBuffer({
-      size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const fragUniformBuffer = device.createBuffer({
-      size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer, rotationData: new Float32Array(4), fragData: new Float32Array(8) };
-  }
-
   // ─── Persistence pipeline ────────────────────────────────────────────────────
 
 
@@ -615,8 +581,8 @@ export class WebGPURenderer {
   }
 
   // ─── Public API ──────────────────────────────────────────────────────────────
-  setTexture(texture: GPUTexture): void {
-    this.currentTexture = texture;
+  setTexture(texture: unknown): void {
+    this.currentTexture = texture as GPUTexture;
     for (const entry of this.layerBindGroupCache) {
       entry.bindGroup = null;
       entry.texture = null;

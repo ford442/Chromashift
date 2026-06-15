@@ -5,6 +5,7 @@
 import { useRef } from 'react';
 import { RotaryKnob } from './RotaryKnob';
 import { getBlendModeInfo } from '../engine/blendModes';
+import type { RendererBackend } from '../engine/RendererTypes';
 
 interface Props {
   layerAngles                : [number, number, number];
@@ -33,6 +34,11 @@ interface Props {
     dominantLayerWins: [number, number, number];
     averageCollision: number;
   };
+  rendererBackend            : RendererBackend;
+  rendererFallbackReason     : string | null;
+  webglDebugMode             : number;
+  onRendererBackendChange    : (backend: RendererBackend) => void;
+  onWebglDebugModeChange     : (mode: number) => void;
   mainViewMode               : number;
   isViewingTracer            : boolean;
   isPaused                   : boolean;
@@ -137,6 +143,11 @@ export function NunifOverlay({
   stampBoost,
   peakCollisionsOnly,
   collisionStats,
+  rendererBackend,
+  rendererFallbackReason,
+  webglDebugMode,
+  onRendererBackendChange,
+  onWebglDebugModeChange,
   mainViewMode,
   isViewingTracer,
   isPaused,
@@ -241,6 +252,54 @@ export function NunifOverlay({
             ⟲
           </button>
         </div>
+      </div>
+
+      <div className="panel-3d space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-[10px] text-amber-300 font-mono uppercase tracking-wider">Renderer</div>
+            <div className="text-[10px] text-amber-100/70 font-mono">
+              Active: <span className={rendererBackend === 'webgl' ? 'text-cyan-300' : 'text-emerald-300'}>{rendererBackend.toUpperCase()}</span>
+            </div>
+          </div>
+          <div className="flex gap-1">
+            {(['webgpu', 'webgl'] as const).map((backend) => (
+              <button
+                key={backend}
+                type="button"
+                onClick={() => onRendererBackendChange(backend)}
+                className={`text-[10px] px-2 py-1 rounded font-mono transition-all ${
+                  rendererBackend === backend
+                    ? 'bg-amber-600 text-white shadow-[0_0_10px_rgba(245,158,11,0.35)]'
+                    : 'bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-100'
+                }`}
+                title={`Persist ${backend.toUpperCase()} and reload with ?renderer=${backend}`}
+              >
+                {backend.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
+        {rendererFallbackReason && (
+          <div className="text-[10px] leading-snug text-cyan-200/75 font-mono">
+            WebGPU fallback: {rendererFallbackReason}
+          </div>
+        )}
+        {rendererBackend === 'webgl' && (
+          <div className="space-y-1">
+            <span className="text-xs text-cyan-300/90 font-mono">WebGL debug:</span>
+            <select
+              value={webglDebugMode}
+              onChange={(event) => onWebglDebugModeChange(Number(event.target.value))}
+              className="w-full text-xs px-2 py-1 rounded bg-zinc-800 border border-cyan-500/30 text-cyan-100"
+            >
+              <option value={0}>Composite parity</option>
+              <option value={1}>Luminance mask</option>
+              <option value={2}>Rotation UV grid</option>
+              <option value={3}>Layer mask isolation</option>
+            </select>
+          </div>
+        )}
       </div>
 
       {/* ========== AUTO-PLAY INTERVAL ========== */}

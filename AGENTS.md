@@ -19,7 +19,7 @@ Each layer has independent rotation (driven by a `mat3x3` uniform) and can be fl
 | Bundler | Vite | ^7.0.0 |
 | UI | React + TypeScript | 19, ~5.9 |
 | Styling | Tailwind CSS v4 | ^4.2.1 |
-| GPU API | WebGPU + WGSL | — |
+| GPU API | WebGPU + WGSL, WebGL2 + GLSL ES 3.00 fallback | — |
 
 ## Common Commands
 
@@ -40,7 +40,7 @@ npm run preview   # Preview the production build locally
 ```
 src/
 ├── main.tsx                  # React entry point (createRoot + StrictMode)
-├── App.tsx                   # Root component — WebGPU init, animation loop, state management,
+├── App.tsx                   # Root component — renderer init, animation loop, state management,
 │                             # preview canvases (Original, Separated, Tracer), image auto-play
 ├── index.css                 # @import "tailwindcss" + extensive gold/glass custom CSS
 ├── components/
@@ -50,19 +50,48 @@ src/
     ├── shaders.ts            # WGSL vertex + 3 fragment shaders, persistence shader,
     │                         # compositor shader, and blend-mode helpers
     ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache
+    ├── WebGLTextureManager.ts # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
+    ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
+    ├── RendererTypes.ts      # Shared renderer/texture contracts consumed by App.tsx
+    ├── WebGLRenderer.ts      # WebGL2 fallback/reference implementation with debug modes
     └── WebGPURenderer.ts     # 5-pass GPU renderer, uniform buffer management,
                               # MSAA toggle, dual ping-pong persistence buffers
 ```
 
+### Renderer Selection / WebGL2 Fallback
+
+The primary backend remains WebGPU. A WebGL2 fallback is available for visual debugging, Playwright screenshots, and shader-porting reference work:
+
+```bash
+npm run dev
+# Primary path
+http://localhost:5173/?renderer=webgpu
+# Fallback/reference path
+http://localhost:5173/?renderer=webgl
+http://localhost:5173/?webgl
+```
+
+The NUNIF panel exposes a **Renderer** control that persists `chromashift.renderer` in localStorage and reloads with the selected `?renderer=` parameter. Runtime breadcrumbs are intentionally global for automation: `window.rendererType`, `window.usingWebGPU`, `window.usingWebGL`, and `window.rendererFallbackReason`.
+
+WebGL mode consumes the same `RendererState` as WebGPU: image selection, layer angles, flips, average luminance, colour mode, Sobel/soft band toggles, layer opacity, blend modes, output mode, diagnostics, and tracer settings. It is an approximate reference renderer, not a replacement for the full WGSL path. Keep WebGPU as the source of truth for production behaviour.
+
+WebGL-only debug helpers are in the Renderer panel:
+- `Composite parity` — normal fallback compositing.
+- `Luminance mask` — grayscale BT.709 luminance after shared rotation.
+- `Rotation UV grid` — transformed UVs and a grid to debug layer rotation/flips.
+- `Layer mask isolation` — shows active per-layer mask output before final compositing.
+
+For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when browser automation needs visible pixels, then port the final logic into `shaders.ts` / `WebGPUPipelines.ts`. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
+
 ### Rendering Pipeline (Detailed)
 
 1. `TextureManager.fetchImageList('/images.json')` loads the image list on startup.
-2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm`) via `copyExternalImageToTexture`.
+2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
    - 3 independent `GPURenderPipeline`s for the colour layers (each can use 4× MSAA).
    - 1 persistence pipeline that reads the 3 layer textures + previous tracer texture.
    - 1 compositor pipeline that blends tracers + live layers and writes to the swap-chain.
-4. Each frame, `renderer.render(state)` encodes all passes into a single command buffer and submits it.
+4. Each frame, `renderer.render(state)` receives the shared `RendererState`. WebGPU encodes all passes into a single command buffer; WebGL runs equivalent GLSL/FBO passes for debugging/reference output.
 
 ### Colour Bands (WGSL Fragment Shaders)
 
@@ -156,8 +185,10 @@ python deploy.py
 
 ## Browser Requirements
 
-WebGPU is required. Supported in:
+WebGPU is required for the primary renderer. Supported in:
 - Chrome 113+ / Edge 113+
 - Chrome Canary (flags may be needed on older versions)
 
 Firefox and Safari do not yet have stable WebGPU support.
+
+Use `?renderer=webgl` on browsers or CI environments where WebGPU is unavailable but WebGL2 is present.
