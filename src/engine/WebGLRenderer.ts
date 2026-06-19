@@ -270,7 +270,9 @@ void main() {
   vec4 c2 = texture(u_layer2, v_uv);
   vec4 prev = texture(u_previous, v_uv);
   float count = step(0.01, c0.a) + step(0.01, c1.a) + step(0.01, c2.a);
-  vec4 decayed = vec4(prev.rgb * u_decay, prev.a * u_decay);
+  // Peak mode discards the decayed history so only fresh collision stamps show,
+  // mirroring the WebGPU persistence pass (peakMode -> decayed = 0).
+  vec4 decayed = u_peakMode == 1 ? vec4(0.0) : vec4(prev.rgb * u_decay, prev.a * u_decay);
   if (count < 1.5) {
     outColor = decayed;
     return;
@@ -279,7 +281,7 @@ void main() {
   float lum = dot(combined, vec3(0.2126, 0.7152, 0.0722));
   vec3 stamped = u_tracerMode == 1 ? vec3(min(lum * u_stampBoost, 1.0)) : min(combined * u_stampBoost, vec3(1.0));
   vec4 fresh = vec4(stamped, count > 2.5 ? 1.0 : 0.72);
-  outColor = u_peakMode == 1 ? max(decayed, fresh) : max(decayed, fresh);
+  outColor = max(decayed, fresh);
 }
 `;
 
