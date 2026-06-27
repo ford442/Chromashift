@@ -55,6 +55,22 @@ interface ChromashiftWasmModule {
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'unavailable';
 
+/** Embind exports the TS bridge may call; checked individually for stale builds. */
+const WASM_API_FUNCTIONS = [
+  'computeAverageLuminance',
+  'computeAverageLuminanceStrided',
+  'classifyPixel',
+  'classifyPixelsBulk',
+  'computeClassificationMask',
+  'computeLuminanceHistogram',
+  'computeColorBandCounts',
+  'durationToDecay',
+  'advanceLayerAngles',
+  'simulateTracerDecay',
+] as const satisfies ReadonlyArray<keyof ChromashiftWasmModule>;
+
+type WasmApiFunction = (typeof WASM_API_FUNCTIONS)[number];
+
 // ─── Module-level state ───────────────────────────────────────────────────────
 
 let wasmModule: ChromashiftWasmModule | null = null;
@@ -77,6 +93,24 @@ const pendingResolvers: Array<(ok: boolean) => void> = [];
  */
 let persistentBufPtr: number = 0;
 let persistentBufSize: number = 0;
+
+function wasmHas(fn: WasmApiFunction): boolean {
+  return wasmModule !== null && typeof wasmModule[fn] === 'function';
+}
+
+function canUseWasmFn(fn: WasmApiFunction, useWasm: boolean): boolean {
+  return useWasm && wasmHas(fn);
+}
+
+function logStaleWasmExports(): void {
+  const missing = WASM_API_FUNCTIONS.filter((fn) => !wasmHas(fn));
+  if (missing.length === 0) return;
+  console.warn(
+    `[WasmEngine] Stale WASM build — missing ${missing.length}/${WASM_API_FUNCTIONS.length} exports `
+    + `(${missing.join(', ')}). Falling back to TypeScript for those calls. `
+    + 'Rebuild with: cd cpp && make',
+  );
+}
 
 /**
  * Return a persistent WASM heap pointer that can hold at least `size` bytes.
@@ -159,6 +193,7 @@ export async function loadWasmEngine(): Promise<boolean> {
     const glue = await import(/* @vite-ignore */ engineUrl) as GlueModule;
     wasmModule = await glue.default();
     loadState = 'ready';
+    logStaleWasmExports();
 
     // Log SIMD availability so developers can confirm the accelerated path is active.
     const simd = isWasmSimdSupported();
@@ -235,14 +270,15 @@ export function computeAverageLuminanceWith(
   image: HTMLImageElement,
   useWasm: boolean,
 ): number {
-  if (useWasm && wasmModule) {
+  if (canUseWasmFn('computeAverageLuminance', useWasm)) {
     // Downscale to ≤256 px, copy RGBA bytes into WASM heap, call C++.
     const bytes = getImageBytes(image);
     if (!bytes) return tsComputeAverageLuminance(image);
 
+    const mod = wasmModule!;
     const ptr = getPersistentBuf(bytes.length);
-    wasmModule.HEAPU8.set(bytes, ptr);
-    return wasmModule.computeAverageLuminance(ptr, bytes.length);
+    mod.HEAPU8.set(bytes, ptr);
+    return mod.computeAverageLuminance(ptr, bytes.length);
   }
 
   return tsComputeAverageLuminance(image);
@@ -273,11 +309,11 @@ export function computeAverageLuminanceStridedWith(
 ): number {
   const safeStride = Math.max(1, stride);
 
-  if (useWasm && wasmModule) {
+  if (canUseWasmFn('computeAverageLuminanceStrided', useWasm)) {
     const byteLen = width * height * 4;
     const ptr = getPersistentBuf(byteLen);
-    wasmModule.HEAPU8.set(pixels, ptr);
-    return wasmModule.computeAverageLuminanceStrided(ptr, width, height, safeStride);
+    wasmModule!.HEAPU8.set(pixels, ptr);
+    return wasmModule!.computeAverageLuminanceStrided(ptr, width, height, safeStride);
   }
 
   // TypeScript fallback — mirrors the strided loop from App.tsx.
@@ -322,8 +358,8 @@ export function classifyPixelWith(
   avgLum: number,
   useWasm: boolean,
 ): number {
-  if (useWasm && wasmModule) {
-    return wasmModule.classifyPixel(r, g, b, avgLum);
+  if (canUseWasmFn('classifyPixel', useWasm)) {
+    return wasmModule!.classifyPixel(r, g, b, avgLum);
   }
 
   // TypeScript fallback — mirrors the C++ implementation.
@@ -364,17 +400,18 @@ export function classifyPixelsBulkWith(
   const { data } = imageData;
   const pixelCount = data.length / 4;
 
-  if (useWasm && wasmModule) {
-    const inPtr  = wasmModule._malloc(data.length);
-    const outPtr = wasmModule._malloc(pixelCount * 4); // int32 per pixel
-    wasmModule.HEAPU8.set(data, inPtr);
-    wasmModule.classifyPixelsBulk(inPtr, data.length, Math.round(avgLum), outPtr);
+  if (canUseWasmFn('classifyPixelsBulk', useWasm)) {
+    const mod = wasmModule!;
+    const inPtr  = mod._malloc(data.length);
+    const outPtr = mod._malloc(pixelCount * 4); // int32 per pixel
+    mod.HEAPU8.set(data, inPtr);
+    mod.classifyPixelsBulk(inPtr, data.length, Math.round(avgLum), outPtr);
     const result = new Int32Array(pixelCount);
     for (let i = 0; i < pixelCount; i++) {
-      result[i] = wasmModule.HEAP32[(outPtr >> 2) + i];
+      result[i] = mod.HEAP32[(outPtr >> 2) + i];
     }
-    wasmModule._free(inPtr);
-    wasmModule._free(outPtr);
+    mod._free(inPtr);
+    mod._free(outPtr);
     return result;
   }
 
@@ -420,15 +457,16 @@ export function classifyImageMaskWith(
   const { data, width, height } = imageData;
   const pixelCount = width * height;
 
-  if (useWasm && wasmModule) {
-    const inPtr = wasmModule._malloc(data.length);
-    const outPtr = wasmModule._malloc(pixelCount);
-    wasmModule.HEAPU8.set(data, inPtr);
-    wasmModule.computeClassificationMask(inPtr, width, height, avgLum, outPtr);
+  if (canUseWasmFn('computeClassificationMask', useWasm)) {
+    const mod = wasmModule!;
+    const inPtr = mod._malloc(data.length);
+    const outPtr = mod._malloc(pixelCount);
+    mod.HEAPU8.set(data, inPtr);
+    mod.computeClassificationMask(inPtr, width, height, avgLum, outPtr);
     const mask = new Uint8Array(pixelCount);
-    mask.set(wasmModule.HEAPU8.subarray(outPtr, outPtr + pixelCount));
-    wasmModule._free(inPtr);
-    wasmModule._free(outPtr);
+    mask.set(mod.HEAPU8.subarray(outPtr, outPtr + pixelCount));
+    mod._free(inPtr);
+    mod._free(outPtr);
     return { mask, width, height };
   }
 
@@ -458,16 +496,17 @@ export function computeLuminanceHistogramWith(
   const bytes = getImageBytes(image);
   if (!bytes) return new Uint32Array(256);
 
-  if (useWasm && wasmModule) {
+  if (canUseWasmFn('computeLuminanceHistogram', useWasm)) {
+    const mod = wasmModule!;
     const inPtr  = getPersistentBuf(bytes.length);
-    const outPtr = wasmModule._malloc(256 * 4); // 256 uint32 values — fixed small size
-    wasmModule.HEAPU8.set(bytes, inPtr);
-    wasmModule.computeLuminanceHistogram(inPtr, bytes.length, outPtr);
+    const outPtr = mod._malloc(256 * 4); // 256 uint32 values — fixed small size
+    mod.HEAPU8.set(bytes, inPtr);
+    mod.computeLuminanceHistogram(inPtr, bytes.length, outPtr);
     const result = new Uint32Array(256);
     for (let i = 0; i < 256; i++) {
-      result[i] = wasmModule.HEAPU32[(outPtr >> 2) + i];
+      result[i] = mod.HEAPU32[(outPtr >> 2) + i];
     }
-    wasmModule._free(outPtr);
+    mod._free(outPtr);
     return result;
   }
 
@@ -501,16 +540,17 @@ export function computeColorBandCountsWith(
   const bytes = getImageBytes(image);
   if (!bytes) return new Uint32Array(11);
 
-  if (useWasm && wasmModule) {
+  if (canUseWasmFn('computeColorBandCounts', useWasm)) {
+    const mod = wasmModule!;
     const inPtr  = getPersistentBuf(bytes.length);
-    const outPtr = wasmModule._malloc(11 * 4); // 11 uint32 values — fixed small size
-    wasmModule.HEAPU8.set(bytes, inPtr);
-    wasmModule.computeColorBandCounts(inPtr, bytes.length, Math.round(avgLum), outPtr);
+    const outPtr = mod._malloc(11 * 4); // 11 uint32 values — fixed small size
+    mod.HEAPU8.set(bytes, inPtr);
+    mod.computeColorBandCounts(inPtr, bytes.length, Math.round(avgLum), outPtr);
     const result = new Uint32Array(11);
     for (let i = 0; i < 11; i++) {
-      result[i] = wasmModule.HEAPU32[(outPtr >> 2) + i];
+      result[i] = mod.HEAPU32[(outPtr >> 2) + i];
     }
-    wasmModule._free(outPtr);
+    mod._free(outPtr);
     return result;
   }
 
@@ -557,8 +597,8 @@ export function durationToDecayWith(
   fps: number,
   useWasm: boolean,
 ): number {
-  if (useWasm && wasmModule) {
-    return wasmModule.durationToDecay(durationMs, fps);
+  if (canUseWasmFn('durationToDecay', useWasm)) {
+    return wasmModule!.durationToDecay(durationMs, fps);
   }
 
   // TypeScript fallback — mirrors the C++ implementation.
@@ -582,19 +622,20 @@ export function advanceAnglesBy(
   steps: [number, number, number],
   useWasm: boolean,
 ): [number, number, number] {
-  if (useWasm && wasmModule) {
-    const outPtr = wasmModule._malloc(12); // 3 × float32
-    wasmModule.advanceLayerAngles(
+  if (canUseWasmFn('advanceLayerAngles', useWasm)) {
+    const mod = wasmModule!;
+    const outPtr = mod._malloc(12); // 3 × float32
+    mod.advanceLayerAngles(
       angles[0], angles[1], angles[2],
       steps[0],  steps[1],  steps[2],
       outPtr,
     );
     const result: [number, number, number] = [
-      wasmModule.HEAPF32[(outPtr >> 2)],
-      wasmModule.HEAPF32[(outPtr >> 2) + 1],
-      wasmModule.HEAPF32[(outPtr >> 2) + 2],
+      mod.HEAPF32[(outPtr >> 2)],
+      mod.HEAPF32[(outPtr >> 2) + 1],
+      mod.HEAPF32[(outPtr >> 2) + 2],
     ];
-    wasmModule._free(outPtr);
+    mod._free(outPtr);
     return result;
   }
 
@@ -625,15 +666,16 @@ export function simulateTracerDecayWith(
 ): void {
   const pixelCount = Math.floor(buffer.length / 4);
 
-  if (useWasm && wasmModule) {
+  if (canUseWasmFn('simulateTracerDecay', useWasm)) {
+    const mod = wasmModule!;
     const byteCount = pixelCount * 4 * 4; // pixelCount × 4 channels × 4 bytes/float
-    const ptr = wasmModule._malloc(byteCount);
+    const ptr = mod._malloc(byteCount);
     // Copy buffer into WASM heap (HEAPF32 is indexed by float, not byte)
-    wasmModule.HEAPF32.set(buffer.subarray(0, pixelCount * 4), ptr >> 2);
-    wasmModule.simulateTracerDecay(ptr, pixelCount, decayFactor);
+    mod.HEAPF32.set(buffer.subarray(0, pixelCount * 4), ptr >> 2);
+    mod.simulateTracerDecay(ptr, pixelCount, decayFactor);
     // Copy result back
-    buffer.set(wasmModule.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + pixelCount * 4));
-    wasmModule._free(ptr);
+    buffer.set(mod.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + pixelCount * 4));
+    mod._free(ptr);
     return;
   }
 

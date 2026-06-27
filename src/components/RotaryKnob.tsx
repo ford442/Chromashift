@@ -44,9 +44,6 @@ export function RotaryKnob({
     large: 'text-base',
   };
 
-  // Convert value to rotation angle (0-360 degrees, mapped from min-max range)
-  const rotation = ((value - min) / (max - min)) * 360;
-
   // Handle mouse move for dragging
   useEffect(() => {
     if (!isDragging || !knobRef.current) return;
@@ -89,16 +86,29 @@ export function RotaryKnob({
     };
   }, [isDragging, min, max, step, onChange]);
 
+  // Convert value to rotation angle (0-360 degrees, mapped from min-max range)
+  const rotation = ((value - min) / (max - min)) * 360;
+
+  useEffect(() => {
+    const knob = knobRef.current;
+    if (!knob) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const direction = event.deltaY > 0 ? -1 : 1;
+      setDisplayValue((prev) => {
+        const newValue = Math.max(min, Math.min(max, prev + direction * step));
+        onChange(newValue);
+        return newValue;
+      });
+    };
+
+    knob.addEventListener('wheel', handleWheel, { passive: false });
+    return () => knob.removeEventListener('wheel', handleWheel);
+  }, [min, max, step, onChange]);
+
   const handleMouseDown = () => {
     setIsDragging(true);
-  };
-
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const direction = e.deltaY > 0 ? -1 : 1;
-    const newValue = Math.max(min, Math.min(max, displayValue + direction * step));
-    onChange(newValue);
-    setDisplayValue(newValue);
   };
 
   return (
@@ -107,7 +117,6 @@ export function RotaryKnob({
         ref={knobRef}
         className={`${sizeClasses[size]} relative cursor-grab active:cursor-grabbing select-none`}
         onMouseDown={handleMouseDown}
-        onWheel={handleWheel}
       >
         {/* Outer glow ring */}
         <div className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-500/20 via-transparent to-amber-600/20 shadow-[0_0_30px_rgba(245,158,11,0.3),inset_0_0_30px_rgba(245,158,11,0.1)]" />
