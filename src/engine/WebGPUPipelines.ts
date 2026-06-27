@@ -309,10 +309,10 @@ export class WebGPUPipelines {
       size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const fragUniformBuffer = device.createBuffer({
-      size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer, rotationData: new Float32Array(4), fragData: new Float32Array(4) };
+    return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer, rotationData: new Float32Array(4), fragData: new Float32Array(8) };
   }
 
 }
