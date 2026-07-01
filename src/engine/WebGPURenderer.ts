@@ -56,6 +56,7 @@ export interface RendererState {
   stampBoost?          : number;
   peakCollisionsOnly?  : boolean;
   webglDebugMode?      : number;  // WebGL-only: 0=normal, 1=luminance, 2=rotation UV, 3=mask
+  viewportQuarterZoom? : boolean; // Magnify bottom-left quarter of compositor output to full canvas
 }
 
 export interface CollisionStats {
@@ -1095,6 +1096,7 @@ export class WebGPURenderer {
     this.compositorU32[9] = state.outputMode ?? 0;
     this.compositorU32[10] = tracerMode;
     this.compositorU32[11] = state.diagnosticsMode ? 1 : 0;
+    this.compositorU32[12] = state.viewportQuarterZoom ? 1 : 0;
 
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0, this.compositorUniformData);
 
@@ -1309,6 +1311,12 @@ export class WebGPURenderer {
     }
     if (this.previewCaptureQueued && this.previewTexture && this.previewStagingBuffer && this.previewReadCallback) {
       const sz = WebGPURenderer.PREVIEW_SIZE;
+
+      // Thumbnail preview always shows the full compositor frame, not the zoomed viewport.
+      if (state.viewportQuarterZoom) {
+        this.compositorU32[12] = 0;
+        this.device.queue.writeBuffer(this.compositorUniformBuf, 0, this.compositorUniformData);
+      }
 
       // Render the same compositor output into the small preview texture.
       // The compositor bind group (compBG) and pipeline are resolution-agnostic,

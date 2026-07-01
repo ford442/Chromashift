@@ -765,17 +765,26 @@ struct CompositorUniforms {
   outputMode         : u32,
   tracerMode         : u32,
   diagnosticsMode    : u32,
-  _pad0              : u32,
+  viewportQuarterZoom: u32,
 };
 @group(0) @binding(6) var<uniform> cu : CompositorUniforms;
 
+fn viewportSampleUV(uv: vec2<f32>) -> vec2<f32> {
+  if (cu.viewportQuarterZoom == 0u) {
+    return uv;
+  }
+  // Magnify the bottom-left quarter (x: 0–0.5, y: 0.5–1.0) to fill the canvas.
+  return vec2<f32>(uv.x * 0.5, uv.y * 0.5 + 0.5);
+}
+
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let c0      = textureSample(layer0,       cSampler, uv);
-  let c1      = textureSample(layer1,       cSampler, uv);
-  let c2      = textureSample(layer2,       cSampler, uv);
-  let pBelow  = textureSample(persistBelow, cSampler, uv);
-  let pAbove  = textureSample(persistAbove, cSampler, uv);
+  let sampleUV = viewportSampleUV(uv);
+  let c0      = textureSample(layer0,       cSampler, sampleUV);
+  let c1      = textureSample(layer1,       cSampler, sampleUV);
+  let c2      = textureSample(layer2,       cSampler, sampleUV);
+  let pBelow  = textureSample(persistBelow, cSampler, sampleUV);
+  let pAbove  = textureSample(persistAbove, cSampler, sampleUV);
 
   let pBelowScaled = scale_premultiplied(pBelow, cu.tracerBelowOpacity);
   let pAboveScaled = scale_premultiplied(pAbove, cu.tracerAboveOpacity);

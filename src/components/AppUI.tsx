@@ -25,7 +25,8 @@ export function AppUI(props: any) {
     layerBlendMode, setLayerBlendMode, tracerBlendMode, setTracerBlendMode, outputMode, setOutputMode,
     diagnosticsMode, setDiagnosticsMode, diagnosticsOpacity, setDiagnosticsOpacity, stampBoost,
     setStampBoost, peakCollisionsOnly, setPeakCollisionsOnly, colorMode, setColorMode, squareCanvas,
-    setSobelEnabled, sobelEnabled, setSoftCropEnabled, softCropEnabled, setSquareCanvas,
+    setSobelEnabled, sobelEnabled, setSoftCropEnabled, softCropEnabled, viewportQuarterZoom,
+    setViewportQuarterZoom, setSquareCanvas,
     antialiasEnabled, setAntialiasEnabled, handleReset, imageChangeInterval,
     setImageChangeInterval, upscaleModel, setUpscaleModel, handleUpscaleSource, handleUpscaleOutput,
     upscaleBusy, upscaleProgress, upscaleInfo, engineMode, setEngineMode, wasmAvailable,
@@ -335,6 +336,7 @@ export function AppUI(props: any) {
         onExportTracer={handleExportTracer}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
+        viewportQuarterZoom={viewportQuarterZoom}
         onAngleChange={handleAngleChange}
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
@@ -371,6 +373,7 @@ export function AppUI(props: any) {
           setAntialiasEnabled(enabled);
           rendererRef.current?.setAntialiasing(enabled);
         }}
+        onViewportQuarterZoomToggle={setViewportQuarterZoom}
         onReset={handleReset}
         isAutoPlayActive={isAutoPlayActive}
         onAutoPlayToggle={setIsAutoPlayActive}

@@ -74,6 +74,7 @@ interface Props {
   onSoftCropEnabledToggle    : (v: boolean) => void;
   squareCanvas               : boolean;
   antialiasEnabled           : boolean;
+  viewportQuarterZoom        : boolean;
   onAngleChange              : (layer: 0 | 1 | 2, angle: number) => void;
   onExtensionChange          : (layer: 0 | 1 | 2, extension: number) => void;
   onFrameRateChange          : (fps: number) => void;
@@ -96,6 +97,7 @@ interface Props {
   onColorModeChange          : (v: number) => void;
   onSquareCanvasToggle       : (v: boolean) => void;
   onAntialiasToggle          : (v: boolean) => void;
+  onViewportQuarterZoomToggle: (v: boolean) => void;
   onReset                    : () => void;
   isAutoPlayActive           : boolean;
   onAutoPlayToggle           : (active: boolean) => void;
@@ -183,6 +185,7 @@ export function NunifOverlay({
   onSoftCropEnabledToggle,
   squareCanvas,
   antialiasEnabled,
+  viewportQuarterZoom,
   onAngleChange,
   onExtensionChange,
   onFrameRateChange,
@@ -205,6 +208,7 @@ export function NunifOverlay({
   onColorModeChange,
   onSquareCanvasToggle,
   onAntialiasToggle,
+  onViewportQuarterZoomToggle,
   onReset,
   isAutoPlayActive,
   onAutoPlayToggle,
@@ -1153,6 +1157,21 @@ export function NunifOverlay({
           }`}
         >
           ▣ Square Canvas
+        </button>
+
+        <button
+          onClick={() => onViewportQuarterZoomToggle(!viewportQuarterZoom)}
+          disabled={isViewingTracer || mainViewMode !== 0}
+          className={`w-full text-xs px-2 py-0.5 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+            viewportQuarterZoom
+              ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+              : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
+          }`}
+          title={viewportQuarterZoom
+            ? 'Return to full-canvas view'
+            : 'Magnify the bottom-left quarter of the processed output to fill the main canvas (layers keep rotating and blending)'}
+        >
+          {viewportQuarterZoom ? '↙ Exit Quarter Zoom' : '↙ Zoom Bottom-Left Quarter'}
         </button>
 
         <button

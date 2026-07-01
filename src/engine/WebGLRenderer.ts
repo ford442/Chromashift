@@ -304,12 +304,20 @@ uniform int u_outputMode;
 uniform int u_mainViewMode;
 uniform int u_diagnosticsMode;
 uniform float u_diagnosticsOpacity;
+uniform int u_viewportQuarterZoom;
 
 in vec2 v_uv;
 out vec4 outColor;
 
 vec4 scaleAlpha(vec4 c, float opacity) {
   return vec4(c.rgb, c.a * opacity);
+}
+
+vec2 viewportSampleUV(vec2 uv) {
+  if (u_viewportQuarterZoom == 0) {
+    return uv;
+  }
+  return vec2(uv.x * 0.5, uv.y * 0.5 + 0.5);
 }
 
 vec3 blendRgb(vec3 d, vec3 s, int mode) {
@@ -344,23 +352,38 @@ vec4 collisionColor(vec4 c0, vec4 c1, vec4 c2) {
 }
 
 void main() {
-  vec4 c0 = scaleAlpha(texture(u_layer0, v_uv), u_layerOpacity0);
-  vec4 c1 = scaleAlpha(texture(u_layer1, v_uv), u_layerOpacity1);
-  vec4 c2 = scaleAlpha(texture(u_layer2, v_uv), u_layerOpacity2);
-  vec4 below = scaleAlpha(texture(u_tracerBelow, v_uv), u_tracerBelowOpacity);
-  vec4 above = scaleAlpha(texture(u_tracerAbove, v_uv), u_tracerAboveOpacity);
-
   if (u_mainViewMode == 1) {
+    vec4 below = scaleAlpha(texture(u_tracerBelow, v_uv), u_tracerBelowOpacity);
+    vec4 above = scaleAlpha(texture(u_tracerAbove, v_uv), u_tracerAboveOpacity);
     outColor = vec4(blendOver(below, above, u_tracerBlendMode).rgb, 1.0);
     return;
   }
-  if (u_mainViewMode == 3) { outColor = vec4(c0.rgb, 1.0); return; }
-  if (u_mainViewMode == 4) { outColor = vec4(c1.rgb, 1.0); return; }
-  if (u_mainViewMode == 5) { outColor = vec4(c2.rgb, 1.0); return; }
+  if (u_mainViewMode == 3) {
+    outColor = vec4(texture(u_layer0, v_uv).rgb, 1.0);
+    return;
+  }
+  if (u_mainViewMode == 4) {
+    outColor = vec4(texture(u_layer1, v_uv).rgb, 1.0);
+    return;
+  }
+  if (u_mainViewMode == 5) {
+    outColor = vec4(texture(u_layer2, v_uv).rgb, 1.0);
+    return;
+  }
   if (u_mainViewMode == 6 || u_mainViewMode == 11) {
+    vec4 c0 = scaleAlpha(texture(u_layer0, v_uv), u_layerOpacity0);
+    vec4 c1 = scaleAlpha(texture(u_layer1, v_uv), u_layerOpacity1);
+    vec4 c2 = scaleAlpha(texture(u_layer2, v_uv), u_layerOpacity2);
     outColor = vec4(collisionColor(c0, c1, c2).rgb, 1.0);
     return;
   }
+
+  vec2 sampleUV = viewportSampleUV(v_uv);
+  vec4 c0 = scaleAlpha(texture(u_layer0, sampleUV), u_layerOpacity0);
+  vec4 c1 = scaleAlpha(texture(u_layer1, sampleUV), u_layerOpacity1);
+  vec4 c2 = scaleAlpha(texture(u_layer2, sampleUV), u_layerOpacity2);
+  vec4 below = scaleAlpha(texture(u_tracerBelow, sampleUV), u_tracerBelowOpacity);
+  vec4 above = scaleAlpha(texture(u_tracerAbove, sampleUV), u_tracerAboveOpacity);
 
   vec4 live = blendOver(blendOver(c0, c1, u_layerBlendMode), c2, u_layerBlendMode);
   vec4 tracer = blendOver(below, above, u_tracerBlendMode);
@@ -513,7 +536,10 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.renderComposite(null, width, height, state, layerOpacities);
     if (this.previewQueued) {
       this.ensurePreviewTarget();
-      this.renderComposite(this.previewTarget, PREVIEW_SIZE, PREVIEW_SIZE, state, layerOpacities);
+      this.renderComposite(this.previewTarget, PREVIEW_SIZE, PREVIEW_SIZE, {
+        ...state,
+        viewportQuarterZoom: false,
+      }, layerOpacities);
       this.readPreview();
     }
     if (this.statsQueued) {
@@ -635,6 +661,9 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.uniform1i('u_mainViewMode', state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
     this.uniform1i('u_diagnosticsMode', state.diagnosticsMode ? 1 : 0);
     this.uniform1f('u_diagnosticsOpacity', state.diagnosticsOpacity ?? 0.55);
+    const zoomEnabled = (state.viewportQuarterZoom ?? false)
+      && (state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE) === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
+    this.uniform1i('u_viewportQuarterZoom', zoomEnabled ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
