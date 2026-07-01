@@ -26,7 +26,7 @@ export function AppUI(props: any) {
     diagnosticsMode, setDiagnosticsMode, diagnosticsOpacity, setDiagnosticsOpacity, stampBoost,
     setStampBoost, peakCollisionsOnly, setPeakCollisionsOnly, colorMode, setColorMode, squareCanvas,
     setSobelEnabled, sobelEnabled, setSoftCropEnabled, softCropEnabled, viewportQuarterZoom,
-    setViewportQuarterZoom, setSquareCanvas,
+    setViewportQuarterZoom, viewportHalfOverlay, setViewportHalfOverlay, setSquareCanvas,
     antialiasEnabled, setAntialiasEnabled, handleReset, imageChangeInterval,
     setImageChangeInterval, upscaleModel, setUpscaleModel, handleUpscaleSource, handleUpscaleOutput,
     upscaleBusy, upscaleProgress, upscaleInfo, engineMode, setEngineMode, wasmAvailable,
@@ -337,6 +337,7 @@ export function AppUI(props: any) {
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         viewportQuarterZoom={viewportQuarterZoom}
+        viewportHalfOverlay={viewportHalfOverlay}
         onAngleChange={handleAngleChange}
         onExtensionChange={handleExtensionChange}
         onFrameRateChange={setFrameRate}
@@ -373,7 +374,14 @@ export function AppUI(props: any) {
           setAntialiasEnabled(enabled);
           rendererRef.current?.setAntialiasing(enabled);
         }}
-        onViewportQuarterZoomToggle={setViewportQuarterZoom}
+        onViewportQuarterZoomToggle={(enabled) => {
+          setViewportQuarterZoom(enabled);
+          if (enabled) setViewportHalfOverlay(false);
+        }}
+        onViewportHalfOverlayToggle={(enabled) => {
+          setViewportHalfOverlay(enabled);
+          if (enabled) setViewportQuarterZoom(false);
+        }}
         onReset={handleReset}
         isAutoPlayActive={isAutoPlayActive}
         onAutoPlayToggle={setIsAutoPlayActive}

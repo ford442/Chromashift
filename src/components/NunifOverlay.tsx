@@ -75,6 +75,7 @@ interface Props {
   squareCanvas               : boolean;
   antialiasEnabled           : boolean;
   viewportQuarterZoom        : boolean;
+  viewportHalfOverlay        : boolean;
   onAngleChange              : (layer: 0 | 1 | 2, angle: number) => void;
   onExtensionChange          : (layer: 0 | 1 | 2, extension: number) => void;
   onFrameRateChange          : (fps: number) => void;
@@ -98,6 +99,7 @@ interface Props {
   onSquareCanvasToggle       : (v: boolean) => void;
   onAntialiasToggle          : (v: boolean) => void;
   onViewportQuarterZoomToggle: (v: boolean) => void;
+  onViewportHalfOverlayToggle: (v: boolean) => void;
   onReset                    : () => void;
   isAutoPlayActive           : boolean;
   onAutoPlayToggle           : (active: boolean) => void;
@@ -186,6 +188,7 @@ export function NunifOverlay({
   squareCanvas,
   antialiasEnabled,
   viewportQuarterZoom,
+  viewportHalfOverlay,
   onAngleChange,
   onExtensionChange,
   onFrameRateChange,
@@ -209,6 +212,7 @@ export function NunifOverlay({
   onSquareCanvasToggle,
   onAntialiasToggle,
   onViewportQuarterZoomToggle,
+  onViewportHalfOverlayToggle,
   onReset,
   isAutoPlayActive,
   onAutoPlayToggle,
@@ -1161,7 +1165,7 @@ export function NunifOverlay({
 
         <button
           onClick={() => onViewportQuarterZoomToggle(!viewportQuarterZoom)}
-          disabled={isViewingTracer || mainViewMode !== 0}
+          disabled={isViewingTracer || mainViewMode !== 0 || viewportHalfOverlay}
           className={`w-full text-xs px-2 py-0.5 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
             viewportQuarterZoom
               ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
@@ -1172,6 +1176,21 @@ export function NunifOverlay({
             : 'Magnify the bottom-left quarter of the processed output to fill the main canvas (layers keep rotating and blending)'}
         >
           {viewportQuarterZoom ? '↙ Exit Quarter Zoom' : '↙ Zoom Bottom-Left Quarter'}
+        </button>
+
+        <button
+          onClick={() => onViewportHalfOverlayToggle(!viewportHalfOverlay)}
+          disabled={isViewingTracer || mainViewMode !== 0 || viewportQuarterZoom}
+          className={`w-full text-xs px-2 py-0.5 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+            viewportHalfOverlay
+              ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+              : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
+          }`}
+          title={viewportHalfOverlay
+            ? 'Return to normal full-canvas view'
+            : 'Superimpose the bottom half over the top half at 50% alpha (layers keep rotating and blending)'}
+        >
+          {viewportHalfOverlay ? '⇅ Exit Half Overlay' : '⇅ Overlay Top + Bottom Halves'}
         </button>
 
         <button

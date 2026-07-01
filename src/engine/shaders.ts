@@ -766,6 +766,8 @@ struct CompositorUniforms {
   tracerMode         : u32,
   diagnosticsMode    : u32,
   viewportQuarterZoom: u32,
+  halfOverlayAlpha   : f32,
+  viewportHalfOverlay: u32,
 };
 @group(0) @binding(6) var<uniform> cu : CompositorUniforms;
 
@@ -777,9 +779,7 @@ fn viewportSampleUV(uv: vec2<f32>) -> vec2<f32> {
   return vec2<f32>(uv.x * 0.5, uv.y * 0.5 + 0.5);
 }
 
-@fragment
-fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let sampleUV = viewportSampleUV(uv);
+fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
   let c0      = textureSample(layer0,       cSampler, sampleUV);
   let c1      = textureSample(layer1,       cSampler, sampleUV);
   let c2      = textureSample(layer2,       cSampler, sampleUV);
@@ -875,6 +875,19 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     tonemapped = mix(tonemapped, diagOverlay, clamp(cu.diagnosticsOpacity, 0.0, 1.0));
   }
   return vec4<f32>(tonemapped, 1.0);
+}
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  if (cu.viewportHalfOverlay == 1u) {
+    let topUV = vec2<f32>(uv.x, uv.y * 0.5);
+    let bottomUV = vec2<f32>(uv.x, uv.y * 0.5 + 0.5);
+    let topCol = compositeAt(topUV);
+    let bottomCol = compositeAt(bottomUV);
+    let alpha = clamp(cu.halfOverlayAlpha, 0.0, 1.0);
+    return vec4<f32>(mix(topCol.rgb, bottomCol.rgb, alpha), 1.0);
+  }
+  return compositeAt(viewportSampleUV(uv));
 }
 `;
 

@@ -305,6 +305,8 @@ uniform int u_mainViewMode;
 uniform int u_diagnosticsMode;
 uniform float u_diagnosticsOpacity;
 uniform int u_viewportQuarterZoom;
+uniform int u_viewportHalfOverlay;
+uniform float u_halfOverlayAlpha;
 
 in vec2 v_uv;
 out vec4 outColor;
@@ -351,6 +353,21 @@ vec4 collisionColor(vec4 c0, vec4 c1, vec4 c2) {
   return count > 2.5 ? vec4(1.0, 0.85, 0.1, 1.0) : vec4(0.2, 0.8, 1.0, 0.8);
 }
 
+vec4 compositeProcessed(vec2 sampleUV) {
+  vec4 c0 = scaleAlpha(texture(u_layer0, sampleUV), u_layerOpacity0);
+  vec4 c1 = scaleAlpha(texture(u_layer1, sampleUV), u_layerOpacity1);
+  vec4 c2 = scaleAlpha(texture(u_layer2, sampleUV), u_layerOpacity2);
+  vec4 below = scaleAlpha(texture(u_tracerBelow, sampleUV), u_tracerBelowOpacity);
+  vec4 above = scaleAlpha(texture(u_tracerAbove, sampleUV), u_tracerAboveOpacity);
+  vec4 live = blendOver(blendOver(c0, c1, u_layerBlendMode), c2, u_layerBlendMode);
+  vec4 tracer = blendOver(below, above, u_tracerBlendMode);
+  vec4 finalColor = u_outputMode == 2 ? tracer : u_outputMode == 1 ? blendOver(tracer, live, u_layerBlendMode) : blendOver(live, tracer, u_tracerBlendMode);
+  if (u_diagnosticsMode == 1) {
+    finalColor = blendOver(finalColor, scaleAlpha(collisionColor(c0, c1, c2), u_diagnosticsOpacity), 4);
+  }
+  return vec4(finalColor.rgb, 1.0);
+}
+
 void main() {
   if (u_mainViewMode == 1) {
     vec4 below = scaleAlpha(texture(u_tracerBelow, v_uv), u_tracerBelowOpacity);
@@ -378,20 +395,17 @@ void main() {
     return;
   }
 
-  vec2 sampleUV = viewportSampleUV(v_uv);
-  vec4 c0 = scaleAlpha(texture(u_layer0, sampleUV), u_layerOpacity0);
-  vec4 c1 = scaleAlpha(texture(u_layer1, sampleUV), u_layerOpacity1);
-  vec4 c2 = scaleAlpha(texture(u_layer2, sampleUV), u_layerOpacity2);
-  vec4 below = scaleAlpha(texture(u_tracerBelow, sampleUV), u_tracerBelowOpacity);
-  vec4 above = scaleAlpha(texture(u_tracerAbove, sampleUV), u_tracerAboveOpacity);
-
-  vec4 live = blendOver(blendOver(c0, c1, u_layerBlendMode), c2, u_layerBlendMode);
-  vec4 tracer = blendOver(below, above, u_tracerBlendMode);
-  vec4 finalColor = u_outputMode == 2 ? tracer : u_outputMode == 1 ? blendOver(tracer, live, u_layerBlendMode) : blendOver(live, tracer, u_tracerBlendMode);
-  if (u_diagnosticsMode == 1) {
-    finalColor = blendOver(finalColor, scaleAlpha(collisionColor(c0, c1, c2), u_diagnosticsOpacity), 4);
+  if (u_viewportHalfOverlay == 1) {
+    vec2 topUV = vec2(v_uv.x, v_uv.y * 0.5);
+    vec2 bottomUV = vec2(v_uv.x, v_uv.y * 0.5 + 0.5);
+    vec4 topCol = compositeProcessed(topUV);
+    vec4 bottomCol = compositeProcessed(bottomUV);
+    float alpha = clamp(u_halfOverlayAlpha, 0.0, 1.0);
+    outColor = vec4(mix(topCol.rgb, bottomCol.rgb, alpha), 1.0);
+    return;
   }
-  outColor = vec4(finalColor.rgb, 1.0);
+
+  outColor = compositeProcessed(viewportSampleUV(v_uv));
 }
 `;
 
@@ -539,6 +553,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
       this.renderComposite(this.previewTarget, PREVIEW_SIZE, PREVIEW_SIZE, {
         ...state,
         viewportQuarterZoom: false,
+        viewportHalfOverlay: false,
       }, layerOpacities);
       this.readPreview();
     }
@@ -663,7 +678,11 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.uniform1f('u_diagnosticsOpacity', state.diagnosticsOpacity ?? 0.55);
     const zoomEnabled = (state.viewportQuarterZoom ?? false)
       && (state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE) === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
+    const overlayEnabled = (state.viewportHalfOverlay ?? false)
+      && (state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE) === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
     this.uniform1i('u_viewportQuarterZoom', zoomEnabled ? 1 : 0);
+    this.uniform1i('u_viewportHalfOverlay', overlayEnabled ? 1 : 0);
+    this.uniform1f('u_halfOverlayAlpha', state.halfOverlayAlpha ?? 0.5);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 

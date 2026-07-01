@@ -57,6 +57,8 @@ export interface RendererState {
   peakCollisionsOnly?  : boolean;
   webglDebugMode?      : number;  // WebGL-only: 0=normal, 1=luminance, 2=rotation UV, 3=mask
   viewportQuarterZoom? : boolean; // Magnify bottom-left quarter of compositor output to full canvas
+  viewportHalfOverlay? : boolean; // Alpha-blend top and bottom halves stretched to full canvas
+  halfOverlayAlpha?    : number;  // 0–1 opacity for bottom half overlay, default 0.5
 }
 
 export interface CollisionStats {
@@ -1097,6 +1099,8 @@ export class WebGPURenderer {
     this.compositorU32[10] = tracerMode;
     this.compositorU32[11] = state.diagnosticsMode ? 1 : 0;
     this.compositorU32[12] = state.viewportQuarterZoom ? 1 : 0;
+    this.compositorF32[13] = state.halfOverlayAlpha ?? 0.5;
+    this.compositorU32[14] = state.viewportHalfOverlay ? 1 : 0;
 
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0, this.compositorUniformData);
 
@@ -1312,9 +1316,10 @@ export class WebGPURenderer {
     if (this.previewCaptureQueued && this.previewTexture && this.previewStagingBuffer && this.previewReadCallback) {
       const sz = WebGPURenderer.PREVIEW_SIZE;
 
-      // Thumbnail preview always shows the full compositor frame, not the zoomed viewport.
-      if (state.viewportQuarterZoom) {
+      // Thumbnail preview always shows the full compositor frame, not viewport effects.
+      if (state.viewportQuarterZoom || state.viewportHalfOverlay) {
         this.compositorU32[12] = 0;
+        this.compositorU32[14] = 0;
         this.device.queue.writeBuffer(this.compositorUniformBuf, 0, this.compositorUniformData);
       }
 
