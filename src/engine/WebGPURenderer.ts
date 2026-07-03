@@ -57,7 +57,7 @@ export interface RendererState {
   peakCollisionsOnly?  : boolean;
   webglDebugMode?      : number;  // WebGL-only: 0=normal, 1=luminance, 2=rotation UV, 3=mask
   viewportQuarterZoom? : boolean; // Magnify bottom-left quarter of compositor output to full canvas
-  viewportHalfOverlay? : boolean; // Alpha-blend top and bottom halves stretched to full canvas
+  viewportHalfOverlay? : boolean; // Alpha-blend top and bottom halves at native half height
   halfOverlayAlpha?    : number;  // 0–1 opacity for bottom half overlay, default 0.5
 }
 

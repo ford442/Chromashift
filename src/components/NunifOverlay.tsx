@@ -1188,7 +1188,7 @@ export function NunifOverlay({
           }`}
           title={viewportHalfOverlay
             ? 'Return to normal full-canvas view'
-            : 'Superimpose the bottom half over the top half at 50% alpha (layers keep rotating and blending)'}
+            : 'Superimpose top and bottom halves at native half height with 50% alpha (no vertical stretch)'}
         >
           {viewportHalfOverlay ? '⇅ Exit Half Overlay' : '⇅ Overlay Top + Bottom Halves'}
         </button>
