@@ -880,8 +880,13 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   if (cu.viewportHalfOverlay == 1u) {
-    let topUV = vec2<f32>(uv.x, uv.y * 0.5);
-    let bottomUV = vec2<f32>(uv.x, uv.y * 0.5 + 0.5);
+    // 1:1 half-height overlay: top and bottom source halves blend in the upper
+    // half of the canvas without vertical stretching.
+    if (uv.y > 0.5) {
+      return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    let topUV = vec2<f32>(uv.x, uv.y);
+    let bottomUV = vec2<f32>(uv.x, uv.y + 0.5);
     let topCol = compositeAt(topUV);
     let bottomCol = compositeAt(bottomUV);
     let alpha = clamp(cu.halfOverlayAlpha, 0.0, 1.0);

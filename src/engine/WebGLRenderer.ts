@@ -396,8 +396,12 @@ void main() {
   }
 
   if (u_viewportHalfOverlay == 1) {
-    vec2 topUV = vec2(v_uv.x, v_uv.y * 0.5);
-    vec2 bottomUV = vec2(v_uv.x, v_uv.y * 0.5 + 0.5);
+    if (v_uv.y > 0.5) {
+      outColor = vec4(0.0, 0.0, 0.0, 1.0);
+      return;
+    }
+    vec2 topUV = vec2(v_uv.x, v_uv.y);
+    vec2 bottomUV = vec2(v_uv.x, v_uv.y + 0.5);
     vec4 topCol = compositeProcessed(topUV);
     vec4 bottomCol = compositeProcessed(bottomUV);
     float alpha = clamp(u_halfOverlayAlpha, 0.0, 1.0);

@@ -57,7 +57,7 @@ export interface RendererState {
   peakCollisionsOnly?  : boolean;
   webglDebugMode?      : number;  // WebGL-only: 0=normal, 1=luminance, 2=rotation UV, 3=mask
   viewportQuarterZoom? : boolean; // Magnify bottom-left quarter of compositor output to full canvas
-  viewportHalfOverlay? : boolean; // Alpha-blend top and bottom halves stretched to full canvas
+  viewportHalfOverlay? : boolean; // Alpha-blend top and bottom halves at native half height
   halfOverlayAlpha?    : number;  // 0–1 opacity for bottom half overlay, default 0.5
 }
 
@@ -184,6 +184,7 @@ export class WebGPURenderer {
   private compositorBGL       : GPUBindGroupLayout;
   private compositorSampler   : GPUSampler;
   private compositorUniformBuf: GPUBuffer;
+  private previewCompositorUniformBuf: GPUBuffer;
 
   // ── Tracer View (full-res centered inspection of persistence buffers) ──────
   /** Pipeline + resources for the dedicated "Show Full Tracer" display path.
@@ -253,6 +254,14 @@ export class WebGPURenderer {
     textureA: null,
     textureB: null,
   }));
+  private previewCompositorBindGroupCache: TexturePairBindGroupCacheEntry[] = [0, 1].map(() => ({
+    bindGroup: null,
+    layer0: null,
+    layer1: null,
+    layer2: null,
+    textureA: null,
+    textureB: null,
+  }));
   private tracerViewBindGroupCache: TexturePairBindGroupCacheEntry[] = [0, 1].map(() => ({
     bindGroup: null,
     layer0: null,
@@ -304,7 +313,7 @@ export class WebGPURenderer {
     );
 
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
-    for (const src of fragSources) this.layerPipelines.push(this.pipelines.createLayerPipeline(src));
+    for (const src of fragSources) this.layerPipelines.push(this.pipelines.createLayerPipeline(src, this.sampleCount));
 
     // Sampler used for all intermediate layer + persistence textures.
     // These are same-resolution render targets (no mips), so mipmapFilter is irrelevant.
@@ -326,6 +335,10 @@ export class WebGPURenderer {
     this.compositorBGL      = this.pipelines.compositorBGL;
     this.compositorPipeline = this.pipelines.createCompositorPipeline();
     this.compositorUniformBuf = device.createBuffer({
+      size: 64,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.previewCompositorUniformBuf = device.createBuffer({
       size: 64,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
@@ -390,6 +403,8 @@ export class WebGPURenderer {
   private compositorUniformData = new ArrayBuffer(64);
   private compositorF32 = new Float32Array(this.compositorUniformData);
   private compositorU32 = new Uint32Array(this.compositorUniformData);
+  private previewCompositorUniformData = new ArrayBuffer(64);
+  private previewCompositorU32 = new Uint32Array(this.previewCompositorUniformData);
 
   // Tracer view uniform
   private tracerViewUniformData = new ArrayBuffer(80);
@@ -418,6 +433,7 @@ export class WebGPURenderer {
       this.persistBelowBindGroupCache,
       this.persistAboveBindGroupCache,
       this.compositorBindGroupCache,
+      this.previewCompositorBindGroupCache,
       this.tracerViewBindGroupCache,
     ]) {
       for (const entry of entries) {
@@ -608,7 +624,7 @@ export class WebGPURenderer {
     // Rebuild layer pipelines with new sample count
     this.layerPipelines = [];
     for (const src of [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow]) {
-      this.layerPipelines.push(this.pipelines.createLayerPipeline(src));
+      this.layerPipelines.push(this.pipelines.createLayerPipeline(src, this.sampleCount));
     }
 
     // Force texture recreation
@@ -897,6 +913,42 @@ export class WebGPURenderer {
     return bindGroup;
   }
 
+  private getPreviewCompositorBindGroup(): GPUBindGroup {
+    const entry = this.previewCompositorBindGroupCache[this.persistPingPong];
+    const persistBelow = this.persistBelowTextures[this.persistPingPong]!;
+    const persistAbove = this.persistAboveTextures[this.persistPingPong]!;
+    if (
+      entry.bindGroup &&
+      entry.layer0 === this.layerTextures[0] &&
+      entry.layer1 === this.layerTextures[1] &&
+      entry.layer2 === this.layerTextures[2] &&
+      entry.textureA === persistBelow &&
+      entry.textureB === persistAbove
+    ) {
+      return entry.bindGroup;
+    }
+
+    const bindGroup = this.device.createBindGroup({
+      layout : this.compositorBGL,
+      entries: [
+        { binding: 0, resource: this.compositorSampler },
+        { binding: 1, resource: this.layerTextures[0].createView() },
+        { binding: 2, resource: this.layerTextures[1].createView() },
+        { binding: 3, resource: this.layerTextures[2].createView() },
+        { binding: 4, resource: persistBelow.createView() },
+        { binding: 5, resource: persistAbove.createView() },
+        { binding: 6, resource: { buffer: this.previewCompositorUniformBuf } },
+      ],
+    });
+    entry.bindGroup = bindGroup;
+    entry.layer0 = this.layerTextures[0];
+    entry.layer1 = this.layerTextures[1];
+    entry.layer2 = this.layerTextures[2];
+    entry.textureA = persistBelow;
+    entry.textureB = persistAbove;
+    return bindGroup;
+  }
+
   private getTracerViewBindGroup(): GPUBindGroup {
     const entry = this.tracerViewBindGroupCache[this.persistPingPong];
     const persistAbove = this.persistAboveTextures[this.persistPingPong]!;
@@ -1103,8 +1155,15 @@ export class WebGPURenderer {
     this.compositorU32[14] = state.viewportHalfOverlay ? 1 : 0;
 
     this.device.queue.writeBuffer(this.compositorUniformBuf, 0, this.compositorUniformData);
+    // Thumbnail preview uses a separate uniform buffer so viewport effects on the
+    // main canvas are not clobbered when the preview pass runs in the same submit.
+    new Uint8Array(this.previewCompositorUniformData).set(new Uint8Array(this.compositorUniformData));
+    this.previewCompositorU32[12] = 0;
+    this.previewCompositorU32[14] = 0;
+    this.device.queue.writeBuffer(this.previewCompositorUniformBuf, 0, this.previewCompositorUniformData);
 
     const compBG = this.getCompositorBindGroup();
+    const previewCompBG = this.getPreviewCompositorBindGroup();
 
     // ── Final output to main canvas ─────────────────────────────────────────
     // Two paths:
@@ -1316,16 +1375,7 @@ export class WebGPURenderer {
     if (this.previewCaptureQueued && this.previewTexture && this.previewStagingBuffer && this.previewReadCallback) {
       const sz = WebGPURenderer.PREVIEW_SIZE;
 
-      // Thumbnail preview always shows the full compositor frame, not viewport effects.
-      if (state.viewportQuarterZoom || state.viewportHalfOverlay) {
-        this.compositorU32[12] = 0;
-        this.compositorU32[14] = 0;
-        this.device.queue.writeBuffer(this.compositorUniformBuf, 0, this.compositorUniformData);
-      }
-
-      // Render the same compositor output into the small preview texture.
-      // The compositor bind group (compBG) and pipeline are resolution-agnostic,
-      // so they work correctly at any output size.
+      // Render the full compositor frame into the small preview texture.
       const previewPass = enc.beginRenderPass({
         colorAttachments: [{
           view      : this.previewTexture.createView(),
@@ -1335,7 +1385,7 @@ export class WebGPURenderer {
         }],
       });
       previewPass.setPipeline(this.compositorPipeline);
-      previewPass.setBindGroup(0, compBG);
+      previewPass.setBindGroup(0, previewCompBG);
       previewPass.draw(6);
       previewPass.end();
 
@@ -1494,6 +1544,7 @@ export class WebGPURenderer {
     this.persistAboveUniformBuf.destroy();
     this.persistBelowUniformBuf.destroy();
     this.compositorUniformBuf.destroy();
+    this.previewCompositorUniformBuf.destroy();
     this.tracerViewUniformBuf.destroy();
     this.displayUniformBuf.destroy();
     this.heatmapUniformBuf.destroy();
