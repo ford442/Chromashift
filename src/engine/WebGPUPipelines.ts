@@ -279,7 +279,7 @@ export class WebGPUPipelines {
     });
   }
 
-  public createLayerPipeline(fragmentSource: string): LayerPipeline {
+  public createLayerPipeline(fragmentSource: string, sampleCount = 1): LayerPipeline {
 
     const device = this.device;
 
@@ -302,7 +302,7 @@ export class WebGPUPipelines {
         targets    : [{ format: this.internalFormat }],
       },
       primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
+      multisample: { count: sampleCount },
     });
 
     const rotationBuffer = device.createBuffer({
