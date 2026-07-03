@@ -879,20 +879,19 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let zoomedCol = compositeAt(viewportSampleUV(uv));
   if (cu.viewportHalfOverlay == 1u) {
     // 1:1 half-height overlay: top and bottom source halves blend in the upper
-    // half of the canvas without vertical stretching.
-    if (uv.y > 0.5) {
-      return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
-    let topUV = vec2<f32>(uv.x, uv.y);
-    let bottomUV = vec2<f32>(uv.x, uv.y + 0.5);
-    let topCol = compositeAt(topUV);
-    let bottomCol = compositeAt(bottomUV);
+    // half of the canvas without vertical stretching. Avoid branching on uv
+    // before textureSample — use step() to mask the lower half instead.
+    let topCol = compositeAt(vec2<f32>(uv.x, uv.y));
+    let bottomCol = compositeAt(vec2<f32>(uv.x, uv.y + 0.5));
     let alpha = clamp(cu.halfOverlayAlpha, 0.0, 1.0);
-    return vec4<f32>(mix(topCol.rgb, bottomCol.rgb, alpha), 1.0);
+    let overlayRgb = mix(topCol.rgb, bottomCol.rgb, alpha);
+    let inUpperHalf = step(uv.y, 0.5);
+    return vec4<f32>(overlayRgb * inUpperHalf, 1.0);
   }
-  return compositeAt(viewportSampleUV(uv));
+  return zoomedCol;
 }
 `;
 
