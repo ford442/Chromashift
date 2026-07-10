@@ -1,3 +1,4 @@
+import type { ExportPanelProps } from './ExportPanel';
 import type { CollisionStats } from '../../engine/types/RendererState';
 import type { RendererBackend } from '../../engine/RendererTypes';
 
@@ -11,6 +12,7 @@ export type OverlaySectionId =
   | 'tracer'
   | 'upscale'
   | 'diagnostics'
+  | 'export'
   | 'viewport';
 
 export interface PlayPanelProps {
@@ -152,4 +154,5 @@ export type OverlayProps =
   TracerPanelProps &
   DiagnosticsPanelProps &
   UpscalePanelProps &
+  ExportPanelProps &
   ViewportPanelProps;

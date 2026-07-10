@@ -4,6 +4,7 @@ import type { CollisionStats } from '../engine/types/RendererState';
 import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';
+import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { ReferenceBlendMode } from '../components/overlay/types';
 
 export type LayerTriple<T> = [T, T, T];
@@ -77,6 +78,16 @@ export interface EngineSlice {
   avgLuminance: number;
 }
 
+export interface VideoExportSettings {
+  durationSec: number;
+  fps: number;
+  resolutionScale: number;
+  includeTracers: boolean;
+  passMode: ExportPassMode;
+  filename: string;
+  usePresetAngles: boolean;
+}
+
 export interface UiSlice {
   isAutoPlayActive: boolean;
   imageChangeInterval: number;
@@ -84,6 +95,9 @@ export interface UiSlice {
   referenceBlendMode: ReferenceBlendMode;
   referenceOpacity: number;
   exportingTracer: boolean;
+  exportingVideo: boolean;
+  videoExportProgress: number;
+  videoExportSettings: VideoExportSettings;
   upscaleModel: string;
   upscaleBusy: boolean;
   upscaleProgress: number;

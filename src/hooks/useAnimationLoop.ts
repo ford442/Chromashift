@@ -1,66 +1,17 @@
 import { useEffect } from 'react';
 import { WebGPURenderer } from '../engine/WebGPURenderer';
-import { MAIN_VIEW_MODES } from '../engine/viewModes';
-import type { RendererState } from '../engine/types/RendererState';
+import { buildRendererState } from '../engine/buildRendererState';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 const PREVIEW_TARGET_LIVE = 1;
 const PREVIEW_TARGET_SEPARATED = 2;
-
-function buildRendererState(store: ChromashiftStore, angles: [number, number, number]): RendererState {
-  const { state } = store;
-  const { layers, tracers, output, engine } = state;
-  const isViewingTracer = output.mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER;
-  const inspect = output.tracerInspect;
-
-  return {
-    layers: [
-      { angleDeg: angles[0], flipX: false, flipY: false },
-      { angleDeg: angles[1], flipX: false, flipY: true },
-      { angleDeg: angles[2], flipX: false, flipY: false },
-    ],
-    avgLuminance: engine.avgLuminance,
-    layerOpacity: layers.opacity,
-    layerOpacities: layers.opacities,
-    layerScale: layers.scale,
-    tracerScale: tracers.scale,
-    tracerAboveIntensity: tracers.aboveIntensity,
-    tracerBelowIntensity: tracers.belowIntensity,
-    tracerAboveDuration: tracers.aboveDuration * (60 / engine.fps),
-    tracerBelowDuration: tracers.belowDuration * (60 / engine.fps),
-    tracerMode: tracers.mode,
-    colorMode: layers.colorMode,
-    sobelEnabled: layers.sobelEnabled,
-    softCropEnabled: layers.softCropEnabled,
-    layerBlendMode: tracers.layerBlendMode,
-    tracerBlendMode: tracers.tracerBlendMode,
-    outputMode: output.outputMode,
-    paused: engine.paused,
-    mainViewMode: output.mainViewMode,
-    showTracerView: isViewingTracer,
-    tracerInspectZoom: inspect.zoom,
-    tracerInspectPanX: inspect.pan.x,
-    tracerInspectPanY: inspect.pan.y,
-    tracerInspectHeatmap: inspect.heatmap,
-    tracerInspectExposure: inspect.exposure,
-    tracerInspectTonemap: inspect.tonemap,
-    tracerInspectShowLayers: inspect.showLayers,
-    diagnosticsMode: output.diagnosticsMode,
-    diagnosticsOpacity: output.diagnosticsOpacity,
-    stampBoost: output.stampBoost,
-    peakCollisionsOnly: output.peakCollisionsOnly,
-    webglDebugMode: output.webglDebugMode,
-    viewportQuarterZoom: output.viewportQuarterZoom,
-    viewportHalfOverlay: output.viewportHalfOverlay,
-    halfOverlayAlpha: 0.5,
-  };
-}
 
 export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore): void {
   const { state, actions } = store;
   const gpuReady = state.engine.gpuReady;
   const frameRate = state.engine.fps;
   const layerExtensions = state.layers.extensions;
+  const exportingVideo = state.ui.exportingVideo;
   const {
     animAnglesRef,
     lastAngleSyncRef,
@@ -76,7 +27,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
   } = refs;
 
   useEffect(() => {
-    if (!gpuReady) return;
+    if (!gpuReady || exportingVideo) return;
 
     const msPerFrame = 1000 / frameRate;
     let last = performance.now();
@@ -84,6 +35,11 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
 
     function loop(now: number) {
       const current = renderStateRef.current;
+      if (current.ui.exportingVideo) {
+        animFrame = requestAnimationFrame(loop);
+        return;
+      }
+
       const delta = now - last;
       if (delta >= msPerFrame) {
         last = now - (delta % msPerFrame);
@@ -100,7 +56,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
           actions.setLayerAngles(angles);
         }
 
-        rendererRef.current?.render(buildRendererState(store, angles));
+        rendererRef.current?.render(buildRendererState(current, angles));
 
         if (now - lastRenderMetricSyncRef.current > 500) {
           lastRenderMetricSyncRef.current = now;
@@ -167,6 +123,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
     gpuReady,
     frameRate,
     layerExtensions,
+    exportingVideo,
     animAnglesRef,
     lastAngleSyncRef,
     lastRenderMetricSyncRef,

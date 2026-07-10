@@ -15,6 +15,8 @@ import {
   type GpuRuntimeError,
   type WebGpuSession,
 } from '../engine/gpuBootstrap';
+import { GpuImageAnalysis } from '../engine/compute/GpuImageAnalysis';
+import { publishGpuComputeBreadcrumbs } from '../engine/compute/computeSupport';
 
 export interface UseAppWebGPUInitProps {
   previewTracerRef: MutableRefObject<HTMLCanvasElement | null>;
@@ -22,6 +24,7 @@ export interface UseAppWebGPUInitProps {
   setGpuError: (err: GpuRuntimeError | null) => void;
   deviceRef: MutableRefObject<GPUDevice | null>;
   webGpuSessionRef: MutableRefObject<WebGpuSession | null>;
+  gpuImageAnalysisRef: MutableRefObject<GpuImageAnalysis | null>;
   rendererRef: MutableRefObject<ChromashiftRenderer | null>;
   textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>;
   setRendererBackend: (backend: RendererBackend) => void;
@@ -33,7 +36,11 @@ export interface UseAppWebGPUInitProps {
   setImageAspect: (aspect: number) => void;
   setAvgLuminance: (lum: number) => void;
   clearClassificationMask: () => void;
-  generateClassificationMaskTexture: (img: HTMLImageElement, avgLumValue: number) => void;
+  generateClassificationMaskTexture: (
+    img: HTMLImageElement,
+    avgLumValue: number,
+    sourceTexture?: GPUTexture | null,
+  ) => Promise<number>;
   engineModeRef: MutableRefObject<string>;
   previewOriginalRef: MutableRefObject<HTMLCanvasElement | null>;
   setGpuReady: (ready: boolean) => void;
@@ -50,6 +57,7 @@ interface InitResources {
   localTextureManager: ChromashiftTextureManager | null;
   localDevice: GPUDevice | null;
   localSession: WebGpuSession | null;
+  localGpuAnalysis: GpuImageAnalysis | null;
   backend: RendererBackend;
 }
 
@@ -100,17 +108,20 @@ function syncLiveResources(
   liveResources.localTextureManager = resources.localTextureManager;
   liveResources.localDevice = resources.localDevice;
   liveResources.localSession = resources.localSession;
+  liveResources.localGpuAnalysis = resources.localGpuAnalysis;
   liveResources.backend = resources.backend;
 }
 
 function destroyInitResources(resources: InitResources, canvas: HTMLCanvasElement | null): void {
   resources.localRenderer?.destroy();
   resources.localTextureManager?.destroy();
+  resources.localGpuAnalysis?.destroy();
   resources.localSession?.detach();
   resources.localDevice?.destroy();
 
   resources.localRenderer = null;
   resources.localTextureManager = null;
+  resources.localGpuAnalysis = null;
   resources.localSession = null;
   resources.localDevice = null;
 
@@ -126,6 +137,7 @@ export function useAppWebGPUInit({
   setGpuError,
   deviceRef,
   webGpuSessionRef,
+  gpuImageAnalysisRef,
   rendererRef,
   textureManagerRef,
   setRendererBackend,
@@ -158,6 +170,7 @@ export function useAppWebGPUInit({
         localTextureManager: null,
         localDevice: null,
         localSession: null,
+        localGpuAnalysis: null,
         backend: getRendererPreference(),
       };
       let fallbackReason: string | null = null;
@@ -166,6 +179,7 @@ export function useAppWebGPUInit({
         if (!isCancelled(cancelToken, signal)) return false;
         deviceRef.current = null;
         webGpuSessionRef.current = null;
+        gpuImageAnalysisRef.current = null;
         rendererRef.current = null;
         textureManagerRef.current = null;
         destroyInitResources(resources, canvas);
@@ -236,6 +250,8 @@ export function useAppWebGPUInit({
           resources.localTextureManager = created.textureManager;
           resources.localDevice = created.device;
           resources.localSession = created.session;
+          resources.localGpuAnalysis = new GpuImageAnalysis(created.device);
+          publishGpuComputeBreadcrumbs(resources.localGpuAnalysis.support);
         }
       } catch (primaryError) {
         if (isAbortError(primaryError) || bailIfCancelled()) return;
@@ -256,6 +272,7 @@ export function useAppWebGPUInit({
 
       deviceRef.current = resources.localDevice;
       webGpuSessionRef.current = resources.localSession;
+      gpuImageAnalysisRef.current = resources.localGpuAnalysis;
       rendererRef.current = resources.localRenderer;
       textureManagerRef.current = resources.localTextureManager;
       setRendererBackend(resources.backend);
@@ -278,7 +295,7 @@ export function useAppWebGPUInit({
 
         if (specificUrl) {
           try {
-            const tex = await localTextureManager.loadTexture(specificUrl);
+            const tex = await localTextureManager.loadTexture(specificUrl) as GPUTexture;
             if (bailIfCancelled()) return;
 
             localRenderer.setTexture(tex);
@@ -300,17 +317,17 @@ export function useAppWebGPUInit({
               if (img.height > 0) setImageAspect(img.width / img.height);
               let avgLum = 128;
               try {
-                avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
-              } catch (e) {
-                console.warn('CORS?', e);
-              }
-              setAvgLuminance(Math.round(avgLum));
-              try {
-                generateClassificationMaskTexture(img, avgLum);
+                avgLum = await generateClassificationMaskTexture(img, 128, tex);
               } catch (e) {
                 console.warn('Could not generate classification mask:', e);
                 clearClassificationMask();
+                try {
+                  avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
+                } catch (lumError) {
+                  console.warn('CORS?', lumError);
+                }
               }
+              setAvgLuminance(Math.round(avgLum));
               const previewOrig = previewOriginalRef.current;
               if (previewOrig) {
                 const ctx = previewOrig.getContext('2d');
@@ -348,7 +365,7 @@ export function useAppWebGPUInit({
 
       if (bailIfCancelled()) return;
       setGpuReady(true);
-  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, deviceRef, webGpuSessionRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef]);
+  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, deviceRef, webGpuSessionRef, gpuImageAnalysisRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef]);
 
   useEffect(() => {
     const canvas = previewTracerRef.current;
@@ -359,6 +376,7 @@ export function useAppWebGPUInit({
       localTextureManager: null,
       localDevice: null,
       localSession: null,
+      localGpuAnalysis: null,
       backend: getRendererPreference(),
     };
 
@@ -373,6 +391,7 @@ export function useAppWebGPUInit({
 
       deviceRef.current = null;
       webGpuSessionRef.current = null;
+      gpuImageAnalysisRef.current = null;
       rendererRef.current = null;
       textureManagerRef.current = null;
 
@@ -382,5 +401,5 @@ export function useAppWebGPUInit({
 
       destroyInitResources(liveResources, canvas);
     };
-  }, [init, clearClassificationMask, deviceRef, ownedObjectUrlsRef, previewTracerRef, rendererRef, setGpuError, textureManagerRef, webGpuSessionRef]);
+  }, [init, clearClassificationMask, deviceRef, gpuImageAnalysisRef, ownedObjectUrlsRef, previewTracerRef, rendererRef, setGpuError, textureManagerRef, webGpuSessionRef]);
 }

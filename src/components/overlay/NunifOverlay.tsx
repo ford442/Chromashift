@@ -1,5 +1,6 @@
 import { CollapsibleSection } from './CollapsibleSection';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
+import { ExportPanel } from './ExportPanel';
 import { LayerPanel } from './LayerPanel';
 import { PlayPanel } from './PlayPanel';
 import { RendererPanel } from './RendererPanel';
@@ -87,6 +88,16 @@ export function NunifOverlay(props: OverlayProps) {
         hint="Collision stats, heatmap, tracer export"
       >
         <DiagnosticsPanel {...props} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        id="export"
+        title="🎬 Video Export"
+        open={sections.export}
+        onToggle={toggleSection}
+        hint="Offline composite render to WebM/MP4"
+      >
+        <ExportPanel {...props} />
       </CollapsibleSection>
 
       <CollapsibleSection

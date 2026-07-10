@@ -56,6 +56,10 @@ src/
     ├── WebGLRenderer.ts      # WebGL2 fallback/reference implementation with debug modes
     └── WebGPURenderer.ts     # 5-pass GPU renderer, uniform buffer management,
                               # MSAA toggle, dual ping-pong persistence buffers
+    └── compute/
+        ├── GpuImageAnalysis.ts   # WebGPU histogram + r8uint classification mask
+        ├── computeSupport.ts     # Feature detection + window breadcrumbs
+        └── wgslSnippets.ts       # Shared WGSL threshold helpers (C++ parity)
 ```
 
 ### Renderer Selection / WebGL2 Fallback
@@ -92,6 +96,24 @@ For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when brows
    - 1 persistence pipeline that reads the 3 layer textures + previous tracer texture.
    - 1 compositor pipeline that blends tracers + live layers and writes to the swap-chain.
 4. Each frame, `renderer.render(state)` receives the shared `RendererState`. WebGPU encodes all passes into a single command buffer; WebGL runs equivalent GLSL/FBO passes for debugging/reference output.
+
+### GPU Image Analysis (Compute)
+
+Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K) images. Implemented in `src/engine/compute/GpuImageAnalysis.ts`:
+
+1. **Histogram pass** — BT.709 luminance per pixel → 256-bin atomic histogram on GPU; average luminance derived from the histogram (256-entry readback only).
+2. **Classification pass** — writes an `r8uint` band-index mask texture (thresholds in `wgslSnippets.ts`, matching `chromashift_engine.cpp` / `bandClassification.ts`).
+3. **Layer binding** — mask is fed into existing layer pipelines via `setClassificationMaskTexture()` when `colorMode === 0` (Original CR0P fixed).
+
+**Selection order** (`useClassificationMask.ts`):
+
+1. WebGPU compute (preferred when `renderer.backend === 'webgpu'` and `GpuImageAnalysis.isSupported()`).
+2. WASM `computeClassificationMask` (when Engine mode = WASM).
+3. TypeScript `classifyImageMaskWith` fallback.
+
+**Feature detection**: `detectGpuComputeSupport(device)` gates on adapter `maxTextureDimension2D`. Breadcrumbs: `window.gpuComputeAvailable`, `window.gpuComputeReason`. WebGL mode skips compute entirely.
+
+**Parity tests**: `src/engine/compute/goldenMask.test.ts` validates TS/WASM mask output against `bandClassification.ts` (same thresholds as C++). WGSL compute uses identical `classify_band()` logic.
 
 ### WebGPU MSAA
 
@@ -132,7 +154,7 @@ Then each shader checks `rgb` against the original cr0p thresholds and outputs f
 | Border yellow | `125 < rgb ≤ 128` | 2 | `(255, 255, 0)` |
 | Dark / grey | `rgb ≤ 126` | All | `(grey-(rgb-128))/255` |
 
-The `avgLuminance` uniform is computed automatically from each loaded image via `computeAverageLuminance()` (ITU-R BT.709 average over all pixels). Users can still override it with the UI slider.
+The `avgLuminance` uniform is computed automatically when an image loads — preferring the GPU histogram when compute is available, otherwise `computeAverageLuminanceWith()` (WASM or TypeScript). Users can still override it with the UI slider.
 
 ### Persistence / Tracer System
 

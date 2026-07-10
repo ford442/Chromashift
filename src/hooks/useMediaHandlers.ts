@@ -11,7 +11,11 @@ interface MediaHandlersOptions {
   refs: ChromashiftRefs;
   store: ChromashiftStore;
   clearClassificationMask: () => void;
-  generateClassificationMaskTexture: (image: HTMLImageElement, avgLum: number) => void;
+  generateClassificationMaskTexture: (
+    image: HTMLImageElement,
+    avgLum: number,
+    sourceTexture?: GPUTexture | null,
+  ) => Promise<number>;
 }
 
 export function useMediaHandlers({
@@ -65,19 +69,21 @@ export function useMediaHandlers({
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         if (img.height > 0) actions.setImageAspect(img.width / img.height);
-        let avgLum = 128;
-        try {
-          avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
-        } catch (e) {
-          console.warn('CORS?', e);
-        }
-        actions.setAvgLuminance(Math.round(avgLum));
-        try {
-          generateClassificationMaskTexture(img, avgLum);
-        } catch (e) {
-          console.warn('Could not generate classification mask:', e);
-          clearClassificationMask();
-        }
+        void (async () => {
+          let avgLum = 128;
+          try {
+            avgLum = await generateClassificationMaskTexture(img, 128, tex as GPUTexture);
+          } catch (e) {
+            console.warn('Could not generate classification mask:', e);
+            clearClassificationMask();
+            try {
+              avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
+            } catch (lumError) {
+              console.warn('CORS?', lumError);
+            }
+          }
+          actions.setAvgLuminance(Math.round(avgLum));
+        })();
         const previewOrig = previewOriginalRef.current;
         if (previewOrig) {
           const ctx = previewOrig.getContext('2d');

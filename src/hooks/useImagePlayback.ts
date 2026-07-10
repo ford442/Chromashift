@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import {
   computeAverageLuminanceWith,
-  isWasmReady,
 } from '../engine/WasmEngine';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
@@ -9,7 +8,11 @@ interface ImagePlaybackOptions {
   refs: ChromashiftRefs;
   store: ChromashiftStore;
   clearClassificationMask: () => void;
-  generateClassificationMaskTexture: (image: HTMLImageElement, avgLum: number) => void;
+  generateClassificationMaskTexture: (
+    image: HTMLImageElement,
+    avgLum: number,
+    sourceTexture?: GPUTexture | null,
+  ) => Promise<number>;
 }
 
 export function useImagePlayback({
@@ -51,19 +54,25 @@ export function useImagePlayback({
           if (gen !== loadGenRef.current) return;
           if (img.height > 0) actions.setImageAspect(img.width / img.height);
 
-          let avgLum = 128;
-          try {
-            avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
-          } catch (e) {
-            console.warn('Could not compute average luminance (CORS?):', e);
-          }
-          actions.setAvgLuminance(Math.round(avgLum));
-          try {
-            generateClassificationMaskTexture(img, avgLum);
-          } catch (e) {
-            console.warn('Could not generate classification mask:', e);
-            clearClassificationMask();
-          }
+          void (async () => {
+            let avgLum = 128;
+            try {
+              avgLum = await generateClassificationMaskTexture(
+                img,
+                128,
+                tex as GPUTexture,
+              );
+            } catch (e) {
+              console.warn('Could not generate classification mask:', e);
+              clearClassificationMask();
+              try {
+                avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
+              } catch (lumError) {
+                console.warn('Could not compute average luminance (CORS?):', lumError);
+              }
+            }
+            actions.setAvgLuminance(Math.round(avgLum));
+          })();
 
           const ctx = previewOrig.getContext('2d');
           if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
@@ -88,40 +97,37 @@ export function useImagePlayback({
   ]);
 
   useEffect(() => {
-    if (!ui.isAutoPlayActive || engine.paused || media.imageList.length === 0) return;
+    if (!ui.isAutoPlayActive || engine.paused || ui.exportingVideo || media.imageList.length === 0) return;
     const interval = setInterval(() => {
       selectSourceIndex(Math.floor(Math.random() * media.imageList.length));
     }, ui.imageChangeInterval * 1000);
     return () => clearInterval(interval);
-  }, [ui.isAutoPlayActive, engine.paused, ui.imageChangeInterval, media.imageList.length, selectSourceIndex]);
+  }, [ui.isAutoPlayActive, engine.paused, ui.exportingVideo, ui.imageChangeInterval, media.imageList.length, selectSourceIndex]);
 
   useEffect(() => {
     if (!engine.gpuReady || media.imageList.length === 0) return;
-    if (engine.engineMode !== 'wasm' || !isWasmReady()) {
-      clearClassificationMask();
-      return;
-    }
     const activeImage = media.imageList[media.currentIndex];
     if (!activeImage) return;
     const url = activeImage.url;
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      try {
-        generateClassificationMaskTexture(img, engine.avgLuminance);
-      } catch (e) {
-        console.warn('Could not refresh classification mask:', e);
-        clearClassificationMask();
-      }
-    };
-    img.onerror = () => clearClassificationMask();
-    img.src = url;
+
+    textureManagerRef.current?.loadTexture(url).then((tex) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        void generateClassificationMaskTexture(img, engine.avgLuminance, tex as GPUTexture).catch((e) => {
+          console.warn('Could not refresh classification mask:', e);
+          clearClassificationMask();
+        });
+      };
+      img.onerror = () => clearClassificationMask();
+      img.src = url;
+    }).catch(() => clearClassificationMask());
   }, [
     engine.gpuReady,
     media.imageList,
     media.currentIndex,
-    engine.engineMode,
     engine.avgLuminance,
+    textureManagerRef,
     clearClassificationMask,
     generateClassificationMaskTexture,
   ]);

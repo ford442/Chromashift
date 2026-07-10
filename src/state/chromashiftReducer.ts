@@ -29,6 +29,7 @@ export type ChromashiftAction =
   | { type: 'output/resetInspectView' }
   | { type: 'engine/patch'; patch: Partial<EngineSlice> }
   | { type: 'ui/patch'; patch: Partial<UiSlice> }
+  | { type: 'ui/patchVideoExport'; patch: Partial<import('./types').VideoExportSettings> }
   | { type: 'ui/togglePaused' }
   | { type: 'ui/toggleImageStrip' }
   | { type: 'ui/toggleTracerHeatmap' }
@@ -110,6 +111,15 @@ export function chromashiftReducer(
 
     case 'ui/patch':
       return { ...state, ui: { ...state.ui, ...action.patch } };
+
+    case 'ui/patchVideoExport':
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          videoExportSettings: { ...state.ui.videoExportSettings, ...action.patch },
+        },
+      };
 
     case 'ui/togglePaused':
       return { ...state, engine: { ...state.engine, paused: !state.engine.paused } };

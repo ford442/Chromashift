@@ -8,6 +8,7 @@ const DEFAULT_OPEN: Record<OverlaySectionId, boolean> = {
   tracer: true,
   upscale: false,
   diagnostics: false,
+  export: true,
   viewport: false,
 };
 

@@ -17,6 +17,19 @@ interface HandlerBundle {
   handleUpscaleSource: () => Promise<void>;
   handleUpscaleOutput: () => Promise<void>;
   handleExportTracer: () => Promise<void>;
+  exportingVideo: boolean;
+  videoExportProgress: number;
+  videoExportSettings: import('../state/types').VideoExportSettings;
+  codecSupport: import('../engine/videoExport/videoCodecs').VideoCodecSupport;
+  handleExportVideo: () => Promise<void>;
+  handleCancelVideoExport: () => void;
+  onVideoExportDurationChange: (seconds: number) => void;
+  onVideoExportFpsChange: (fps: number) => void;
+  onVideoExportScaleChange: (scale: number) => void;
+  onVideoExportIncludeTracersChange: (include: boolean) => void;
+  onVideoExportPassModeChange: (mode: import('../engine/types/RendererContracts').ExportPassMode) => void;
+  onVideoExportFilenameChange: (filename: string) => void;
+  onVideoExportUsePresetAnglesChange: (usePreset: boolean) => void;
 }
 
 export function useAppUiProps(
@@ -92,6 +105,19 @@ export function useAppUiProps(
     handleResetInspectView: actions.resetInspectView,
     exportingTracer: ui.exportingTracer,
     handleExportTracer: handlers.handleExportTracer,
+    exportingVideo: handlers.exportingVideo,
+    videoExportProgress: handlers.videoExportProgress,
+    videoExportSettings: handlers.videoExportSettings,
+    codecSupport: handlers.codecSupport,
+    handleExportVideo: handlers.handleExportVideo,
+    handleCancelVideoExport: handlers.handleCancelVideoExport,
+    onVideoExportDurationChange: handlers.onVideoExportDurationChange,
+    onVideoExportFpsChange: handlers.onVideoExportFpsChange,
+    onVideoExportScaleChange: handlers.onVideoExportScaleChange,
+    onVideoExportIncludeTracersChange: handlers.onVideoExportIncludeTracersChange,
+    onVideoExportPassModeChange: handlers.onVideoExportPassModeChange,
+    onVideoExportFilenameChange: handlers.onVideoExportFilenameChange,
+    onVideoExportUsePresetAnglesChange: handlers.onVideoExportUsePresetAnglesChange,
     layerAngles: layers.angles,
     handleAngleChange: handlers.handleAngleChange,
     layerExtensions: layers.extensions,

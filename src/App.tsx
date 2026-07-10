@@ -19,6 +19,7 @@ import {
   useTracerExport,
   useUpscalerHandlers,
 } from './hooks/useMediaHandlers';
+import { useVideoExport } from './hooks/useVideoExport';
 import { useTracerInspectInteraction } from './hooks/useTracerInspectInteraction';
 
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
     setGpuError: actions.setGpuError,
     deviceRef: refs.deviceRef,
     webGpuSessionRef: refs.webGpuSessionRef,
+    gpuImageAnalysisRef: refs.gpuImageAnalysisRef,
     rendererRef: refs.rendererRef,
     textureManagerRef: refs.textureManagerRef,
     setRendererBackend: actions.setRendererBackend,
@@ -74,6 +76,7 @@ export default function App() {
     clearClassificationMask,
   );
   const { handleExportTracer } = useTracerExport(refs, store);
+  const videoExport = useVideoExport(refs, store);
 
   useAppKeyboardShortcuts(refs, store, mediaHandlers.swapSourceAndReference);
 
@@ -91,6 +94,7 @@ export default function App() {
     handleUpscaleSource,
     handleUpscaleOutput,
     handleExportTracer,
+    ...videoExport,
   });
 
   return <AppUI {...uiProps} />;

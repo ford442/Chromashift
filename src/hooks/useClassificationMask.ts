@@ -1,31 +1,74 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { classifyImageMaskWith, isWasmReady } from '../engine/WasmEngine';
 import type { ChromashiftRefs } from './useChromashiftStore';
 
+type MaskOwner = 'gpu-analysis' | 'wasm-upload' | null;
+
 export function useClassificationMask(refs: ChromashiftRefs) {
-  const { rendererRef, maskTextureRef, engineModeRef, deviceRef } = refs;
+  const {
+    rendererRef,
+    maskTextureRef,
+    engineModeRef,
+    deviceRef,
+    gpuImageAnalysisRef,
+  } = refs;
+  const maskOwnerRef = useRef<MaskOwner>(null);
 
   const clearClassificationMask = useCallback(() => {
     rendererRef.current?.setClassificationMaskTexture(null);
-    maskTextureRef.current?.destroy();
+    if (maskOwnerRef.current === 'wasm-upload') {
+      maskTextureRef.current?.destroy();
+    }
     maskTextureRef.current = null;
+    maskOwnerRef.current = null;
   }, [rendererRef, maskTextureRef]);
 
-  const generateClassificationMaskTexture = useCallback((image: HTMLImageElement, avgLumValue: number) => {
-    if (engineModeRef.current !== 'wasm' || !isWasmReady()) {
-      clearClassificationMask();
-      return;
+  const bindMaskTexture = useCallback((texture: GPUTexture, owner: MaskOwner) => {
+    if (maskOwnerRef.current === 'wasm-upload' && maskTextureRef.current) {
+      maskTextureRef.current.destroy();
+    }
+    maskTextureRef.current = texture;
+    maskOwnerRef.current = owner;
+    rendererRef.current?.setClassificationMaskTexture(texture);
+  }, [rendererRef, maskTextureRef]);
+
+  const generateClassificationMaskFromTexture = useCallback(async (
+    source: GPUTexture,
+    width: number,
+    height: number,
+    avgLumHint?: number,
+  ): Promise<{ avgLuminance: number; usedGpu: boolean } | null> => {
+    const renderer = rendererRef.current;
+    if (!renderer || renderer.backend !== 'webgpu') return null;
+
+    const analysis = gpuImageAnalysisRef.current;
+    if (!analysis?.isSupported() || !analysis.canAnalyze(width, height)) {
+      return null;
     }
 
+    try {
+      const result = await analysis.analyze(source, width, height, avgLumHint);
+      if (!result) return null;
+
+      bindMaskTexture(result.maskTexture, 'gpu-analysis');
+      return { avgLuminance: result.avgLuminance, usedGpu: true };
+    } catch (error) {
+      console.warn('GPU classification mask failed, falling back:', error);
+      return null;
+    }
+  }, [rendererRef, gpuImageAnalysisRef, bindMaskTexture]);
+
+  const generateClassificationMaskFromImage = useCallback((
+    image: HTMLImageElement,
+    avgLumValue: number,
+  ): boolean => {
     const device = deviceRef.current;
     const renderer = rendererRef.current;
-    if (!device || !renderer) return;
+    if (!device || !renderer || renderer.backend !== 'webgpu') return false;
 
-    const result = classifyImageMaskWith(image, avgLumValue, true);
-    if (!result) {
-      clearClassificationMask();
-      return;
-    }
+    const useWasm = engineModeRef.current === 'wasm' && isWasmReady();
+    const result = classifyImageMaskWith(image, avgLumValue, useWasm);
+    if (!result) return false;
 
     const { mask, width, height } = result;
     const texture = device.createTexture({
@@ -41,10 +84,39 @@ export function useClassificationMask(refs: ChromashiftRefs) {
       { bytesPerRow: width, rowsPerImage: height },
       [width, height, 1],
     );
-    maskTextureRef.current?.destroy();
-    maskTextureRef.current = texture;
-    renderer.setClassificationMaskTexture(texture);
-  }, [deviceRef, rendererRef, maskTextureRef, engineModeRef, clearClassificationMask]);
+    bindMaskTexture(texture, 'wasm-upload');
+    return true;
+  }, [deviceRef, rendererRef, engineModeRef, bindMaskTexture]);
 
-  return { clearClassificationMask, generateClassificationMaskTexture };
+  const generateClassificationMaskTexture = useCallback(async (
+    image: HTMLImageElement,
+    avgLumValue: number,
+    sourceTexture?: GPUTexture | null,
+  ): Promise<number> => {
+    const width = image.naturalWidth;
+    const height = image.naturalHeight;
+
+    if (sourceTexture && width > 0 && height > 0) {
+      const gpu = await generateClassificationMaskFromTexture(
+        sourceTexture,
+        width,
+        height,
+      );
+      if (gpu) return gpu.avgLuminance;
+    }
+
+    const usedCpu = generateClassificationMaskFromImage(image, avgLumValue);
+    if (!usedCpu) clearClassificationMask();
+    return avgLumValue;
+  }, [
+    generateClassificationMaskFromTexture,
+    generateClassificationMaskFromImage,
+    clearClassificationMask,
+  ]);
+
+  return {
+    clearClassificationMask,
+    generateClassificationMaskTexture,
+    generateClassificationMaskFromTexture,
+  };
 }

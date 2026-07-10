@@ -1,6 +1,6 @@
 import { MAIN_VIEW_MODES } from './viewModes';
 import type { CollisionStats, RendererState } from './types/RendererState';
-import type { ChromashiftRenderer, ExportTracerOptions, ExportTracerResult, RenderTiming } from './types/RendererContracts';
+import type { ChromashiftRenderer, ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, RenderTiming } from './types/RendererContracts';
 import { durationToDecay } from './math/decay';
 import { layerRotationUniforms } from './math/rotation';
 import type { WebGLImageTexture } from './WebGLTextureManager';
@@ -508,11 +508,94 @@ export class WebGLRenderer implements ChromashiftRenderer {
   render(state: RendererState, fps = 30): void {
     if (!this.currentTexture) return;
     const start = performance.now();
-    const gl = this.gl;
     const width = Math.max(1, this.canvas.width);
     const height = Math.max(1, this.canvas.height);
+    this.renderFrameInternal(state, width, height, fps, 'composite', null);
+    if (this.previewQueued) {
+      this.ensurePreviewTarget();
+      const globalLayerOpacity = state.layerOpacity ?? 1.0;
+      const perLayer = state.layerOpacities ?? [1, 1, 1];
+      const layerOpacities: [number, number, number] = [
+        globalLayerOpacity * perLayer[0],
+        globalLayerOpacity * perLayer[1],
+        globalLayerOpacity * perLayer[2],
+      ];
+      this.renderComposite(this.previewTarget, PREVIEW_SIZE, PREVIEW_SIZE, {
+        ...state,
+        viewportQuarterZoom: false,
+        viewportHalfOverlay: false,
+      }, layerOpacities);
+      this.readPreview();
+    }
+    if (this.statsQueued) {
+      this.ensureDiagnosticTarget();
+      const globalLayerOpacity = state.layerOpacity ?? 1.0;
+      const perLayer = state.layerOpacities ?? [1, 1, 1];
+      const layerOpacities: [number, number, number] = [
+        globalLayerOpacity * perLayer[0],
+        globalLayerOpacity * perLayer[1],
+        globalLayerOpacity * perLayer[2],
+      ];
+      this.renderComposite(this.diagnosticTarget, DIAGNOSTIC_SIZE, DIAGNOSTIC_SIZE, {
+        ...state,
+        mainViewMode: MAIN_VIEW_MODES.COINCIDENCE_HEATMAP,
+      }, layerOpacities);
+      this.readStats();
+    }
+
+    const elapsed = performance.now() - start;
+    this.lastCpuMs = elapsed;
+    this.avgCpuMs = this.avgCpuMs === 0 ? elapsed : this.avgCpuMs * 0.9 + elapsed * 0.1;
+  }
+
+  restoreRenderSize(width: number, height: number): void {
+    if (width > 0 && height > 0) {
+      this.ensureTargets(width, height);
+    }
+  }
+
+  async exportFrame(state: RendererState, options: ExportFrameOptions): Promise<ExportFrameResult | null> {
+    if (!this.currentTexture) return null;
+
+    const width = Math.max(1, Math.floor(options.width));
+    const height = Math.max(1, Math.floor(options.height));
+    const fps = options.fps ?? 30;
+    const passMode = options.passMode ?? 'composite';
+
     this.ensureTargets(width, height);
 
+    const exportState: RendererState = {
+      ...state,
+      viewportQuarterZoom: false,
+      viewportHalfOverlay: false,
+      diagnosticsMode: false,
+      mainViewMode: passMode === 'tracers'
+        ? MAIN_VIEW_MODES.FULL_RES_TRACER
+        : MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
+      ...(passMode === 'layers'
+        ? { tracerAboveIntensity: 0, tracerBelowIntensity: 0 }
+        : {}),
+    };
+
+    const target = this.createTarget(width, height);
+    this.renderFrameInternal(exportState, width, height, fps, passMode, target);
+    const pixels = this.readTargetPixels(target, width, height);
+    this.destroyTarget(target);
+    return { data: pixels, width, height };
+  }
+
+  private renderFrameInternal(
+    state: RendererState,
+    width: number,
+    height: number,
+    fps: number,
+    _passMode: ExportPassMode,
+    compositeTarget: RenderTarget | null,
+  ): void {
+    if (!this.currentTexture) return;
+    this.ensureTargets(width, height);
+
+    const gl = this.gl;
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
     const perLayer = state.layerOpacities ?? [1, 1, 1];
     const layerOpacities: [number, number, number] = [
@@ -554,28 +637,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.renderPersistence(this.tracerBelow[writeIndex]!, this.tracerBelow[readIndex]!, belowDecay, state);
     if (!state.paused) this.pingPong = writeIndex;
 
-    this.renderComposite(null, width, height, state, layerOpacities);
-    if (this.previewQueued) {
-      this.ensurePreviewTarget();
-      this.renderComposite(this.previewTarget, PREVIEW_SIZE, PREVIEW_SIZE, {
-        ...state,
-        viewportQuarterZoom: false,
-        viewportHalfOverlay: false,
-      }, layerOpacities);
-      this.readPreview();
-    }
-    if (this.statsQueued) {
-      this.ensureDiagnosticTarget();
-      this.renderComposite(this.diagnosticTarget, DIAGNOSTIC_SIZE, DIAGNOSTIC_SIZE, {
-        ...state,
-        mainViewMode: MAIN_VIEW_MODES.COINCIDENCE_HEATMAP,
-      }, layerOpacities);
-      this.readStats();
-    }
-
-    const elapsed = performance.now() - start;
-    this.lastCpuMs = elapsed;
-    this.avgCpuMs = this.avgCpuMs === 0 ? elapsed : this.avgCpuMs * 0.9 + elapsed * 0.1;
+    this.renderComposite(compositeTarget, width, height, state, layerOpacities);
   }
 
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {

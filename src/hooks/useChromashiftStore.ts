@@ -37,6 +37,7 @@ export interface ChromashiftRefs {
   lastRenderMetricSyncRef: MutableRefObject<number>;
   loadGenRef: MutableRefObject<number>;
   maskTextureRef: MutableRefObject<GPUTexture | null>;
+  gpuImageAnalysisRef: RefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>;
   imageListRef: MutableRefObject<ImageEntry[]>;
   currentImageIndexRef: MutableRefObject<number>;
   ownedObjectUrlsRef: MutableRefObject<string[]>;
@@ -66,6 +67,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const lastRenderMetricSyncRef = useRef(0);
   const loadGenRef = useRef(0);
   const maskTextureRef = useRef<GPUTexture | null>(null);
+  const gpuImageAnalysisRef = useRef<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>(null);
   const imageListRef = useRef<ImageEntry[]>([]);
   const currentImageIndexRef = useRef(0);
   const ownedObjectUrlsRef = useRef<string[]>([]);
@@ -94,6 +96,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
     lastRenderMetricSyncRef,
     loadGenRef,
     maskTextureRef,
+    gpuImageAnalysisRef,
     imageListRef,
     currentImageIndexRef,
     ownedObjectUrlsRef,
@@ -221,6 +224,12 @@ export function useChromashiftStore(refs: ChromashiftRefs) {
     resetInspectView: () => dispatch({ type: 'output/resetInspectView' }),
     setExportingTracer: (exportingTracer: boolean) =>
       dispatch({ type: 'ui/patch', patch: { exportingTracer } }),
+    setExportingVideo: (exportingVideo: boolean) =>
+      dispatch({ type: 'ui/patch', patch: { exportingVideo } }),
+    setVideoExportProgress: (videoExportProgress: number) =>
+      dispatch({ type: 'ui/patch', patch: { videoExportProgress } }),
+    patchVideoExportSettings: (patch: Partial<import('../state/types').VideoExportSettings>) =>
+      dispatch({ type: 'ui/patchVideoExport', patch }),
     setViewportQuarterZoom: (viewportQuarterZoom: boolean) =>
       dispatch({ type: 'output/patch', patch: { viewportQuarterZoom } }),
     setViewportHalfOverlay: (viewportHalfOverlay: boolean) =>

@@ -117,6 +117,43 @@ export class GpuReadback {
     if (flags.diagnostic) this.beginDiagnosticReadback();
   }
 
+  async readTexturePixels(
+    texture: GPUTexture,
+    width: number,
+    height: number,
+  ): Promise<ExportTracerResult | null> {
+    const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
+    const staging = this.device.createBuffer({
+      size: bytesPerRow * height,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    const enc = this.device.createCommandEncoder();
+    enc.copyTextureToBuffer(
+      { texture },
+      { buffer: staging, bytesPerRow },
+      [width, height, 1],
+    );
+    this.device.queue.submit([enc.finish()]);
+
+    try {
+      await staging.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(staging.getMappedRange());
+      const packed = new Uint8ClampedArray(width * height * 4);
+      for (let y = 0; y < height; y++) {
+        const srcOffset = y * bytesPerRow;
+        const dstOffset = y * width * 4;
+        packed.set(mapped.subarray(srcOffset, srcOffset + width * 4), dstOffset);
+      }
+      staging.unmap();
+      staging.destroy();
+      return { width, height, data: packed };
+    } catch {
+      staging.destroy();
+      return null;
+    }
+  }
+
   async exportTracerView(
     tracerInspect: TracerInspectPass,
     ctx: {

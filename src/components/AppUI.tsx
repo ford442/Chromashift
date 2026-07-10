@@ -33,7 +33,12 @@ export function AppUI(props: any) {
     specificImageError, renderCpuTiming, avgLuminance, canvasRef, setTracerPreviewFrozen,
     tracerPreviewFrozen, setLivePreviewEnabled, livePreviewEnabled, setIsPaused, setMainViewMode,
     setAvgLuminance, isViewingTracer, currentImage, rendererRef, handleLoadReferenceImage,
-    isWasmReady, setSpecificImageError
+    isWasmReady, setSpecificImageError,
+    exportingVideo, videoExportProgress, videoExportSettings, codecSupport,
+    handleExportVideo, handleCancelVideoExport,
+    onVideoExportDurationChange, onVideoExportFpsChange, onVideoExportScaleChange,
+    onVideoExportIncludeTracersChange, onVideoExportPassModeChange, onVideoExportFilenameChange,
+    onVideoExportUsePresetAnglesChange,
   } = props;
 
   return (
@@ -357,6 +362,19 @@ export function AppUI(props: any) {
         onTracerInspectShowLayersToggle={setTracerInspectShowLayers}
         onResetInspectView={handleResetInspectView}
         onExportTracer={handleExportTracer}
+        exportingVideo={exportingVideo}
+        videoExportProgress={videoExportProgress}
+        videoExportSettings={videoExportSettings}
+        codecSupport={codecSupport}
+        onExportVideo={handleExportVideo}
+        onCancelVideoExport={handleCancelVideoExport}
+        onVideoExportDurationChange={onVideoExportDurationChange}
+        onVideoExportFpsChange={onVideoExportFpsChange}
+        onVideoExportScaleChange={onVideoExportScaleChange}
+        onVideoExportIncludeTracersChange={onVideoExportIncludeTracersChange}
+        onVideoExportPassModeChange={onVideoExportPassModeChange}
+        onVideoExportFilenameChange={onVideoExportFilenameChange}
+        onVideoExportUsePresetAnglesChange={onVideoExportUsePresetAnglesChange}
         squareCanvas={squareCanvas}
         antialiasEnabled={antialiasEnabled}
         viewportQuarterZoom={viewportQuarterZoom}

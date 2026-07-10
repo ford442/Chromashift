@@ -14,7 +14,7 @@ import { PersistencePass } from './PersistencePass';
 import { CompositorPass } from './CompositorPass';
 import { TracerInspectPass } from './TracerInspectPass';
 import { GpuReadback } from './GpuReadback';
-import type { ExportTracerOptions, ExportTracerResult } from './types/RendererContracts';
+import type { ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult } from './types/RendererContracts';
 import type { CollisionStats, RendererState } from './types/RendererState';
 import { layerRotationUniforms } from './math/rotation';
 
@@ -299,13 +299,92 @@ export class WebGPURenderer {
     if (!this.currentTexture) return;
     const renderStart = performance.now();
 
+    const canvasTex = this.context.getCurrentTexture();
     this.layerScale = state.layerScale ?? 1.0;
     this.tracerScale = state.tracerScale ?? 1.0;
-
-    const canvasTex = this.context.getCurrentTexture();
     this.ensureTextures(canvasTex.width, canvasTex.height);
 
     const enc = this.device.createCommandEncoder();
+    this.encodeFrameCore(enc, state, canvasTex.createView(), canvasTex.width, canvasTex.height, fps, 'composite');
+
+    const readbackFlags = this.readback.encodeQueuedReadbacks(
+      enc,
+      (previewView) => {
+        this.compositor.encodePreview(
+          enc,
+          previewView,
+          this.getLayerTexturesTuple(),
+          this.getTracerTextures().below,
+          this.getTracerTextures().above,
+          this.persistence.pingPong,
+        );
+      },
+      state.paused
+        ? this.persistence.getDiagnosticTextureForReadback(true)
+        : this.persistence.getDiagnosticTextureForReadback(false),
+    );
+
+    this.device.queue.submit([enc.finish()]);
+    this.lastRenderCpuMs = performance.now() - renderStart;
+    this.averageRenderCpuMs = this.averageRenderCpuMs === 0
+      ? this.lastRenderCpuMs
+      : this.averageRenderCpuMs * 0.9 + this.lastRenderCpuMs * 0.1;
+    this.readback.afterSubmit(readbackFlags);
+  }
+
+  /** Rebuild GPU targets after export at a different resolution. */
+  restoreRenderSize(width: number, height: number): void {
+    if (width > 0 && height > 0) {
+      this.ensureTextures(width, height);
+    }
+  }
+
+  async exportFrame(state: RendererState, options: ExportFrameOptions): Promise<ExportFrameResult | null> {
+    if (!this.currentTexture) return null;
+
+    const width = Math.max(1, Math.floor(options.width));
+    const height = Math.max(1, Math.floor(options.height));
+    const fps = options.fps ?? 30;
+    const passMode = options.passMode ?? 'composite';
+
+    this.layerScale = state.layerScale ?? 1.0;
+    this.tracerScale = state.tracerScale ?? 1.0;
+    this.ensureTextures(width, height);
+
+    const output = this.device.createTexture({
+      size: [width, height, 1],
+      format: this.format,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    });
+
+    const exportState: RendererState = {
+      ...state,
+      viewportQuarterZoom: false,
+      viewportHalfOverlay: false,
+      diagnosticsMode: false,
+      ...(passMode === 'layers'
+        ? { tracerAboveIntensity: 0, tracerBelowIntensity: 0 }
+        : {}),
+    };
+
+    const enc = this.device.createCommandEncoder();
+    this.encodeFrameCore(enc, exportState, output.createView(), width, height, fps, passMode);
+    this.device.queue.submit([enc.finish()]);
+
+    const result = await this.readback.readTexturePixels(output, width, height);
+    output.destroy();
+    return result;
+  }
+
+  private encodeFrameCore(
+    enc: GPUCommandEncoder,
+    state: RendererState,
+    outputView: GPUTextureView,
+    width: number,
+    height: number,
+    fps: number,
+    passMode: ExportPassMode,
+  ): void {
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
     const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
     const layerOpacities: [number, number, number] = [
@@ -317,8 +396,9 @@ export class WebGPURenderer {
     const tracerMode = state.tracerMode ?? 0.0;
     const layerTextures = this.getLayerTexturesTuple();
     const { below: persistBelow, above: persistAbove } = this.getTracerTextures();
+    const canvasDims = { width, height } as GPUTexture;
 
-    this.encodeLayerPasses(enc, state, canvasTex, layerOpacities);
+    this.encodeLayerPasses(enc, state, canvasDims, layerOpacities);
 
     this.persistence.encode(enc, layerTextures, {
       fps,
@@ -347,23 +427,53 @@ export class WebGPURenderer {
       outputMode: state.outputMode ?? 0,
       tracerMode,
       diagnosticsMode: state.diagnosticsMode ?? false,
-      viewportQuarterZoom: state.viewportQuarterZoom ?? false,
+      viewportQuarterZoom: false,
       halfOverlayAlpha: state.halfOverlayAlpha ?? 0.5,
-      viewportHalfOverlay: state.viewportHalfOverlay ?? false,
+      viewportHalfOverlay: false,
     });
 
-    const mainViewMode = state.mainViewMode ?? (
-      (state.showTracerView ?? false)
-        ? MAIN_VIEW_MODES.FULL_RES_TRACER
-        : MAIN_VIEW_MODES.PROCESSED_COMPOSITE
-    );
+    if (passMode === 'tracers') {
+      this.tracerInspect.encodeTracerView(
+        enc,
+        outputView,
+        {
+          canvasWidth: width,
+          canvasHeight: height,
+          tracerAboveOpacity: tracerAboveOp,
+          tracerBelowOpacity: tracerBelowOp,
+          tracerBlendMode,
+          inspectZoom: state.tracerInspectZoom,
+          inspectPanX: state.tracerInspectPanX,
+          inspectPanY: state.tracerInspectPanY,
+          showHeatmap: state.tracerInspectHeatmap,
+          exposure: state.tracerInspectExposure,
+          applyTonemap: state.tracerInspectTonemap,
+          showLayers: state.tracerInspectShowLayers,
+          layerBlendMode,
+          layerOpacity0: layerOpacities[0],
+          layerOpacity1: layerOpacities[1],
+          layerOpacity2: layerOpacities[2],
+        },
+        {
+          layerTextures,
+          persistAbove,
+          persistBelow,
+          pingPong: this.persistence.pingPong,
+        },
+      );
+      return;
+    }
+
+    const mainViewMode = passMode === 'composite'
+      ? MAIN_VIEW_MODES.PROCESSED_COMPOSITE
+      : (state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
 
     const handledAlternateView = this.tracerInspect.encodeMainView(enc, {
       mainViewMode,
-      canvasView: canvasTex.createView(),
-      canvasWidth: canvasTex.width,
-      canvasHeight: canvasTex.height,
-      sourceTexture: this.currentTexture,
+      canvasView: outputView,
+      canvasWidth: width,
+      canvasHeight: height,
+      sourceTexture: this.currentTexture!,
       sourceSampler: this.sampler,
       layerTextures,
       persistBelow,
@@ -393,37 +503,17 @@ export class WebGPURenderer {
     if (!handledAlternateView) {
       this.compositor.encode(
         enc,
-        canvasTex.createView(),
+        outputView,
         layerTextures,
         persistBelow,
         persistAbove,
         this.persistence.pingPong,
       );
     }
+  }
 
-    const readbackFlags = this.readback.encodeQueuedReadbacks(
-      enc,
-      (previewView) => {
-        this.compositor.encodePreview(
-          enc,
-          previewView,
-          layerTextures,
-          persistBelow,
-          persistAbove,
-          this.persistence.pingPong,
-        );
-      },
-      state.paused
-        ? this.persistence.getDiagnosticTextureForReadback(true)
-        : this.persistence.getDiagnosticTextureForReadback(false),
-    );
-
-    this.device.queue.submit([enc.finish()]);
-    this.lastRenderCpuMs = performance.now() - renderStart;
-    this.averageRenderCpuMs = this.averageRenderCpuMs === 0
-      ? this.lastRenderCpuMs
-      : this.averageRenderCpuMs * 0.9 + this.lastRenderCpuMs * 0.1;
-    this.readback.afterSubmit(readbackFlags);
+  private get format(): GPUTextureFormat {
+    return this.context.getCurrentTexture().format;
   }
 
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {

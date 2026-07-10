@@ -33,6 +33,20 @@ export interface ExportTracerResult {
   height: number;
 }
 
+/** Which render pass to capture during offline video export. */
+export type ExportPassMode = 'composite' | 'tracers' | 'layers';
+
+export interface ExportFrameOptions {
+  width: number;
+  height: number;
+  /** Target pass; defaults to `composite`. */
+  passMode?: ExportPassMode;
+  /** Frame rate used for tracer decay during export. */
+  fps?: number;
+}
+
+export type ExportFrameResult = ExportTracerResult;
+
 export interface ChromashiftRenderer {
   readonly backend: RendererBackend;
   setTexture(texture: unknown): void;
@@ -44,6 +58,10 @@ export interface ChromashiftRenderer {
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean;
   getRenderTiming(): RenderTiming;
   exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null>;
+  /** Render one offline frame and return RGBA8 pixels (does not present to canvas). */
+  exportFrame(state: RendererState, options: ExportFrameOptions): Promise<ExportFrameResult | null>;
+  /** Restore internal render targets after an export at a different resolution. */
+  restoreRenderSize(width: number, height: number): void;
   destroy(): void;
 }
 

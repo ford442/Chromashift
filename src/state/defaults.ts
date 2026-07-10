@@ -1,5 +1,6 @@
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { getRendererPreference } from '../engine/rendererMode';
+import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { ChromashiftState, LayerTriple } from './types';
 
 export const DEFAULT_ANGLES: LayerTriple<number> = [0, 0, 0];
@@ -12,6 +13,16 @@ export const DEFAULT_COLLISION_STATS = {
   threeOverlapPixels: 0,
   dominantLayerWins: [0, 0, 0] as LayerTriple<number>,
   averageCollision: 0,
+};
+
+export const DEFAULT_VIDEO_EXPORT_SETTINGS = {
+  durationSec: 5,
+  fps: DEFAULT_FPS,
+  resolutionScale: 1,
+  includeTracers: true,
+  passMode: 'composite' as ExportPassMode,
+  filename: 'chromashift-export',
+  usePresetAngles: true,
 };
 
 export function createInitialState(): ChromashiftState {
@@ -85,6 +96,9 @@ export function createInitialState(): ChromashiftState {
       referenceBlendMode: 'hidden',
       referenceOpacity: 0.22,
       exportingTracer: false,
+      exportingVideo: false,
+      videoExportProgress: 0,
+      videoExportSettings: { ...DEFAULT_VIDEO_EXPORT_SETTINGS },
       upscaleModel: 'realesrgan:general_plus',
       upscaleBusy: false,
       upscaleProgress: 0,

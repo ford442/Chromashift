@@ -10,6 +10,9 @@ export type {
   RenderTiming,
   ExportTracerOptions,
   ExportTracerResult,
+  ExportPassMode,
+  ExportFrameOptions,
+  ExportFrameResult,
   ChromashiftRenderer,
   ChromashiftTextureManager,
 } from './types/RendererContracts';
