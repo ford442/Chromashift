@@ -1,5 +1,7 @@
 # Chromashift
 
+[![CI](https://github.com/ford442/chromashift/actions/workflows/ci.yml/badge.svg)](https://github.com/ford442/chromashift/actions/workflows/ci.yml)
+
 A WebGPU-based visual engine that performs real-time RGB colour separation and independent layer rotation — replacing a legacy Canvas 2D / Emscripten slideshow. A toggleable WebGL2 fallback is available for visual debugging, automated screenshots, and shader-porting reference work.
 
 ## Features
@@ -24,9 +26,19 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 
 - A browser with WebGPU support: **Chrome 113+**, **Edge 113+**, or Chrome Canary.
 - For fallback/debug mode: any browser with WebGL2 support.
-- Node.js 18+
+- Node.js **18+** (`engines.node` in `package.json`; CI uses Node 22)
 
-## Getting Started
+### Recommended GPU / browser setup
+
+| Item | Guidance |
+|---|---|
+| Browser | Chrome or Edge 113+ with WebGPU enabled |
+| GPU | Discrete GPU recommended for 4K+ canvases; integrated GPUs work for HD |
+| Texture headroom | Chromashift requests up to **8192 px** `maxTextureDimension2D` when the adapter allows it |
+| Chrome flags | On older builds, enable WebGPU via `chrome://flags/#enable-unsafe-webgpu` |
+| Fallback | `?renderer=webgl` for WebGL2 when WebGPU is unavailable or after device loss |
+
+GPU bootstrap (`src/engine/gpuBootstrap.ts`) logs adapter info at startup, derives conservative `requiredLimits`, handles `device.lost`, and surfaces uncaptured errors. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) for the WebGPU/WebGL options matrix.
 
 ```bash
 npm install
@@ -70,8 +82,14 @@ To build the C++ engine:
 ```bash
 # Install Emscripten: https://emscripten.org/docs/getting_started/downloads.html
 source /path/to/emsdk/emsdk_env.sh
-cd cpp && make
+npm run build:wasm          # or: cd cpp && make
+npm run check:wasm          # verify emcc is on PATH
+npm run test:cpp            # host-side band/decay unit tests (plain g++, no emcc)
 ```
+
+Host-side C++ tests (`cpp/tests/`) run with `g++` and do not require Emscripten. Rebuild
+the WASM binary after changing `cpp/` and commit `public/chromashift_engine.{js,wasm}` when
+shipping C++ changes.
 
 See [docs/wasm-engine.md](docs/wasm-engine.md) for full build instructions, SIMD
 browser support details, and memory management guidelines.

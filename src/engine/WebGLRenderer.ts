@@ -1,6 +1,8 @@
 import { MAIN_VIEW_MODES } from './viewModes';
-import type { CollisionStats, RendererState } from './WebGPURenderer';
-import type { ChromashiftRenderer, ExportTracerOptions, ExportTracerResult, RenderTiming } from './RendererTypes';
+import type { CollisionStats, RendererState } from './types/RendererState';
+import type { ChromashiftRenderer, ExportTracerOptions, ExportTracerResult, RenderTiming } from './types/RendererContracts';
+import { durationToDecay } from './math/decay';
+import { layerRotationUniforms } from './math/rotation';
 import type { WebGLImageTexture } from './WebGLTextureManager';
 
 const PREVIEW_SIZE = 128;
@@ -530,10 +532,11 @@ export class WebGLRenderer implements ChromashiftRenderer {
       this.useProgram(this.layerProgram);
       this.bindTexture('u_source', 0, this.currentTexture.texture);
       this.uniform1i('u_layerIndex', layerIndex);
-      this.uniform1f('u_angleRad', (layer.angleDeg * Math.PI) / 180);
-      this.uniform1f('u_flipX', layer.flipX ? 1 : 0);
-      this.uniform1f('u_flipY', layer.flipY ? 1 : 0);
-      this.uniform1f('u_aspect', width / height);
+      const [rad, flipX, flipY, layerAspect] = layerRotationUniforms(layer, width / height);
+      this.uniform1f('u_angleRad', rad);
+      this.uniform1f('u_flipX', flipX);
+      this.uniform1f('u_flipY', flipY);
+      this.uniform1f('u_aspect', layerAspect);
       this.uniform1f('u_avgLuminance', state.avgLuminance);
       this.uniform1f('u_layerOpacity', 1);
       this.uniform1f('u_colorMode', state.colorMode ?? 1);
@@ -843,13 +846,6 @@ export class WebGLRenderer implements ChromashiftRenderer {
     gl.bindTexture(gl.TEXTURE_2D, texture);
     this.uniform1i(name, unit);
   }
-}
-
-function durationToDecay(durationMs: number, fps: number): number {
-  if (durationMs <= 0) return 0;
-  const frames = fps * durationMs / 1000;
-  if (frames < 1) return 0;
-  return Math.pow(0.1, 1 / frames);
 }
 
 function isWebGLImageTexture(texture: unknown): texture is WebGLImageTexture {

@@ -93,6 +93,16 @@ For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when brows
    - 1 compositor pipeline that blends tracers + live layers and writes to the swap-chain.
 4. Each frame, `renderer.render(state)` receives the shared `RendererState`. WebGPU encodes all passes into a single command buffer; WebGL runs equivalent GLSL/FBO passes for debugging/reference output.
 
+### WebGPU MSAA
+
+When `enableMSAA` is true (`sampleCount = 4`):
+
+- Layer pipelines render into a shared `msaaTexture` (4×) and **resolve** into `layerTextures` (always `sampleCount: 1`) so persistence and compositor passes can sample them as ordinary 1× textures.
+- The compositor pass writes directly to the swap-chain at 1× (no MSAA resolve on the canvas).
+- `setAntialiasing()` recreates pipelines and destroys `msaaTexture`; `ensureLayerTextures()` recreates it when the canvas size changes.
+
+MSAA pipelines must match the render-pass attachment `sampleCount`. A 4× pipeline cannot target a 1× texture without a `resolveTarget`.
+
 ### Colour Bands (WGSL Fragment Shaders)
 
 Luminance is calculated via ITU-R BT.709: `0.2126R + 0.7152G + 0.0722B`, scaled 0–255.

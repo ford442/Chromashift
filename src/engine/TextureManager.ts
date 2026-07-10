@@ -26,8 +26,8 @@ export class TextureManager {
   }
 
   /** Fetch a list of image entries from a JSON endpoint. */
-  async fetchImageList(endpoint: string): Promise<ImageEntry[]> {
-    const response = await fetch(endpoint);
+  async fetchImageList(endpoint: string, signal?: AbortSignal): Promise<ImageEntry[]> {
+    const response = await fetch(endpoint, { signal });
     if (!response.ok) {
       throw new Error(`Failed to fetch image list from ${endpoint}: ${response.statusText}`);
     }

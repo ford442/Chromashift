@@ -1,0 +1,50 @@
+name: C++ / WASM freshness
+
+on:
+  push:
+    paths:
+      - 'cpp/**'
+      - 'public/chromashift_engine.*'
+      - '.github/workflows/wasm.yml'
+  pull_request:
+    paths:
+      - 'cpp/**'
+      - 'public/chromashift_engine.*'
+      - '.github/workflows/wasm.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host-side C++ unit tests
+        run: npm run test:cpp
+
+  wasm-freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+          cache: true
+
+      - name: Verify export list matches header
+        run: make -C cpp verify-exports
+
+      - name: Rebuild WASM
+        run: npm run build:wasm
+
+      - name: Fail if committed WASM artifacts are stale
+        run: |
+          if ! git diff --exit-code -- public/chromashift_engine.js public/chromashift_engine.wasm; then
+            echo "::error::WASM artifacts are out of date. Run 'npm run build:wasm' and commit public/chromashift_engine.{js,wasm}."
+            exit 1
+          fi

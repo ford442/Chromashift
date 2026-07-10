@@ -8,7 +8,7 @@ export function AppUI(props: any) {
   const {
     containerRef, mainViewportRef, previewTracerRef, photoModeImage, isReferenceCompareMode,
     referenceImage, showCanvasMainView, isPaused, mainViewMode, showReferenceOverlay,
-    referenceBlendMode, referenceOpacity, previewOriginalRef, previewSeparatedRef, error,
+    referenceBlendMode, referenceOpacity, previewOriginalRef, previewSeparatedRef, gpuError,
     rendererBackend, rendererFallbackReason, webglDebugMode, setWebglDebugMode,
     collisionStats, isAutoPlayActive, setIsAutoPlayActive, isImageStripOpen,
     setIsImageStripOpen, imageList, currentImageIndex, selectSourceIndex, handleLoadFile,
@@ -261,14 +261,37 @@ export function AppUI(props: any) {
         </span>
       </div>
 
-      {/* Error / no-WebGPU notice */}
-      {error && (
+      {/* GPU error / device loss notice */}
+      {gpuError && (
         <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/80 backdrop-blur-sm">
           <div className="bg-gray-900/90 backdrop-blur-md border border-red-500/50 rounded-lg p-6 max-w-md text-center shadow-2xl shadow-red-900/20">
-            <p className="text-red-400 font-mono text-sm">{error}</p>
-            <p className="text-amber-200/70 text-xs mt-2">
-              Use Chrome/Edge with WebGPU, or open with <code>?renderer=webgl</code> for the WebGL2 fallback.
+            <p className="text-red-400 font-mono text-sm">{gpuError.message}</p>
+            {gpuError.detail && (
+              <p className="text-red-300/80 font-mono text-xs mt-2 break-words">{gpuError.detail}</p>
+            )}
+            <p className="text-amber-200/70 text-xs mt-3">
+              {gpuError.kind === 'device-lost'
+                ? 'The GPU process may have restarted. Reload the page or switch to the WebGL2 fallback.'
+                : 'Use Chrome/Edge with WebGPU, or open with ?renderer=webgl for the WebGL2 fallback.'}
             </p>
+            {gpuError.recoverable && (
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-100 text-xs font-mono hover:bg-amber-500/30"
+                  onClick={() => window.location.reload()}
+                >
+                  Reload page
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded bg-cyan-500/20 border border-cyan-400/40 text-cyan-100 text-xs font-mono hover:bg-cyan-500/30"
+                  onClick={() => switchRendererPreference('webgl')}
+                >
+                  Switch to WebGL2
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

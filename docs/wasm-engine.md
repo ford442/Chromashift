@@ -86,8 +86,8 @@ Then `rgb` is compared against the same thresholds used in the shaders:
 ### Build
 
 ```bash
-cd cpp
-make        # produces public/chromashift_engine.js + public/chromashift_engine.wasm
+npm run build:wasm   # produces public/chromashift_engine.js + public/chromashift_engine.wasm
+# equivalent: cd cpp && make
 ```
 
 The output lands in `public/` so Vite's dev server and production build both serve the files.
@@ -95,14 +95,40 @@ The output lands in `public/` so Vite's dev server and production build both ser
 ### Verify
 
 ```bash
-cd cpp && make check   # just checks that emcc is on PATH
+npm run check:wasm          # checks that emcc is on PATH
+make -C cpp verify-exports  # EXPORTED_FUNCTIONS matches chromashift_engine.h 1:1
+npm run test:cpp            # host-side g++ unit tests (band thresholds, durationToDecay)
 ```
 
 ### Clean
 
 ```bash
-cd cpp && make clean
+npm run clean:wasm   # or: cd cpp && make clean
 ```
+
+---
+
+## Export strategy: embind vs raw C symbols
+
+The WASM build uses **both** mechanisms:
+
+| Mechanism | Purpose |
+|---|---|
+| `EMSCRIPTEN_KEEPALIVE` + `-s EXPORTED_FUNCTIONS` | Underscored C ABI (`_classifyPixel`, …) for direct heap access and tooling |
+| `EMSCRIPTEN_BINDINGS` (`--bind`) | JS-friendly names on `Module` used by `WasmEngine.ts` (`classifyPixel`, …) |
+
+**When to prefer each:**
+
+- **Embind (`--bind`)** — best when TypeScript calls functions by name with mixed scalar
+  and pointer arguments. `WasmEngine.ts` already uses embind exports; pointer-heavy batch
+  functions get thin lambda wrappers in `chromashift_engine.cpp`.
+- **Raw `EXPORTED_FUNCTIONS` only** — smaller glue and a clearer ABI when you are willing to
+  write thin TS wrappers around `_malloc` / `HEAPU8` / `_classifyPixel` yourself. Every
+  `EMSCRIPTEN_KEEPALIVE` symbol in `chromashift_engine.h` must appear in the Makefile list
+  (run `make -C cpp verify-exports` after adding functions).
+
+Chromashift keeps both paths in sync: the header is the source of truth, embind mirrors the
+same functions for the TS bridge, and `verify-exports` guards the underscored export list.
 
 ---
 
@@ -190,7 +216,9 @@ The currently active engine is also shown in the top-right corner of the canvas
 cpp/
 ├── chromashift_engine.h     Header — exported C function declarations
 ├── chromashift_engine.cpp   C++ implementation (Phase 1 complete)
-└── Makefile                 Emscripten build recipe → public/*.{js,wasm}
+├── Makefile                 Emscripten build recipe → public/*.{js,wasm}
+└── tests/
+    └── test_engine.cpp      Host-side g++ unit tests (band thresholds, decay)
 
 public/
 ├── chromashift_engine.js    (generated) Emscripten ES-module glue
@@ -238,7 +266,7 @@ In addition to `HEAPU8` (byte-level access), the build now exports:
 
 **Q: The C++ WASM button is greyed out — why?**
 
-The WASM binary has not been built yet.  Run `cd cpp && make` (requires Emscripten).
+The WASM binary has not been built yet.  Run `npm run build:wasm` (requires Emscripten).
 
 **Q: Can I use the WASM engine for the GPU rendering pipeline?**
 

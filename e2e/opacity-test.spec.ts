@@ -19,16 +19,21 @@ async function setSliderByIndex(page: Page, index: number, value: number) {
   }, { index, value });
 }
 
-test.describe('Chromashift Opacity Tests', () => {
+const recordScreenshots = Boolean(process.env.RECORD_SCREENSHOTS);
+
+(recordScreenshots ? test.describe : test.describe.skip)(
+  'Chromashift Opacity Tests',
+  () => {
   test('capture screenshots with varying opacity settings', async ({ page }) => {
-    // Create screenshots directory
-    const screenshotsDir = '/root/.openclaw/workspace/Chromashift/test-screenshots';
+    test.setTimeout(120_000);
+    // Create screenshots directory (project-relative)
+    const screenshotsDir = path.join(process.cwd(), 'test-screenshots');
     if (!fs.existsSync(screenshotsDir)) {
       fs.mkdirSync(screenshotsDir, { recursive: true });
     }
 
-    // Navigate to the app (assuming dev server is running)
-    await page.goto('http://localhost:5173');
+    // Navigate to the app (WebGL for CI-friendly rendering)
+    await page.goto('http://localhost:5173/?renderer=webgl');
     
     // Wait for WebGPU to initialize
     await page.waitForTimeout(3000);
@@ -93,4 +98,5 @@ test.describe('Chromashift Opacity Tests', () => {
 
     console.log('\nAll screenshots saved to:', screenshotsDir);
   });
-});
+  },
+);

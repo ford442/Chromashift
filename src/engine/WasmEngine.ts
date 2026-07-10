@@ -11,6 +11,8 @@
  *   cd cpp && make          # requires Emscripten — see docs/wasm-engine.md
  */
 
+import { classifyBandIndex, classifyPixelBands, computeAdjustedRgb } from './math/bandClassification';
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type EngineKind = 'ts' | 'wasm';
@@ -363,21 +365,8 @@ export function classifyPixelWith(
   }
 
   // TypeScript fallback — mirrors the C++ implementation.
-  const lum       = r * 0.2126 + g * 0.7152 + b * 0.0722;
-  const lightDark = 128 + Math.abs(avgLum - 128) / 2;
-  const rgb       = lum + lightDark / 2;
-
-  if      (rgb > 229) return 0;
-  else if (rgb > 209) return 1;
-  else if (rgb > 193) return 2;
-  else if (rgb > 190) return 3;
-  else if (rgb > 177) return 4;
-  else if (rgb > 161) return 5;
-  else if (rgb > 158) return 6;
-  else if (rgb > 145) return 7;
-  else if (rgb > 128) return 8;
-  else if (rgb > 125) return 9;
-  else                return 10;
+  const rgb = computeAdjustedRgb(r, g, b, avgLum);
+  return classifyBandIndex(rgb);
 }
 
 /**
@@ -421,20 +410,7 @@ export function classifyPixelsBulkWith(
     const r = data[i * 4];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
-    const lum       = r * 0.2126 + g * 0.7152 + b * 0.0722;
-    const lightDark = 128 + Math.abs(avgLum - 128) / 2;
-    const rgb       = lum + lightDark / 2;
-    if      (rgb > 229) result[i] = 0;
-    else if (rgb > 209) result[i] = 1;
-    else if (rgb > 193) result[i] = 2;
-    else if (rgb > 190) result[i] = 3;
-    else if (rgb > 177) result[i] = 4;
-    else if (rgb > 161) result[i] = 5;
-    else if (rgb > 158) result[i] = 6;
-    else if (rgb > 145) result[i] = 7;
-    else if (rgb > 128) result[i] = 8;
-    else if (rgb > 125) result[i] = 9;
-    else                result[i] = 10;
+    result[i] = classifyPixelBands(r, g, b, avgLum);
   }
   return result;
 }
@@ -560,21 +536,8 @@ export function computeColorBandCountsWith(
     const r = bytes[i];
     const g = bytes[i + 1];
     const b = bytes[i + 2];
-    const lum       = r * 0.2126 + g * 0.7152 + b * 0.0722;
-    const lightDark = 128 + Math.abs(avgLum - 128) / 2;
-    const rgb       = lum + lightDark / 2;
-    let band: number;
-    if      (rgb > 229) band = 0;
-    else if (rgb > 209) band = 1;
-    else if (rgb > 193) band = 2;
-    else if (rgb > 190) band = 3;
-    else if (rgb > 177) band = 4;
-    else if (rgb > 161) band = 5;
-    else if (rgb > 158) band = 6;
-    else if (rgb > 145) band = 7;
-    else if (rgb > 128) band = 8;
-    else if (rgb > 125) band = 9;
-    else                band = 10;
+    const rgb = computeAdjustedRgb(r, g, b, avgLum);
+    const band = classifyBandIndex(rgb);
     counts[band]++;
   }
   return counts;
@@ -585,7 +548,7 @@ export function computeColorBandCountsWith(
  *
  * Solves `decay ^ (fps × durationMs / 1000) = 0.1` so that the tracer
  * reaches 10% of its original brightness after `durationMs` milliseconds.
- * Matches the `durationToDecay()` helper in `WebGPURenderer.ts`.
+ * Matches `durationToDecay()` in `math/decay.ts`.
  *
  * @param durationMs  Desired tracer lifetime in milliseconds.
  * @param fps         Current frame rate.
