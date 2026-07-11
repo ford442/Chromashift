@@ -47,8 +47,14 @@ src/
 │   └── NunifOverlay.tsx      # Left-side control panel (angles, rates, fps, opacity, tracers,
 │                             # blend modes, reset, play/pause, image interval)
 └── engine/
-    ├── shaders.ts            # WGSL vertex + 3 fragment shaders, persistence shader,
-    │                         # compositor shader, and blend-mode helpers
+    ├── shaders/              # WGSL modules assembled in TS (thin assembler)
+    │   ├── index.ts          # Re-exports all shader sources (import via './shaders')
+    │   ├── common.ts         # Vertex shaders, colour/blend helpers, BAND_WGSL
+    │   │                     # (band thresholds generated from math/bandClassification.ts BAND)
+    │   ├── layers.ts         # 3 layer fragment shaders (shared header/prelude)
+    │   ├── persistence.ts    # Tracer persistence pass
+    │   ├── compositor.ts     # Final compositor pass
+    │   └── diagnostics.ts    # Tracer view, display, heatmap, diagnostic, compare passes
     ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache
     ├── WebGLTextureManager.ts # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
     ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
@@ -85,7 +91,7 @@ WebGL-only debug helpers are in the Renderer panel:
 - `Rotation UV grid` — transformed UVs and a grid to debug layer rotation/flips.
 - `Layer mask isolation` — shows active per-layer mask output before final compositing.
 
-For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when browser automation needs visible pixels, then port the final logic into `shaders.ts` / `WebGPUPipelines.ts`. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
+For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL`) — never hardcode them in WGSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/C++ against divergence. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
 ### Rendering Pipeline (Detailed)
 

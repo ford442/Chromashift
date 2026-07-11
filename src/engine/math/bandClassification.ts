@@ -19,14 +19,37 @@ export function computeAdjustedRgb(
 }
 
 /**
+ * Canonical named band thresholds — the single source of truth for the
+ * colour-separation bands. Consumers:
+ *   - WGSL layer fragment shaders (`shaders/layers.ts`, via `BAND_WGSL`)
+ *   - WGSL compute classification (`compute/wgslSnippets.ts`)
+ *   - the TS classifier below
+ *   - `chromashift_engine.cpp` classifyPixel mirrors it (guarded by
+ *     `compute/goldenMask.test.ts`, which parses the C++ source)
+ * Key order matters: it defines the band indices (0 = greyHighlight …
+ * 9 = borderYellow, 10 = dark/grey).
+ */
+export const BAND = {
+  greyHighlight: 229,
+  orange: 209,
+  red: 193,
+  borderRed: 190,
+  violet: 177,
+  blue: 161,
+  borderBlue: 158,
+  green: 145,
+  yellow: 128,
+  borderYellow: 125,
+} as const;
+
+export type BandName = keyof typeof BAND;
+
+/**
  * Band thresholds, highest first. Band index i is assigned when
  * `rgb > BAND_THRESHOLDS[i]`; values at or below the last threshold get
- * band `BAND_THRESHOLDS.length` (dark/grey). This table is the single
- * source of truth — the WGSL compute shader threshold chain in
- * `compute/wgslSnippets.ts` is generated from it, and
- * `chromashift_engine.cpp` classifyPixel mirrors it.
+ * band `BAND_THRESHOLDS.length` (dark/grey).
  */
-export const BAND_THRESHOLDS = [229, 209, 193, 190, 177, 161, 158, 145, 128, 125] as const;
+export const BAND_THRESHOLDS: readonly number[] = Object.values(BAND);
 
 /**
  * Classify adjusted rgb into a Chromashift colour band index (0–10).
