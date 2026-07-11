@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { WebGPURenderer } from '../engine/WebGPURenderer';
+import { GPU_TIMING_HISTORY_SIZE } from '../engine/GpuTimestampProfiler';
 import { buildRendererState } from '../engine/buildRendererState';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
@@ -12,6 +13,8 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
   const frameRate = state.engine.fps;
   const layerExtensions = state.layers.extensions;
   const exportingVideo = state.ui.exportingVideo;
+  const autoDegradeAppliedRef = useRef(false);
+  const frameHistoryRef = useRef<number[]>([]);
   const {
     animAnglesRef,
     lastAngleSyncRef,
@@ -24,7 +27,18 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
     canvasRef,
     previewSeparatedRef,
     tracerScratchRef,
+    reactiveModRef,
   } = refs;
+
+  useEffect(() => {
+    autoDegradeAppliedRef.current = false;
+  }, [state.output.performanceAutoDegrade]);
+
+  useEffect(() => {
+    if (!state.output.performanceHudEnabled) {
+      frameHistoryRef.current = [];
+    }
+  }, [state.output.performanceHudEnabled]);
 
   useEffect(() => {
     if (!gpuReady || exportingVideo) return;
@@ -44,10 +58,13 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
       if (delta >= msPerFrame) {
         last = now - (delta % msPerFrame);
 
+        const mod = current.reactive.enabled ? reactiveModRef.current : null;
+        const extensions = mod?.extensions ?? current.layers.extensions;
+
         const angles: [number, number, number] = [
-          (animAnglesRef.current[0] + current.layers.extensions[0]) % 360,
-          (animAnglesRef.current[1] + current.layers.extensions[1]) % 360,
-          (animAnglesRef.current[2] + current.layers.extensions[2]) % 360,
+          (animAnglesRef.current[0] + extensions[0]) % 360,
+          (animAnglesRef.current[1] + extensions[1]) % 360,
+          (animAnglesRef.current[2] + extensions[2]) % 360,
         ];
         animAnglesRef.current = angles;
 
@@ -56,13 +73,45 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
           actions.setLayerAngles(angles);
         }
 
-        rendererRef.current?.render(buildRendererState(current, angles));
+        const renderOverrides = mod
+          ? {
+              tracerAboveIntensity: mod.tracerAboveIntensity,
+              tracerBelowIntensity: mod.tracerBelowIntensity,
+              avgLuminance: mod.avgLuminance,
+            }
+          : {};
+        rendererRef.current?.render(buildRendererState(current, angles, renderOverrides));
 
-        if (now - lastRenderMetricSyncRef.current > 500) {
+        if (now - lastRenderMetricSyncRef.current > 200) {
           lastRenderMetricSyncRef.current = now;
           const timing = rendererRef.current?.getRenderTiming();
           if (timing) {
             actions.setRenderCpuTiming({ last: timing.lastCpuMs, avg: timing.averageCpuMs });
+            actions.setRenderGpuTiming(timing.gpu);
+
+            if (current.output.performanceHudEnabled) {
+              const gpuTotal = timing.gpu.last?.totalGpuMs ?? 0;
+              const frameMs = Math.max(timing.lastCpuMs, gpuTotal);
+              frameHistoryRef.current.push(frameMs);
+              if (frameHistoryRef.current.length > GPU_TIMING_HISTORY_SIZE) {
+                frameHistoryRef.current.shift();
+              }
+              actions.setFrameTimeHistory([...frameHistoryRef.current]);
+
+              const budgetMs = 1000 / current.engine.fps;
+              const overBudget = frameMs > budgetMs;
+              actions.setPerformanceBudgetExceeded(overBudget);
+
+              if (
+                overBudget
+                && current.output.performanceAutoDegrade
+                && !autoDegradeAppliedRef.current
+              ) {
+                autoDegradeAppliedRef.current = true;
+                rendererRef.current?.setAntialiasing(false);
+                actions.applyPerformanceDegrade();
+              }
+            }
           }
         }
 
@@ -135,5 +184,6 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
     canvasRef,
     previewSeparatedRef,
     tracerScratchRef,
+    reactiveModRef,
   ]);
 }

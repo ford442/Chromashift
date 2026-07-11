@@ -59,6 +59,33 @@ float computeAverageLuminanceStrided(const uint8_t* pixels,
 int classifyPixel(int r, int g, int b, int avgLum);
 
 /**
+ * Build a 256-entry band lookup table for a given average luminance.
+ *
+ * Entry `lut[l]` is the band index for BT.709 luminance bucket `l` (0–255).
+ * Use with {@link classifyPixelLut} or the bulk LUT mask paths for faster
+ * classification when per-pixel branch chains dominate.
+ *
+ * @param avgLum  Per-image average luminance [0–255].
+ * @param outLut  Caller-allocated array of 256 uint8 band indices.
+ */
+void buildBandLut(int avgLum, uint8_t* outLut);
+
+/**
+ * Classify a pixel using a pre-built 256-entry band LUT.
+ *
+ * Luminance is bucketed with truncation to [0, 255] before lookup — identical
+ * to the LUT bulk paths and exact for integer grey pixels (r = g = b).
+ *
+ * @param r       Red channel   [0–255]
+ * @param g       Green channel [0–255]
+ * @param b       Blue channel  [0–255]
+ * @param avgLum  Per-image average luminance [0–255] (must match buildBandLut).
+ * @param lut     256-entry table from buildBandLut().
+ * @returns       Band index (0–10).
+ */
+int classifyPixelLut(int r, int g, int b, int avgLum, const uint8_t* lut);
+
+/**
  * Classify every pixel in an RGBA buffer into colour band indices.
  *
  * This is the batch version of classifyPixel — processing the whole buffer in
@@ -72,6 +99,12 @@ int classifyPixel(int r, int g, int b, int avgLum);
  */
 void classifyPixelsBulk(const uint8_t* pixels, uint32_t byteLen,
                         int avgLum, int* outBands);
+
+/**
+ * LUT-accelerated bulk classification — same output layout as classifyPixelsBulk.
+ */
+void classifyPixelsBulkLut(const uint8_t* pixels, uint32_t byteLen,
+                           int avgLum, int* outBands);
 
 /**
  * Compute a per-pixel Chromashift classification mask (band index 0–10).
@@ -90,6 +123,15 @@ void computeClassificationMask(const uint8_t* pixels,
                                uint32_t height,
                                float avgLum,
                                uint8_t* outMask);
+
+/**
+ * LUT-accelerated classification mask — same layout as computeClassificationMask.
+ */
+void computeClassificationMaskLut(const uint8_t* pixels,
+                                  uint32_t width,
+                                  uint32_t height,
+                                  float avgLum,
+                                  uint8_t* outMask);
 
 /**
  * Build a 256-bucket ITU-R BT.709 luminance histogram.
@@ -116,6 +158,20 @@ void computeLuminanceHistogram(const uint8_t* pixels, uint32_t byteLen,
  */
 void computeColorBandCounts(const uint8_t* pixels, uint32_t byteLen,
                             int avgLum, uint32_t* outCounts);
+
+// ─── Rotation / layer uniforms ───────────────────────────────────────────────
+
+/**
+ * Build a column-major 3×3 rotation matrix for a layer angle in degrees.
+ *
+ * Matches `buildRotationMat3()` in src/engine/math/rotation.ts — the 2D
+ * rotation used by CPU previews and tests.  GPU vertex shaders pass
+ * angleRad / flip / aspect separately; this matrix is the core 2D rotation.
+ *
+ * @param angleDeg  Layer rotation in degrees.
+ * @param outMat3   Caller-allocated array of 9 floats (column-major).
+ */
+void buildRotationMat3(float angleDeg, float* outMat3);
 
 // ─── Frame timing / tracer helpers ───────────────────────────────────────────
 

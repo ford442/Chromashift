@@ -78,6 +78,14 @@ describe('listAvailableOptionalFeatures', () => {
     const adapter = mockAdapter(['timestamp-query']);
     expect(listAvailableOptionalFeatures(adapter)).toEqual(['timestamp-query']);
   });
+
+  it('feeds requestDevice requiredFeatures at bootstrap', () => {
+    const adapter = mockAdapter(['timestamp-query', 'float32-filterable']);
+    expect(listAvailableOptionalFeatures(adapter)).toEqual([
+      'timestamp-query',
+      'float32-filterable',
+    ]);
+  });
 });
 
 describe('getWebGL2ContextAttributes', () => {

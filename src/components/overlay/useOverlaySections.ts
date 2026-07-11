@@ -6,6 +6,7 @@ const DEFAULT_OPEN: Record<OverlaySectionId, boolean> = {
   renderer: true,
   layers: true,
   tracer: true,
+  reactive: false,
   upscale: false,
   diagnostics: false,
   export: true,

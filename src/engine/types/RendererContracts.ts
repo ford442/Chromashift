@@ -3,9 +3,33 @@ import type { ImageEntry } from '../TextureManager';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 
+export interface GpuPassTimings {
+  layersMs: number;
+  persistenceMs: number;
+  compositorMs: number;
+  readbackMs: number;
+  totalGpuMs: number;
+}
+
+export interface GpuRenderTiming {
+  available: boolean;
+  last: GpuPassTimings | null;
+  /** Total GPU frame time per frame (up to 120 samples). */
+  history: readonly number[];
+  approxBandwidthMBps: number;
+}
+
+export const EMPTY_GPU_RENDER_TIMING: GpuRenderTiming = {
+  available: false,
+  last: null,
+  history: [],
+  approxBandwidthMBps: 0,
+};
+
 export interface RenderTiming {
   lastCpuMs: number;
   averageCpuMs: number;
+  gpu: GpuRenderTiming;
 }
 
 export interface ExportTracerOptions {

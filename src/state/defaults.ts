@@ -1,7 +1,15 @@
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { getRendererPreference } from '../engine/rendererMode';
+import { EMPTY_GPU_RENDER_TIMING } from '../engine/types/RendererContracts';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { ChromashiftState, LayerTriple } from './types';
+
+export const DEFAULT_AUDIO_LEVELS = {
+  bass: 0,
+  mid: 0,
+  high: 0,
+  energy: 0,
+} as const;
 
 export const DEFAULT_ANGLES: LayerTriple<number> = [0, 0, 0];
 export const DEFAULT_EXTENSIONS: LayerTriple<number> = [130, 230, 330];
@@ -77,6 +85,8 @@ export function createInitialState(): ChromashiftState {
       },
       tracerPreviewFrozen: false,
       livePreviewEnabled: true,
+      performanceHudEnabled: false,
+      performanceAutoDegrade: false,
     },
     engine: {
       backend: typeof window !== 'undefined' ? getRendererPreference() : 'webgpu',
@@ -104,8 +114,28 @@ export function createInitialState(): ChromashiftState {
       upscaleProgress: 0,
       upscaleInfo: '',
       renderCpuTiming: { last: 0, avg: 0 },
+      renderGpuTiming: { ...EMPTY_GPU_RENDER_TIMING },
+      frameTimeHistory: [],
+      performanceBudgetExceeded: false,
       collisionStats: { ...DEFAULT_COLLISION_STATS },
       presetLoadError: null,
+      kioskEnabled: false,
+      kioskUiHidden: false,
+      kioskAttractMode: false,
+      shortcutsOverlayVisible: false,
+    },
+    reactive: {
+      enabled: false,
+      audioEnabled: false,
+      midiEnabled: false,
+      micActive: false,
+      micError: null,
+      midiAvailable: typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator,
+      midiError: null,
+      midiLearnTarget: null,
+      midiBindings: [],
+      audioSensitivity: 1,
+      audioLevels: { ...DEFAULT_AUDIO_LEVELS },
     },
   };
 }

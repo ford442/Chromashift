@@ -12,6 +12,7 @@
  */
 
 import { classifyBandIndex, classifyPixelBands, computeAdjustedRgb } from './math/bandClassification';
+import { buildRotationMat3 } from './math/rotation';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,10 +26,18 @@ interface ChromashiftWasmModule {
   computeAverageLuminanceStrided(ptr: number, width: number, height: number, stride: number): number;
   /** Call the C++ classifyPixel. */
   classifyPixel(r: number, g: number, b: number, avgLum: number): number;
+  /** Fill a 256-entry band LUT at outPtr for the given avgLum. */
+  buildBandLut(avgLum: number, outPtr: number): void;
+  /** Classify one pixel using a pre-built LUT. */
+  classifyPixelLut(r: number, g: number, b: number, avgLum: number, lutPtr: number): number;
   /** Classify every pixel in a RGBA buffer.  outPtr points to pixelCount int32 values. */
   classifyPixelsBulk(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
+  /** LUT-accelerated bulk classification. */
+  classifyPixelsBulkLut(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
   /** Build a compact uint8 classification mask (0–10 per pixel). */
   computeClassificationMask(inPtr: number, width: number, height: number, avgLum: number, outPtr: number): void;
+  /** LUT-accelerated classification mask. */
+  computeClassificationMaskLut(inPtr: number, width: number, height: number, avgLum: number, outPtr: number): void;
   /** Fill a 256-entry uint32 histogram at outPtr. */
   computeLuminanceHistogram(inPtr: number, byteLen: number, outPtr: number): void;
   /** Fill an 11-entry uint32 colour-band count array at outPtr. */
@@ -41,6 +50,8 @@ interface ChromashiftWasmModule {
                      outPtr: number): void;
   /** Apply decay in-place to a float RGBA buffer on the WASM heap. */
   simulateTracerDecay(bufPtr: number, pixelCount: number, decayFactor: number): void;
+  /** Write a column-major 3×3 rotation matrix (9 floats) to outPtr. */
+  buildRotationMat3(angleDeg: number, outPtr: number): void;
   /** Allocate bytes on the WASM heap; returns a pointer. */
   _malloc(size: number): number;
   /** Free a heap allocation. */
@@ -62,10 +73,15 @@ const WASM_API_FUNCTIONS = [
   'computeAverageLuminance',
   'computeAverageLuminanceStrided',
   'classifyPixel',
+  'buildBandLut',
+  'classifyPixelLut',
   'classifyPixelsBulk',
+  'classifyPixelsBulkLut',
   'computeClassificationMask',
+  'computeClassificationMaskLut',
   'computeLuminanceHistogram',
   'computeColorBandCounts',
+  'buildRotationMat3',
   'durationToDecay',
   'advanceLayerAngles',
   'simulateTracerDecay',
@@ -433,6 +449,19 @@ export function classifyImageMaskWith(
   const { data, width, height } = imageData;
   const pixelCount = width * height;
 
+  if (canUseWasmFn('computeClassificationMaskLut', useWasm)) {
+    const mod = wasmModule!;
+    const inPtr = mod._malloc(data.length);
+    const outPtr = mod._malloc(pixelCount);
+    mod.HEAPU8.set(data, inPtr);
+    mod.computeClassificationMaskLut(inPtr, width, height, avgLum, outPtr);
+    const mask = new Uint8Array(pixelCount);
+    mask.set(mod.HEAPU8.subarray(outPtr, outPtr + pixelCount));
+    mod._free(inPtr);
+    mod._free(outPtr);
+    return { mask, width, height };
+  }
+
   if (canUseWasmFn('computeClassificationMask', useWasm)) {
     const mod = wasmModule!;
     const inPtr = mod._malloc(data.length);
@@ -608,6 +637,27 @@ export function advanceAnglesBy(
     ((angles[1] + steps[1]) % 360 + 360) % 360,
     ((angles[2] + steps[2]) % 360 + 360) % 360,
   ];
+}
+
+/**
+ * Build a column-major 3×3 rotation matrix for a layer angle in degrees.
+ * Matches `buildRotationMat3()` in src/engine/math/rotation.ts.
+ */
+export function buildRotationMat3With(
+  angleDeg: number,
+  useWasm: boolean,
+): Float32Array {
+  if (canUseWasmFn('buildRotationMat3', useWasm)) {
+    const mod = wasmModule!;
+    const outPtr = mod._malloc(9 * 4);
+    mod.buildRotationMat3(angleDeg, outPtr);
+    const result = new Float32Array(9);
+    result.set(mod.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + 9));
+    mod._free(outPtr);
+    return result;
+  }
+
+  return buildRotationMat3(angleDeg);
 }
 
 /**

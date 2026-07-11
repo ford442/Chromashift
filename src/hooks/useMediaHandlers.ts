@@ -446,7 +446,7 @@ export function useAppKeyboardShortcuts(
   swapSourceAndReference: () => void,
 ): void {
   const { actions, selectSourceIndex } = store;
-  const { currentImageIndexRef, imageListRef } = refs;
+  const { currentImageIndexRef, imageListRef, renderStateRef } = refs;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -463,6 +463,8 @@ export function useAppKeyboardShortcuts(
         event.preventDefault();
         selectSourceIndex(Math.min(imageListRef.current.length - 1, currentImageIndexRef.current + 1));
       } else if (event.key === ' ') {
+        const { kioskEnabled, kioskUiHidden } = renderStateRef.current.ui;
+        if (kioskEnabled && kioskUiHidden) return;
         event.preventDefault();
         actions.togglePaused();
       } else if (event.key === 'r' || event.key === 'R') {
@@ -478,5 +480,5 @@ export function useAppKeyboardShortcuts(
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentImageIndexRef, imageListRef, actions, selectSourceIndex, swapSourceAndReference]);
+  }, [currentImageIndexRef, imageListRef, renderStateRef, actions, selectSourceIndex, swapSourceAndReference]);
 }

@@ -22,6 +22,8 @@ import {
 import { usePresets } from './hooks/usePresets';
 import { useVideoExport } from './hooks/useVideoExport';
 import { useTracerInspectInteraction } from './hooks/useTracerInspectInteraction';
+import { useReactiveInput } from './hooks/useReactiveInput';
+import { useKioskMode } from './hooks/useKioskMode';
 
 export default function App() {
   const refs = useChromashiftRefs();
@@ -63,6 +65,7 @@ export default function App() {
 
   useImagePlayback({ refs, store, clearClassificationMask, generateClassificationMaskTexture });
   useAnimationLoop(refs, store);
+  useReactiveInput(refs, store);
   useTracerInspectInteraction(refs, store);
 
   const mediaHandlers = useMediaHandlers({
@@ -82,6 +85,8 @@ export default function App() {
 
   useAppKeyboardShortcuts(refs, store, mediaHandlers.swapSourceAndReference);
 
+  const kiosk = useKioskMode(refs, store);
+
   const uiProps = useAppUiProps(refs, store, {
     selectSourceIndex: store.selectSourceIndex,
     handleAngleChange: store.handleAngleChange,
@@ -100,7 +105,7 @@ export default function App() {
     handleExportTracer,
     ...videoExport,
     ...presets,
-  });
+  }, kiosk);
 
   return <AppUI {...uiProps} />;
 }

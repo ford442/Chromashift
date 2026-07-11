@@ -1,5 +1,6 @@
 import { createInitialState } from './defaults';
 import { chromashiftReducer } from './chromashiftReducer';
+import { isKioskModeSearch, publishKioskBreadcrumbs } from '../engine/kioskMode';
 import {
   deserializeSettings,
   serializeSettings,
@@ -78,11 +79,36 @@ export function readPresetFromSearch(search: string): UrlPresetResult {
   return { document, error: null };
 }
 
+function applyKioskBootstrap(state: ChromashiftState, search: string): ChromashiftState {
+  if (!isKioskModeSearch(search)) return state;
+  publishKioskBreadcrumbs(true);
+  return {
+    ...state,
+    engine: {
+      ...state.engine,
+      paused: false,
+    },
+    output: {
+      ...state.output,
+      livePreviewEnabled: false,
+      performanceHudEnabled: false,
+    },
+    ui: {
+      ...state.ui,
+      kioskEnabled: true,
+      kioskUiHidden: true,
+      kioskAttractMode: true,
+      shortcutsOverlayVisible: false,
+      isAutoPlayActive: true,
+      imageChangeInterval: 10,
+    },
+  };
+}
+
 /**
- * Build the app's initial state, applying a ?preset= URL parameter when
- * present. Runs inside useReducer's lazy initializer, so the preset is in
- * effect before the first frame renders — no flash of default settings.
- * Invalid presets fall back to defaults with ui.presetLoadError set.
+ * Build the app's initial state, applying ?preset= and ?kiosk= URL parameters when
+ * present. Runs inside useReducer's lazy initializer so settings are live before
+ * the first frame renders.
  */
 export function createInitialStateFromUrl(search?: string): ChromashiftState {
   const base = createInitialState();
@@ -90,10 +116,12 @@ export function createInitialStateFromUrl(search?: string): ChromashiftState {
   if (!effectiveSearch) return base;
 
   const { document, error } = readPresetFromSearch(effectiveSearch);
+  let state = base;
   if (error) {
-    return { ...base, ui: { ...base.ui, presetLoadError: error } };
+    state = { ...base, ui: { ...base.ui, presetLoadError: error } };
+  } else if (document) {
+    state = chromashiftReducer(base, { type: 'settings/apply', settings: document.settings });
   }
-  if (!document) return base;
 
-  return chromashiftReducer(base, { type: 'settings/apply', settings: document.settings });
+  return applyKioskBootstrap(state, effectiveSearch);
 }

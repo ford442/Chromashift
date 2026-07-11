@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chromashift WASM Band LUT Benchmark</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, sans-serif;
+      background: #111;
+      color: #eee;
+    }
+    body { margin: 2rem; max-width: 52rem; line-height: 1.5; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+    button {
+      background: #c9a227;
+      color: #111;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    pre {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      padding: 1rem;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    .pass { color: #6d6; }
+    .fail { color: #f66; }
+  </style>
+</head>
+<body>
+  <h1>Chromashift WASM — Band LUT vs branchy (4K)</h1>
+  <p>
+  Compares <code>computeClassificationMask</code> (branchy thresholds) against
+  <code>computeClassificationMaskLut</code> on a synthetic 3840×2160 RGBA buffer.
+  Acceptance target: LUT path ≥2× faster. Requires <code>npm run build:wasm</code>.
+  </p>
+  <button id="run" disabled>Run benchmark</button>
+  <pre id="out">Loading WASM…</pre>
+  <script type="module">
+    const out = document.getElementById('out');
+    const runBtn = document.getElementById('run');
+
+    const WIDTH = 3840;
+    const HEIGHT = 2160;
+    const PIXELS = WIDTH * HEIGHT;
+    const BYTE_LEN = PIXELS * 4;
+    const AVG_LUM = 128;
+    const WARMUP = 2;
+    const ITERS = 8;
+
+    function log(line) {
+      out.textContent += line + '\n';
+    }
+
+    function bench(fn) {
+      const t0 = performance.now();
+      fn();
+      return performance.now() - t0;
+    }
+
+    async function main() {
+      let Module;
+      try {
+        const glue = await import('./chromashift_engine.js');
+        Module = await glue.default();
+      } catch (err) {
+        out.textContent = 'Failed to load chromashift_engine.js — run: npm run build:wasm\n' + err;
+        return;
+      }
+
+      if (typeof Module.computeClassificationMaskLut !== 'function') {
+        out.textContent = 'Stale WASM build — rebuild with: npm run build:wasm';
+        return;
+      }
+
+      const inPtr = Module._malloc(BYTE_LEN);
+      const outPtr = Module._malloc(PIXELS);
+      const heap = Module.HEAPU8;
+
+      // Deterministic gradient pattern (no DOM canvas decode overhead)
+      for (let i = 0; i < PIXELS; i += 1) {
+        const o = i * 4;
+        const v = (i * 17) & 255;
+        heap[o] = v;
+        heap[o + 1] = (v + 64) & 255;
+        heap[o + 2] = (v + 128) & 255;
+        heap[o + 3] = 255;
+      }
+
+      out.textContent = `WASM loaded. Image: ${WIDTH}×${HEIGHT} (${(BYTE_LEN / 1e6).toFixed(1)} MB RGBA)\n`;
+
+      runBtn.disabled = false;
+      runBtn.onclick = () => {
+        runBtn.disabled = true;
+        out.textContent = '';
+
+        // Warmup
+        for (let i = 0; i < WARMUP; i += 1) {
+          Module.computeClassificationMask(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
+          Module.computeClassificationMaskLut(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
+        }
+
+        let branchyMs = 0;
+        let lutMs = 0;
+        for (let i = 0; i < ITERS; i += 1) {
+          branchyMs += bench(() => {
+            Module.computeClassificationMask(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
+          });
+          lutMs += bench(() => {
+            Module.computeClassificationMaskLut(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
+          });
+        }
+
+        branchyMs /= ITERS;
+        lutMs /= ITERS;
+        const speedup = branchyMs / lutMs;
+        const pass = speedup >= 2.0;
+
+        log(`Branchy mask: ${branchyMs.toFixed(1)} ms / frame (avg of ${ITERS})`);
+        log(`LUT mask:     ${lutMs.toFixed(1)} ms / frame (avg of ${ITERS})`);
+        log(`Speedup:      ${speedup.toFixed(2)}×`);
+        log('');
+        log(pass ? 'PASS — LUT ≥2× faster' : 'FAIL — LUT below 2× target', pass ? 'pass' : 'fail');
+
+        // Identity check on a subsample
+        const maskA = new Uint8Array(PIXELS);
+        const maskB = new Uint8Array(PIXELS);
+        Module.computeClassificationMask(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
+        maskA.set(heap.subarray(outPtr, outPtr + PIXELS));
+        Module.computeClassificationMaskLut(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
+        maskB.set(heap.subarray(outPtr, outPtr + PIXELS));
+        let mismatches = 0;
+        for (let i = 0; i < PIXELS; i += 1) {
+          if (maskA[i] !== maskB[i]) mismatches += 1;
+        }
+        log(`Identity:     ${mismatches === 0 ? 'byte-identical masks' : mismatches + ' mismatches'}`);
+
+        Module._free(inPtr);
+        Module._free(outPtr);
+        runBtn.disabled = false;
+      };
+    }
+
+    main();
+  </script>
+</body>
+</html>

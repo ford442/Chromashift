@@ -1,4 +1,9 @@
+import { PerformanceSparkline } from '../PerformanceSparkline';
 import type { DiagnosticsPanelProps } from './types';
+
+function formatPassMs(value: number | undefined): string {
+  return value === undefined ? '—' : value.toFixed(2);
+}
 
 export function DiagnosticsPanel({
   diagnosticsMode,
@@ -14,10 +19,21 @@ export function DiagnosticsPanel({
   tracerInspectExposure,
   tracerInspectTonemap,
   tracerInspectShowLayers,
+  performanceHudEnabled,
+  performanceAutoDegrade,
+  performanceBudgetExceeded,
+  frameRate,
+  renderCpuTiming,
+  renderGpuTiming,
+  frameTimeHistory,
+  rendererBackend,
   onDiagnosticsModeChange,
   onDiagnosticsOpacityChange,
   onStampBoostChange,
   onPeakCollisionsOnlyChange,
+  onPerformanceHudToggle,
+  onPerformanceAutoDegradeToggle,
+  onApplyPerformanceDegrade,
   onFreezeInspect,
   onExportTracer,
   onTracerInspectHeatmapToggle,
@@ -27,6 +43,9 @@ export function DiagnosticsPanel({
   onTracerInspectShowLayersToggle,
   onResetInspectView,
 }: DiagnosticsPanelProps) {
+  const budgetMs = 1000 / frameRate;
+  const gpuPasses = renderGpuTiming.last;
+
   return (
     <div className="space-y-3">
       <div className="panel-3d space-y-2">
@@ -88,6 +107,91 @@ export function DiagnosticsPanel({
         <div className="text-[10px] font-mono text-cyan-200/65">
           Wins R/V/G: {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]} | Hit {Math.round(collisionStats.averageCollision * 100)}%
         </div>
+      </div>
+
+      <div className="panel-3d space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-emerald-300 font-mono text-[10px] uppercase tracking-wider">Perf HUD</span>
+          <button
+            type="button"
+            onClick={() => onPerformanceHudToggle(!performanceHudEnabled)}
+            className={`text-[10px] px-2 py-1 rounded transition-all ${
+              performanceHudEnabled
+                ? 'bg-emerald-500 text-black shadow-[0_0_8px_rgba(52,211,153,0.35)]'
+                : 'bg-zinc-800 border border-emerald-500/30 hover:bg-zinc-700 text-emerald-200'
+            }`}
+            title="Per-pass GPU timing (WebGPU timestamp queries) plus CPU frame cost"
+          >
+            {performanceHudEnabled ? 'HUD On' : 'HUD Off'}
+          </button>
+        </div>
+
+        {performanceHudEnabled && (
+          <>
+            <div className="text-[10px] font-mono text-emerald-200/85">
+              CPU {renderCpuTiming.last.toFixed(2)} / {renderCpuTiming.avg.toFixed(2)} ms
+              <span className="text-emerald-400/60"> · budget {budgetMs.toFixed(2)} ms</span>
+            </div>
+
+            {rendererBackend === 'webgpu' && renderGpuTiming.available ? (
+              <>
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] font-mono text-emerald-100/90">
+                  <span>Layers</span>
+                  <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.layersMs)} ms</span>
+                  <span>Persistence</span>
+                  <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.persistenceMs)} ms</span>
+                  <span>Compositor</span>
+                  <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.compositorMs)} ms</span>
+                  <span>Readback</span>
+                  <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.readbackMs)} ms</span>
+                  <span className="text-emerald-300">GPU total</span>
+                  <span className="text-right tabular-nums text-emerald-300">{formatPassMs(gpuPasses?.totalGpuMs)} ms</span>
+                </div>
+                <div className="text-[10px] font-mono text-emerald-300/75">
+                  ≈ {renderGpuTiming.approxBandwidthMBps.toFixed(1)} MB/s (model)
+                </div>
+              </>
+            ) : (
+              <div className="text-[10px] font-mono text-amber-300/80">
+                GPU timing N/A{rendererBackend !== 'webgpu' ? ' (WebGL fallback)' : ''}
+              </div>
+            )}
+
+            <PerformanceSparkline
+              values={frameTimeHistory}
+              budgetMs={budgetMs}
+            />
+
+            {performanceBudgetExceeded && (
+              <div className="text-[9px] font-mono leading-tight text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded px-1.5 py-1">
+                Frame time exceeds {budgetMs.toFixed(1)} ms budget ({frameRate} FPS).
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => onPerformanceAutoDegradeToggle(!performanceAutoDegrade)}
+                className={`text-[10px] px-2 py-1 rounded transition-all ${
+                  performanceAutoDegrade
+                    ? 'bg-rose-600 text-white shadow-[0_0_8px_rgba(244,63,94,0.35)]'
+                    : 'bg-zinc-800 border border-rose-500/30 hover:bg-zinc-700 text-rose-200'
+                }`}
+                title="When over budget, disable MSAA, reduce tracer scale, and turn off live preview readback"
+              >
+                {performanceAutoDegrade ? 'Auto-degrade On' : 'Auto-degrade Off'}
+              </button>
+              <button
+                type="button"
+                onClick={onApplyPerformanceDegrade}
+                className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-rose-500/30 hover:bg-zinc-700 text-rose-200"
+                title="One-shot: disable MSAA, tracer scale ×0.75, live preview off"
+              >
+                Apply fixes
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="panel-3d space-y-2">

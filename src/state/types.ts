@@ -1,3 +1,4 @@
+import type { GpuRenderTiming } from '../engine/types/RendererContracts';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { RendererBackend } from '../engine/RendererTypes';
 import type { CollisionStats } from '../engine/types/RendererState';
@@ -6,6 +7,7 @@ import type { EngineKind } from '../engine/WasmEngine';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { ReferenceBlendMode } from '../components/overlay/types';
+export type { ReactiveSlice } from '../engine/reactive/types';
 
 export type LayerTriple<T> = [T, T, T];
 
@@ -64,6 +66,10 @@ export interface OutputSlice {
   tracerInspect: TracerInspectState;
   tracerPreviewFrozen: boolean;
   livePreviewEnabled: boolean;
+  /** Show per-pass GPU timing HUD in the Diagnostics panel (WebGPU only). */
+  performanceHudEnabled: boolean;
+  /** Automatically reduce MSAA / tracer scale / live readback when over frame budget. */
+  performanceAutoDegrade: boolean;
 }
 
 export interface EngineSlice {
@@ -103,9 +109,20 @@ export interface UiSlice {
   upscaleProgress: number;
   upscaleInfo: string;
   renderCpuTiming: { last: number; avg: number };
+  renderGpuTiming: GpuRenderTiming;
+  /** Sparkline samples (total ms = max(cpu last, gpu total) per frame). */
+  frameTimeHistory: number[];
+  performanceBudgetExceeded: boolean;
   collisionStats: CollisionStats;
   /** Friendly message when a ?preset= URL parameter could not be applied. */
   presetLoadError: string | null;
+  /** Set from `?kiosk=1` — gallery / installation mode. */
+  kioskEnabled: boolean;
+  /** When true, NUNIF and peripheral chrome are hidden for a clean canvas. */
+  kioskUiHidden: boolean;
+  /** Slow parameter drift for unattended attract loops. */
+  kioskAttractMode: boolean;
+  shortcutsOverlayVisible: boolean;
 }
 
 export interface ChromashiftState {
@@ -115,4 +132,5 @@ export interface ChromashiftState {
   output: OutputSlice;
   engine: EngineSlice;
   ui: UiSlice;
+  reactive: import('../engine/reactive/types').ReactiveSlice;
 }

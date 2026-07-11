@@ -14,7 +14,9 @@ import { PersistencePass } from './PersistencePass';
 import { CompositorPass } from './CompositorPass';
 import { TracerInspectPass } from './TracerInspectPass';
 import { GpuReadback } from './GpuReadback';
-import type { ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult } from './types/RendererContracts';
+import { GpuTimestampProfiler, publishGpuTimestampBreadcrumbs } from './GpuTimestampProfiler';
+import type { ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, GpuRenderTiming, RenderTiming } from './types/RendererContracts';
+import { EMPTY_GPU_RENDER_TIMING } from './types/RendererContracts';
 import type { CollisionStats, RendererState } from './types/RendererState';
 import { layerRotationUniforms } from './math/rotation';
 
@@ -73,6 +75,7 @@ export class WebGPURenderer {
   private readonly compositor: CompositorPass;
   private readonly tracerInspect: TracerInspectPass;
   private readonly readback: GpuReadback;
+  private readonly gpuProfiler: GpuTimestampProfiler | null;
   private readonly compositorSampler: GPUSampler;
   private readonly layerBindGroupCache = createLayerBindGroupCache(3);
 
@@ -121,10 +124,22 @@ export class WebGPURenderer {
     this.compositor = new CompositorPass(device, this.pipelines, this.compositorSampler);
     this.tracerInspect = new TracerInspectPass(device, this.pipelines, this.compositorSampler);
     this.readback = new GpuReadback(device, format, this.pipelines);
+    this.gpuProfiler = GpuTimestampProfiler.create(device);
+    publishGpuTimestampBreadcrumbs(
+      this.gpuProfiler !== null,
+      this.gpuProfiler ? undefined : 'timestamp-query not granted',
+    );
   }
 
-  getRenderTiming(): { lastCpuMs: number; averageCpuMs: number } {
-    return { lastCpuMs: this.lastRenderCpuMs, averageCpuMs: this.averageRenderCpuMs };
+  getRenderTiming(): RenderTiming {
+    const gpu: GpuRenderTiming = this.gpuProfiler
+      ? this.gpuProfiler.getSnapshot()
+      : EMPTY_GPU_RENDER_TIMING;
+    return {
+      lastCpuMs: this.lastRenderCpuMs,
+      averageCpuMs: this.averageRenderCpuMs,
+      gpu,
+    };
   }
 
   private invalidateBindGroupCaches(): void {
@@ -305,7 +320,20 @@ export class WebGPURenderer {
     this.ensureTextures(canvasTex.width, canvasTex.height);
 
     const enc = this.device.createCommandEncoder();
-    this.encodeFrameCore(enc, state, canvasTex.createView(), canvasTex.width, canvasTex.height, fps, 'composite');
+    const profiling = state.profilePerformance === true && this.gpuProfiler !== null;
+    this.gpuProfiler?.setEnabled(profiling);
+    if (profiling && this.gpuProfiler) {
+      this.gpuProfiler.setBandwidthInput({
+        canvasW: canvasTex.width,
+        canvasH: canvasTex.height,
+        layerScale: this.layerScale,
+        tracerScale: this.tracerScale,
+        sampleCount: this.sampleCount,
+        readbackActive: state.livePreviewEnabled !== false,
+      });
+    }
+
+    this.encodeFrameCore(enc, state, canvasTex.createView(), canvasTex.width, canvasTex.height, fps, 'composite', this.gpuProfiler);
 
     const readbackFlags = this.readback.encodeQueuedReadbacks(
       enc,
@@ -324,11 +352,14 @@ export class WebGPURenderer {
         : this.persistence.getDiagnosticTextureForReadback(false),
     );
 
+    this.gpuProfiler?.finishFrame(enc);
+
     this.device.queue.submit([enc.finish()]);
     this.lastRenderCpuMs = performance.now() - renderStart;
     this.averageRenderCpuMs = this.averageRenderCpuMs === 0
       ? this.lastRenderCpuMs
       : this.averageRenderCpuMs * 0.9 + this.lastRenderCpuMs * 0.1;
+    this.gpuProfiler?.afterSubmit();
     this.readback.afterSubmit(readbackFlags);
   }
 
@@ -384,7 +415,10 @@ export class WebGPURenderer {
     height: number,
     fps: number,
     passMode: ExportPassMode,
+    profiler: GpuTimestampProfiler | null = null,
   ): void {
+    profiler?.beginFrame(enc);
+
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
     const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
     const layerOpacities: [number, number, number] = [
@@ -399,6 +433,7 @@ export class WebGPURenderer {
     const canvasDims = { width, height } as GPUTexture;
 
     this.encodeLayerPasses(enc, state, canvasDims, layerOpacities);
+    profiler?.markLayersEnd(enc);
 
     this.persistence.encode(enc, layerTextures, {
       fps,
@@ -410,6 +445,7 @@ export class WebGPURenderer {
       aboveDuration: state.tracerAboveDuration ?? 1000,
       paused: state.paused ?? false,
     });
+    profiler?.markPersistenceEnd(enc);
 
     const tracerAboveOp = state.tracerAboveIntensity ?? 0.85;
     const tracerBelowOp = state.tracerBelowIntensity ?? 0.30;
@@ -461,6 +497,7 @@ export class WebGPURenderer {
           pingPong: this.persistence.pingPong,
         },
       );
+      profiler?.markCompositorEnd(enc);
       return;
     }
 
@@ -510,6 +547,7 @@ export class WebGPURenderer {
         this.persistence.pingPong,
       );
     }
+    profiler?.markCompositorEnd(enc);
   }
 
   private get format(): GPUTextureFormat {
@@ -544,6 +582,7 @@ export class WebGPURenderer {
     this.compositor.destroy();
     this.tracerInspect.destroy();
     this.readback.destroy();
+    this.gpuProfiler?.destroy();
     this.fallbackMaskTexture.destroy();
   }
 }

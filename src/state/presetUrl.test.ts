@@ -117,4 +117,14 @@ describe('built-in preset gallery', () => {
       expect(restored.output).toEqual(applied.output);
     }
   });
+
+  it('applies kiosk bootstrap from ?kiosk=1', () => {
+    const state = createInitialStateFromUrl('?kiosk=1');
+    expect(state.ui.kioskEnabled).toBe(true);
+    expect(state.ui.kioskUiHidden).toBe(true);
+    expect(state.ui.kioskAttractMode).toBe(true);
+    expect(state.ui.isAutoPlayActive).toBe(true);
+    expect(state.engine.paused).toBe(false);
+    expect(state.output.livePreviewEnabled).toBe(false);
+  });
 });

@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useRef, useState } from 'react';
 import { ImageStrip } from './ImageStrip';
+import { KioskRemote } from './KioskRemote';
 import { NunifOverlay } from './NunifOverlay';
+import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { switchRendererPreference } from '../engine/rendererMode';
 import { collectImageFilesFromDataTransfer } from '../engine/fileDrop';
@@ -28,6 +30,8 @@ export function AppUI(props: any) {
     layerBlendMode, setLayerBlendMode, tracerBlendMode, setTracerBlendMode, outputMode, setOutputMode,
     diagnosticsMode, setDiagnosticsMode, diagnosticsOpacity, setDiagnosticsOpacity, stampBoost,
     setStampBoost, peakCollisionsOnly, setPeakCollisionsOnly, colorMode, setColorMode, squareCanvas,
+    performanceHudEnabled, setPerformanceHudEnabled, performanceAutoDegrade, setPerformanceAutoDegrade,
+    performanceBudgetExceeded, renderGpuTiming, frameTimeHistory, applyPerformanceDegrade,
     setSobelEnabled, sobelEnabled, setSoftCropEnabled, softCropEnabled, viewportQuarterZoom,
     setViewportQuarterZoom, viewportHalfOverlay, setViewportHalfOverlay, setSquareCanvas,
     antialiasEnabled, setAntialiasEnabled, handleReset, imageChangeInterval,
@@ -45,7 +49,35 @@ export function AppUI(props: any) {
     onVideoExportDurationChange, onVideoExportFpsChange, onVideoExportScaleChange,
     onVideoExportIncludeTracersChange, onVideoExportPassModeChange, onVideoExportFilenameChange,
     onVideoExportUsePresetAnglesChange,
+    kioskEnabled,
+    kioskUiHidden,
+    shortcutsOverlayVisible,
+    setShortcutsOverlayVisible,
+    kioskFullscreen,
+    toggleKioskFullscreen,
+    reactiveEnabled,
+    audioEnabled,
+    midiEnabled,
+    micActive,
+    micError,
+    midiAvailable,
+    midiError,
+    midiLearnTarget,
+    midiBindings,
+    audioLevels,
+    audioSensitivity,
+    layerExtension0,
+    onReactiveEnabledChange,
+    onAudioEnabledChange,
+    onMidiEnabledChange,
+    onAudioSensitivityChange,
+    onStartMicDemo,
+    onMidiLearnTargetChange,
+    onRemoveMidiBinding,
   } = props;
+
+  const showChrome = !kioskEnabled || !kioskUiHidden;
+  const showKioskRemote = kioskEnabled && kioskUiHidden;
 
   const [isDragActive, setIsDragActive] = useState(false);
   const dragDepthRef = useRef(0);
@@ -84,14 +116,21 @@ export function AppUI(props: any) {
   return (
     <div
       ref={containerRef}
-      className="relative w-screen h-screen bg-gradient-to-br from-gray-900 via-amber-950 to-black overflow-hidden"
+      className={`relative w-screen h-screen bg-gradient-to-br from-gray-900 via-amber-950 to-black overflow-hidden ${
+        kioskEnabled ? 'kiosk-mode' : ''
+      }`}
       id="chromashift-container"
-      onDragOver={handleDragOver}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDragOver={showChrome ? handleDragOver : undefined}
+      onDragEnter={showChrome ? handleDragEnter : undefined}
+      onDragLeave={showChrome ? handleDragLeave : undefined}
+      onDrop={showChrome ? handleDrop : undefined}
+      onClick={() => {
+        if (showKioskRemote && !kioskFullscreen) {
+          void toggleKioskFullscreen();
+        }
+      }}
     >
-      {isDragActive && (
+      {showChrome && isDragActive && (
         <div className="absolute inset-0 z-[100] pointer-events-none flex items-center justify-center bg-black/60 border-4 border-dashed border-amber-400">
           <div className="text-amber-200 font-mono text-lg px-6 py-3 rounded-xl bg-black/70 border border-amber-400/50">
             Drop images or folders to add to your local library
@@ -174,6 +213,7 @@ export function AppUI(props: any) {
       </div>
 
       {/* Preview: Original Image (Top-Right, below Avg Lum) */}
+      {showChrome && (
       <div className="absolute top-14 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewOriginalRef}
@@ -183,8 +223,10 @@ export function AppUI(props: any) {
         />
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Original</div>
       </div>
+      )}
 
       {/* Preview: RGB Separated Output (Right-Center) */}
+      {showChrome && (
       <div className="absolute right-3 top-1/2 -translate-y-1/2 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewSeparatedRef}
@@ -194,8 +236,10 @@ export function AppUI(props: any) {
         />
         <div className="text-xs text-amber-400 px-2 py-1 font-mono">Separated</div>
       </div>
+      )}
 
       {/* Preview: Composite thumbnail (Bottom-Right, 2D canvas fed by throttled GPU readback) */}
+      {showChrome && (
       <div className="absolute bottom-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={canvasRef}
@@ -231,9 +275,10 @@ export function AppUI(props: any) {
           </div>
         </div>
       </div>
+      )}
 
       {/* Image navigation — issue #53: prev/next instead of one-dot-per-image */}
-      {imageList.length > 1 && (
+      {showChrome && imageList.length > 1 && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-40 bg-black/40 backdrop-blur-md rounded px-3 py-1.5 border border-amber-500/20">
           <button
             onClick={() => selectSourceIndex(Math.max(0, currentImageIndex - 1))}
@@ -257,6 +302,7 @@ export function AppUI(props: any) {
       )}
 
       {/* Pause button */}
+      {showChrome && (
       <div className="absolute bottom-3 left-3 z-40">
         <button
           onClick={() => setIsPaused(!isPaused)}
@@ -269,7 +315,9 @@ export function AppUI(props: any) {
           {isPaused ? '▶ Resume' : '⏸ Pause'}
         </button>
       </div>
+      )}
 
+      {showChrome && (
       <ImageStrip
         images={imageList}
         currentIndex={currentImageIndex}
@@ -285,8 +333,10 @@ export function AppUI(props: any) {
         }}
         onClearLibrary={handleClearLocalLibrary}
       />
+      )}
 
       {/* Average luminance control */}
+      {showChrome && (
       <div className="absolute top-3 right-3 z-40 bg-black/40 backdrop-blur-md rounded p-2 flex flex-col items-end gap-1 border border-amber-500/30">
         <span className="text-xs text-amber-400 font-mono">
           Avg Lum: <span className="tabular-nums text-amber-200">{avgLuminance}</span>
@@ -310,13 +360,18 @@ export function AppUI(props: any) {
         <span className="text-[10px] font-mono text-emerald-300/80">
           CPU {renderCpuTiming.last.toFixed(2)} / {renderCpuTiming.avg.toFixed(2)} ms
         </span>
-        <span className="text-[10px] font-mono text-cyan-300/80">
-          2+ {collisionStats.twoOverlapPixels} | 3 {collisionStats.threeOverlapPixels}
-        </span>
-        <span className="text-[10px] font-mono text-cyan-200/70">
-          Win {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]}
-        </span>
+        {!performanceHudEnabled && (
+          <span className="text-[10px] font-mono text-cyan-300/80">
+            2+ {collisionStats.twoOverlapPixels} | 3 {collisionStats.threeOverlapPixels}
+          </span>
+        )}
+        {!performanceHudEnabled && (
+          <span className="text-[10px] font-mono text-cyan-200/70">
+            Win {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]}
+          </span>
+        )}
       </div>
+      )}
 
       {/* GPU error / device loss notice */}
       {gpuError && (
@@ -354,6 +409,7 @@ export function AppUI(props: any) {
       )}
 
       {/* NUNIF control overlay */}
+      {showChrome && (
       <NunifOverlay
         layerAngles={layerAngles}
         layerExtensions={layerExtensions}
@@ -456,6 +512,18 @@ export function AppUI(props: any) {
         onDiagnosticsOpacityChange={setDiagnosticsOpacity}
         onStampBoostChange={setStampBoost}
         onPeakCollisionsOnlyChange={setPeakCollisionsOnly}
+        performanceHudEnabled={performanceHudEnabled}
+        performanceAutoDegrade={performanceAutoDegrade}
+        performanceBudgetExceeded={performanceBudgetExceeded}
+        renderCpuTiming={renderCpuTiming}
+        renderGpuTiming={renderGpuTiming}
+        frameTimeHistory={frameTimeHistory}
+        onPerformanceHudToggle={setPerformanceHudEnabled}
+        onPerformanceAutoDegradeToggle={setPerformanceAutoDegrade}
+        onApplyPerformanceDegrade={() => {
+          rendererRef.current?.setAntialiasing(false);
+          applyPerformanceDegrade();
+        }}
         colorMode={colorMode}
         onColorModeChange={setColorMode}
         sobelEnabled={sobelEnabled}
@@ -504,7 +572,57 @@ export function AppUI(props: any) {
         onUpscaleOutput={handleUpscaleOutput}
         engineMode={engineMode}
         wasmAvailable={wasmAvailable}
+        reactiveEnabled={reactiveEnabled}
+        audioEnabled={audioEnabled}
+        midiEnabled={midiEnabled}
+        micActive={micActive}
+        micError={micError}
+        midiAvailable={midiAvailable}
+        midiError={midiError}
+        midiLearnTarget={midiLearnTarget}
+        midiBindings={midiBindings}
+        audioLevels={audioLevels}
+        audioSensitivity={audioSensitivity}
+        layerExtension0={layerExtension0}
+        onReactiveEnabledChange={onReactiveEnabledChange}
+        onAudioEnabledChange={onAudioEnabledChange}
+        onMidiEnabledChange={onMidiEnabledChange}
+        onAudioSensitivityChange={onAudioSensitivityChange}
+        onStartMicDemo={onStartMicDemo}
+        onMidiLearnTargetChange={onMidiLearnTargetChange}
+        onRemoveMidiBinding={onRemoveMidiBinding}
       />
+      )}
+
+      {showKioskRemote && (
+        <KioskRemote
+          currentIndex={currentImageIndex}
+          imageCount={imageList.length}
+          onPrevious={() => selectSourceIndex(Math.max(0, currentImageIndex - 1))}
+          onNext={() => selectSourceIndex(Math.min(imageList.length - 1, currentImageIndex + 1))}
+          onRandom={() => {
+            if (imageList.length > 0) {
+              selectSourceIndex(Math.floor(Math.random() * imageList.length));
+            }
+          }}
+          onToggleFullscreen={() => { void toggleKioskFullscreen(); }}
+          isFullscreen={kioskFullscreen}
+        />
+      )}
+
+      {showKioskRemote && !kioskFullscreen && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none text-amber-200/50 font-mono text-xs bg-black/30 px-3 py-1 rounded-full border border-amber-500/20">
+          Click canvas or press F for fullscreen · ? for shortcuts · Esc restores panels
+        </div>
+      )}
+
+      {shortcutsOverlayVisible && (
+        <ShortcutsOverlay
+          kioskEnabled={kioskEnabled}
+          kioskUiHidden={kioskUiHidden}
+          onClose={() => setShortcutsOverlayVisible(false)}
+        />
+      )}
 
       {/* Specific image error toast */}
       {specificImageError && (

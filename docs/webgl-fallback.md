@@ -53,6 +53,19 @@ The WebGL-only debug selector in the Renderer panel supports:
 
 These modes are intended for fast browser-visible checks. The WebGPU renderer ignores `webglDebugMode`.
 
+## GPU Performance HUD (WebGPU only)
+
+Per-pass GPU frame timing (`layers`, `persistence`, `compositor`, `readback`) is available on the WebGPU path when the adapter grants `timestamp-query`. Enable **Perf HUD** in the Diagnostics panel. The WebGL2 fallback keeps CPU-only timing and shows **GPU timing N/A**.
+
+Automation breadcrumbs (WebGPU bootstrap):
+
+```js
+window.gpuTimestampAvailable
+window.gpuTimestampReason
+```
+
+When the HUD is disabled, Chromashift does not write or resolve timestamp queries.
+
 ## Porting GLSL Effects To WGSL
 
 Use this workflow for shader-based image effects:

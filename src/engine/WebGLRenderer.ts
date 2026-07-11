@@ -1,6 +1,7 @@
 import { MAIN_VIEW_MODES } from './viewModes';
 import type { CollisionStats, RendererState } from './types/RendererState';
 import type { ChromashiftRenderer, ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, RenderTiming } from './types/RendererContracts';
+import { EMPTY_GPU_RENDER_TIMING } from './types/RendererContracts';
 import { durationToDecay } from './math/decay';
 import { layerRotationUniforms } from './math/rotation';
 import type { WebGLImageTexture } from './WebGLTextureManager';
@@ -502,7 +503,11 @@ export class WebGLRenderer implements ChromashiftRenderer {
   }
 
   getRenderTiming(): RenderTiming {
-    return { lastCpuMs: this.lastCpuMs, averageCpuMs: this.avgCpuMs };
+    return {
+      lastCpuMs: this.lastCpuMs,
+      averageCpuMs: this.avgCpuMs,
+      gpu: EMPTY_GPU_RENDER_TIMING,
+    };
   }
 
   render(state: RendererState, fps = 30): void {

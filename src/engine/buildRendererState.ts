@@ -52,6 +52,8 @@ export function buildRendererState(
     viewportQuarterZoom: output.viewportQuarterZoom,
     viewportHalfOverlay: output.viewportHalfOverlay,
     halfOverlayAlpha: 0.5,
+    livePreviewEnabled: output.livePreviewEnabled,
+    profilePerformance: output.performanceHudEnabled,
     ...overrides,
   };
 }

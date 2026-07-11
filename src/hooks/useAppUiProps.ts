@@ -49,9 +49,10 @@ export function useAppUiProps(
   refs: ChromashiftRefs,
   store: ChromashiftStore,
   handlers: HandlerBundle,
+  kiosk: { isFullscreen: boolean; toggleFullscreen: () => Promise<void> },
 ) {
   const { state, actions } = store;
-  const { media, layers, tracers, output, engine, ui } = state;
+  const { media, layers, tracers, output, engine, ui, reactive } = state;
 
   const currentImage = media.imageList[media.currentIndex] ?? null;
   const isViewingTracer = output.mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER;
@@ -183,6 +184,14 @@ export function useAppUiProps(
     setStampBoost: actions.setStampBoost,
     peakCollisionsOnly: output.peakCollisionsOnly,
     setPeakCollisionsOnly: actions.setPeakCollisionsOnly,
+    performanceHudEnabled: output.performanceHudEnabled,
+    setPerformanceHudEnabled: actions.setPerformanceHudEnabled,
+    performanceAutoDegrade: output.performanceAutoDegrade,
+    setPerformanceAutoDegrade: actions.setPerformanceAutoDegrade,
+    performanceBudgetExceeded: ui.performanceBudgetExceeded,
+    renderGpuTiming: ui.renderGpuTiming,
+    frameTimeHistory: ui.frameTimeHistory,
+    applyPerformanceDegrade: actions.applyPerformanceDegrade,
     colorMode: layers.colorMode,
     setColorMode: actions.setColorMode,
     sobelEnabled: layers.sobelEnabled,
@@ -227,5 +236,36 @@ export function useAppUiProps(
     handleLoadReferenceImage: handlers.handleLoadReferenceImage,
     isWasmReady,
     setSpecificImageError: actions.setSpecificImageError,
+    kioskEnabled: ui.kioskEnabled,
+    kioskUiHidden: ui.kioskUiHidden,
+    kioskAttractMode: ui.kioskAttractMode,
+    shortcutsOverlayVisible: ui.shortcutsOverlayVisible,
+    setKioskUiHidden: actions.setKioskUiHidden,
+    setKioskAttractMode: actions.setKioskAttractMode,
+    setShortcutsOverlayVisible: actions.setShortcutsOverlayVisible,
+    kioskFullscreen: kiosk.isFullscreen,
+    toggleKioskFullscreen: kiosk.toggleFullscreen,
+    reactiveEnabled: reactive.enabled,
+    audioEnabled: reactive.audioEnabled,
+    midiEnabled: reactive.midiEnabled,
+    micActive: reactive.micActive,
+    micError: reactive.micError,
+    midiAvailable: reactive.midiAvailable,
+    midiError: reactive.midiError,
+    midiLearnTarget: reactive.midiLearnTarget,
+    midiBindings: reactive.midiBindings,
+    audioLevels: reactive.audioLevels,
+    audioSensitivity: reactive.audioSensitivity,
+    layerExtension0: layers.extensions[0],
+    onReactiveEnabledChange: actions.setReactiveEnabled,
+    onAudioEnabledChange: actions.setReactiveAudioEnabled,
+    onMidiEnabledChange: actions.setReactiveMidiEnabled,
+    onAudioSensitivityChange: actions.setReactiveAudioSensitivity,
+    onStartMicDemo: () => {
+      actions.setReactiveEnabled(true);
+      actions.setReactiveAudioEnabled(true);
+    },
+    onMidiLearnTargetChange: actions.setMidiLearnTarget,
+    onRemoveMidiBinding: actions.removeMidiBinding,
   };
 }

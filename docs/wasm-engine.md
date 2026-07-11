@@ -20,11 +20,16 @@ the application always works.
 | C++ function | TS dispatcher | Description |
 |---|---|---|
 | `computeAverageLuminance` | `computeAverageLuminanceWith` | ITU-R BT.709 average luminance over an RGBA pixel buffer |
+| `computeAverageLuminanceStrided` | `computeAverageLuminanceStridedWith` | Strided luminance for large (4K–8K) images |
 | `classifyPixel` | `classifyPixelWith` | Maps a single pixel's RGB + avgLum to a colour-band index (0–10) |
+| `buildBandLut` | `buildBandLut` (TS) / WASM heap | 256-entry band LUT from avgLuminance |
 | `classifyPixelsBulk` | `classifyPixelsBulkWith` | Batch version of `classifyPixel` — one WASM call for the whole image |
+| `classifyPixelsBulkLut` | — | LUT-accelerated bulk classification (≥2× on 4K; see benchmark) |
 | `computeClassificationMask` | `classifyImageMaskWith` | Generates compact uint8 band mask (`width × height`) for GPU `r8uint` texture upload |
+| `computeClassificationMaskLut` | `classifyImageMaskWith` (preferred WASM path) | Byte-identical LUT mask, faster on large images |
 | `computeLuminanceHistogram` | `computeLuminanceHistogramWith` | 256-bucket ITU-R BT.709 luminance histogram |
 | `computeColorBandCounts` | `computeColorBandCountsWith` | 11-bucket pixel count per Chromashift colour band |
+| `buildRotationMat3` | `buildRotationMat3With` | Column-major 3×3 rotation matrix (matches `rotation.ts`) |
 
 ### Frame timing & tracer helpers
 
@@ -63,7 +68,31 @@ Then `rgb` is compared against the same thresholds used in the shaders:
 
 ---
 
-## Building the WASM engine
+## Shared band table (`shared/band.json`)
+
+Band thresholds are authored once in `shared/band.json` and consumed by:
+
+| Consumer | Mechanism |
+|---|---|
+| TypeScript | `import` in `bandClassification.ts` |
+| C++ | `npm run codegen:band` → `cpp/band_table.h` |
+| WGSL | `BAND_WGSL` literals generated from the same TS `BAND` object |
+
+Run `npm run codegen:band` after editing the JSON, then rebuild WASM.
+
+---
+
+## Band LUT fast path
+
+`buildBandLut(avgLum)` amortises the per-pixel threshold chain into a 256-entry table.
+`computeClassificationMaskLut` uses a hybrid lookup: when adjacent luminance buckets share
+the same band the LUT value is returned directly; at bucket boundaries the exact float `rgb`
+path runs so masks stay byte-identical to the branchy classifier.
+
+**Benchmark:** open `/wasm-benchmark.html` after `npm run build:wasm` — compares branchy vs
+LUT on a synthetic 3840×2160 buffer. Acceptance target: LUT ≥2× faster in Chrome.
+
+---
 
 ### Prerequisites
 
@@ -83,11 +112,27 @@ Then `rgb` is compared against the same thresholds used in the shaders:
    emcc --version
    ```
 
+### Build targets
+
+| Command | Makefile target | Flags | Use |
+|---|---|---|---|
+| `npm run build:wasm` | `make release` | `-O3` | Production / default dev |
+| `npm run build:wasm:debug` | `make debug` | `-O0 -g -s ASSERTIONS=1` | WASM debugging |
+| `npm run codegen:band` | — | — | Regenerate `cpp/band_table.h` from `shared/band.json` |
+
+```bash
+npm run codegen:band   # shared/band.json → cpp/band_table.h
+npm run build:wasm     # release: public/chromashift_engine.{js,wasm}
+npm run build:wasm:debug
+# equivalent: cd cpp && make release | make debug
+```
+
+The release build also passes `-fno-exceptions -fno-rtti` for smaller glue (embind-compatible).
+
 ### Build
 
 ```bash
 npm run build:wasm   # produces public/chromashift_engine.js + public/chromashift_engine.wasm
-# equivalent: cd cpp && make
 ```
 
 The output lands in `public/` so Vite's dev server and production build both serve the files.
@@ -215,10 +260,17 @@ The currently active engine is also shown in the top-right corner of the canvas
 ```
 cpp/
 ├── chromashift_engine.h     Header — exported C function declarations
-├── chromashift_engine.cpp   C++ implementation (Phase 1 complete)
+├── chromashift_engine.cpp   C++ implementation
+├── band_table.h             Generated from shared/band.json (codegen)
 ├── Makefile                 Emscripten build recipe → public/*.{js,wasm}
 └── tests/
-    └── test_engine.cpp      Host-side g++ unit tests (band thresholds, decay)
+    └── test_engine.cpp      Host-side g++ unit tests
+
+shared/
+└── band.json                Canonical band thresholds (single source of truth)
+
+scripts/
+└── codegen-band.mjs         shared/band.json → cpp/band_table.h
 
 public/
 ├── chromashift_engine.js    (generated) Emscripten ES-module glue

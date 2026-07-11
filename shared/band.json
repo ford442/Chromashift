@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "Canonical Chromashift colour-band thresholds (rgb > threshold). Order defines band indices 0–9; band 10 is dark/grey.",
+  "bands": {
+    "greyHighlight": 229,
+    "orange": 209,
+    "red": 193,
+    "borderRed": 190,
+    "violet": 177,
+    "blue": 161,
+    "borderBlue": 158,
+    "green": 145,
+    "yellow": 128,
+    "borderYellow": 125
+  }
+}

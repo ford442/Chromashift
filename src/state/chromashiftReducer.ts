@@ -16,6 +16,7 @@ import type {
   TracersSlice,
   UiSlice,
 } from './types';
+import type { MidiBinding, ReactiveSettings } from '../engine/reactive/types';
 
 export type ChromashiftAction =
   | { type: 'reset/renderDefaults' }
@@ -33,6 +34,11 @@ export type ChromashiftAction =
   | { type: 'ui/togglePaused' }
   | { type: 'ui/toggleImageStrip' }
   | { type: 'ui/toggleTracerHeatmap' }
+  | { type: 'ui/applyPerformanceDegrade' }
+  | { type: 'reactive/patch'; patch: Partial<import('../engine/reactive/types').ReactiveSlice> }
+  | { type: 'reactive/setMidiBindings'; bindings: MidiBinding[] }
+  | { type: 'reactive/addMidiBinding'; binding: MidiBinding }
+  | { type: 'reactive/removeMidiBinding'; param: import('../engine/reactive/types').MidiParamId }
   | { type: 'settings/apply'; settings: ChromashiftSettingsInput };
 
 /** Serializable preset payload (excludes runtime GPU/media corpus state). */
@@ -42,6 +48,7 @@ export interface ChromashiftSettingsInput {
   output?: Partial<Omit<OutputSlice, 'tracerInspect'>> & { tracerInspect?: Partial<TracerInspectState> };
   engine?: Pick<EngineSlice, 'fps' | 'paused' | 'engineMode' | 'avgLuminance'>;
   ui?: Pick<UiSlice, 'isAutoPlayActive' | 'imageChangeInterval' | 'referenceBlendMode' | 'referenceOpacity' | 'upscaleModel'>;
+  reactive?: Partial<ReactiveSettings>;
 }
 
 export function chromashiftReducer(
@@ -139,6 +146,52 @@ export function chromashiftReducer(
         },
       };
 
+    case 'ui/applyPerformanceDegrade': {
+      const nextTracerScale = Math.max(0.5, Math.round(state.tracers.scale * 0.75 * 100) / 100);
+      return {
+        ...state,
+        output: {
+          ...state.output,
+          antialiasEnabled: false,
+          livePreviewEnabled: false,
+        },
+        tracers: {
+          ...state.tracers,
+          scale: nextTracerScale,
+        },
+      };
+    }
+
+    case 'reactive/patch':
+      return { ...state, reactive: { ...state.reactive, ...action.patch } };
+
+    case 'reactive/setMidiBindings':
+      return {
+        ...state,
+        reactive: { ...state.reactive, midiBindings: [...action.bindings] },
+      };
+
+    case 'reactive/addMidiBinding':
+      return {
+        ...state,
+        reactive: {
+          ...state.reactive,
+          midiBindings: [
+            ...state.reactive.midiBindings.filter((b) => b.param !== action.binding.param),
+            action.binding,
+          ],
+        },
+      };
+
+    case 'reactive/removeMidiBinding':
+      return {
+        ...state,
+        reactive: {
+          ...state.reactive,
+          midiBindings: state.reactive.midiBindings.filter((b) => b.param !== action.param),
+        },
+      };
+
     case 'settings/apply': {
       const { settings } = action;
       return {
@@ -156,6 +209,15 @@ export function chromashiftReducer(
           : state.output,
         engine: settings.engine ? { ...state.engine, ...settings.engine } : state.engine,
         ui: settings.ui ? { ...state.ui, ...settings.ui } : state.ui,
+        reactive: settings.reactive
+          ? {
+              ...state.reactive,
+              ...settings.reactive,
+              midiBindings: settings.reactive.midiBindings
+                ? [...settings.reactive.midiBindings]
+                : state.reactive.midiBindings,
+            }
+          : state.reactive,
       };
     }
 

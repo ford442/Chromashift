@@ -41,6 +41,9 @@ export interface RendererState {
   viewportQuarterZoom? : boolean;
   viewportHalfOverlay? : boolean;
   halfOverlayAlpha?    : number;
+  livePreviewEnabled?  : boolean;
+  /** When true, WebGPU timestamp queries are written and resolved (Perf HUD). */
+  profilePerformance?: boolean;
 }
 
 export interface CollisionStats {

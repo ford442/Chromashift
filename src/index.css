@@ -495,3 +495,13 @@ input[type="range"].gold-filled::-webkit-slider-thumb {
   letter-spacing: 0.1em;
   margin-bottom: 0.5rem;
 }
+
+/* Kiosk / gallery installation — larger touch & IR-remote targets */
+.kiosk-mode .kiosk-remote-btn {
+  min-height: 3rem;
+  touch-action: manipulation;
+}
+
+.kiosk-mode #chromashift-container {
+  cursor: none;
+}

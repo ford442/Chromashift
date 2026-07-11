@@ -15,6 +15,7 @@ import {
 } from '../state/chromashiftReducer';
 import { createInitialStateFromUrl } from '../state/presetUrl';
 import type { ChromashiftState, LayerTriple } from '../state/types';
+import type { ReactiveModulation } from '../engine/reactive/types';
 
 export interface ChromashiftRefs {
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -44,6 +45,8 @@ export interface ChromashiftRefs {
   ownedObjectUrlsRef: MutableRefObject<string[]>;
   engineModeRef: MutableRefObject<EngineKind>;
   renderStateRef: MutableRefObject<ChromashiftState>;
+  /** Per-frame audio modulation; null when reactive input is off or idle. */
+  reactiveModRef: MutableRefObject<ReactiveModulation | null>;
 }
 
 export function useChromashiftRefs(): ChromashiftRefs {
@@ -74,6 +77,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const ownedObjectUrlsRef = useRef<string[]>([]);
   const engineModeRef = useRef<EngineKind>('ts');
   const renderStateRef = useRef<ChromashiftState>(createInitialState());
+  const reactiveModRef = useRef<ReactiveModulation | null>(null);
 
   return {
     canvasRef,
@@ -103,6 +107,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
     ownedObjectUrlsRef,
     engineModeRef,
     renderStateRef,
+    reactiveModRef,
   };
 }
 
@@ -274,8 +279,43 @@ export function useChromashiftStore(refs: ChromashiftRefs) {
       dispatch({ type: 'engine/patch', patch: { fallbackReason } }),
     setRenderCpuTiming: (renderCpuTiming: { last: number; avg: number }) =>
       dispatch({ type: 'ui/patch', patch: { renderCpuTiming } }),
+    setRenderGpuTiming: (renderGpuTiming: import('../engine/types/RendererContracts').GpuRenderTiming) =>
+      dispatch({ type: 'ui/patch', patch: { renderGpuTiming } }),
+    setFrameTimeHistory: (frameTimeHistory: number[]) =>
+      dispatch({ type: 'ui/patch', patch: { frameTimeHistory } }),
+    setPerformanceBudgetExceeded: (performanceBudgetExceeded: boolean) =>
+      dispatch({ type: 'ui/patch', patch: { performanceBudgetExceeded } }),
+    setPerformanceHudEnabled: (performanceHudEnabled: boolean) =>
+      dispatch({ type: 'output/patch', patch: { performanceHudEnabled } }),
+    setPerformanceAutoDegrade: (performanceAutoDegrade: boolean) =>
+      dispatch({ type: 'output/patch', patch: { performanceAutoDegrade } }),
+    applyPerformanceDegrade: () => dispatch({ type: 'ui/applyPerformanceDegrade' }),
     setCollisionStats: (collisionStats: CollisionStats) =>
       dispatch({ type: 'ui/patch', patch: { collisionStats } }),
+    setKioskUiHidden: (kioskUiHidden: boolean) =>
+      dispatch({ type: 'ui/patch', patch: { kioskUiHidden } }),
+    setKioskAttractMode: (kioskAttractMode: boolean) =>
+      dispatch({ type: 'ui/patch', patch: { kioskAttractMode } }),
+    setShortcutsOverlayVisible: (shortcutsOverlayVisible: boolean) =>
+      dispatch({ type: 'ui/patch', patch: { shortcutsOverlayVisible } }),
+    setReactiveEnabled: (enabled: boolean) =>
+      dispatch({
+        type: 'reactive/patch',
+        patch: {
+          enabled,
+          ...(enabled ? {} : { audioEnabled: false, midiEnabled: false, midiLearnTarget: null }),
+        },
+      }),
+    setReactiveAudioEnabled: (audioEnabled: boolean) =>
+      dispatch({ type: 'reactive/patch', patch: { audioEnabled } }),
+    setReactiveMidiEnabled: (midiEnabled: boolean) =>
+      dispatch({ type: 'reactive/patch', patch: { midiEnabled } }),
+    setReactiveAudioSensitivity: (audioSensitivity: number) =>
+      dispatch({ type: 'reactive/patch', patch: { audioSensitivity } }),
+    setMidiLearnTarget: (midiLearnTarget: import('../engine/reactive/types').MidiParamId | null) =>
+      dispatch({ type: 'reactive/patch', patch: { midiLearnTarget } }),
+    removeMidiBinding: (param: import('../engine/reactive/types').MidiParamId) =>
+      dispatch({ type: 'reactive/removeMidiBinding', param }),
   }), []);
 
   const selectSourceIndex = useCallback((nextIndex: number) => {

@@ -4,6 +4,7 @@ import { ExportPanel } from './ExportPanel';
 import { LayerPanel } from './LayerPanel';
 import { PlayPanel } from './PlayPanel';
 import { PresetsPanel } from './PresetsPanel';
+import { ReactivePanel } from './ReactivePanel';
 import { RendererPanel } from './RendererPanel';
 import { TracerPanel } from './TracerPanel';
 import { UpscalePanel } from './UpscalePanel';
@@ -69,6 +70,16 @@ export function NunifOverlay(props: OverlayProps) {
         onToggle={toggleSection}
       >
         <TracerPanel {...props} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        id="reactive"
+        title="🎵 Reactive Input"
+        open={sections.reactive}
+        onToggle={toggleSection}
+        hint="Audio + MIDI performance control"
+      >
+        <ReactivePanel {...props} />
       </CollapsibleSection>
 
       <CollapsibleSection

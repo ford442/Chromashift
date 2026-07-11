@@ -46,6 +46,8 @@ export interface WebGpuSession {
   context: GPUCanvasContext;
   format: GPUTextureFormat;
   adapterReport: GpuAdapterReport;
+  /** True when `timestamp-query` was requested and granted on the device. */
+  timestampQueryAvailable: boolean;
   reconfigure: () => void;
   detach: () => void;
 }
@@ -249,9 +251,14 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
 
   const adapterInfo = await readAdapterInfo(adapter);
   const adapterReport = buildAdapterReport(adapterInfo, adapter);
+  const requiredFeatures = listAvailableOptionalFeatures(adapter);
   logAdapterReport(adapterReport, requiredLimits);
 
-  const device = await adapter.requestDevice({ requiredLimits });
+  const device = await adapter.requestDevice({
+    requiredLimits,
+    requiredFeatures,
+  });
+  const timestampQueryAvailable = device.features.has('timestamp-query');
   const context = options.canvas.getContext('webgpu');
   if (!context) {
     device.destroy();
@@ -283,6 +290,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
     context,
     format,
     adapterReport,
+    timestampQueryAvailable,
     reconfigure,
     detach,
   };

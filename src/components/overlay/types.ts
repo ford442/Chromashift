@@ -11,6 +11,7 @@ export type OverlaySectionId =
   | 'renderer'
   | 'layers'
   | 'tracer'
+  | 'reactive'
   | 'upscale'
   | 'diagnostics'
   | 'export'
@@ -112,10 +113,21 @@ export interface DiagnosticsPanelProps {
   tracerInspectExposure: number;
   tracerInspectTonemap: boolean;
   tracerInspectShowLayers: boolean;
+  performanceHudEnabled: boolean;
+  performanceAutoDegrade: boolean;
+  performanceBudgetExceeded: boolean;
+  frameRate: number;
+  renderCpuTiming: { last: number; avg: number };
+  renderGpuTiming: import('../../engine/types/RendererContracts').GpuRenderTiming;
+  frameTimeHistory: readonly number[];
+  rendererBackend: RendererBackend;
   onDiagnosticsModeChange: (value: boolean) => void;
   onDiagnosticsOpacityChange: (value: number) => void;
   onStampBoostChange: (value: number) => void;
   onPeakCollisionsOnlyChange: (value: boolean) => void;
+  onPerformanceHudToggle: (value: boolean) => void;
+  onPerformanceAutoDegradeToggle: (value: boolean) => void;
+  onApplyPerformanceDegrade: () => void;
   onFreezeInspect: () => void;
   onExportTracer: () => void;
   onTracerInspectHeatmapToggle: (value: boolean) => void;
@@ -149,6 +161,28 @@ export interface ViewportPanelProps {
   onViewportHalfOverlayToggle: (value: boolean) => void;
 }
 
+export interface ReactivePanelProps {
+  reactiveEnabled: boolean;
+  audioEnabled: boolean;
+  midiEnabled: boolean;
+  micActive: boolean;
+  micError: string | null;
+  midiAvailable: boolean;
+  midiError: string | null;
+  midiLearnTarget: import('../../engine/reactive/types').MidiParamId | null;
+  midiBindings: import('../../engine/reactive/types').MidiBinding[];
+  audioLevels: import('../../engine/reactive/types').AudioLevelSnapshot;
+  audioSensitivity: number;
+  layerExtension0: number;
+  onReactiveEnabledChange: (enabled: boolean) => void;
+  onAudioEnabledChange: (enabled: boolean) => void;
+  onMidiEnabledChange: (enabled: boolean) => void;
+  onAudioSensitivityChange: (value: number) => void;
+  onStartMicDemo: () => void;
+  onMidiLearnTargetChange: (target: import('../../engine/reactive/types').MidiParamId | null) => void;
+  onRemoveMidiBinding: (param: import('../../engine/reactive/types').MidiParamId) => void;
+}
+
 export type OverlayProps =
   PlayPanelProps &
   RendererPanelProps &
@@ -158,4 +192,5 @@ export type OverlayProps =
   UpscalePanelProps &
   ExportPanelProps &
   ViewportPanelProps &
-  PresetsPanelProps;
+  PresetsPanelProps &
+  ReactivePanelProps;

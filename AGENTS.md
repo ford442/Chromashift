@@ -90,7 +90,7 @@ src/
     ├── WebGLRenderer.ts      # WebGL2 fallback/reference implementation with debug modes
     ├── WebGPURenderer.ts     # 5-pass GPU renderer orchestration (delegates to the below)
     ├── WebGPUPipelines.ts, BindGroupCache.ts, PersistencePass.ts, CompositorPass.ts,
-    │   TracerInspectPass.ts, GpuReadback.ts  # Split-out pipeline/pass/readback modules
+    │   TracerInspectPass.ts, GpuReadback.ts, GpuTimestampProfiler.ts  # pass/readback + WebGPU perf HUD
     ├── videoExport/          # Offline frame-by-frame WebM/PNG-sequence export — see docs/VIDEO_EXPORT.md
     ├── compute/
     │   ├── GpuImageAnalysis.ts   # WebGPU histogram + r8uint classification mask
@@ -137,6 +137,14 @@ For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when brows
 ### Presets & Shareable URLs
 
 Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 1`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. See `docs/PRESETS.md`.
+
+### Kiosk / gallery installation
+
+`?kiosk=1` enables installation mode (see `docs/KIOSK.md`): hides NUNIF chrome, forces autoplay + attract parameter drift, large bottom remote, fullscreen + wake lock (`useKioskMode.ts`), and **Esc** to restore panels. Breadcrumb: `window.kioskMode`. WebXR remains future research — kiosk targets desktop Chrome today.
+
+### Compare / multi-view (planned)
+
+Side-by-side preset comparison (dual 2-up, quad grid, swipe split) is **not shipped yet**. Architecture, GPU budget rules, and phased acceptance criteria: `docs/COMPARE_VIEWS.md`. Shared types/helpers: `src/engine/compareViews.ts` (`CompareLayoutMode`, `effectiveLayerScaleForMultiView`, `multiViewPerformanceNote`).
 
 ### Local Image Library (drag-and-drop)
 
@@ -195,6 +203,21 @@ When `enableMSAA` is true (`sampleCount = 4`):
 - `setAntialiasing()` recreates pipelines and destroys `msaaTexture`; `ensureLayerTextures()` recreates it when the canvas size changes.
 
 MSAA pipelines must match the render-pass attachment `sampleCount`. A 4× pipeline cannot target a 1× texture without a `resolveTarget`.
+
+### GPU Performance Instrumentation (WebGPU only)
+
+Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, Chromashift requests every adapter-supported entry in `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`), including `timestamp-query` when present. Breadcrumbs: `window.gpuTimestampAvailable`, `window.gpuTimestampReason`.
+
+`GpuTimestampProfiler` (`src/engine/GpuTimestampProfiler.ts`) wraps the live render path in `WebGPURenderer`:
+
+1. **Layers** — three colour-band passes (MSAA resolve when enabled).
+2. **Persistence** — dual tracer ping-pong + diagnostic texture.
+3. **Compositor** — final blend or alternate main-view pass (tracer inspect, layer isolation, etc.).
+4. **Readback** — preview thumbnail + collision-stats blit/copy when queued.
+
+Timestamps resolve to a ping-pong buffer after submit; results appear one frame later. The Diagnostics panel **Perf HUD** toggle (`output.performanceHudEnabled`) gates all query writes and resolves — when off, there is zero timestamp cost. The HUD shows CPU ms, per-pass GPU ms, an approximate bandwidth model, a 120-frame sparkline, budget warnings (`1000 / fps` ms), and optional auto-degrade (disable MSAA, tracer scale ×0.75, live preview readback off).
+
+WebGL2 fallback reports CPU timing only (`GPU timing N/A` in the HUD). See `docs/webgl-fallback.md`.
 
 ### Colour Bands (WGSL Fragment Shaders)
 

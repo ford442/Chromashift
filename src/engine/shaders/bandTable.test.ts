@@ -69,17 +69,12 @@ describe('WGSL shaders consume the canonical table', () => {
 });
 
 describe('C++ engine divergence guard', () => {
-  it('chromashift_engine.cpp classifyPixel uses the canonical thresholds', () => {
-    const cpp = readFileSync(
-      join(__dirname, '../../../cpp/chromashift_engine.cpp'),
+  it('band_table.h matches the canonical thresholds from shared/band.json', () => {
+    const header = readFileSync(
+      join(__dirname, '../../../cpp/band_table.h'),
       'utf8',
     );
-    const fnStart = cpp.indexOf('int classifyPixel');
-    expect(fnStart).toBeGreaterThan(-1);
-    const body = cpp.slice(fnStart, cpp.indexOf('}', cpp.indexOf('return 10;', fnStart)));
-
-    // Every canonical threshold appears as a comparison, in band-index order.
-    const found = [...body.matchAll(/rgb > (\d+(?:\.\d+)?)f/g)].map((m) => Number(m[1]));
+    const found = [...header.matchAll(/(\d+)\.0f/g)].map((m) => Number(m[1]));
     expect(found).toEqual([...BAND_THRESHOLDS]);
   });
 });

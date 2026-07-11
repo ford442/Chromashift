@@ -9,7 +9,7 @@ export interface ChromashiftSettingsDocument {
 }
 
 export function serializeSettings(state: ChromashiftState): ChromashiftSettingsDocument {
-  const { layers, tracers, output, engine, ui } = state;
+  const { layers, tracers, output, engine, ui, reactive } = state;
   const {
     tracerInspect,
     tracerPreviewFrozen: _tracerPreviewFrozen,
@@ -40,6 +40,10 @@ export function serializeSettings(state: ChromashiftState): ChromashiftSettingsD
         referenceBlendMode: ui.referenceBlendMode,
         referenceOpacity: ui.referenceOpacity,
         upscaleModel: ui.upscaleModel,
+      },
+      reactive: {
+        audioSensitivity: reactive.audioSensitivity,
+        midiBindings: reactive.midiBindings.map((b) => ({ ...b })),
       },
     },
   };

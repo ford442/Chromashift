@@ -1,3 +1,5 @@
+import bandTable from '../../../shared/band.json';
+
 /** BT.709 luminance scaled 0–255 (matches WGSL / C++). */
 export function bt709Luminance(r: number, g: number, b: number): number {
   return r * 0.2126 + g * 0.7152 + b * 0.0722;
@@ -29,18 +31,8 @@ export function computeAdjustedRgb(
  * Key order matters: it defines the band indices (0 = greyHighlight …
  * 9 = borderYellow, 10 = dark/grey).
  */
-export const BAND = {
-  greyHighlight: 229,
-  orange: 209,
-  red: 193,
-  borderRed: 190,
-  violet: 177,
-  blue: 161,
-  borderBlue: 158,
-  green: 145,
-  yellow: 128,
-  borderYellow: 125,
-} as const;
+/** Canonical thresholds from shared/band.json (codegen source for C++ / WGSL). */
+export const BAND = bandTable.bands;
 
 export type BandName = keyof typeof BAND;
 
@@ -81,4 +73,47 @@ export function classifyPixelBands(
   avgLum: number,
 ): number {
   return classifyBandIndex(computeAdjustedRgb(r, g, b, avgLum));
+}
+
+/** lightDark/2 offset from average luminance — shared by LUT build and lookup. */
+export function bandLutOffset(avgLum: number): number {
+  const lightDark = 128 + Math.abs(avgLum - 128) / 2;
+  return lightDark / 2;
+}
+
+/**
+ * Build a 256-entry band LUT for the given average luminance.
+ * Entry `lut[l]` is the band for integer luminance bucket `l`.
+ */
+export function buildBandLut(avgLum: number): Uint8Array {
+  const offset = bandLutOffset(avgLum);
+  const lut = new Uint8Array(256);
+  for (let lum = 0; lum < 256; lum += 1) {
+    lut[lum] = classifyBandIndex(lum + offset);
+  }
+  return lut;
+}
+
+/**
+ * Classify a pixel with a pre-built LUT — matches C++ classifyLumWithLut().
+ */
+export function classifyPixelBandsLut(
+  r: number,
+  g: number,
+  b: number,
+  avgLum: number,
+  lut: Uint8Array,
+): number {
+  const lum = bt709Luminance(r, g, b);
+  const offset = bandLutOffset(avgLum);
+  const rgb = lum + offset;
+  if (lum < 0 || lum >= 255) {
+    return classifyBandIndex(rgb);
+  }
+  const l0 = Math.floor(lum);
+  const l1 = l0 + 1;
+  if (lut[l0] === lut[l1]) {
+    return lut[l0];
+  }
+  return classifyBandIndex(rgb);
 }
