@@ -12,13 +12,15 @@ export function AppUI(props: any) {
   const {
     containerRef, mainViewportRef, previewTracerRef, photoModeImage, isReferenceCompareMode,
     handleDropFiles, handleClearLocalLibrary,
-    referenceImage, showCanvasMainView, isPaused, mainViewMode, showReferenceOverlay,
-    referenceBlendMode, referenceOpacity, previewOriginalRef, previewSeparatedRef, gpuError,
+    referenceImage, showCanvasMainView, isPaused, mainViewMode, showImageOverlay,
+    overlayImageSource, overlayPhotoImage, overlayUsesSeparatedCanvas,
+    referenceBlendMode, referenceOpacity, previewOriginalRef, previewSeparatedRef,
+    overlaySeparatedRef, gpuError,
     rendererBackend, rendererFallbackReason, webglDebugMode, setWebglDebugMode,
     collisionStats, isAutoPlayActive, setIsAutoPlayActive, isImageStripOpen,
     setIsImageStripOpen, imageList, currentImageIndex, selectSourceIndex, handleLoadFile,
     handleLoadSpecificImage, handleLoadReferenceFile, setReferenceImage, swapSourceAndReference,
-    setReferenceBlendMode, setReferenceOpacity, handleFreezeInspect, tracerInspectZoom,
+    setReferenceBlendMode, setOverlayImageSource, setReferenceOpacity, handleFreezeInspect, tracerInspectZoom,
     setTracerInspectZoom, tracerInspectHeatmap, setTracerInspectHeatmap,
     tracerInspectExposure, setTracerInspectExposure, tracerInspectTonemap, setTracerInspectTonemap,
     tracerInspectShowLayers, setTracerInspectShowLayers, handleResetInspectView, exportingTracer,
@@ -172,7 +174,7 @@ export function AppUI(props: any) {
         {isReferenceCompareMode && (
           <div className="absolute top-0 bottom-0 left-1/2 w-px bg-amber-300/80 shadow-[0_0_12px_rgba(245,158,11,0.65)]" />
         )}
-        {showReferenceOverlay && referenceImage && (
+        {showImageOverlay && (
           <div
             className="absolute inset-0 overflow-hidden pointer-events-none"
             style={{
@@ -196,18 +198,29 @@ export function AppUI(props: any) {
               WebkitMaskPosition: referenceBlendMode === 'checker' ? '0 0,24px 24px' : undefined,
             }}
           >
-            <img
-              src={referenceImage.url}
-              alt={referenceImage.label ?? 'Reference overlay'}
-              className="w-full h-full object-contain"
-              style={{
-                filter:
-                  referenceBlendMode === 'edge'
-                    ? 'grayscale(1) contrast(3) brightness(1.2)'
-                    : 'none',
-              }}
-              draggable={false}
-            />
+            {overlayUsesSeparatedCanvas ? (
+              <canvas
+                ref={overlaySeparatedRef}
+                width={300}
+                height={300}
+                className="w-full h-full object-contain"
+                style={{ display: 'block', imageRendering: 'pixelated' }}
+              />
+            ) : overlayPhotoImage ? (
+              <img
+                key={overlayPhotoImage.url}
+                src={overlayPhotoImage.url}
+                alt={overlayPhotoImage.label ?? `${overlayImageSource} overlay`}
+                className="w-full h-full object-contain"
+                style={{
+                  filter:
+                    referenceBlendMode === 'edge'
+                      ? 'grayscale(1) contrast(3) brightness(1.2)'
+                      : 'none',
+                }}
+                draggable={false}
+              />
+            ) : null}
           </div>
         )}
       </div>
@@ -449,6 +462,7 @@ export function AppUI(props: any) {
         referenceImageLabel={referenceImage?.label ?? referenceImage?.url ?? null}
         isImageStripOpen={isImageStripOpen}
         referenceBlendMode={referenceBlendMode}
+        overlayImageSource={overlayImageSource}
         referenceOpacity={referenceOpacity}
         onTracerViewToggle={(next) => setMainViewMode(
           next ? MAIN_VIEW_MODES.FULL_RES_TRACER : MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
@@ -461,6 +475,7 @@ export function AppUI(props: any) {
         onToggleImageStrip={() => setIsImageStripOpen((prev: boolean) => !prev)}
         onSwapSourceReference={swapSourceAndReference}
         onReferenceBlendModeChange={setReferenceBlendMode}
+        onOverlayImageSourceChange={setOverlayImageSource}
         onReferenceOpacityChange={setReferenceOpacity}
         onFreezeInspect={handleFreezeInspect}
         onTracerInspectHeatmapToggle={setTracerInspectHeatmap}

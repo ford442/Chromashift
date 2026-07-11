@@ -1,5 +1,5 @@
 import { getBlendModeInfo } from '../../engine/blendModes';
-import type { ReferenceBlendMode, TracerPanelProps } from './types';
+import type { ReferenceBlendMode, OverlayImageSource, TracerPanelProps } from './types';
 
 const BLEND_OPTIONS = (
   <>
@@ -65,6 +65,7 @@ export function TracerPanel({
   currentImageLabel,
   referenceImageLabel,
   referenceBlendMode,
+  overlayImageSource,
   referenceOpacity,
   isImageStripOpen,
   onTracerAboveIntensityChange,
@@ -78,6 +79,7 @@ export function TracerPanel({
   onTracerViewToggle,
   onMainViewModeChange,
   onReferenceBlendModeChange,
+  onOverlayImageSourceChange,
   onReferenceOpacityChange,
   onSwapSourceReference,
   onToggleImageStrip,
@@ -198,18 +200,31 @@ export function TracerPanel({
           </select>
           <div className="text-[10px] text-amber-300/70 font-mono">Src: {currentImageLabel ?? '—'}</div>
           <div className="text-[10px] text-cyan-300/70 font-mono">Ref: {referenceImageLabel ?? '—'}</div>
+          <div className="space-y-1 mt-1">
+            <span className="text-xs text-amber-400/80 font-mono text-[10px]">Blend Overlay:</span>
+            <select
+              value={overlayImageSource}
+              onChange={(e) => onOverlayImageSourceChange(e.target.value as OverlayImageSource)}
+              className="w-full text-[10px] px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-cyan-500/30 text-cyan-100"
+            >
+              <option value="source">Source (follows autoplay)</option>
+              <option value="reference">Reference</option>
+              <option value="previous">Previous</option>
+              <option value="separated">Separated output</option>
+            </select>
+          </div>
           <div className="grid grid-cols-2 gap-2 mt-1">
             <select
               value={referenceBlendMode}
               onChange={(e) => onReferenceBlendModeChange(e.target.value as ReferenceBlendMode)}
               className="text-[10px] px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 border border-cyan-500/30 text-cyan-100"
             >
-              <option value="hidden">Ref Hidden</option>
-              <option value="overlay">Ref Overlay</option>
-              <option value="split">Ref Split</option>
-              <option value="checker">Ref Checker</option>
-              <option value="difference">Ref Difference</option>
-              <option value="edge">Ref Edge</option>
+              <option value="hidden">Hidden</option>
+              <option value="overlay">Alpha overlay</option>
+              <option value="split">Split</option>
+              <option value="checker">Checker</option>
+              <option value="difference">Difference</option>
+              <option value="edge">Edge</option>
             </select>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-cyan-200/70 font-mono">{Math.round(referenceOpacity * 100)}%</span>

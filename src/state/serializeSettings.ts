@@ -38,6 +38,7 @@ export function serializeSettings(state: ChromashiftState): ChromashiftSettingsD
         isAutoPlayActive: ui.isAutoPlayActive,
         imageChangeInterval: ui.imageChangeInterval,
         referenceBlendMode: ui.referenceBlendMode,
+        overlayImageSource: ui.overlayImageSource,
         referenceOpacity: ui.referenceOpacity,
         upscaleModel: ui.upscaleModel,
       },
