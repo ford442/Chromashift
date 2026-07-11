@@ -17,6 +17,7 @@ import {
 } from '../engine/gpuBootstrap';
 import { GpuImageAnalysis } from '../engine/compute/GpuImageAnalysis';
 import { publishGpuComputeBreadcrumbs } from '../engine/compute/computeSupport';
+import { listLocalImages } from '../engine/LocalLibrary';
 
 export interface UseAppWebGPUInitProps {
   previewTracerRef: MutableRefObject<HTMLCanvasElement | null>;
@@ -286,7 +287,16 @@ export function useAppWebGPUInit({
         const list = await localTextureManager.fetchImageList('./images.json', signal);
         if (bailIfCancelled()) return;
 
-        const entries = [...list];
+        const localRecords = await listLocalImages().catch(() => []);
+        if (bailIfCancelled()) return;
+        const localEntries: ImageEntry[] = localRecords.map((record) => {
+          const url = URL.createObjectURL(record.blob);
+          const thumbUrl = URL.createObjectURL(record.thumbBlob);
+          ownedObjectUrlsRef.current.push(url, thumbUrl);
+          return { url, thumbUrl, label: record.label, localId: record.id };
+        });
+
+        const entries = [...list, ...localEntries];
         setImageList(entries);
 
         const urlParams = new URLSearchParams(window.location.search);
@@ -365,7 +375,7 @@ export function useAppWebGPUInit({
 
       if (bailIfCancelled()) return;
       setGpuReady(true);
-  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, deviceRef, webGpuSessionRef, gpuImageAnalysisRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef]);
+  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, deviceRef, webGpuSessionRef, gpuImageAnalysisRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef, ownedObjectUrlsRef]);
 
   useEffect(() => {
     const canvas = previewTracerRef.current;

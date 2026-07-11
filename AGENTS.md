@@ -12,6 +12,8 @@ Chromashift is a WebGPU-based visual engine that renders images through a multi-
 
 Each layer has independent rotation (driven by a `mat3x3` uniform) and can be flipped. The UI is a fixed left-side control panel built with React and Tailwind CSS v4, using a gold-tinted glass-morphism theme.
 
+For what's already shipped vs. planned next, see the [Roadmap](README.md#roadmap) in README.md — it groups open GitHub issues into foundation / features / research.
+
 ## Tech Stack
 
 | Layer | Technology | Version |
@@ -37,15 +39,34 @@ npm run preview   # Preview the production build locally
 
 ## Architecture
 
+This tree covers every top-level directory under `src/`; file comments are illustrative,
+not exhaustive — grep the directory itself for the full file list.
+
 ```
 src/
 ├── main.tsx                  # React entry point (createRoot + StrictMode)
-├── App.tsx                   # Root component — renderer init, animation loop, state management,
-│                             # preview canvases (Original, Separated, Tracer), image auto-play
+├── App.tsx                   # Root component — wires all hooks below, renders <AppUI>
 ├── index.css                 # @import "tailwindcss" + extensive gold/glass custom CSS
 ├── components/
-│   └── NunifOverlay.tsx      # Left-side control panel (angles, rates, fps, opacity, tracers,
-│                             # blend modes, reset, play/pause, image interval)
+│   ├── AppUI.tsx              # Presentational root: canvas, previews, ImageStrip, overlay
+│   ├── ImageStrip.tsx         # Corpus browser (remote + LOCAL/REMOTE badges, drag-drop target)
+│   ├── RotaryKnob.tsx         # Reusable rotation-angle dial control
+│   └── overlay/               # NunifOverlay split into per-concern section panels
+│       ├── NunifOverlay.tsx       # Shell that composes the panels below
+│       ├── LayerPanel.tsx, TracerPanel.tsx, PlayPanel.tsx, ViewportPanel.tsx,
+│       │   RendererPanel.tsx, DiagnosticsPanel.tsx, ExportPanel.tsx,
+│       │   PresetsPanel.tsx, UpscalePanel.tsx  # one panel per settings group
+│       └── useOverlaySections.ts, types.ts, constants.ts
+├── hooks/                    # App.tsx's logic, extracted so the component stays declarative
+│   ├── useChromashiftStore.ts    # Reducer-backed store (state slices) + refs bundle
+│   ├── useAppWebGPUInit.ts       # WebGPU/WebGL bootstrap, initial image list + local library merge
+│   ├── useImagePlayback.ts       # Loads the current/reference texture on index change, evicts old ones
+│   ├── useMediaHandlers.ts       # File/drop/upscale handlers (handleDropFiles, handleLoadFile, …)
+│   ├── useAnimationLoop.ts, useAppLifecycle.ts, useClassificationMask.ts,
+│   │   useTracerInspectInteraction.ts, useVideoExport.ts, usePresets.ts, useAppUiProps.ts
+├── state/                    # Reducer, slices, and (de)serialization — see `ChromashiftState`
+│   ├── chromashiftReducer.ts, defaults.ts, types.ts
+│   └── serializeSettings.ts, presetUrl.ts, presetLibrary.ts, presetGallery.ts  # see docs/PRESETS.md
 └── engine/
     ├── shaders/              # WGSL modules assembled in TS (thin assembler)
     │   ├── index.ts          # Re-exports all shader sources (import via './shaders')
@@ -55,17 +76,27 @@ src/
     │   ├── persistence.ts    # Tracer persistence pass
     │   ├── compositor.ts     # Final compositor pass
     │   └── diagnostics.ts    # Tracer view, display, heatmap, diagnostic, compare passes
-    ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache
+    ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache, evictExcept()
     ├── WebGLTextureManager.ts # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
+    ├── LocalLibrary.ts       # IndexedDB-backed local image library (drag-and-drop uploads)
+    ├── fileDrop.ts           # Flattens a drop's DataTransfer (incl. folders) into File[]
+    ├── Upscaler.ts           # Lazy Web Worker wrapper for the two upscale backends below
+    ├── upscaler.worker.ts    # TF.js Real-ESRGAN / Real-CUGAN
+    ├── nunif.worker.ts       # onnxruntime-web swin_unet (waifu2x)
+    ├── viewModes.ts          # MAIN_VIEW_MODES enum (composite, tracer, layers, quarter-zoom, …)
     ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
-    ├── RendererTypes.ts      # Shared renderer/texture contracts consumed by App.tsx
+    ├── RendererTypes.ts / types/RendererContracts.ts  # Shared renderer/texture contracts
+    ├── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
     ├── WebGLRenderer.ts      # WebGL2 fallback/reference implementation with debug modes
-    └── WebGPURenderer.ts     # 5-pass GPU renderer, uniform buffer management,
-                              # MSAA toggle, dual ping-pong persistence buffers
-    └── compute/
-        ├── GpuImageAnalysis.ts   # WebGPU histogram + r8uint classification mask
-        ├── computeSupport.ts     # Feature detection + window breadcrumbs
-        └── wgslSnippets.ts       # Shared WGSL threshold helpers (C++ parity)
+    ├── WebGPURenderer.ts     # 5-pass GPU renderer orchestration (delegates to the below)
+    ├── WebGPUPipelines.ts, BindGroupCache.ts, PersistencePass.ts, CompositorPass.ts,
+    │   TracerInspectPass.ts, GpuReadback.ts  # Split-out pipeline/pass/readback modules
+    ├── videoExport/          # Offline frame-by-frame WebM/PNG-sequence export — see docs/VIDEO_EXPORT.md
+    ├── compute/
+    │   ├── GpuImageAnalysis.ts   # WebGPU histogram + r8uint classification mask
+    │   ├── computeSupport.ts     # Feature detection + window breadcrumbs
+    │   └── wgslSnippets.ts       # Shared WGSL threshold helpers (C++ parity)
+    └── math/                 # Pure TS (bandClassification, rotation, decay) shared with tests/C++ parity
 ```
 
 ### Renderer Selection / WebGL2 Fallback
@@ -106,6 +137,36 @@ For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when brows
 ### Presets & Shareable URLs
 
 Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 1`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. See `docs/PRESETS.md`.
+
+### Local Image Library (drag-and-drop)
+
+Dropping image files (or whole folders) anywhere on `#chromashift-container` persists them to IndexedDB (`src/engine/LocalLibrary.ts`, db `chromashift-library`) — labels, dimensions, and a small WebP thumbnail alongside the original bytes — so the personal library survives page reloads without any server upload. `src/engine/fileDrop.ts` flattens a drop's `DataTransfer` (including nested folders, via `webkitGetAsEntry`) into a plain `File[]`; `useMediaHandlers.handleDropFiles` writes them to IndexedDB and appends `ImageEntry`s carrying a `localId` and a `blob:` URL — the corpus, image strip, and texture pipeline don't otherwise distinguish local from remote entries.
+
+`ImageStrip` shows a LOCAL/REMOTE badge per entry (using `thumbUrl`, not the full-res `url`, to avoid decoding full images just for a 144px thumbnail) and a "Clear Library" button that wipes IndexedDB and drops every `localId`-tagged entry from the corpus.
+
+Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureManager` need no special-casing to decode them (no CORS, unlike some remote hosts). The one addition is `evictExcept(keepUrls)`, called after each texture swap in `useImagePlayback`: it destroys any cached GPU texture backed by a `blob:` URL that isn't the current source or reference, so switching away frees GPU memory and switching back simply re-decodes from the (already-resident) blob on demand. Remote `http(s)` textures are still cached forever.
+
+### Upscaler (lazy-loaded)
+
+`Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web (and its ~26 MB `ort-wasm-simd-threaded.jsep.wasm`) is fetched on initial page load — only after the user actually invokes an upscale. Verify this stays true after changes by running `npm run build` and confirming `dist/assets/index-*.js` contains no `tfjs`/`ort-wasm` references, or by checking the Network panel on a fresh load.
+
+- **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not** bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
+- **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Defaults to a public CDN base (`NUNIF_DEFAULT_BASE` in `Upscaler.ts`); override with `VITE_NUNIF_BASE` to self-host the `models/swin_unet/` and `models/utils/` ONNX files instead. The ORT wasm runtime itself is always loaded from jsDelivr (`ort.env.wasm.wasmPaths` in `nunif.worker.ts`), not bundled, to avoid shipping it in `dist/`.
+
+Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on an actual first-time fetch, not on cache hits.
+
+### Viewport Modes
+
+`src/engine/viewModes.ts` defines `MAIN_VIEW_MODES` (composite, full-res tracer, source/reference/previous image, individual layers, coincidence heatmap, compare split-views, stamp diagnostics). The Viewport panel (`ViewportPanel.tsx`) additionally offers two mutually-exclusive display transforms layered on top of the composite view:
+
+- **Quarter Zoom** (`viewportQuarterZoom`) — crops and scales the main canvas to just its bottom-left quarter, for inspecting fine detail at effectively higher resolution.
+- **Half Overlay** (`viewportHalfOverlay`) — overlays the canvas's top and bottom halves on top of each other.
+
+Both are disabled while viewing the full-res tracer or any non-composite view mode.
+
+### Video Export
+
+`src/engine/videoExport/` renders offline frames (independent of the live canvas/animation loop) to produce a WebM or PNG-sequence export at a configurable duration, FPS, resolution scale, and pass mode (composite/tracers/layers). Driven by `useVideoExport.ts` + `ExportPanel.tsx`. See `docs/VIDEO_EXPORT.md`.
 
 ### GPU Image Analysis (Compute)
 
@@ -223,14 +284,21 @@ python deploy.py
 - It uses **Paramiko/SFTP** to recursively upload the `dist/` directory.
 - Target server: `1ink.us` (port 22).
 - Remote path: `test.1ink.us/chromashift`.
-- **Security note**: The script currently contains a hard-coded password. Treat it as sensitive and avoid committing it to public repositories.
+- **Security note**: Credentials are read from `DEPLOY_USER` / `DEPLOY_PASS` env vars (falling back to `CHANGEME` placeholders in the script, which refuse to run). There is no password-only, key-based auth path yet, and `CLEAN_BEFORE_UPLOAD = True` is destructive with no dry-run — see issue tracking hardening this further.
 
 ## Browser Requirements
 
-WebGPU is required for the primary renderer. Supported in:
-- Chrome 113+ / Edge 113+
-- Chrome Canary (flags may be needed on older versions)
+Chromashift layers four independent capability checks; each degrades gracefully to the
+next without blocking the app from loading:
 
-Firefox and Safari do not yet have stable WebGPU support.
+| Capability | Role | Requirement | Fallback if unavailable |
+|---|---|---|---|
+| **WebGPU** | Primary renderer (5-pass pipeline, GPU compute analysis) | Chrome 113+ / Edge 113+ / Chrome Canary | Falls back to WebGL2 automatically on init failure or `device.lost`; force with `?renderer=webgl` |
+| **WebGL2** | Debug/reference renderer, Playwright screenshots, shader-porting | Any browser with WebGL2 (Firefox, Safari included) | N/A — this *is* the fallback |
+| **WASM SIMD128** | Accelerated CPU luminance/classification (`cpp/chromashift_engine.cpp`) | Chrome/Edge/Firefox with WASM SIMD; requires `npm run build:wasm` (Emscripten) | Silently uses the TypeScript engine (`WasmEngine.ts`) — same public API either way |
+| **ORT (onnxruntime-web)** | Optional waifu2x upscaling (`nunif.worker.ts`) | Any WebGPU/WebGL2 browser; loaded lazily only when "Upscale" is clicked | Real-ESRGAN/Real-CUGAN via TF.js (`upscaler.worker.ts`) covers the other upscale path |
 
-Use `?renderer=webgl` on browsers or CI environments where WebGPU is unavailable but WebGL2 is present.
+Firefox and Safari do not yet have stable WebGPU support — use `?renderer=webgl` there.
+
+See `docs/gpu-bootstrap.md` (WebGPU/WebGL matrix), `docs/wasm-engine.md` (SIMD build/browser
+support), and the Upscaler section above (ORT vs TF.js) for the full detail behind this table.

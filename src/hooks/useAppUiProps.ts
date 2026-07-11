@@ -12,6 +12,8 @@ interface HandlerBundle {
   handleLoadFile: (file: File) => void;
   handleLoadReferenceImage: (url: string, label?: string) => void;
   handleLoadReferenceFile: (file: File) => void;
+  handleDropFiles: (files: File[]) => Promise<void>;
+  handleClearLocalLibrary: () => Promise<void>;
   swapSourceAndReference: () => void;
   handleFreezeInspect: () => void;
   handleUpscaleSource: () => Promise<void>;
@@ -97,6 +99,8 @@ export function useAppUiProps(
     handleLoadFile: handlers.handleLoadFile,
     handleLoadSpecificImage: handlers.handleLoadSpecificImage,
     handleLoadReferenceFile: handlers.handleLoadReferenceFile,
+    handleDropFiles: handlers.handleDropFiles,
+    handleClearLocalLibrary: handlers.handleClearLocalLibrary,
     setReferenceImage: actions.setReferenceImage,
     swapSourceAndReference: handlers.swapSourceAndReference,
     setReferenceBlendMode: actions.setReferenceBlendMode,

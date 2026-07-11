@@ -1,12 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { useCallback, useRef, useState } from 'react';
 import { ImageStrip } from './ImageStrip';
 import { NunifOverlay } from './NunifOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { switchRendererPreference } from '../engine/rendererMode';
+import { collectImageFilesFromDataTransfer } from '../engine/fileDrop';
 
 export function AppUI(props: any) {
   const {
     containerRef, mainViewportRef, previewTracerRef, photoModeImage, isReferenceCompareMode,
+    handleDropFiles, handleClearLocalLibrary,
     referenceImage, showCanvasMainView, isPaused, mainViewMode, showReferenceOverlay,
     referenceBlendMode, referenceOpacity, previewOriginalRef, previewSeparatedRef, gpuError,
     rendererBackend, rendererFallbackReason, webglDebugMode, setWebglDebugMode,
@@ -44,12 +47,57 @@ export function AppUI(props: any) {
     onVideoExportUsePresetAnglesChange,
   } = props;
 
+  const [isDragActive, setIsDragActive] = useState(false);
+  const dragDepthRef = useRef(0);
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDragActive(true);
+  }, [dragDepthRef]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer?.types.includes('Files')) return;
+    e.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragActive(false);
+  }, [dragDepthRef]);
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragActive(false);
+    const dataTransfer = e.dataTransfer;
+    if (!dataTransfer) return;
+    void collectImageFilesFromDataTransfer(dataTransfer).then((files) => {
+      if (files.length > 0) void handleDropFiles(files);
+    });
+  }, [dragDepthRef, handleDropFiles]);
+
   return (
     <div
       ref={containerRef}
       className="relative w-screen h-screen bg-gradient-to-br from-gray-900 via-amber-950 to-black overflow-hidden"
       id="chromashift-container"
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {isDragActive && (
+        <div className="absolute inset-0 z-[100] pointer-events-none flex items-center justify-center bg-black/60 border-4 border-dashed border-amber-400">
+          <div className="text-amber-200 font-mono text-lg px-6 py-3 rounded-xl bg-black/70 border border-amber-400/50">
+            Drop images or folders to add to your local library
+          </div>
+        </div>
+      )}
       {/* Main display viewport */}
       <div
         ref={mainViewportRef}
@@ -235,6 +283,7 @@ export function AppUI(props: any) {
         onSelectReference={(index) => {
           setReferenceImage(imageList[index] ?? null);
         }}
+        onClearLibrary={handleClearLocalLibrary}
       />
 
       {/* Average luminance control */}

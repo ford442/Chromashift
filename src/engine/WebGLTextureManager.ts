@@ -74,6 +74,17 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
     this.textures.clear();
   }
 
+  /** See `TextureManager.evictExcept` — mirrors the same local-blob eviction policy for the WebGL backend. */
+  evictExcept(keepUrls: Iterable<string>): void {
+    const keep = new Set(keepUrls);
+    for (const [url, entry] of this.textures) {
+      if (url.startsWith('blob:') && !keep.has(url)) {
+        this.gl.deleteTexture(entry.texture);
+        this.textures.delete(url);
+      }
+    }
+  }
+
   private createTextureFromSource(source: HTMLImageElement): WebGLTexture {
     const gl = this.gl;
     const texture = gl.createTexture();

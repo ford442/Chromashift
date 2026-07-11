@@ -10,6 +10,10 @@
 export interface ImageEntry {
   url: string;
   label?: string;
+  /** Present when this entry lives in the local IndexedDB library (drag-dropped upload). */
+  localId?: string;
+  /** Small thumbnail object URL to show in the image strip instead of decoding the full image. */
+  thumbUrl?: string;
 }
 
 export class TextureManager {
@@ -93,6 +97,22 @@ export class TextureManager {
       texture.destroy();
     }
     this.textures.clear();
+  }
+
+  /**
+   * Destroy and evict any cached texture backed by a local `blob:` URL (drag-dropped
+   * uploads) that isn't in `keepUrls`. Remote `http(s)` textures are left cached
+   * indefinitely, matching prior behavior. The evicted image reloads from its
+   * IndexedDB-backed blob on demand next time it's selected.
+   */
+  evictExcept(keepUrls: Iterable<string>): void {
+    const keep = new Set(keepUrls);
+    for (const [url, texture] of this.textures) {
+      if (url.startsWith('blob:') && !keep.has(url)) {
+        texture.destroy();
+        this.textures.delete(url);
+      }
+    }
   }
 
   /**

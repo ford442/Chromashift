@@ -91,6 +91,8 @@ export default function App() {
     handleLoadFile: mediaHandlers.handleLoadFile,
     handleLoadReferenceImage: mediaHandlers.handleLoadReferenceImage,
     handleLoadReferenceFile: mediaHandlers.handleLoadReferenceFile,
+    handleDropFiles: mediaHandlers.handleDropFiles,
+    handleClearLocalLibrary: mediaHandlers.handleClearLocalLibrary,
     swapSourceAndReference: mediaHandlers.swapSourceAndReference,
     handleFreezeInspect: mediaHandlers.handleFreezeInspect,
     handleUpscaleSource,

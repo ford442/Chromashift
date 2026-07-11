@@ -5,6 +5,8 @@ import {
   computeAverageLuminanceStridedWith,
   computeAverageLuminanceWith,
 } from '../engine/WasmEngine';
+import { addLocalImage, clearLocalLibrary } from '../engine/LocalLibrary';
+import type { ImageEntry } from '../engine/TextureManager';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 interface MediaHandlersOptions {
@@ -148,6 +150,50 @@ export function useMediaHandlers({
     actions.setMainViewMode(MAIN_VIEW_MODES.FULL_RES_TRACER);
   }, [actions]);
 
+  /**
+   * Persist dropped files (and any images inside dropped folders) into the local
+   * IndexedDB library, then append them to the corpus and select the first one as
+   * the new source. Existing textures are unaffected — the new entries just carry
+   * blob: URLs backed by IndexedDB, so they behave like any other corpus image.
+   */
+  const handleDropFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    const additions: ImageEntry[] = [];
+    for (const file of files) {
+      try {
+        const { meta, thumbBlob } = await addLocalImage(file);
+        const url = URL.createObjectURL(file);
+        const thumbUrl = URL.createObjectURL(thumbBlob);
+        ownedObjectUrlsRef.current.push(url, thumbUrl);
+        additions.push({ url, thumbUrl, label: meta.label, localId: meta.id });
+      } catch (e) {
+        console.error('Failed to store dropped image:', file.name, e);
+      }
+    }
+    if (additions.length === 0) return;
+
+    const nextList = [...imageListRef.current, ...additions];
+    actions.setImageList(nextList);
+    const firstNewIndex = nextList.length - additions.length;
+    actions.setCurrentImageIndex(firstNewIndex);
+    if (media.reference === null) {
+      actions.setReferenceImage(ensureReferenceImage(nextList, firstNewIndex));
+    }
+  }, [ownedObjectUrlsRef, imageListRef, actions, media.reference, ensureReferenceImage]);
+
+  /** Wipe the local library and drop every locally-sourced entry from the corpus. */
+  const handleClearLocalLibrary = useCallback(async () => {
+    await clearLocalLibrary().catch((e) => console.error('Failed to clear local library:', e));
+    const remaining = imageListRef.current.filter((entry) => !entry.localId);
+    actions.setImageList(remaining);
+    if (media.reference?.localId) actions.setReferenceImage(null);
+    if (media.previous?.localId) actions.setPreviousImage(null);
+    const currentEntry = imageListRef.current[currentImageIndexRef.current];
+    if (currentEntry?.localId) {
+      actions.setCurrentImageIndex(0);
+    }
+  }, [imageListRef, currentImageIndexRef, actions, media.reference, media.previous]);
+
   return {
     handleReset,
     handleLoadSpecificImage,
@@ -156,6 +202,8 @@ export function useMediaHandlers({
     handleLoadReferenceImage,
     handleLoadReferenceFile,
     handleFreezeInspect,
+    handleDropFiles,
+    handleClearLocalLibrary,
   };
 }
 

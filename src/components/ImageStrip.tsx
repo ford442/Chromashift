@@ -8,6 +8,7 @@ interface Props {
   onToggleOpen: () => void;
   onSelectSource: (index: number) => void;
   onSelectReference: (index: number) => void;
+  onClearLibrary: () => void;
 }
 
 function getImageLabel(image: ImageEntry, index: number): string {
@@ -29,7 +30,10 @@ export function ImageStrip({
   onToggleOpen,
   onSelectSource,
   onSelectReference,
+  onClearLibrary,
 }: Props) {
+  const localCount = images.filter((image) => image.localId).length;
+
   return (
     <div className="absolute inset-x-0 bottom-0 z-40 pointer-events-none">
       <div className="flex justify-center mb-2 pointer-events-auto">
@@ -46,10 +50,27 @@ export function ImageStrip({
           <div className="flex items-center justify-between px-4 py-2 border-b border-amber-500/15">
             <div className="text-xs font-mono text-amber-300">
               Corpus Browser
-              <span className="ml-2 text-amber-200/60">{images.length} images</span>
+              <span className="ml-2 text-amber-200/60">
+                {images.length} images{localCount > 0 ? ` (${localCount} local)` : ''}
+              </span>
             </div>
-            <div className="text-[10px] font-mono text-amber-200/60">
-              Click card = source, `Ref` = reference
+            <div className="flex items-center gap-3">
+              <div className="text-[10px] font-mono text-amber-200/60">
+                Click card = source, `Ref` = reference. Drag images/folders in to add.
+              </div>
+              {localCount > 0 && (
+                <button
+                  onClick={() => {
+                    if (window.confirm(`Remove all ${localCount} locally-stored image(s)? This cannot be undone.`)) {
+                      onClearLibrary();
+                    }
+                  }}
+                  className="rounded px-2 py-1 text-[10px] font-mono bg-red-900/60 text-red-200 hover:bg-red-800/80 transition-colors"
+                  title="Delete every local (drag-dropped) image from this browser's storage"
+                >
+                  Clear Library
+                </button>
+              )}
             </div>
           </div>
           <div className="overflow-x-auto px-4 py-3">
@@ -74,7 +95,7 @@ export function ImageStrip({
                       className="block w-full bg-zinc-900 hover:bg-zinc-800 transition-colors text-left"
                     >
                       <img
-                        src={image.url}
+                        src={image.thumbUrl ?? image.url}
                         alt={getImageLabel(image, index)}
                         loading="lazy"
                         className="w-full h-24 object-cover bg-black"
@@ -92,6 +113,13 @@ export function ImageStrip({
                               REF
                             </span>
                           )}
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[9px] font-mono ${
+                              image.localId ? 'bg-emerald-900/70 text-emerald-200' : 'bg-zinc-700/70 text-zinc-300'
+                            }`}
+                          >
+                            {image.localId ? 'LOCAL' : 'REMOTE'}
+                          </span>
                         </div>
                         <div className="text-[11px] font-mono text-amber-100 line-clamp-2 min-h-[2rem]">
                           {getImageLabel(image, index)}
