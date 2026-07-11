@@ -1,4 +1,5 @@
 import type { ExportPanelProps } from './ExportPanel';
+import type { PresetsPanelProps } from './PresetsPanel';
 import type { CollisionStats } from '../../engine/types/RendererState';
 import type { RendererBackend } from '../../engine/RendererTypes';
 
@@ -13,7 +14,8 @@ export type OverlaySectionId =
   | 'upscale'
   | 'diagnostics'
   | 'export'
-  | 'viewport';
+  | 'viewport'
+  | 'presets';
 
 export interface PlayPanelProps {
   isAutoPlayActive: boolean;
@@ -155,4 +157,5 @@ export type OverlayProps =
   DiagnosticsPanelProps &
   UpscalePanelProps &
   ExportPanelProps &
-  ViewportPanelProps;
+  ViewportPanelProps &
+  PresetsPanelProps;

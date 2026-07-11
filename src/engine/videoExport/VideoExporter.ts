@@ -118,6 +118,9 @@ export async function exportVideo(
   });
 
   const stopPromise = waitForRecorderStop(recorder);
+  // On an export failure we throw before awaiting stopPromise; keep a rejection
+  // from the recorder itself from surfacing as an unhandled rejection.
+  stopPromise.catch(() => {});
   recorder.start();
 
   renderer.clearPersistence();

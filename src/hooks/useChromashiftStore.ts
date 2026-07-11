@@ -13,6 +13,7 @@ import {
   type ChromashiftAction,
   type ChromashiftSettingsInput,
 } from '../state/chromashiftReducer';
+import { createInitialStateFromUrl } from '../state/presetUrl';
 import type { ChromashiftState, LayerTriple } from '../state/types';
 
 export interface ChromashiftRefs {
@@ -106,7 +107,9 @@ export function useChromashiftRefs(): ChromashiftRefs {
 }
 
 export function useChromashiftStore(refs: ChromashiftRefs) {
-  const [state, dispatch] = useReducer(chromashiftReducer, undefined, createInitialState);
+  // Lazy initializer applies any ?preset= URL parameter before the first
+  // render commit, so a shared preset is live before the first frame.
+  const [state, dispatch] = useReducer(chromashiftReducer, undefined, () => createInitialStateFromUrl());
   const {
     renderStateRef,
     engineModeRef,

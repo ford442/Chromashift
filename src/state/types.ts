@@ -104,6 +104,8 @@ export interface UiSlice {
   upscaleInfo: string;
   renderCpuTiming: { last: number; avg: number };
   collisionStats: CollisionStats;
+  /** Friendly message when a ?preset= URL parameter could not be applied. */
+  presetLoadError: string | null;
 }
 
 export interface ChromashiftState {

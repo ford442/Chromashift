@@ -47,8 +47,14 @@ src/
 │   └── NunifOverlay.tsx      # Left-side control panel (angles, rates, fps, opacity, tracers,
 │                             # blend modes, reset, play/pause, image interval)
 └── engine/
-    ├── shaders.ts            # WGSL vertex + 3 fragment shaders, persistence shader,
-    │                         # compositor shader, and blend-mode helpers
+    ├── shaders/              # WGSL modules assembled in TS (thin assembler)
+    │   ├── index.ts          # Re-exports all shader sources (import via './shaders')
+    │   ├── common.ts         # Vertex shaders, colour/blend helpers, BAND_WGSL
+    │   │                     # (band thresholds generated from math/bandClassification.ts BAND)
+    │   ├── layers.ts         # 3 layer fragment shaders (shared header/prelude)
+    │   ├── persistence.ts    # Tracer persistence pass
+    │   ├── compositor.ts     # Final compositor pass
+    │   └── diagnostics.ts    # Tracer view, display, heatmap, diagnostic, compare passes
     ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache
     ├── WebGLTextureManager.ts # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
     ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
@@ -85,7 +91,7 @@ WebGL-only debug helpers are in the Renderer panel:
 - `Rotation UV grid` — transformed UVs and a grid to debug layer rotation/flips.
 - `Layer mask isolation` — shows active per-layer mask output before final compositing.
 
-For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when browser automation needs visible pixels, then port the final logic into `shaders.ts` / `WebGPUPipelines.ts`. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
+For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL`) — never hardcode them in WGSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/C++ against divergence. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
 ### Rendering Pipeline (Detailed)
 
@@ -96,6 +102,10 @@ For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when brows
    - 1 persistence pipeline that reads the 3 layer textures + previous tracer texture.
    - 1 compositor pipeline that blends tracers + live layers and writes to the swap-chain.
 4. Each frame, `renderer.render(state)` receives the shared `RendererState`. WebGPU encodes all passes into a single command buffer; WebGL runs equivalent GLSL/FBO passes for debugging/reference output.
+
+### Presets & Shareable URLs
+
+Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 1`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. See `docs/PRESETS.md`.
 
 ### GPU Image Analysis (Compute)
 
@@ -113,7 +123,7 @@ Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K
 
 **Feature detection**: `detectGpuComputeSupport(device)` gates on adapter `maxTextureDimension2D`. Breadcrumbs: `window.gpuComputeAvailable`, `window.gpuComputeReason`. WebGL mode skips compute entirely.
 
-**Parity tests**: `src/engine/compute/goldenMask.test.ts` validates TS/WASM mask output against `bandClassification.ts` (same thresholds as C++). WGSL compute uses identical `classify_band()` logic.
+**Parity tests**: `src/engine/compute/goldenMask.test.ts` checks the TS fallback against an f32-accurate port of C++ `computeClassificationMask` on a golden image (exact match, several avgLum values), asserts the WGSL `classify_band()` chain is generated from `BAND_THRESHOLDS`, and bounds the histogram-derived average within one bucket of the exact BT.709 average. `BAND_THRESHOLDS` in `src/engine/math/bandClassification.ts` is the single source of truth for band thresholds — the WGSL threshold chain is generated from it.
 
 ### WebGPU MSAA
 

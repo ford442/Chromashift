@@ -65,6 +65,11 @@ ExportPanel → useVideoExport → VideoExporter.exportVideo()
 
 `renderer.exportFrame()` generalizes the existing `exportTracerView` readback pattern: run the full GPU pipeline at export resolution, read RGBA8 pixels, without presenting to the main canvas. After export, `restoreRenderSize()` rebuilds targets at the live canvas size.
 
+## Tests
+
+- `src/engine/videoExport/videoExport.test.ts` — codec helpers and `advanceAnglesBy` determinism.
+- `src/engine/videoExport/videoExporter.test.ts` — offline loop harness with a fake renderer and stubbed MediaRecorder: frame count (5s @ 30fps → 150 frames), progress reporting, preset-vs-live start angles, identical angle sequences across runs from the same preset, cancel via `AbortSignal` (render size restored), and tracer exclusion forcing the layers pass.
+
 ## Future work
 
 - WebCodecs `VideoEncoder` + WebM/MP4 muxer for frame-accurate offline encoding

@@ -19,6 +19,7 @@ import {
   useTracerExport,
   useUpscalerHandlers,
 } from './hooks/useMediaHandlers';
+import { usePresets } from './hooks/usePresets';
 import { useVideoExport } from './hooks/useVideoExport';
 import { useTracerInspectInteraction } from './hooks/useTracerInspectInteraction';
 
@@ -77,6 +78,7 @@ export default function App() {
   );
   const { handleExportTracer } = useTracerExport(refs, store);
   const videoExport = useVideoExport(refs, store);
+  const presets = usePresets(store);
 
   useAppKeyboardShortcuts(refs, store, mediaHandlers.swapSourceAndReference);
 
@@ -95,6 +97,7 @@ export default function App() {
     handleUpscaleOutput,
     handleExportTracer,
     ...videoExport,
+    ...presets,
   });
 
   return <AppUI {...uiProps} />;
