@@ -34,6 +34,9 @@ export function AppUI(props: any) {
     tracerPreviewFrozen, setLivePreviewEnabled, livePreviewEnabled, setIsPaused, setMainViewMode,
     setAvgLuminance, isViewingTracer, currentImage, rendererRef, handleLoadReferenceImage,
     isWasmReady, setSpecificImageError,
+    builtinPresets, savedPresets, presetStatus, presetError,
+    handleSavePreset, handleLoadPreset, handleDeletePreset, handleApplyBuiltinPreset,
+    handleCopyPresetUrl, handleExportPresetFile, handleImportPresetFile,
     exportingVideo, videoExportProgress, videoExportSettings, codecSupport,
     handleExportVideo, handleCancelVideoExport,
     onVideoExportDurationChange, onVideoExportFpsChange, onVideoExportScaleChange,
@@ -424,6 +427,17 @@ export function AppUI(props: any) {
           if (enabled) setViewportQuarterZoom(false);
         }}
         onReset={handleReset}
+        builtinPresets={builtinPresets}
+        savedPresets={savedPresets}
+        presetStatus={presetStatus}
+        presetError={presetError}
+        onSavePreset={handleSavePreset}
+        onLoadPreset={handleLoadPreset}
+        onDeletePreset={handleDeletePreset}
+        onApplyBuiltinPreset={handleApplyBuiltinPreset}
+        onCopyPresetUrl={handleCopyPresetUrl}
+        onExportPresetFile={handleExportPresetFile}
+        onImportPresetFile={handleImportPresetFile}
         isAutoPlayActive={isAutoPlayActive}
         onAutoPlayToggle={setIsAutoPlayActive}
         imageChangeInterval={imageChangeInterval}

@@ -30,6 +30,17 @@ interface HandlerBundle {
   onVideoExportPassModeChange: (mode: import('../engine/types/RendererContracts').ExportPassMode) => void;
   onVideoExportFilenameChange: (filename: string) => void;
   onVideoExportUsePresetAnglesChange: (usePreset: boolean) => void;
+  builtinPresets: readonly import('../state/presetGallery').BuiltinPreset[];
+  savedPresets: import('../state/presetLibrary').StoredPreset[];
+  presetStatus: string | null;
+  presetError: string | null;
+  handleSavePreset: (name: string) => void;
+  handleLoadPreset: (name: string) => void;
+  handleDeletePreset: (name: string) => void;
+  handleApplyBuiltinPreset: (id: string) => void;
+  handleCopyPresetUrl: () => void;
+  handleExportPresetFile: () => void;
+  handleImportPresetFile: (file: File) => void;
 }
 
 export function useAppUiProps(
@@ -118,6 +129,17 @@ export function useAppUiProps(
     onVideoExportPassModeChange: handlers.onVideoExportPassModeChange,
     onVideoExportFilenameChange: handlers.onVideoExportFilenameChange,
     onVideoExportUsePresetAnglesChange: handlers.onVideoExportUsePresetAnglesChange,
+    builtinPresets: handlers.builtinPresets,
+    savedPresets: handlers.savedPresets,
+    presetStatus: handlers.presetStatus,
+    presetError: handlers.presetError ?? ui.presetLoadError,
+    handleSavePreset: handlers.handleSavePreset,
+    handleLoadPreset: handlers.handleLoadPreset,
+    handleDeletePreset: handlers.handleDeletePreset,
+    handleApplyBuiltinPreset: handlers.handleApplyBuiltinPreset,
+    handleCopyPresetUrl: handlers.handleCopyPresetUrl,
+    handleExportPresetFile: handlers.handleExportPresetFile,
+    handleImportPresetFile: handlers.handleImportPresetFile,
     layerAngles: layers.angles,
     handleAngleChange: handlers.handleAngleChange,
     layerExtensions: layers.extensions,

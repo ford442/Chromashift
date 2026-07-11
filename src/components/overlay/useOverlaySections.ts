@@ -10,6 +10,7 @@ const DEFAULT_OPEN: Record<OverlaySectionId, boolean> = {
   diagnostics: false,
   export: true,
   viewport: false,
+  presets: false,
 };
 
 function readStoredSections(): Record<OverlaySectionId, boolean> {

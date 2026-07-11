@@ -103,6 +103,10 @@ For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when brows
    - 1 compositor pipeline that blends tracers + live layers and writes to the swap-chain.
 4. Each frame, `renderer.render(state)` receives the shared `RendererState`. WebGPU encodes all passes into a single command buffer; WebGL runs equivalent GLSL/FBO passes for debugging/reference output.
 
+### Presets & Shareable URLs
+
+Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 1`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. See `docs/PRESETS.md`.
+
 ### GPU Image Analysis (Compute)
 
 Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K) images. Implemented in `src/engine/compute/GpuImageAnalysis.ts`:

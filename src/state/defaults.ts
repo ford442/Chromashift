@@ -105,6 +105,7 @@ export function createInitialState(): ChromashiftState {
       upscaleInfo: '',
       renderCpuTiming: { last: 0, avg: 0 },
       collisionStats: { ...DEFAULT_COLLISION_STATS },
+      presetLoadError: null,
     },
   };
 }

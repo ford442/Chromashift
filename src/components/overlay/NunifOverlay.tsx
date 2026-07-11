@@ -3,6 +3,7 @@ import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { ExportPanel } from './ExportPanel';
 import { LayerPanel } from './LayerPanel';
 import { PlayPanel } from './PlayPanel';
+import { PresetsPanel } from './PresetsPanel';
 import { RendererPanel } from './RendererPanel';
 import { TracerPanel } from './TracerPanel';
 import { UpscalePanel } from './UpscalePanel';
@@ -98,6 +99,16 @@ export function NunifOverlay(props: OverlayProps) {
         hint="Offline composite render to WebM/MP4"
       >
         <ExportPanel {...props} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        id="presets"
+        title="💾 Presets"
+        open={sections.presets}
+        onToggle={toggleSection}
+        hint="Save, share URL, gallery"
+      >
+        <PresetsPanel {...props} />
       </CollapsibleSection>
 
       <CollapsibleSection
