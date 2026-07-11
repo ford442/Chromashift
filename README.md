@@ -6,12 +6,19 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 
 ## Features
 
-- **3-layer GPU rendering pipeline** — Red/Orange, Violet/Blue, Green/Yellow colour bands, each composited with alpha blending on the GPU.
-- **GPU-only colour separation** — luminance-based colour masking is computed entirely in WGSL fragment shaders; zero CPU-side pixel manipulation.
+- **5-pass GPU rendering pipeline** — 3 colour-band layers (Red/Orange, Violet/Blue, Green/Yellow), a persistence pass that accumulates decaying "tracer" overlays where 2+ layers coincide, and a compositor pass that blends everything to the canvas.
+- **GPU-only colour separation** — luminance-based colour masking is computed entirely in WGSL fragment shaders; zero CPU-side pixel manipulation on the hot path.
 - **Independent layer rotation** — each layer has its own rotation angle and rate, driven by a `mat3x3` rotation matrix uploaded as a vertex-shader uniform.
-- **WebGL2 fallback renderer** — opt in with `?renderer=webgl`, the NUNIF renderer control, or `localStorage.chromashift.renderer = "webgl"` for Playwright-friendly output and GLSL shader debugging.
-- **TextureManager** — fetches image URLs from a JSON endpoint (simulating the PHP backend) and uploads decoded images directly to GPU textures via `copyExternalImageToTexture`.
-- **NUNIF control overlay** — minimal Tailwind CSS UI for adjusting per-layer rotation angle, rotation rate, global frame rate, and average luminance.
+- **Hybrid TS/C++ WASM engine** — luminance and classification-mask computation run in an optional SIMD128 C++ WASM module, with a pure-TypeScript fallback exposing the identical API (see [Hybrid Engine](#hybrid-engine-typescript--c-wasm) below).
+- **GPU compute analysis** — optional WebGPU compute shaders accelerate luminance histogram + band classification for large (4K–8K) images.
+- **WebGL2 fallback renderer** — opt in with `?renderer=webgl`, the Renderer panel control, or `localStorage.chromashift.renderer = "webgl"` for Playwright-friendly output and GLSL shader debugging.
+- **Local image library** — drag-and-drop images or whole folders onto the canvas to persist them in IndexedDB (thumbnails + originals), with no server upload; survives reloads and shows LOCAL/REMOTE badges in the image strip.
+- **AI upscalers** — Real-ESRGAN/Real-CUGAN (TF.js) and waifu2x swin_unet (onnxruntime-web), both lazy-loaded as Web Workers so neither ships in the initial bundle.
+- **Shareable presets** — render settings serialize to a versioned JSON document, shareable via `?preset=` URL, named local presets, or file export/import.
+- **Offline video/frame export** — render composite, tracer, or per-layer passes to a WebM or PNG sequence independent of the live canvas.
+- **Inspection viewport modes** — full-res tracer inspector (zoom/pan/freeze), quarter-zoom crop, half-overlay split, reference-image comparison, and per-layer/heatmap diagnostics.
+- **TextureManager** — fetches image URLs from a JSON endpoint and uploads decoded images directly to GPU textures via `copyExternalImageToTexture`.
+- **NUNIF control overlay** — Tailwind CSS panel (split into per-concern sections) for layer rotation, tracers, viewport, renderer, presets, export, and upscaling.
 
 ## Tech Stack
 
@@ -94,7 +101,7 @@ shipping C++ changes.
 See [docs/wasm-engine.md](docs/wasm-engine.md) for full build instructions, SIMD
 browser support details, and memory management guidelines.
 
-
+## Image Source
 
 Place a JSON file at `public/images.json` with the following shape:
 
@@ -112,15 +119,61 @@ The `TextureManager` fetches this file on startup and loads each image into a GP
 ```
 src/
   engine/
-    WebGPURenderer.ts   # 3-layer GPU pipeline, rotation uniforms, render loop
+    WebGPURenderer.ts, WebGPUPipelines.ts, PersistencePass.ts,
+    CompositorPass.ts, TracerInspectPass.ts   # 5-pass GPU pipeline (layers → persistence → compositor)
     WebGLRenderer.ts    # WebGL2 fallback with shared RendererState + debug modes
     rendererMode.ts     # URL/localStorage/backend breadcrumb selection
-    TextureManager.ts   # JSON fetch + GPU texture upload
-    WebGLTextureManager.ts # JSON fetch + WebGL texture upload
-    shaders.ts          # WGSL vertex + 3 fragment shaders
+    TextureManager.ts, WebGLTextureManager.ts  # JSON/blob fetch + GPU/WebGL texture upload
+    LocalLibrary.ts, fileDrop.ts               # IndexedDB local image library (drag-and-drop)
+    Upscaler.ts, upscaler.worker.ts, nunif.worker.ts  # Lazy-loaded AI upscalers
+    videoExport/        # Offline WebM/PNG-sequence export
+    compute/             # WebGPU histogram + classification-mask compute shaders
+    shaders/             # WGSL vertex + fragment shader modules
+  hooks/                 # useAppWebGPUInit, useImagePlayback, useMediaHandlers, usePresets, …
+  state/                 # Reducer, slices, preset (de)serialization
   components/
-    NunifOverlay.tsx    # Tailwind CSS control panel
-  App.tsx               # React root, WebGPU init, animation loop
+    AppUI.tsx, ImageStrip.tsx
+    overlay/             # NunifOverlay split into per-concern panels (Layer, Tracer, Viewport, …)
+  App.tsx                # React root — wires hooks together, renders <AppUI>
 ```
 
+Full per-file detail lives in [AGENTS.md](AGENTS.md#architecture) — keep it as the source of truth
+when this summary and the actual `src/` tree diverge again.
+
 See [docs/webgl-fallback.md](docs/webgl-fallback.md) for fallback scope, debug helpers, and WebGL-to-WebGPU shader porting notes.
+
+## Browser Matrix
+
+| Capability | Role | Fallback if unavailable |
+|---|---|---|
+| **WebGPU** | Primary renderer | WebGL2 (`?renderer=webgl`), automatic on init failure or device loss |
+| **WebGL2** | Debug/reference renderer, screenshots | N/A — this is the fallback tier |
+| **WASM SIMD128** | Accelerated CPU luminance/classification | TypeScript engine (identical API), used automatically if the WASM binary isn't built |
+| **ORT (onnxruntime-web)** | Optional waifu2x upscaling, lazy-loaded | TF.js Real-ESRGAN/Real-CUGAN covers the other upscale path |
+
+See [AGENTS.md](AGENTS.md#browser-requirements) for the full matrix with version/build requirements.
+
+## Roadmap
+
+Closed issues **#16–#84** cover the foundation this app is built on: the C++/WASM hybrid
+engine, WebGPU hardening (adapter limits, `device.lost`, error scopes), the WebGL2
+fallback renderer, `App.tsx` state consolidated into a reducer, shader modularization
+with TS/WGSL/C++ threshold parity tests, CI (lint/typecheck/build/wasm), GPU compute
+analysis, shareable presets, and offline video export.
+
+Open work, roughly foundation → features → research:
+
+| Stage | Issue | Summary |
+|---|---|---|
+| Foundation | [#90](https://github.com/ford442/Chromashift/issues/90) | Harden `deploy.py` (key auth, dry-run, drop the doc-vs-code drift on credentials) |
+| Foundation | [#91](https://github.com/ford442/Chromashift/issues/91) | GPU timestamp queries + per-pass frame budget HUD |
+| Feature ✅ *in review* | [#80](https://github.com/ford442/Chromashift/issues/80) | Lazy-load the upscaler workers so ORT/TF.js don't ship on first load |
+| Feature ✅ *in review* | [#88](https://github.com/ford442/Chromashift/issues/88) | Local image library: drag-drop upload, IndexedDB cache |
+| Feature ✅ *in review* | [#89](https://github.com/ford442/Chromashift/issues/89) | This doc pass — README/AGENTS refresh + roadmap |
+| Research | [#86](https://github.com/ford442/Chromashift/issues/86) | Expand the C++ WASM engine (rotation matrices, band LUT, offline composite) |
+| Research | [#87](https://github.com/ford442/Chromashift/issues/87) | Multi-viewport / A-B preset comparison layout |
+| Research | [#92](https://github.com/ford442/Chromashift/issues/92) | Audio-reactive + MIDI control of layer rates / tracer intensity |
+| Research | [#85](https://github.com/ford442/Chromashift/issues/85) | WebXR / kiosk / immersive installation mode |
+
+See the [issue tracker](https://github.com/ford442/Chromashift/issues) for current status —
+this table is a snapshot, not a live query.

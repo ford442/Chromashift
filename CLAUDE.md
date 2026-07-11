@@ -1,17 +1,10 @@
 # Chromashift — Claude Code Guide
 
-## Project Overview
-
-Chromashift is a WebGPU-based visual engine that renders images through a 3-layer color-separation pipeline. Each layer isolates a different luminance band and maps it to a color group (red/orange, violet/blue, green/yellow), with independent per-layer rotation controlled via a Tailwind CSS overlay UI.
-
-## Tech Stack
-
-| Layer | Technology | Version |
-|---|---|---|
-| Bundler | Vite | ^7.0.0 |
-| UI | React + TypeScript | 19, ~5.9 |
-| Styling | Tailwind CSS v4 | ^4.2.1 |
-| GPU API | WebGPU + WGSL | — |
+**[AGENTS.md](AGENTS.md) is the canonical project/architecture guide — read it first.**
+This file only adds notes specific to working in Claude Code; it intentionally does not
+duplicate architecture, feature, or pipeline descriptions to avoid drifting out of sync
+with AGENTS.md again (see issue #89). If anything below ever contradicts AGENTS.md,
+AGENTS.md wins.
 
 ## Common Commands
 
@@ -20,115 +13,12 @@ npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
 npm run preview   # Preview the production build locally
+npx vitest run    # Run the unit test suite
 ```
 
 ## Key Dependency Constraint
 
 `@tailwindcss/vite` v4 supports **vite `^5-7` only** — do **not** upgrade vite to v8 or higher until Tailwind's Vite plugin publishes support for it. Similarly, `@vitejs/plugin-react` v5 is required for Vite 7 compatibility; v6 requires Vite 8.
-
-## Architecture
-
-```
-src/
-├── main.tsx                  # React entry point (createRoot + StrictMode)
-├── App.tsx                   # Root component — WebGPU init, animation loop, state
-├── index.css                 # @import "tailwindcss" only
-├── components/
-│   └── NunifOverlay.tsx      # Bottom control panel (layer angles, rates, fps, reset)
-└── engine/
-    ├── shaders.ts            # WGSL vertex + 3 fragment shaders
-    ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache
-    └── WebGPURenderer.ts     # 3-pipeline GPU renderer, uniform buffer management
-```
-
-### Rendering Pipeline
-
-1. `TextureManager.fetchImageList('/images.json')` loads the image list on startup.
-2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (RGBA8 unorm).
-3. `WebGPURenderer` creates 3 independent `GPURenderPipeline`s — one per color band.
-4. Each frame, `renderer.render(state)` writes rotation (mat3x3) and luminance uniforms and calls `draw` on all 3 pipelines, blending results with `src-alpha / one-minus-src-alpha`.
-
-### Color Bands (WGSL fragment shaders)
-
-Luminance is calculated via ITU-R BT.709: `0.2126R + 0.7152G + 0.0722B`, scaled 0–255.
-
-| Layer | Luminance range | Output color |
-|---|---|---|
-| 0 | 190–209 | Red |
-| 0 | 209–229 | Orange |
-| 0 | 229+ | Near-white highlight |
-| 1 | 177–190 | Violet |
-| 1 | 158–177 | Blue |
-| 2 | 145–158 | Green |
-| 2 | 125–145 | Yellow |
-
-The `avgLuminance` uniform (0–255, controlled by a slider) modulates color saturation: `diff = (avg / 255.0) * 32.0`.
-
-### Image Source
-
-Edit `public/images.json` to change the image list:
-```json
-[
-  { "url": "https://example.com/image.jpg", "label": "My Scene" }
-]
-```
-
-The `TextureManager` fetches this file at startup and caches textures by URL.
-
-### Local Image Library (drag-and-drop)
-
-Dropping image files (or whole folders) anywhere on `#chromashift-container` persists
-them to IndexedDB (`src/engine/LocalLibrary.ts`, db `chromashift-library`) — labels,
-dimensions, and a small WebP thumbnail alongside the original bytes — so the personal
-library survives page reloads without any server upload. `src/engine/fileDrop.ts`
-flattens a drop's `DataTransfer` (including nested folders, via `webkitGetAsEntry`)
-into a plain `File[]`; `useMediaHandlers.handleDropFiles` writes them to IndexedDB and
-appends `ImageEntry`s carrying a `localId` and a `blob:` URL — the corpus, image strip,
-and texture pipeline don't otherwise distinguish local from remote entries.
-
-`ImageStrip` shows a LOCAL/REMOTE badge per entry (using `thumbUrl`, not the full-res
-`url`, to avoid decoding full images just for a 144px thumbnail) and a "Clear Library"
-button that wipes IndexedDB and drops every `localId`-tagged entry from the corpus.
-
-Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureManager`
-need no special-casing to decode them (no CORS, unlike some remote hosts). The one
-addition is `evictExcept(keepUrls)`, called after each texture swap in
-`useImagePlayback`: it destroys any cached GPU texture backed by a `blob:` URL that
-isn't the current source or reference, so switching away frees GPU memory and
-switching back simply re-decodes from the (already-resident) blob on demand. Remote
-`http(s)` textures are still cached forever, unchanged from prior behavior.
-
-### Upscaler (lazy-loaded)
-
-`Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via
-`new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the
-"Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`).
-Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web (and its
-~26 MB `ort-wasm-simd-threaded.jsep.wasm`) is fetched on initial page load — only after
-the user actually invokes an upscale. Verify this stays true after changes by running
-`npm run build` and confirming `dist/assets/index-*.js` contains no `tfjs`/`ort-wasm`
-references, or by checking the Network panel on a fresh load.
-
-- **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not**
-  bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host
-  (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
-- **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Defaults to a public CDN
-  base (`NUNIF_DEFAULT_BASE` in `Upscaler.ts`); override with `VITE_NUNIF_BASE` to
-  self-host the `models/swin_unet/` and `models/utils/` ONNX files instead. The ORT wasm
-  runtime itself is always loaded from jsDelivr (`ort.env.wasm.wasmPaths` in
-  `nunif.worker.ts`), not bundled, to avoid shipping it in `dist/`.
-
-Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP
-cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on
-an actual first-time fetch, not on cache hits.
-
-## Browser Requirements
-
-WebGPU is required. Supported in:
-- Chrome 113+ / Edge 113+
-- Chrome Canary (flags may be needed on older versions)
-
-Firefox and Safari do not yet have stable WebGPU support.
 
 ## TypeScript Config Notes
 
@@ -138,3 +28,10 @@ Two project references are used:
 - `tsconfig.node.json` — compiles `vite.config.ts`, includes `@types/node`
 
 Both use strict mode. `skipLibCheck: true` avoids noise from `.d.ts` files in `node_modules`.
+
+## Verifying changes to the lazy-loaded upscaler workers
+
+After touching `src/engine/Upscaler.ts`, `upscaler.worker.ts`, or `nunif.worker.ts`, run
+`npm run build` and confirm `dist/assets/index-*.js` contains no `tfjs`/`ort-wasm`
+references — those should only appear in the separate worker chunks, fetched on demand
+when the user clicks Upscale. See AGENTS.md's "Upscaler (lazy-loaded)" section for why.
