@@ -1,8 +1,15 @@
+import { BAND_THRESHOLDS } from '../math/bandClassification';
+
 /**
  * Shared WGSL snippets for image-analysis compute passes.
- * Threshold logic mirrors chromashift_engine.cpp classifyPixel and
- * src/engine/math/bandClassification.ts.
+ * The classify_band threshold chain is generated from BAND_THRESHOLDS in
+ * src/engine/math/bandClassification.ts, which chromashift_engine.cpp
+ * classifyPixel mirrors.
  */
+const CLASSIFY_BAND_THRESHOLD_CHAIN = BAND_THRESHOLDS
+  .map((t, i) => `  if (rgb > ${t.toFixed(1)}) { return ${i}u; }`)
+  .join('\n');
+
 export const WGSL_IMAGE_ANALYSIS_HELPERS = /* wgsl */ `
 fn linear_to_stored_u8(channel: f32) -> f32 {
   let c = clamp(channel, 0.0, 1.0);
@@ -32,17 +39,8 @@ fn classify_band(r: f32, g: f32, b: f32, avg_lum: f32) -> u32 {
   let lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
   let light_dark = 128.0 + abs(avg_lum - 128.0) / 2.0;
   let rgb = lum + light_dark / 2.0;
-  if (rgb > 229.0) { return 0u; }
-  if (rgb > 209.0) { return 1u; }
-  if (rgb > 193.0) { return 2u; }
-  if (rgb > 190.0) { return 3u; }
-  if (rgb > 177.0) { return 4u; }
-  if (rgb > 161.0) { return 5u; }
-  if (rgb > 158.0) { return 6u; }
-  if (rgb > 145.0) { return 7u; }
-  if (rgb > 128.0) { return 8u; }
-  if (rgb > 125.0) { return 9u; }
-  return 10u;
+${CLASSIFY_BAND_THRESHOLD_CHAIN}
+  return ${BAND_THRESHOLDS.length}u;
 }
 `;
 

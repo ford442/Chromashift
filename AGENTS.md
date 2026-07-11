@@ -113,7 +113,7 @@ Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K
 
 **Feature detection**: `detectGpuComputeSupport(device)` gates on adapter `maxTextureDimension2D`. Breadcrumbs: `window.gpuComputeAvailable`, `window.gpuComputeReason`. WebGL mode skips compute entirely.
 
-**Parity tests**: `src/engine/compute/goldenMask.test.ts` validates TS/WASM mask output against `bandClassification.ts` (same thresholds as C++). WGSL compute uses identical `classify_band()` logic.
+**Parity tests**: `src/engine/compute/goldenMask.test.ts` checks the TS fallback against an f32-accurate port of C++ `computeClassificationMask` on a golden image (exact match, several avgLum values), asserts the WGSL `classify_band()` chain is generated from `BAND_THRESHOLDS`, and bounds the histogram-derived average within one bucket of the exact BT.709 average. `BAND_THRESHOLDS` in `src/engine/math/bandClassification.ts` is the single source of truth for band thresholds — the WGSL threshold chain is generated from it.
 
 ### WebGPU MSAA
 
