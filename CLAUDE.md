@@ -75,6 +75,30 @@ Edit `public/images.json` to change the image list:
 
 The `TextureManager` fetches this file at startup and caches textures by URL.
 
+### Upscaler (lazy-loaded)
+
+`Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via
+`new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the
+"Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`).
+Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web (and its
+~26 MB `ort-wasm-simd-threaded.jsep.wasm`) is fetched on initial page load — only after
+the user actually invokes an upscale. Verify this stays true after changes by running
+`npm run build` and confirming `dist/assets/index-*.js` contains no `tfjs`/`ort-wasm`
+references, or by checking the Network panel on a fresh load.
+
+- **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not**
+  bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host
+  (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
+- **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Defaults to a public CDN
+  base (`NUNIF_DEFAULT_BASE` in `Upscaler.ts`); override with `VITE_NUNIF_BASE` to
+  self-host the `models/swin_unet/` and `models/utils/` ONNX files instead. The ORT wasm
+  runtime itself is always loaded from jsDelivr (`ort.env.wasm.wasmPaths` in
+  `nunif.worker.ts`), not bundled, to avoid shipping it in `dist/`.
+
+Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP
+cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on
+an actual first-time fetch, not on cache hits.
+
 ## Browser Requirements
 
 WebGPU is required. Supported in:

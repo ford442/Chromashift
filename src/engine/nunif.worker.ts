@@ -106,9 +106,10 @@ function calcTileSizeSwinUnet(tileSize: number): number {
 // ── ONNX session cache ───────────────────────────────────────────────────────
 const sessions = new Map<string, ort.InferenceSession>();
 
-async function getSession(path: string): Promise<ort.InferenceSession> {
+async function getSession(path: string, onDownloading?: () => void): Promise<ort.InferenceSession> {
   let s = sessions.get(path);
   if (s) return s;
+  onDownloading?.();
   const resp = await fetch(path);
   if (!resp.ok) throw new Error(`Failed to fetch model ${path}: ${resp.status} ${resp.statusText}`);
   const buf = new Uint8Array(await resp.arrayBuffer());
@@ -330,8 +331,9 @@ async function tiledRender(
   config: ArchConfig,
   tileSize: number,
   onProgress: (p: number) => void,
+  onDownloading: () => void,
 ): Promise<{ pixels: Uint8ClampedArray; width: number; height: number }> {
-  const model = await getSession(config.path);
+  const model = await getSession(config.path, onDownloading);
 
   let x = toInput(new Uint8Array(req.pixels), req.width, req.height);
   const seam = new SeamBlending(x.dims, config.scale, config.offset, tileSize, req.baseUrl);
@@ -408,14 +410,16 @@ self.addEventListener('message', async (e: MessageEvent<NunifRequest>) => {
     if (req.scale === 1 && req.noise === -1) {
       throw new Error('Scale 1× requires a noise-reduction level');
     }
-    post({ kind: 'progress', progress: 0, info: 'Loading swin_unet model…' });
+    post({ kind: 'progress', progress: 0, info: 'Preparing…' });
 
     const config = getConfig(req.baseUrl, req.style, req.scale, req.noise);
     const tileSize = calcTileSizeSwinUnet(req.tileSize);
 
-    const result = await tiledRender(req, config, tileSize, (progress) => {
-      post({ kind: 'progress', progress, info: `Upscaling ${progress.toFixed(0)}%` });
-    });
+    const result = await tiledRender(
+      req, config, tileSize,
+      (progress) => { post({ kind: 'progress', progress, info: `Upscaling ${progress.toFixed(0)}%` }); },
+      () => { post({ kind: 'progress', progress: 0, info: 'Downloading model…' }); },
+    );
 
     const buf = result.pixels.buffer as ArrayBuffer;
     post({ kind: 'done', pixels: buf, width: result.width, height: result.height }, [buf]);
