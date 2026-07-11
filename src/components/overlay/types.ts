@@ -4,6 +4,8 @@ import type { CollisionStats } from '../../engine/types/RendererState';
 import type { RendererBackend } from '../../engine/RendererTypes';
 
 export type ReferenceBlendMode = 'hidden' | 'overlay' | 'split' | 'checker' | 'difference' | 'edge';
+/** Which image feeds the viewport blend overlay (when blend mode is not hidden). */
+export type OverlayImageSource = 'source' | 'reference' | 'previous' | 'separated';
 export type EngineMode = 'ts' | 'wasm';
 export type LayerIndex = 0 | 1 | 2;
 
@@ -81,6 +83,7 @@ export interface TracerPanelProps {
   currentImageLabel: string | null;
   referenceImageLabel: string | null;
   referenceBlendMode: ReferenceBlendMode;
+  overlayImageSource: OverlayImageSource;
   referenceOpacity: number;
   isImageStripOpen: boolean;
   onTracerAboveIntensityChange: (value: number) => void;
@@ -94,6 +97,7 @@ export interface TracerPanelProps {
   onTracerViewToggle: (value: boolean) => void;
   onMainViewModeChange: (value: number) => void;
   onReferenceBlendModeChange: (value: ReferenceBlendMode) => void;
+  onOverlayImageSourceChange: (value: OverlayImageSource) => void;
   onReferenceOpacityChange: (value: number) => void;
   onSwapSourceReference: () => void;
   onToggleImageStrip: () => void;

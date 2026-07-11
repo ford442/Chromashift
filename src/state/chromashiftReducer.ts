@@ -47,7 +47,7 @@ export interface ChromashiftSettingsInput {
   tracers?: Partial<TracersSlice>;
   output?: Partial<Omit<OutputSlice, 'tracerInspect'>> & { tracerInspect?: Partial<TracerInspectState> };
   engine?: Pick<EngineSlice, 'fps' | 'paused' | 'engineMode' | 'avgLuminance'>;
-  ui?: Pick<UiSlice, 'isAutoPlayActive' | 'imageChangeInterval' | 'referenceBlendMode' | 'referenceOpacity' | 'upscaleModel'>;
+  ui?: Pick<UiSlice, 'isAutoPlayActive' | 'imageChangeInterval' | 'referenceBlendMode' | 'overlayImageSource' | 'referenceOpacity' | 'upscaleModel'>;
   reactive?: Partial<ReactiveSettings>;
 }
 

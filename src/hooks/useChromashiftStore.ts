@@ -6,7 +6,7 @@ import type { CollisionStats } from '../engine/types/RendererState';
 import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';
-import type { ReferenceBlendMode } from '../components/overlay/types';
+import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
 import {
   chromashiftReducer,
   createInitialState,
@@ -27,6 +27,7 @@ export interface ChromashiftRefs {
   mainViewportRef: RefObject<HTMLDivElement | null>;
   previewOriginalRef: RefObject<HTMLCanvasElement | null>;
   previewSeparatedRef: RefObject<HTMLCanvasElement | null>;
+  overlaySeparatedRef: RefObject<HTMLCanvasElement | null>;
   previewTracerRef: RefObject<HTMLCanvasElement | null>;
   upscalerRef: RefObject<import('../engine/Upscaler').Upscaler | null>;
   tracerScratchRef: RefObject<HTMLCanvasElement | null>;
@@ -59,6 +60,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const mainViewportRef = useRef<HTMLDivElement>(null);
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
+  const overlaySeparatedRef = useRef<HTMLCanvasElement>(null);
   const previewTracerRef = useRef<HTMLCanvasElement>(null);
   const upscalerRef = useRef<import('../engine/Upscaler').Upscaler | null>(null);
   const tracerScratchRef = useRef<HTMLCanvasElement | null>(null);
@@ -89,6 +91,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
     mainViewportRef,
     previewOriginalRef,
     previewSeparatedRef,
+    overlaySeparatedRef,
     previewTracerRef,
     upscalerRef,
     tracerScratchRef,
@@ -255,6 +258,8 @@ export function useChromashiftStore(refs: ChromashiftRefs) {
     toggleImageStrip: () => dispatch({ type: 'ui/toggleImageStrip' }),
     setReferenceBlendMode: (referenceBlendMode: ReferenceBlendMode) =>
       dispatch({ type: 'ui/patch', patch: { referenceBlendMode } }),
+    setOverlayImageSource: (overlayImageSource: OverlayImageSource) =>
+      dispatch({ type: 'ui/patch', patch: { overlayImageSource } }),
     setReferenceOpacity: (referenceOpacity: number) =>
       dispatch({ type: 'ui/patch', patch: { referenceOpacity } }),
     setUpscaleModel: (upscaleModel: string) =>

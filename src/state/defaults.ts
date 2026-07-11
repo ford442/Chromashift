@@ -104,6 +104,7 @@ export function createInitialState(): ChromashiftState {
       imageChangeInterval: 5,
       isImageStripOpen: false,
       referenceBlendMode: 'hidden',
+      overlayImageSource: 'reference',
       referenceOpacity: 0.22,
       exportingTracer: false,
       exportingVideo: false,

@@ -6,7 +6,7 @@ import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
-import type { ReferenceBlendMode } from '../components/overlay/types';
+import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
 export type { ReactiveSlice } from '../engine/reactive/types';
 
 export type LayerTriple<T> = [T, T, T];
@@ -99,6 +99,7 @@ export interface UiSlice {
   imageChangeInterval: number;
   isImageStripOpen: boolean;
   referenceBlendMode: ReferenceBlendMode;
+  overlayImageSource: OverlayImageSource;
   referenceOpacity: number;
   exportingTracer: boolean;
   exportingVideo: boolean;

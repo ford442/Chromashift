@@ -1,4 +1,5 @@
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
+import { isOverlayImageSourceAvailable } from '../engine/overlayImageSource';
 import { isWasmReady } from '../engine/WasmEngine';
 import { DEFAULT_FPS } from '../state/defaults';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
@@ -64,8 +65,23 @@ export function useAppUiProps(
   const isReferenceCompareMode =
     output.mainViewMode === MAIN_VIEW_MODES.COMPARE_REFERENCE_COMPOSITE && !!media.reference;
   const showCanvasMainView = photoModeImage === null;
-  const showReferenceOverlay =
-    showCanvasMainView && !!media.reference && ui.referenceBlendMode !== 'hidden';
+  const overlayImageSource = ui.overlayImageSource;
+  const overlaySourceAvailable = isOverlayImageSourceAvailable(
+    overlayImageSource,
+    currentImage,
+    media.reference,
+    media.previous,
+  );
+  const showImageOverlay =
+    ui.referenceBlendMode !== 'hidden'
+    && overlaySourceAvailable
+    && !isReferenceCompareMode;
+  const overlayPhotoImage =
+    overlayImageSource === 'source' ? currentImage
+      : overlayImageSource === 'reference' ? media.reference
+        : overlayImageSource === 'previous' ? media.previous
+          : null;
+  const overlayUsesSeparatedCanvas = overlayImageSource === 'separated';
 
   return {
     containerRef: refs.containerRef,
@@ -78,11 +94,15 @@ export function useAppUiProps(
     isPaused: engine.paused,
     mainViewMode: output.mainViewMode,
     MAIN_VIEW_MODES,
-    showReferenceOverlay,
+    showImageOverlay,
+    overlayImageSource,
+    overlayPhotoImage,
+    overlayUsesSeparatedCanvas,
     referenceBlendMode: ui.referenceBlendMode,
     referenceOpacity: ui.referenceOpacity,
     previewOriginalRef: refs.previewOriginalRef,
     previewSeparatedRef: refs.previewSeparatedRef,
+    overlaySeparatedRef: refs.overlaySeparatedRef,
     gpuError: engine.gpuError,
     gpuReady: engine.gpuReady,
     rendererBackend: engine.backend,
@@ -105,6 +125,7 @@ export function useAppUiProps(
     setReferenceImage: actions.setReferenceImage,
     swapSourceAndReference: handlers.swapSourceAndReference,
     setReferenceBlendMode: actions.setReferenceBlendMode,
+    setOverlayImageSource: actions.setOverlayImageSource,
     setReferenceOpacity: actions.setReferenceOpacity,
     handleFreezeInspect: handlers.handleFreezeInspect,
     tracerInspectZoom: output.tracerInspect.zoom,
