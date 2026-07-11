@@ -70,4 +70,6 @@ export interface ChromashiftTextureManager {
   loadTexture(url: string): Promise<unknown>;
   uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): unknown;
   destroy(): void;
+  /** Evict cached local-blob textures not in `keepUrls`, freeing GPU memory until reselected. */
+  evictExcept(keepUrls: Iterable<string>): void;
 }

@@ -45,6 +45,7 @@ export function useImagePlayback({
       if (gen !== loadGenRef.current) return;
       rendererRef.current?.setTexture(tex);
       capturePreviewAfterRender.current = true;
+      textureManagerRef.current?.evictExcept([url, media.reference?.url].filter((u): u is string => !!u));
 
       const previewOrig = previewOriginalRef.current;
       if (previewOrig) {
@@ -85,6 +86,7 @@ export function useImagePlayback({
     engine.gpuReady,
     media.imageList,
     media.currentIndex,
+    media.reference?.url,
     actions,
     textureManagerRef,
     rendererRef,

@@ -75,6 +75,29 @@ Edit `public/images.json` to change the image list:
 
 The `TextureManager` fetches this file at startup and caches textures by URL.
 
+### Local Image Library (drag-and-drop)
+
+Dropping image files (or whole folders) anywhere on `#chromashift-container` persists
+them to IndexedDB (`src/engine/LocalLibrary.ts`, db `chromashift-library`) — labels,
+dimensions, and a small WebP thumbnail alongside the original bytes — so the personal
+library survives page reloads without any server upload. `src/engine/fileDrop.ts`
+flattens a drop's `DataTransfer` (including nested folders, via `webkitGetAsEntry`)
+into a plain `File[]`; `useMediaHandlers.handleDropFiles` writes them to IndexedDB and
+appends `ImageEntry`s carrying a `localId` and a `blob:` URL — the corpus, image strip,
+and texture pipeline don't otherwise distinguish local from remote entries.
+
+`ImageStrip` shows a LOCAL/REMOTE badge per entry (using `thumbUrl`, not the full-res
+`url`, to avoid decoding full images just for a 144px thumbnail) and a "Clear Library"
+button that wipes IndexedDB and drops every `localId`-tagged entry from the corpus.
+
+Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureManager`
+need no special-casing to decode them (no CORS, unlike some remote hosts). The one
+addition is `evictExcept(keepUrls)`, called after each texture swap in
+`useImagePlayback`: it destroys any cached GPU texture backed by a `blob:` URL that
+isn't the current source or reference, so switching away frees GPU memory and
+switching back simply re-decodes from the (already-resident) blob on demand. Remote
+`http(s)` textures are still cached forever, unchanged from prior behavior.
+
 ### Upscaler (lazy-loaded)
 
 `Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via
