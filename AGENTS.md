@@ -325,3 +325,26 @@ Firefox and Safari do not yet have stable WebGPU support — use `?renderer=webg
 
 See `docs/gpu-bootstrap.md` (WebGPU/WebGL matrix), `docs/wasm-engine.md` (SIMD build/browser
 support), and the Upscaler section above (ORT vs TF.js) for the full detail behind this table.
+
+## Cursor Cloud specific instructions
+
+Frontend-only project — no backend/database/services to run. Standard commands are in
+"Common Commands" above (`npm run dev`, `npm run build`, `npm run lint`, `npm test`).
+
+- **No WebGPU in the cloud VM.** The headless Chrome available here does not expose
+  WebGPU (and the default WebGL2 detection can also fail on first load), so the default
+  `http://localhost:5173/` shows a "WebGPU/WebGL2 not supported" prompt. To see the
+  canvas actually render, use the WebGL2 fallback path: `http://localhost:5173/?renderer=webgl`.
+  This is expected — WebGPU behaviour cannot be validated here; the WebGL2 renderer is an
+  approximate reference. The Playwright smoke test (`npm run test:e2e`) already targets
+  `?renderer=webgl` for this reason.
+- **Playwright browsers must be installed once per fresh VM** before `npm run test:e2e`:
+  `npx playwright install --with-deps chromium`. This is intentionally not in the update
+  script (heavy, network-dependent). The `opacity-test.spec.ts` spec is skipped by default;
+  only `smoke.spec.ts` runs.
+- **Remote images:** `public/images.json` points at `https://cr0p.1ink.us/...`; loading the
+  displayed corpus requires outbound network access to that host. Drag-and-drop local images
+  work offline.
+- **WASM engine is optional:** `npm run build:wasm` needs Emscripten (not installed by
+  default). Without it the TypeScript engine is used automatically — no action needed for
+  normal dev/test/build.
