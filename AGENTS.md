@@ -12,7 +12,7 @@ Chromashift is a WebGPU-based visual engine that renders images through a multi-
 
 Each layer has independent rotation (driven by a `mat3x3` uniform) and can be flipped. The UI is a fixed left-side control panel built with React and Tailwind CSS v4, using a gold-tinted glass-morphism theme.
 
-For what's already shipped vs. planned next, see the [Roadmap](README.md#roadmap) in README.md — it groups open GitHub issues into foundation / features / research.
+For what's already shipped vs. planned next, see [docs/ROADMAP.md](docs/ROADMAP.md) (also summarised in [README.md#roadmap](README.md#roadmap)).
 
 ## Tech Stack
 
@@ -29,6 +29,9 @@ For what's already shipped vs. planned next, see the [Roadmap](README.md#roadmap
 npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
+npm test          # Vitest unit tests (src/**/*.test.ts)
+npm run test:e2e  # Playwright smoke (WebGL renderer; install browsers first)
+npm run test:cpp  # C++ host tests (g++, no Emscripten)
 npm run preview   # Preview the production build locally
 ```
 
@@ -290,10 +293,27 @@ The `TextureManager` fetches this file at startup and caches textures by URL.
 
 ## Testing Strategy
 
-There is **no test framework** currently configured in this project. There are no unit tests, integration tests, or E2E tests. If you add tests, consider:
+Chromashift has three test tiers. CI runs all of them on every push/PR (see `.github/workflows/ci.yml`).
 
-- **Vitest** for unit-testing pure TS utilities (e.g. `durationToDecay`, `buildRotationMat3`).
-- **Playwright** for E2E validation of the WebGPU canvas (note: requires a Chromium browser with WebGPU enabled).
+| Tier | Command | Scope |
+|------|---------|-------|
+| **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, video export, reactive modulation) |
+| **Playwright** | `npm run test:e2e` | E2E smoke against `?renderer=webgl` (`e2e/smoke.spec.ts` — boots, checks `window.usingWebGL`, screenshots canvas). `e2e/opacity-test.spec.ts` is opt-in (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
+| **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band/decay parity with `chromashift_engine.cpp`; no Emscripten required |
+
+### CI job matrix
+
+| Job | What it runs |
+|-----|----------------|
+| `guard` | Blocks `dist/` and accidental secrets in PR diffs |
+| `web` | `npm run lint`, `npx tsc -b`, `npm run build` |
+| `unit` | `npm test` (Vitest) |
+| `e2e` | `npm run test:e2e` (after `web`; Playwright Chromium) |
+| `wasm` | `npm run test:cpp` + `npm run build:wasm` + artifact check (`continue-on-error: true`) |
+
+WebGPU behaviour is not exercised in CI (headless Chromium has no WebGPU); the Playwright
+smoke path uses the WebGL2 fallback intentionally. For local WebGPU validation, use Chrome
+with `?renderer=webgpu`.
 
 ## Deployment Process
 

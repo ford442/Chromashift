@@ -12,9 +12,13 @@ AGENTS.md wins.
 npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
+npm test          # Vitest unit tests
+npm run test:e2e  # Playwright smoke (WebGL)
+npm run test:cpp  # C++ host tests
 npm run preview   # Preview the production build locally
-npx vitest run    # Run the unit test suite
 ```
+
+Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md). Testing detail: [AGENTS.md](AGENTS.md#testing-strategy).
 
 ## Key Dependency Constraint
 
