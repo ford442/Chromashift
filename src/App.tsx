@@ -44,6 +44,7 @@ export default function App() {
     setGpuError: actions.setGpuError,
     deviceRef: refs.deviceRef,
     webGpuSessionRef: refs.webGpuSessionRef,
+    orchestratorRef: refs.orchestratorRef,
     gpuImageAnalysisRef: refs.gpuImageAnalysisRef,
     rendererRef: refs.rendererRef,
     textureManagerRef: refs.textureManagerRef,
