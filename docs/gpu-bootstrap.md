@@ -1,6 +1,42 @@
 # GPU Bootstrap
 
-Chromashift centralizes renderer initialization in `src/engine/gpuBootstrap.ts` and documents shared canvas options in `src/engine/gpuOptions.ts`.
+Chromashift centralizes renderer initialization in `src/engine/gpuBootstrap.ts` and documents shared canvas options in `src/engine/gpuOptions.ts`. Multi-canvas slot lifecycle (compare views, future quad layout) is owned by `src/engine/RendererOrchestrator.ts`.
+
+## Renderer orchestration
+
+`RendererOrchestrator` owns one shared GPU session and texture manager, and spawns or destroys N renderer instances bound to separate canvases:
+
+```ts
+import { RendererOrchestrator } from './RendererOrchestrator';
+
+const { orchestrator, primarySlot, backend, fallbackReason } =
+  await RendererOrchestrator.bootstrap({
+    primaryCanvas: mainCanvas,
+    antialias: true,
+    onRuntimeError: (error) => { /* device.lost, uncaptured, … */ },
+  });
+
+// Primary slot id defaults to "main"
+rendererRef.current = primarySlot.renderer;
+textureManagerRef.current = orchestrator.textureManagerRef();
+
+// Additional canvases (compare slot B, future quad cells)
+const slotB = orchestrator.createSlot('compare-b', canvasB);
+orchestrator.destroySlot('compare-b');
+
+orchestrator.resizeAll(); // after canvas resize / DPR change
+orchestrator.destroy();   // tears down all slots + device
+```
+
+| Concern | Behaviour |
+|---|---|
+| WebGPU bootstrap | First canvas creates `WebGpuSession` (device + primary context); extra slots call `configureWebGpuCanvas` on their own contexts |
+| WebGL fallback | Single slot only (primary canvas); compare/multi-view is WebGPU-only |
+| `device.lost` | Orchestrator destroys all active slots; shared `onRuntimeError` surfaces the recoverable overlay |
+| Resize | `resizeAll()` reconfigures the session context and every secondary slot context |
+| Tests | `RendererOrchestrator.test.ts` mocks bootstrap/factories — no WebGPU adapter required in CI |
+
+`useAppWebGPUInit` bootstraps the orchestrator and wires refs (`orchestratorRef`, `rendererRef`, `textureManagerRef`, …). `useCompareSlotRenderer` calls `createSlot('compare-b')` / `destroySlot` when dual layout is active.
 
 ## Options matrix
 
