@@ -17,6 +17,9 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 - **Shareable presets** — render settings serialize to a versioned JSON document, shareable via `?preset=` URL, named local presets, or file export/import.
 - **Offline video/frame export** — render composite, tracer, or per-layer passes to a WebM or PNG sequence independent of the live canvas.
 - **Inspection viewport modes** — full-res tracer inspector (zoom/pan/freeze), quarter-zoom crop, half-overlay split, reference-image comparison, and per-layer/heatmap diagnostics.
+- **Kiosk / gallery mode** — `?kiosk=1` hides chrome, enables autoplay + attract drift, fullscreen, and a bottom IR remote for installations ([docs/KIOSK.md](docs/KIOSK.md)).
+- **Audio-reactive + MIDI** — microphone envelope and Web MIDI CC drive layer rotation rates and tracer intensity (`ReactivePanel`).
+- **GPU perf HUD** — optional per-pass WebGPU timestamp queries with frame-budget warnings and auto-degrade (Diagnostics panel).
 - **TextureManager** — fetches image URLs from a JSON endpoint and uploads decoded images directly to GPU textures via `copyExternalImageToTexture`.
 - **NUNIF control overlay** — Tailwind CSS panel (split into per-concern sections) for layer rotation, tracers, viewport, renderer, presets, export, and upscaling.
 
@@ -155,25 +158,14 @@ See [AGENTS.md](AGENTS.md#browser-requirements) for the full matrix with version
 
 ## Roadmap
 
-Closed issues **#16–#84** cover the foundation this app is built on: the C++/WASM hybrid
-engine, WebGPU hardening (adapter limits, `device.lost`, error scopes), the WebGL2
-fallback renderer, `App.tsx` state consolidated into a reducer, shader modularization
-with TS/WGSL/C++ threshold parity tests, CI (lint/typecheck/build/wasm), GPU compute
-analysis, shareable presets, and offline video export.
+**[docs/ROADMAP.md](docs/ROADMAP.md)** is the maintained roadmap (shipped vs. planned).
+The [issue tracker](https://github.com/ford442/Chromashift/issues) has zero open issues
+as of the 2026-07 audit — all foundation work through **#92** is closed.
 
-Open work, roughly foundation → features → research:
+| Status | Highlights |
+|--------|------------|
+| **Shipped** | Lazy upscaler workers, local IndexedDB library, GPU perf HUD, audio-reactive + MIDI panel, desktop kiosk (`?kiosk=1`) — see [KIOSK.md](docs/KIOSK.md) |
+| **Next feature** | [Compare / multi-view layouts](docs/COMPARE_VIEWS.md) ([#87](https://github.com/ford442/Chromashift/issues/87)) — dual 2-up, quad grid, swipe split |
+| **Research** | WebXR / immersive surround ([#85](https://github.com/ford442/Chromashift/issues/85)); deeper C++ WASM offline composite ([#86](https://github.com/ford442/Chromashift/issues/86)) |
 
-| Stage | Issue | Summary |
-|---|---|---|
-| Foundation | [#90](https://github.com/ford442/Chromashift/issues/90) | Harden `deploy.py` (key auth, dry-run, drop the doc-vs-code drift on credentials) |
-| Foundation | [#91](https://github.com/ford442/Chromashift/issues/91) | GPU timestamp queries + per-pass frame budget HUD |
-| Feature ✅ *in review* | [#80](https://github.com/ford442/Chromashift/issues/80) | Lazy-load the upscaler workers so ORT/TF.js don't ship on first load |
-| Feature ✅ *in review* | [#88](https://github.com/ford442/Chromashift/issues/88) | Local image library: drag-drop upload, IndexedDB cache |
-| Feature ✅ *in review* | [#89](https://github.com/ford442/Chromashift/issues/89) | This doc pass — README/AGENTS refresh + roadmap |
-| Research | [#86](https://github.com/ford442/Chromashift/issues/86) | Expand the C++ WASM engine (rotation matrices, band LUT, offline composite) |
-| Research | [#87](https://github.com/ford442/Chromashift/issues/87) | Multi-viewport / A-B preset comparison layout |
-| Research | [#92](https://github.com/ford442/Chromashift/issues/92) | Audio-reactive + MIDI control of layer rates / tracer intensity |
-| Research | [#85](https://github.com/ford442/Chromashift/issues/85) | WebXR / kiosk / immersive installation mode |
-
-See the [issue tracker](https://github.com/ford442/Chromashift/issues) for current status —
-this table is a snapshot, not a live query.
+Full per-issue detail and file pointers: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
