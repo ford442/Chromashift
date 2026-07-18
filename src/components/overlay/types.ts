@@ -163,6 +163,13 @@ export interface ViewportPanelProps {
   onAntialiasToggle: (value: boolean) => void;
   onViewportQuarterZoomToggle: (value: boolean) => void;
   onViewportHalfOverlayToggle: (value: boolean) => void;
+  compareLayout: import('../../engine/compareViews').CompareLayoutMode;
+  compareSyncPlay: boolean;
+  /** False when the WebGPU backend is unavailable or kiosk mode is on. */
+  compareDualAvailable: boolean;
+  comparePerformanceNote: string | null;
+  onCompareLayoutChange: (layout: import('../../engine/compareViews').CompareLayoutMode) => void;
+  onCompareSyncPlayToggle: (value: boolean) => void;
 }
 
 export interface ReactivePanelProps {

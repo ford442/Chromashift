@@ -14,6 +14,10 @@ export interface PresetsPanelProps {
   onCopyPresetUrl: () => void;
   onExportPresetFile: () => void;
   onImportPresetFile: (file: File) => void;
+  /** False when dual compare is unavailable (WebGL backend or kiosk mode). */
+  compareDualAvailable: boolean;
+  onCompareWithBuiltin: (id: string) => void;
+  onCompareWithSaved: (name: string) => void;
 }
 
 export function PresetsPanel({
@@ -28,6 +32,9 @@ export function PresetsPanel({
   onCopyPresetUrl,
   onExportPresetFile,
   onImportPresetFile,
+  compareDualAvailable,
+  onCompareWithBuiltin,
+  onCompareWithSaved,
 }: PresetsPanelProps) {
   const [name, setName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,15 +47,26 @@ export function PresetsPanel({
         </span>
         <div className="grid grid-cols-2 gap-1">
           {builtinPresets.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              title={preset.description}
-              onClick={() => onApplyBuiltinPreset(preset.id)}
-              className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-100 text-left"
-            >
-              {preset.name}
-            </button>
+            <div key={preset.id} className="flex items-center gap-0.5">
+              <button
+                type="button"
+                title={preset.description}
+                onClick={() => onApplyBuiltinPreset(preset.id)}
+                className="flex-1 text-[10px] px-2 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-100 text-left truncate"
+              >
+                {preset.name}
+              </button>
+              {compareDualAvailable && (
+                <button
+                  type="button"
+                  onClick={() => onCompareWithBuiltin(preset.id)}
+                  title={`Compare with “${preset.name}” (dual view, slot B)`}
+                  className="text-[10px] px-1 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-300"
+                >
+                  ⇄
+                </button>
+              )}
+            </div>
           ))}
         </div>
       </div>
@@ -97,6 +115,16 @@ export function PresetsPanel({
             >
               {preset.name}
             </button>
+            {compareDualAvailable && (
+              <button
+                type="button"
+                onClick={() => onCompareWithSaved(preset.name)}
+                title={`Compare with “${preset.name}” (dual view, slot B)`}
+                className="text-[10px] px-1.5 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-300"
+              >
+                ⇄
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onDeletePreset(preset.name)}

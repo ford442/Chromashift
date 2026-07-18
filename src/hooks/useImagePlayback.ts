@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import {
   computeAverageLuminanceWith,
 } from '../engine/WasmEngine';
-import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
+import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
 interface ImagePlaybackOptions {
   refs: ChromashiftRefs;
@@ -43,7 +43,7 @@ export function useImagePlayback({
 
     textureManagerRef.current?.loadTexture(url).then((tex) => {
       if (gen !== loadGenRef.current) return;
-      rendererRef.current?.setTexture(tex);
+      applySourceTexture(refs, tex);
       capturePreviewAfterRender.current = true;
       textureManagerRef.current?.evictExcept([url, media.reference?.url].filter((u): u is string => !!u));
 
@@ -83,6 +83,7 @@ export function useImagePlayback({
       }
     }).catch((e) => console.warn('Failed to load texture:', url, e));
   }, [
+    refs,
     engine.gpuReady,
     media.imageList,
     media.currentIndex,

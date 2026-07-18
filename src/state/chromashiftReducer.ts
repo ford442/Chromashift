@@ -39,7 +39,10 @@ export type ChromashiftAction =
   | { type: 'reactive/setMidiBindings'; bindings: MidiBinding[] }
   | { type: 'reactive/addMidiBinding'; binding: MidiBinding }
   | { type: 'reactive/removeMidiBinding'; param: import('../engine/reactive/types').MidiParamId }
-  | { type: 'settings/apply'; settings: ChromashiftSettingsInput };
+  | { type: 'settings/apply'; settings: ChromashiftSettingsInput }
+  | { type: 'compare/setLayout'; layout: import('../engine/compareViews').CompareLayoutMode }
+  | { type: 'compare/setSyncPlay'; syncPlay: boolean }
+  | { type: 'compare/setSlotB'; label: string; settings: ChromashiftSettingsInput };
 
 /** Serializable preset payload (excludes runtime GPU/media corpus state). */
 export interface ChromashiftSettingsInput {
@@ -192,38 +195,75 @@ export function chromashiftReducer(
         },
       };
 
-    case 'settings/apply': {
-      const { settings } = action;
+    case 'settings/apply':
+      return applySettingsToState(state, action.settings);
+
+    case 'compare/setLayout':
+      // Kiosk mode owns the full viewport; multi-view layouts are incompatible.
+      if (action.layout !== 'single' && state.ui.kioskEnabled) return state;
       return {
         ...state,
-        layers: settings.layers ? { ...state.layers, ...settings.layers } : state.layers,
-        tracers: settings.tracers ? { ...state.tracers, ...settings.tracers } : state.tracers,
-        output: settings.output
-          ? {
-              ...state.output,
-              ...settings.output,
-              tracerInspect: settings.output.tracerInspect
-                ? { ...state.output.tracerInspect, ...settings.output.tracerInspect }
-                : state.output.tracerInspect,
-            }
-          : state.output,
-        engine: settings.engine ? { ...state.engine, ...settings.engine } : state.engine,
-        ui: settings.ui ? { ...state.ui, ...settings.ui } : state.ui,
-        reactive: settings.reactive
-          ? {
-              ...state.reactive,
-              ...settings.reactive,
-              midiBindings: settings.reactive.midiBindings
-                ? [...settings.reactive.midiBindings]
-                : state.reactive.midiBindings,
-            }
-          : state.reactive,
+        ui: { ...state.ui, compareView: { ...state.ui.compareView, layout: action.layout } },
       };
-    }
+
+    case 'compare/setSyncPlay':
+      return {
+        ...state,
+        ui: { ...state.ui, compareView: { ...state.ui.compareView, syncPlay: action.syncPlay } },
+      };
+
+    case 'compare/setSlotB':
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          compareView: {
+            ...state.ui.compareView,
+            slotB: { id: 'b', label: action.label, settings: action.settings },
+          },
+        },
+      };
 
     default:
       return state;
   }
+}
+
+/**
+ * Pure merge of a serializable settings snapshot over full app state.
+ * Used both by the `settings/apply` reducer case and by the render loop to
+ * build compare-slot states, so both paths share identical merge semantics.
+ * Never touches `ui.compareView` (excluded from `ChromashiftSettingsInput.ui`).
+ */
+export function applySettingsToState(
+  state: ChromashiftState,
+  settings: ChromashiftSettingsInput,
+): ChromashiftState {
+  return {
+    ...state,
+    layers: settings.layers ? { ...state.layers, ...settings.layers } : state.layers,
+    tracers: settings.tracers ? { ...state.tracers, ...settings.tracers } : state.tracers,
+    output: settings.output
+      ? {
+          ...state.output,
+          ...settings.output,
+          tracerInspect: settings.output.tracerInspect
+            ? { ...state.output.tracerInspect, ...settings.output.tracerInspect }
+            : state.output.tracerInspect,
+        }
+      : state.output,
+    engine: settings.engine ? { ...state.engine, ...settings.engine } : state.engine,
+    ui: settings.ui ? { ...state.ui, ...settings.ui } : state.ui,
+    reactive: settings.reactive
+      ? {
+          ...state.reactive,
+          ...settings.reactive,
+          midiBindings: settings.reactive.midiBindings
+            ? [...settings.reactive.midiBindings]
+            : state.reactive.midiBindings,
+        }
+      : state.reactive,
+  };
 }
 
 export { createInitialState };

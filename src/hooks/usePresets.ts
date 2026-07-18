@@ -52,6 +52,27 @@ export function usePresets(store: ChromashiftStore) {
     setPresetStatus(`Applied “${preset.name}”`);
   }, [actions]);
 
+  const handleCompareWithBuiltin = useCallback((id: string) => {
+    const preset = findBuiltinPreset(id);
+    if (!preset) return;
+    actions.setCompareSlotB(preset.name, preset.settings);
+    actions.setCompareLayout('dual');
+    setPresetError(null);
+    setPresetStatus(`Comparing with “${preset.name}”`);
+  }, [actions]);
+
+  const handleCompareWithSaved = useCallback((name: string) => {
+    const preset = getStoredPreset(name);
+    if (!preset) {
+      setPresetError(`Preset “${name}” was not found.`);
+      return;
+    }
+    actions.setCompareSlotB(name, preset.document.settings);
+    actions.setCompareLayout('dual');
+    setPresetError(null);
+    setPresetStatus(`Comparing with “${name}”`);
+  }, [actions]);
+
   const handleCopyPresetUrl = useCallback(async () => {
     const url = buildPresetUrl(state, window.location.href);
     // Keep the address bar in sync so a plain reload restores this look too.
@@ -103,6 +124,8 @@ export function usePresets(store: ChromashiftStore) {
     handleLoadPreset,
     handleDeletePreset,
     handleApplyBuiltinPreset,
+    handleCompareWithBuiltin,
+    handleCompareWithSaved,
     handleCopyPresetUrl,
     handleExportPresetFile,
     handleImportPresetFile,

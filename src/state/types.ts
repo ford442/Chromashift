@@ -7,6 +7,7 @@ import type { EngineKind } from '../engine/WasmEngine';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
+import type { CompareViewState } from '../engine/compareViews';
 export type { ReactiveSlice } from '../engine/reactive/types';
 
 export type LayerTriple<T> = [T, T, T];
@@ -124,6 +125,8 @@ export interface UiSlice {
   /** Slow parameter drift for unattended attract loops. */
   kioskAttractMode: boolean;
   shortcutsOverlayVisible: boolean;
+  /** Multi-view comparison layout (dual A/B, etc.) — see docs/COMPARE_VIEWS.md. */
+  compareView: CompareViewState;
 }
 
 export interface ChromashiftState {

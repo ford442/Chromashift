@@ -81,3 +81,4 @@ Important differences:
 - WebGPU textures use `rgba8unorm-srgb` source uploads; the WebGL fallback uses standard WebGL texture uploads and is visually approximate.
 - WebGPU keeps the full dual-ping-pong tracer and diagnostic texture path; WebGL implements a simpler FBO-based tracer suitable for reference/debug work.
 - WebGPU remains the source of truth for deployment-quality output.
+- The dual (2-up) compare view (docs/COMPARE_VIEWS.md Phase 1) is WebGPU-only: it requires a second renderer sharing one `GPUDevice`, which the WebGL path does not support. The Dual toggle is disabled on the WebGL backend.

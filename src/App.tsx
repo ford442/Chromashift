@@ -11,6 +11,7 @@ import { useAnimationLoop } from './hooks/useAnimationLoop';
 import { useAppUiProps } from './hooks/useAppUiProps';
 import { useCanvasResize, useCollisionStatsPoll, useWasmEngineLoader } from './hooks/useAppLifecycle';
 import { useClassificationMask } from './hooks/useClassificationMask';
+import { useCompareSlotRenderer } from './hooks/useCompareSlotRenderer';
 import { useChromashiftRefs, useChromashiftStore } from './hooks/useChromashiftStore';
 import { useImagePlayback } from './hooks/useImagePlayback';
 import {
@@ -34,7 +35,7 @@ export default function App() {
   const { clearClassificationMask, generateClassificationMaskTexture } = useClassificationMask(refs);
 
   useWasmEngineLoader(actions.setWasmAvailable);
-  useCanvasResize(refs, output.squareCanvas, media.aspect);
+  useCanvasResize(refs, output.squareCanvas, media.aspect, state.ui.compareView.layout);
   useCollisionStatsPoll(refs, engine.gpuReady, actions.setCollisionStats);
 
   useAppWebGPUInit({
@@ -61,7 +62,11 @@ export default function App() {
     setGpuReady: actions.setGpuReady,
     setSpecificImageError: actions.setSpecificImageError,
     ownedObjectUrlsRef: refs.ownedObjectUrlsRef,
+    sourceTextureRef: refs.sourceTextureRef,
   });
+
+  // After useAppWebGPUInit so slot B cleanup runs before the shared device is destroyed.
+  useCompareSlotRenderer(refs, store);
 
   useImagePlayback({ refs, store, clearClassificationMask, generateClassificationMaskTexture });
   useAnimationLoop(refs, store);

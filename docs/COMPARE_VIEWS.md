@@ -109,12 +109,12 @@ Readback / collision stats: **slot A only** (or disable in multi-view).
 
 ### Phase 1 — Dual 2-up (acceptance target)
 
-- [ ] Viewport panel: layout `Dual` toggle
-- [ ] Second main canvas, 50/50 grid in `AppUI`
-- [ ] Second `WebGPURenderer` on same device; shared `TextureManager`
-- [ ] Load preset into slot B from Presets panel ("Compare with…")
-- [ ] **Sync play** toggle in Viewport panel
-- [ ] Performance note when layer scale auto-reduced
+- [x] Viewport panel: layout `Dual` toggle
+- [x] Second main canvas, 50/50 grid in `AppUI`
+- [x] Second `WebGPURenderer` on same device; shared `TextureManager`
+- [x] Load preset into slot B from Presets panel ("Compare with…")
+- [x] **Sync play** toggle in Viewport panel
+- [x] Performance note when layer scale auto-reduced
 
 ### Phase 2 — Swipe split
 

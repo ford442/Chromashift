@@ -7,7 +7,7 @@ import {
 } from '../engine/WasmEngine';
 import { addLocalImage, clearLocalLibrary } from '../engine/LocalLibrary';
 import type { ImageEntry } from '../engine/TextureManager';
-import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
+import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
 interface MediaHandlersOptions {
   refs: ChromashiftRefs;
@@ -48,7 +48,7 @@ export function useMediaHandlers({
     actions.setSpecificImageError(null);
     try {
       const tex = await textureManagerRef.current.loadTexture(url);
-      rendererRef.current.setTexture(tex);
+      applySourceTexture(refs, tex);
       rendererRef.current.clearPersistence();
       clearClassificationMask();
       capturePreviewAfterRenderRef.current = true;
@@ -98,6 +98,7 @@ export function useMediaHandlers({
       actions.setSpecificImageError(`Failed to load: ${url}`);
     }
   }, [
+    refs,
     textureManagerRef,
     rendererRef,
     capturePreviewAfterRenderRef,
@@ -278,7 +279,7 @@ export function useUpscalerHandlers(
       const tex = textureManagerRef.current.uploadPixels(
         `__upscaled__:${url}`, result.pixels, result.width, result.height,
       );
-      rendererRef.current.setTexture(tex);
+      applySourceTexture(refs, tex);
       rendererRef.current.clearPersistence();
       clearClassificationMask();
 
@@ -312,6 +313,7 @@ export function useUpscalerHandlers(
       actions.setUpscaleBusy(false);
     }
   }, [
+    refs,
     rendererRef,
     textureManagerRef,
     upscalerRef,

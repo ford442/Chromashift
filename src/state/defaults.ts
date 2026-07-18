@@ -1,4 +1,5 @@
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
+import { defaultCompareSlot } from '../engine/compareViews';
 import { getRendererPreference } from '../engine/rendererMode';
 import { EMPTY_GPU_RENDER_TIMING } from '../engine/types/RendererContracts';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
@@ -124,6 +125,13 @@ export function createInitialState(): ChromashiftState {
       kioskUiHidden: false,
       kioskAttractMode: false,
       shortcutsOverlayVisible: false,
+      compareView: {
+        layout: 'single',
+        syncPlay: true,
+        swipePosition: 0.5,
+        slotA: defaultCompareSlot('a', 'Live'),
+        slotB: defaultCompareSlot('b', 'Preset B'),
+      },
     },
     reactive: {
       enabled: false,

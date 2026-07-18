@@ -7,8 +7,10 @@ export function useCanvasResize(
   refs: ChromashiftRefs,
   squareCanvas: boolean,
   imageAspect: number,
+  compareLayout: import('../engine/compareViews').CompareLayoutMode = 'single',
 ): void {
-  const { containerRef, previewTracerRef, mainViewportRef, webGpuSessionRef } = refs;
+  const { containerRef, previewTracerRef, mainViewportRef, webGpuSessionRef, canvasBRef } = refs;
+  const dual = compareLayout === 'dual';
 
   useEffect(() => {
     const mainCanvas = previewTracerRef.current;
@@ -29,20 +31,26 @@ export function useCanvasResize(
       const boxW = containerW;
       const boxH = Math.floor(Math.min(maxSize, containerH));
 
-      let targetW = boxW;
+      // In dual layout each slot gets a half-width cell; fit the aspect per cell
+      // and size the viewport to two cells plus a 2px divider.
+      const fitW = dual ? Math.floor((boxW - 2) / 2) : boxW;
+
+      let targetW = fitW;
       let targetH = boxH;
 
       if (squareCanvas) {
-        const side = Math.floor(Math.min(boxW, boxH));
+        const side = Math.floor(Math.min(fitW, boxH));
         targetW = side;
         targetH = side;
-      } else if (boxW / boxH > imageAspect) {
+      } else if (fitW / boxH > imageAspect) {
         targetH = boxH;
         targetW = Math.floor(targetH * imageAspect);
       } else {
-        targetW = boxW;
+        targetW = fitW;
         targetH = Math.floor(targetW / imageAspect);
       }
+
+      if (dual) targetW = targetW * 2 + 2;
 
       const cssW = Math.floor(targetW);
       const cssH = Math.floor(targetH);
@@ -55,8 +63,14 @@ export function useCanvasResize(
       mainViewportEl.style.top = `${cssTop}px`;
 
       const dpr = Math.max(1, window.devicePixelRatio || 1);
-      mainCanvasEl.width = Math.floor(cssW * dpr);
+      const canvasCssW = dual ? (cssW - 2) / 2 : cssW;
+      mainCanvasEl.width = Math.floor(canvasCssW * dpr);
       mainCanvasEl.height = Math.floor(cssH * dpr);
+      const canvasBEl = canvasBRef.current;
+      if (dual && canvasBEl) {
+        canvasBEl.width = Math.floor(canvasCssW * dpr);
+        canvasBEl.height = Math.floor(cssH * dpr);
+      }
       webGpuSessionRef.current?.reconfigure();
     }
 
@@ -69,7 +83,7 @@ export function useCanvasResize(
       observer.disconnect();
       window.removeEventListener('resize', resizeCanvas);
     };
-  }, [containerRef, previewTracerRef, mainViewportRef, webGpuSessionRef, squareCanvas, imageAspect]);
+  }, [containerRef, previewTracerRef, mainViewportRef, webGpuSessionRef, canvasBRef, squareCanvas, imageAspect, dual]);
 }
 
 export function useWasmEngineLoader(

@@ -84,6 +84,18 @@ export function multiViewPerformanceNote(layout: CompareLayoutMode): string | nu
   return `Multi-view (${views}× GPU): layer scale ×${factor} to fit VRAM budget.`;
 }
 
+/** Advance an animation angle clock by per-layer extension deltas (degrees, mod 360). */
+export function advanceAngles(
+  prev: readonly [number, number, number],
+  extensions: readonly [number, number, number],
+): [number, number, number] {
+  return [
+    (prev[0] + extensions[0]) % 360,
+    (prev[1] + extensions[1]) % 360,
+    (prev[2] + extensions[2]) % 360,
+  ];
+}
+
 export function defaultCompareSlot(
   id: CompareSlotConfig['id'],
   label: string,

@@ -47,6 +47,8 @@ export interface UseAppWebGPUInitProps {
   setGpuReady: (ready: boolean) => void;
   setSpecificImageError: (err: string | null) => void;
   ownedObjectUrlsRef: MutableRefObject<string[]>;
+  /** Records the initial source texture so a late compare-slot renderer can attach it. */
+  sourceTextureRef: MutableRefObject<GPUTexture | null>;
 }
 
 interface CancelToken {
@@ -155,7 +157,8 @@ export function useAppWebGPUInit({
   previewOriginalRef,
   setGpuReady,
   setSpecificImageError,
-  ownedObjectUrlsRef
+  ownedObjectUrlsRef,
+  sourceTextureRef
 }: UseAppWebGPUInitProps) {
 
   const init = useCallback(async (
@@ -309,6 +312,7 @@ export function useAppWebGPUInit({
             if (bailIfCancelled()) return;
 
             localRenderer.setTexture(tex);
+            sourceTextureRef.current = tex;
             const existingIndex = entries.findIndex((entry) => entry.url === specificUrl);
             if (existingIndex === -1) {
               entries.push({ url: specificUrl, label: 'Query Image' });
@@ -358,6 +362,7 @@ export function useAppWebGPUInit({
               if (bailIfCancelled()) return;
 
               localRenderer.setTexture(tex);
+              sourceTextureRef.current = tex as GPUTexture;
               setReferenceImage(ensureReferenceImage(entries, 0));
             }
           }
@@ -366,6 +371,7 @@ export function useAppWebGPUInit({
           if (bailIfCancelled()) return;
 
           localRenderer.setTexture(tex);
+          sourceTextureRef.current = tex as GPUTexture;
           setReferenceImage(ensureReferenceImage(entries, 0));
         }
       } catch (e) {
@@ -375,7 +381,7 @@ export function useAppWebGPUInit({
 
       if (bailIfCancelled()) return;
       setGpuReady(true);
-  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, deviceRef, webGpuSessionRef, gpuImageAnalysisRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef, ownedObjectUrlsRef]);
+  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, deviceRef, webGpuSessionRef, gpuImageAnalysisRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef, ownedObjectUrlsRef, sourceTextureRef]);
 
   useEffect(() => {
     const canvas = previewTracerRef.current;
@@ -404,6 +410,7 @@ export function useAppWebGPUInit({
       gpuImageAnalysisRef.current = null;
       rendererRef.current = null;
       textureManagerRef.current = null;
+      sourceTextureRef.current = null;
 
       clearClassificationMask();
       for (const objectUrl of ownedObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
@@ -411,5 +418,5 @@ export function useAppWebGPUInit({
 
       destroyInitResources(liveResources, canvas);
     };
-  }, [init, clearClassificationMask, deviceRef, gpuImageAnalysisRef, ownedObjectUrlsRef, previewTracerRef, rendererRef, setGpuError, textureManagerRef, webGpuSessionRef]);
+  }, [init, clearClassificationMask, deviceRef, gpuImageAnalysisRef, ownedObjectUrlsRef, previewTracerRef, rendererRef, setGpuError, textureManagerRef, webGpuSessionRef, sourceTextureRef]);
 }

@@ -11,9 +11,66 @@ export function ViewportPanel({
   onAntialiasToggle,
   onViewportQuarterZoomToggle,
   onViewportHalfOverlayToggle,
+  compareLayout,
+  compareSyncPlay,
+  compareDualAvailable,
+  comparePerformanceNote,
+  onCompareLayoutChange,
+  onCompareSyncPlayToggle,
 }: ViewportPanelProps) {
+  const dualActive = compareLayout === 'dual';
   return (
     <div className="panel-3d space-y-2">
+      <div className="grid grid-cols-2 gap-1">
+        <button
+          type="button"
+          onClick={() => onCompareLayoutChange('single')}
+          className={`text-xs px-2 py-0.5 rounded transition-all ${
+            !dualActive
+              ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+              : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
+          }`}
+        >
+          ▢ Single
+        </button>
+        <button
+          type="button"
+          disabled={!compareDualAvailable}
+          onClick={() => onCompareLayoutChange('dual')}
+          title={compareDualAvailable
+            ? 'Side-by-side A/B comparison of two preset snapshots'
+            : 'Requires the WebGPU renderer (and kiosk mode off)'}
+          className={`text-xs px-2 py-0.5 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+            dualActive
+              ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+              : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
+          }`}
+        >
+          ▢▢ Dual
+        </button>
+      </div>
+
+      {dualActive && (
+        <button
+          type="button"
+          onClick={() => onCompareSyncPlayToggle(!compareSyncPlay)}
+          title="When on, both slots share one animation clock; when off, slot B animates independently"
+          className={`w-full text-xs px-2 py-0.5 rounded transition-all ${
+            compareSyncPlay
+              ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+              : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
+          }`}
+        >
+          ⟳ Sync Play
+        </button>
+      )}
+
+      {comparePerformanceNote && (
+        <div className="text-[10px] font-mono text-amber-300 bg-amber-900/30 border border-amber-500/30 rounded px-1.5 py-1">
+          {comparePerformanceNote}
+        </div>
+      )}
+
       <button
         type="button"
         onClick={() => onSquareCanvasToggle(!squareCanvas)}

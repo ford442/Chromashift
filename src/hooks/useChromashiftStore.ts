@@ -36,6 +36,12 @@ export interface ChromashiftRefs {
   lastReadbackMsRef: MutableRefObject<number>;
   tracerDragRef: MutableRefObject<{ pointerId: number; x: number; y: number } | null>;
   animAnglesRef: MutableRefObject<LayerTriple<number>>;
+  /** Compare slot B (dual layout): canvas, renderer, independent angle clock. */
+  canvasBRef: RefObject<HTMLCanvasElement | null>;
+  rendererBRef: MutableRefObject<import('../engine/WebGPURenderer').WebGPURenderer | null>;
+  animAnglesBRef: MutableRefObject<LayerTriple<number>>;
+  /** Last source texture handed to the renderer(s); lets slot B attach late. */
+  sourceTextureRef: MutableRefObject<GPUTexture | null>;
   lastAngleSyncRef: MutableRefObject<number>;
   lastRenderMetricSyncRef: MutableRefObject<number>;
   loadGenRef: MutableRefObject<number>;
@@ -69,6 +75,10 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const lastReadbackMsRef = useRef(0);
   const tracerDragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const animAnglesRef = useRef<LayerTriple<number>>([0, 0, 0]);
+  const canvasBRef = useRef<HTMLCanvasElement>(null);
+  const rendererBRef = useRef<import('../engine/WebGPURenderer').WebGPURenderer | null>(null);
+  const animAnglesBRef = useRef<LayerTriple<number>>([0, 0, 0]);
+  const sourceTextureRef = useRef<GPUTexture | null>(null);
   const lastAngleSyncRef = useRef(0);
   const lastRenderMetricSyncRef = useRef(0);
   const loadGenRef = useRef(0);
@@ -100,6 +110,10 @@ export function useChromashiftRefs(): ChromashiftRefs {
     lastReadbackMsRef,
     tracerDragRef,
     animAnglesRef,
+    canvasBRef,
+    rendererBRef,
+    animAnglesBRef,
+    sourceTextureRef,
     lastAngleSyncRef,
     lastRenderMetricSyncRef,
     loadGenRef,
@@ -112,6 +126,16 @@ export function useChromashiftRefs(): ChromashiftRefs {
     renderStateRef,
     reactiveModRef,
   };
+}
+
+/**
+ * Route a new source texture to every live renderer (slot A + compare slot B)
+ * and record it so a late-created slot B renderer can attach it.
+ */
+export function applySourceTexture(refs: ChromashiftRefs, tex: unknown): void {
+  refs.sourceTextureRef.current = tex as GPUTexture;
+  refs.rendererRef.current?.setTexture(tex);
+  refs.rendererBRef.current?.setTexture(tex);
 }
 
 export function useChromashiftStore(refs: ChromashiftRefs) {
@@ -303,6 +327,12 @@ export function useChromashiftStore(refs: ChromashiftRefs) {
       dispatch({ type: 'ui/patch', patch: { kioskAttractMode } }),
     setShortcutsOverlayVisible: (shortcutsOverlayVisible: boolean) =>
       dispatch({ type: 'ui/patch', patch: { shortcutsOverlayVisible } }),
+    setCompareLayout: (layout: import('../engine/compareViews').CompareLayoutMode) =>
+      dispatch({ type: 'compare/setLayout', layout }),
+    setCompareSyncPlay: (syncPlay: boolean) =>
+      dispatch({ type: 'compare/setSyncPlay', syncPlay }),
+    setCompareSlotB: (label: string, settings: ChromashiftSettingsInput) =>
+      dispatch({ type: 'compare/setSlotB', label, settings }),
     setReactiveEnabled: (enabled: boolean) =>
       dispatch({
         type: 'reactive/patch',

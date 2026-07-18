@@ -1,4 +1,5 @@
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
+import { effectiveLayerScaleForMultiView, multiViewPerformanceNote } from '../engine/compareViews';
 import { isOverlayImageSourceAvailable } from '../engine/overlayImageSource';
 import { isWasmReady } from '../engine/WasmEngine';
 import { DEFAULT_FPS } from '../state/defaults';
@@ -41,6 +42,8 @@ interface HandlerBundle {
   handleLoadPreset: (name: string) => void;
   handleDeletePreset: (name: string) => void;
   handleApplyBuiltinPreset: (id: string) => void;
+  handleCompareWithBuiltin: (id: string) => void;
+  handleCompareWithSaved: (name: string) => void;
   handleCopyPresetUrl: () => void;
   handleExportPresetFile: () => void;
   handleImportPresetFile: (file: File) => void;
@@ -82,6 +85,13 @@ export function useAppUiProps(
         : overlayImageSource === 'previous' ? media.previous
           : null;
   const overlayUsesSeparatedCanvas = overlayImageSource === 'separated';
+
+  const compareView = ui.compareView;
+  const compareDualActive = compareView.layout === 'dual';
+  const comparePerformanceNote =
+    compareDualActive && effectiveLayerScaleForMultiView(layers.scale, 'dual').reduced
+      ? multiViewPerformanceNote('dual')
+      : null;
 
   return {
     containerRef: refs.containerRef,
@@ -163,6 +173,17 @@ export function useAppUiProps(
     handleLoadPreset: handlers.handleLoadPreset,
     handleDeletePreset: handlers.handleDeletePreset,
     handleApplyBuiltinPreset: handlers.handleApplyBuiltinPreset,
+    canvasBRef: refs.canvasBRef,
+    compareLayout: compareView.layout,
+    compareDualActive,
+    compareSyncPlay: compareView.syncPlay,
+    compareSlotBLabel: compareView.slotB.label,
+    compareDualAvailable: engine.backend === 'webgpu' && !ui.kioskEnabled,
+    comparePerformanceNote,
+    onCompareLayoutChange: actions.setCompareLayout,
+    onCompareSyncPlayToggle: actions.setCompareSyncPlay,
+    onCompareWithBuiltin: handlers.handleCompareWithBuiltin,
+    onCompareWithSaved: handlers.handleCompareWithSaved,
     handleCopyPresetUrl: handlers.handleCopyPresetUrl,
     handleExportPresetFile: handlers.handleExportPresetFile,
     handleImportPresetFile: handlers.handleImportPresetFile,

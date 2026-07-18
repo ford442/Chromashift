@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { WebGPURenderer } from '../engine/WebGPURenderer';
 import { GPU_TIMING_HISTORY_SIZE } from '../engine/GpuTimestampProfiler';
 import { buildRendererState } from '../engine/buildRendererState';
+import { advanceAngles, effectiveLayerScaleForMultiView } from '../engine/compareViews';
+import { applySettingsToState } from '../state/chromashiftReducer';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 const PREVIEW_TARGET_LIVE = 1;
@@ -18,6 +20,8 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
   const frameHistoryRef = useRef<number[]>([]);
   const {
     animAnglesRef,
+    animAnglesBRef,
+    rendererBRef,
     lastAngleSyncRef,
     lastRenderMetricSyncRef,
     rendererRef,
@@ -75,14 +79,35 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
           actions.setLayerAngles(angles);
         }
 
-        const renderOverrides = mod
+        const renderOverrides: Partial<import('../engine/types/RendererState').RendererState> = mod
           ? {
               tracerAboveIntensity: mod.tracerAboveIntensity,
               tracerBelowIntensity: mod.tracerBelowIntensity,
               avgLuminance: mod.avgLuminance,
             }
           : {};
+
+        const compareView = current.ui.compareView;
+        const rendererB = rendererBRef.current;
+        const dualActive = compareView.layout === 'dual' && rendererB !== null;
+        if (dualActive) {
+          renderOverrides.layerScale = effectiveLayerScaleForMultiView(current.layers.scale, 'dual').scale;
+          renderOverrides.tracerScale = effectiveLayerScaleForMultiView(current.tracers.scale, 'dual').scale;
+        }
         rendererRef.current?.render(buildRendererState(current, angles, renderOverrides));
+
+        if (dualActive && rendererB) {
+          const stateB = applySettingsToState(current, compareView.slotB.settings);
+          const anglesB = compareView.syncPlay
+            ? angles
+            : (animAnglesBRef.current = advanceAngles(animAnglesBRef.current, stateB.layers.extensions));
+          rendererB.render(buildRendererState(stateB, anglesB, {
+            layerScale: effectiveLayerScaleForMultiView(stateB.layers.scale, 'dual').scale,
+            tracerScale: effectiveLayerScaleForMultiView(stateB.tracers.scale, 'dual').scale,
+            livePreviewEnabled: false,
+            profilePerformance: false,
+          }));
+        }
 
         if (now - lastRenderMetricSyncRef.current > 200) {
           lastRenderMetricSyncRef.current = now;
@@ -193,6 +218,8 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
     layerExtensions,
     exportingVideo,
     animAnglesRef,
+    animAnglesBRef,
+    rendererBRef,
     lastAngleSyncRef,
     lastRenderMetricSyncRef,
     rendererRef,

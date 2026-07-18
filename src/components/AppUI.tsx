@@ -11,6 +11,9 @@ import { collectImageFilesFromDataTransfer } from '../engine/fileDrop';
 export function AppUI(props: any) {
   const {
     containerRef, mainViewportRef, previewTracerRef, photoModeImage, isReferenceCompareMode,
+    canvasBRef, compareDualActive, compareSlotBLabel, compareLayout, compareSyncPlay,
+    compareDualAvailable, comparePerformanceNote, onCompareLayoutChange,
+    onCompareSyncPlayToggle, onCompareWithBuiltin, onCompareWithSaved,
     handleDropFiles, handleClearLocalLibrary,
     referenceImage, showCanvasMainView, isPaused, mainViewMode, showImageOverlay,
     overlayImageSource, overlayPhotoImage, overlayUsesSeparatedCanvas,
@@ -148,17 +151,41 @@ export function AppUI(props: any) {
           ref={previewTracerRef}
           style={{
             position: 'absolute',
-            inset: 0,
-            width: '100%',
+            top: 0,
+            left: 0,
+            width: compareDualActive ? 'calc(50% - 1px)' : '100%',
             height: '100%',
             imageRendering: 'auto',
             display: showCanvasMainView ? 'block' : 'none',
             background: '#000',
             cursor: isPaused && mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER ? 'grab' : 'default',
-            clipPath: isReferenceCompareMode ? 'inset(0 50% 0 0)' : 'none',
+            clipPath: isReferenceCompareMode && !compareDualActive ? 'inset(0 50% 0 0)' : 'none',
           }}
         />
-        {(photoModeImage || isReferenceCompareMode) && (
+        {compareDualActive && (
+          <>
+            <canvas
+              ref={canvasBRef}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 'calc(50% + 1px)',
+                width: 'calc(50% - 1px)',
+                height: '100%',
+                imageRendering: 'auto',
+                background: '#000',
+              }}
+            />
+            <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-0.5 bg-amber-300/80 shadow-[0_0_12px_rgba(245,158,11,0.65)]" />
+            <div className="absolute top-1 left-1 z-10 text-[10px] font-mono text-amber-200 bg-black/60 px-1.5 py-0.5 rounded pointer-events-none">
+              A · Live
+            </div>
+            <div className="absolute top-1 z-10 text-[10px] font-mono text-amber-200 bg-black/60 px-1.5 py-0.5 rounded pointer-events-none" style={{ left: 'calc(50% + 5px)' }}>
+              B · {compareSlotBLabel}
+            </div>
+          </>
+        )}
+        {!compareDualActive && (photoModeImage || isReferenceCompareMode) && (
           <div
             className="absolute inset-0 overflow-hidden bg-black"
             style={{ clipPath: isReferenceCompareMode ? 'inset(0 0 0 50%)' : 'none' }}
@@ -171,10 +198,10 @@ export function AppUI(props: any) {
             />
           </div>
         )}
-        {isReferenceCompareMode && (
+        {!compareDualActive && isReferenceCompareMode && (
           <div className="absolute top-0 bottom-0 left-1/2 w-px bg-amber-300/80 shadow-[0_0_12px_rgba(245,158,11,0.65)]" />
         )}
-        {showImageOverlay && (
+        {!compareDualActive && showImageOverlay && (
           <div
             className="absolute inset-0 overflow-hidden pointer-events-none"
             style={{
@@ -568,6 +595,14 @@ export function AppUI(props: any) {
         onDeletePreset={handleDeletePreset}
         onApplyBuiltinPreset={handleApplyBuiltinPreset}
         onCopyPresetUrl={handleCopyPresetUrl}
+        compareLayout={compareLayout}
+        compareSyncPlay={compareSyncPlay}
+        compareDualAvailable={compareDualAvailable}
+        comparePerformanceNote={comparePerformanceNote}
+        onCompareLayoutChange={onCompareLayoutChange}
+        onCompareSyncPlayToggle={onCompareSyncPlayToggle}
+        onCompareWithBuiltin={onCompareWithBuiltin}
+        onCompareWithSaved={onCompareWithSaved}
         onExportPresetFile={handleExportPresetFile}
         onImportPresetFile={handleImportPresetFile}
         isAutoPlayActive={isAutoPlayActive}

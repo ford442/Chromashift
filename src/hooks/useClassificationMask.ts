@@ -7,6 +7,7 @@ type MaskOwner = 'gpu-analysis' | 'wasm-upload' | null;
 export function useClassificationMask(refs: ChromashiftRefs) {
   const {
     rendererRef,
+    rendererBRef,
     maskTextureRef,
     engineModeRef,
     deviceRef,
@@ -16,12 +17,13 @@ export function useClassificationMask(refs: ChromashiftRefs) {
 
   const clearClassificationMask = useCallback(() => {
     rendererRef.current?.setClassificationMaskTexture(null);
+    rendererBRef.current?.setClassificationMaskTexture(null);
     if (maskOwnerRef.current === 'wasm-upload') {
       maskTextureRef.current?.destroy();
     }
     maskTextureRef.current = null;
     maskOwnerRef.current = null;
-  }, [rendererRef, maskTextureRef]);
+  }, [rendererRef, rendererBRef, maskTextureRef]);
 
   const bindMaskTexture = useCallback((texture: GPUTexture, owner: MaskOwner) => {
     if (maskOwnerRef.current === 'wasm-upload' && maskTextureRef.current) {
@@ -30,7 +32,8 @@ export function useClassificationMask(refs: ChromashiftRefs) {
     maskTextureRef.current = texture;
     maskOwnerRef.current = owner;
     rendererRef.current?.setClassificationMaskTexture(texture);
-  }, [rendererRef, maskTextureRef]);
+    rendererBRef.current?.setClassificationMaskTexture(texture);
+  }, [rendererRef, rendererBRef, maskTextureRef]);
 
   const generateClassificationMaskFromTexture = useCallback(async (
     source: GPUTexture,
