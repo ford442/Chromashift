@@ -1,15 +1,16 @@
 import { useEffect } from 'react';
-import { WebGPURenderer } from '../engine/WebGPURenderer';
-import { configureWebGpuCanvas } from '../engine/gpuBootstrap';
+import type { WebGPURenderer } from '../engine/WebGPURenderer';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
+
+/** Slot id for compare layout slot B (dual 2-up). */
+export const COMPARE_SLOT_B_ID = 'compare-b';
 
 /**
  * Lifecycle for the compare slot B renderer (dual layout).
  *
- * Creates a second WebGPURenderer on the *shared* GPUDevice/TextureManager from
- * the main bootstrap; owns only the slot B canvas context and renderer. Must be
- * invoked after useAppWebGPUInit so its cleanup runs before the device is
- * destroyed. Never destroys the device, session, or shared textures.
+ * Delegates to RendererOrchestrator on the shared GPUDevice/TextureManager from
+ * the main bootstrap. Must run after useAppWebGPUInit so cleanup order keeps the
+ * orchestrator alive while slot B is torn down.
  */
 export function useCompareSlotRenderer(refs: ChromashiftRefs, store: ChromashiftStore): void {
   const { state } = store;
@@ -20,7 +21,7 @@ export function useCompareSlotRenderer(refs: ChromashiftRefs, store: Chromashift
   const {
     canvasBRef,
     rendererBRef,
-    webGpuSessionRef,
+    orchestratorRef,
     sourceTextureRef,
     maskTextureRef,
     animAnglesRef,
@@ -29,19 +30,12 @@ export function useCompareSlotRenderer(refs: ChromashiftRefs, store: Chromashift
 
   useEffect(() => {
     if (!dualActive || !gpuReady || backend !== 'webgpu') return;
-    const session = webGpuSessionRef.current;
+    const orchestrator = orchestratorRef.current;
     const canvas = canvasBRef.current;
-    if (!session || !canvas) return;
+    if (!orchestrator || !canvas) return;
 
-    const ctx = canvas.getContext('webgpu');
-    if (!ctx) return;
-
-    // Guard against a 0×0 canvas before the resize observer has sized it.
-    if (canvas.width === 0) canvas.width = 1;
-    if (canvas.height === 0) canvas.height = 1;
-    configureWebGpuCanvas(ctx, session.device, session.format);
-
-    const rendererB = new WebGPURenderer(session.device, ctx, session.format, antialiasEnabled);
+    const slot = orchestrator.createSlot(COMPARE_SLOT_B_ID, canvas);
+    const rendererB = slot.renderer as WebGPURenderer;
     if (sourceTextureRef.current) rendererB.setTexture(sourceTextureRef.current);
     if (maskTextureRef.current) rendererB.setClassificationMaskTexture(maskTextureRef.current);
     animAnglesBRef.current = [...animAnglesRef.current];
@@ -49,8 +43,7 @@ export function useCompareSlotRenderer(refs: ChromashiftRefs, store: Chromashift
 
     return () => {
       rendererBRef.current = null;
-      rendererB.destroy();
-      ctx.unconfigure();
+      orchestrator.destroySlot(COMPARE_SLOT_B_ID);
     };
   }, [
     dualActive,
@@ -59,7 +52,7 @@ export function useCompareSlotRenderer(refs: ChromashiftRefs, store: Chromashift
     antialiasEnabled,
     canvasBRef,
     rendererBRef,
-    webGpuSessionRef,
+    orchestratorRef,
     sourceTextureRef,
     maskTextureRef,
     animAnglesRef,

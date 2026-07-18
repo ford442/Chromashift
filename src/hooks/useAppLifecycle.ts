@@ -9,7 +9,7 @@ export function useCanvasResize(
   imageAspect: number,
   compareLayout: import('../engine/compareViews').CompareLayoutMode = 'single',
 ): void {
-  const { containerRef, previewTracerRef, mainViewportRef, webGpuSessionRef, canvasBRef } = refs;
+  const { containerRef, previewTracerRef, mainViewportRef, orchestratorRef, canvasBRef } = refs;
   const dual = compareLayout === 'dual';
 
   useEffect(() => {
@@ -71,7 +71,7 @@ export function useCanvasResize(
         canvasBEl.width = Math.floor(canvasCssW * dpr);
         canvasBEl.height = Math.floor(cssH * dpr);
       }
-      webGpuSessionRef.current?.reconfigure();
+      orchestratorRef.current?.resizeAll();
     }
 
     resizeCanvas();
@@ -83,7 +83,7 @@ export function useCanvasResize(
       observer.disconnect();
       window.removeEventListener('resize', resizeCanvas);
     };
-  }, [containerRef, previewTracerRef, mainViewportRef, webGpuSessionRef, canvasBRef, squareCanvas, imageAspect, dual]);
+  }, [containerRef, previewTracerRef, mainViewportRef, orchestratorRef, canvasBRef, squareCanvas, imageAspect, dual]);
 }
 
 export function useWasmEngineLoader(

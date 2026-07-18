@@ -23,6 +23,7 @@ export interface ChromashiftRefs {
   textureManagerRef: RefObject<import('../engine/RendererTypes').ChromashiftTextureManager | null>;
   deviceRef: RefObject<GPUDevice | null>;
   webGpuSessionRef: RefObject<import('../engine/gpuBootstrap').WebGpuSession | null>;
+  orchestratorRef: RefObject<import('../engine/RendererOrchestrator').RendererOrchestrator | null>;
   containerRef: RefObject<HTMLDivElement | null>;
   mainViewportRef: RefObject<HTMLDivElement | null>;
   previewOriginalRef: RefObject<HTMLCanvasElement | null>;
@@ -62,6 +63,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const textureManagerRef = useRef<import('../engine/RendererTypes').ChromashiftTextureManager | null>(null);
   const deviceRef = useRef<GPUDevice | null>(null);
   const webGpuSessionRef = useRef<import('../engine/gpuBootstrap').WebGpuSession | null>(null);
+  const orchestratorRef = useRef<import('../engine/RendererOrchestrator').RendererOrchestrator | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const mainViewportRef = useRef<HTMLDivElement>(null);
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
@@ -97,6 +99,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
     textureManagerRef,
     deviceRef,
     webGpuSessionRef,
+    orchestratorRef,
     containerRef,
     mainViewportRef,
     previewOriginalRef,
