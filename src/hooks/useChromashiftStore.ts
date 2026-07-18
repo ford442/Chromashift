@@ -19,6 +19,7 @@ import type { ReactiveModulation } from '../engine/reactive/types';
 
 export interface ChromashiftRefs {
   canvasRef: RefObject<HTMLCanvasElement | null>;
+  orchestratorRef: RefObject<import('../engine/RendererOrchestrator').RendererOrchestrator | null>;
   rendererRef: RefObject<import('../engine/RendererTypes').ChromashiftRenderer | null>;
   textureManagerRef: RefObject<import('../engine/RendererTypes').ChromashiftTextureManager | null>;
   deviceRef: RefObject<GPUDevice | null>;
@@ -38,7 +39,7 @@ export interface ChromashiftRefs {
   animAnglesRef: MutableRefObject<LayerTriple<number>>;
   /** Compare slot B (dual layout): canvas, renderer, independent angle clock. */
   canvasBRef: RefObject<HTMLCanvasElement | null>;
-  rendererBRef: MutableRefObject<import('../engine/WebGPURenderer').WebGPURenderer | null>;
+  rendererBRef: MutableRefObject<import('../engine/RendererTypes').ChromashiftRenderer | null>;
   animAnglesBRef: MutableRefObject<LayerTriple<number>>;
   /** Last source texture handed to the renderer(s); lets slot B attach late. */
   sourceTextureRef: MutableRefObject<GPUTexture | null>;
@@ -58,6 +59,7 @@ export interface ChromashiftRefs {
 
 export function useChromashiftRefs(): ChromashiftRefs {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const orchestratorRef = useRef<import('../engine/RendererOrchestrator').RendererOrchestrator | null>(null);
   const rendererRef = useRef<import('../engine/RendererTypes').ChromashiftRenderer | null>(null);
   const textureManagerRef = useRef<import('../engine/RendererTypes').ChromashiftTextureManager | null>(null);
   const deviceRef = useRef<GPUDevice | null>(null);
@@ -76,7 +78,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const tracerDragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const animAnglesRef = useRef<LayerTriple<number>>([0, 0, 0]);
   const canvasBRef = useRef<HTMLCanvasElement>(null);
-  const rendererBRef = useRef<import('../engine/WebGPURenderer').WebGPURenderer | null>(null);
+  const rendererBRef = useRef<import('../engine/RendererTypes').ChromashiftRenderer | null>(null);
   const animAnglesBRef = useRef<LayerTriple<number>>([0, 0, 0]);
   const sourceTextureRef = useRef<GPUTexture | null>(null);
   const lastAngleSyncRef = useRef(0);
@@ -93,6 +95,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
 
   return {
     canvasRef,
+    orchestratorRef,
     rendererRef,
     textureManagerRef,
     deviceRef,

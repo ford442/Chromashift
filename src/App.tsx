@@ -42,6 +42,7 @@ export default function App() {
     previewTracerRef: refs.previewTracerRef,
     antialiasEnabled: output.antialiasEnabled,
     setGpuError: actions.setGpuError,
+    orchestratorRef: refs.orchestratorRef,
     deviceRef: refs.deviceRef,
     webGpuSessionRef: refs.webGpuSessionRef,
     gpuImageAnalysisRef: refs.gpuImageAnalysisRef,

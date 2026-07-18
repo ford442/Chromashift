@@ -1,31 +1,20 @@
 import { useEffect, useCallback, type MutableRefObject } from 'react';
-import { WebGPURenderer } from '../engine/WebGPURenderer';
-import { TextureManager } from '../engine/TextureManager';
-import { WebGLRenderer } from '../engine/WebGLRenderer';
-import { WebGLTextureManager } from '../engine/WebGLTextureManager';
 import { computeAverageLuminanceWith } from '../engine/WasmEngine';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/RendererTypes';
-import { getRendererPreference, publishRendererBreadcrumbs } from '../engine/rendererMode';
-import {
-  bootstrapWebGpu,
-  createWebGL2Context,
-  toBootstrapRuntimeError,
-  withErrorScope,
-  type GpuRuntimeError,
-  type WebGpuSession,
-} from '../engine/gpuBootstrap';
-import { GpuImageAnalysis } from '../engine/compute/GpuImageAnalysis';
-import { publishGpuComputeBreadcrumbs } from '../engine/compute/computeSupport';
+import { publishRendererBreadcrumbs } from '../engine/rendererMode';
+import { toBootstrapRuntimeError, type GpuRuntimeError } from '../engine/gpuBootstrap';
 import { listLocalImages } from '../engine/LocalLibrary';
+import { RendererOrchestrator } from '../engine/RendererOrchestrator';
 
 export interface UseAppWebGPUInitProps {
   previewTracerRef: MutableRefObject<HTMLCanvasElement | null>;
   antialiasEnabled: boolean;
   setGpuError: (err: GpuRuntimeError | null) => void;
+  orchestratorRef: MutableRefObject<RendererOrchestrator | null>;
   deviceRef: MutableRefObject<GPUDevice | null>;
-  webGpuSessionRef: MutableRefObject<WebGpuSession | null>;
-  gpuImageAnalysisRef: MutableRefObject<GpuImageAnalysis | null>;
+  webGpuSessionRef: MutableRefObject<import('../engine/gpuBootstrap').WebGpuSession | null>;
+  gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>;
   rendererRef: MutableRefObject<ChromashiftRenderer | null>;
   textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>;
   setRendererBackend: (backend: RendererBackend) => void;
@@ -55,21 +44,56 @@ interface CancelToken {
   cancelled: boolean;
 }
 
-interface InitResources {
-  localRenderer: ChromashiftRenderer | null;
-  localTextureManager: ChromashiftTextureManager | null;
-  localDevice: GPUDevice | null;
-  localSession: WebGpuSession | null;
-  localGpuAnalysis: GpuImageAnalysis | null;
-  backend: RendererBackend;
-}
-
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
 
 function isCancelled(cancelToken: CancelToken, signal: AbortSignal): boolean {
   return cancelToken.cancelled || signal.aborted;
+}
+
+function clearOrchestratorRefs(
+  orchestratorRef: MutableRefObject<RendererOrchestrator | null>,
+  deviceRef: MutableRefObject<GPUDevice | null>,
+  webGpuSessionRef: MutableRefObject<import('../engine/gpuBootstrap').WebGpuSession | null>,
+  gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>,
+  rendererRef: MutableRefObject<ChromashiftRenderer | null>,
+  textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>,
+  sourceTextureRef: MutableRefObject<GPUTexture | null>,
+): void {
+  orchestratorRef.current = null;
+  deviceRef.current = null;
+  webGpuSessionRef.current = null;
+  gpuImageAnalysisRef.current = null;
+  rendererRef.current = null;
+  textureManagerRef.current = null;
+  sourceTextureRef.current = null;
+}
+
+function syncOrchestratorRefs(
+  orchestrator: RendererOrchestrator,
+  primaryRenderer: ChromashiftRenderer,
+  orchestratorRef: MutableRefObject<RendererOrchestrator | null>,
+  deviceRef: MutableRefObject<GPUDevice | null>,
+  webGpuSessionRef: MutableRefObject<import('../engine/gpuBootstrap').WebGpuSession | null>,
+  gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>,
+  rendererRef: MutableRefObject<ChromashiftRenderer | null>,
+  textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>,
+): void {
+  orchestratorRef.current = orchestrator;
+  deviceRef.current = orchestrator.sharedDevice();
+  webGpuSessionRef.current = orchestrator.sessionRef();
+  gpuImageAnalysisRef.current = orchestrator.gpuImageAnalysisRef();
+  rendererRef.current = primaryRenderer;
+  textureManagerRef.current = orchestrator.textureManagerRef();
+}
+
+function bootstrappedPrimaryRenderer(orchestrator: RendererOrchestrator): ChromashiftRenderer {
+  const primarySlot = orchestrator.getSlot('main');
+  if (!primarySlot) {
+    throw new Error('Primary renderer slot was not created.');
+  }
+  return primarySlot.renderer;
 }
 
 function loadPreviewImage(url: string, signal: AbortSignal): Promise<HTMLImageElement> {
@@ -103,41 +127,11 @@ function loadPreviewImage(url: string, signal: AbortSignal): Promise<HTMLImageEl
   });
 }
 
-function syncLiveResources(
-  liveResources: InitResources,
-  resources: InitResources,
-): void {
-  liveResources.localRenderer = resources.localRenderer;
-  liveResources.localTextureManager = resources.localTextureManager;
-  liveResources.localDevice = resources.localDevice;
-  liveResources.localSession = resources.localSession;
-  liveResources.localGpuAnalysis = resources.localGpuAnalysis;
-  liveResources.backend = resources.backend;
-}
-
-function destroyInitResources(resources: InitResources, canvas: HTMLCanvasElement | null): void {
-  resources.localRenderer?.destroy();
-  resources.localTextureManager?.destroy();
-  resources.localGpuAnalysis?.destroy();
-  resources.localSession?.detach();
-  resources.localDevice?.destroy();
-
-  resources.localRenderer = null;
-  resources.localTextureManager = null;
-  resources.localGpuAnalysis = null;
-  resources.localSession = null;
-  resources.localDevice = null;
-
-  if (canvas && resources.backend === 'webgpu') {
-    const ctx = canvas.getContext('webgpu');
-    ctx?.unconfigure();
-  }
-}
-
 export function useAppWebGPUInit({
   previewTracerRef,
   antialiasEnabled,
   setGpuError,
+  orchestratorRef,
   deviceRef,
   webGpuSessionRef,
   gpuImageAnalysisRef,
@@ -164,41 +158,38 @@ export function useAppWebGPUInit({
   const init = useCallback(async (
     cancelToken: CancelToken,
     signal: AbortSignal,
-    liveResources: InitResources,
+    liveOrchestrator: { current: RendererOrchestrator | null },
   ): Promise<void> => {
       const canvas = previewTracerRef.current;
       if (!canvas) return;
 
-      const resources: InitResources = {
-        localRenderer: null,
-        localTextureManager: null,
-        localDevice: null,
-        localSession: null,
-        localGpuAnalysis: null,
-        backend: getRendererPreference(),
-      };
+      let orchestrator: RendererOrchestrator | null = null;
       let fallbackReason: string | null = null;
+      let backend: 'webgpu' | 'webgl' = 'webgpu';
 
       const bailIfCancelled = (): boolean => {
         if (!isCancelled(cancelToken, signal)) return false;
-        deviceRef.current = null;
-        webGpuSessionRef.current = null;
-        gpuImageAnalysisRef.current = null;
-        rendererRef.current = null;
-        textureManagerRef.current = null;
-        destroyInitResources(resources, canvas);
-        syncLiveResources(liveResources, resources);
+        clearOrchestratorRefs(
+          orchestratorRef,
+          deviceRef,
+          webGpuSessionRef,
+          gpuImageAnalysisRef,
+          rendererRef,
+          textureManagerRef,
+          sourceTextureRef,
+        );
+        orchestrator?.destroy();
+        liveOrchestrator.current = null;
         return true;
       };
 
-      async function createWebGPU(): Promise<{
-        renderer: WebGPURenderer;
-        textureManager: TextureManager;
-        device: GPUDevice;
-        session: WebGpuSession;
-      }> {
-        const session = await bootstrapWebGpu({
-          canvas: canvas!,
+      try {
+        if (!isCancelled(cancelToken, signal)) {
+          setGpuError(null);
+        }
+
+        const bootstrapped = await RendererOrchestrator.bootstrap({
+          primaryCanvas: canvas,
           antialias: antialiasEnabled,
           onRuntimeError: (error) => {
             if (isCancelled(cancelToken, signal)) return;
@@ -207,83 +198,33 @@ export function useAppWebGPUInit({
           },
         });
 
-        if (bailIfCancelled()) {
-          session.detach();
-          session.device.destroy();
-          throw new DOMException('Aborted', 'AbortError');
-        }
-
-        const renderer = await withErrorScope(
-          session.device,
-          'validation',
-          'WebGPURenderer',
-          () => new WebGPURenderer(session.device, session.context, session.format, antialiasEnabled),
-        );
-
-        return {
-          renderer,
-          textureManager: new TextureManager(session.device),
-          device: session.device,
-          session,
-        };
-      }
-
-      function createWebGL(): {
-        renderer: WebGLRenderer;
-        textureManager: WebGLTextureManager;
-      } {
-        const gl = createWebGL2Context(canvas!, { antialias: antialiasEnabled });
-        return {
-          renderer: new WebGLRenderer(canvas!, gl),
-          textureManager: new WebGLTextureManager(gl),
-        };
-      }
-
-      try {
-        if (!isCancelled(cancelToken, signal)) {
-          setGpuError(null);
-        }
-
-        if (resources.backend === 'webgl') {
-          const created = createWebGL();
-          resources.localRenderer = created.renderer;
-          resources.localTextureManager = created.textureManager;
-        } else {
-          const created = await createWebGPU();
-          resources.localRenderer = created.renderer;
-          resources.localTextureManager = created.textureManager;
-          resources.localDevice = created.device;
-          resources.localSession = created.session;
-          resources.localGpuAnalysis = new GpuImageAnalysis(created.device);
-          publishGpuComputeBreadcrumbs(resources.localGpuAnalysis.support);
-        }
+        orchestrator = bootstrapped.orchestrator;
+        liveOrchestrator.current = orchestrator;
+        fallbackReason = bootstrapped.fallbackReason;
+        backend = bootstrapped.backend;
       } catch (primaryError) {
         if (isAbortError(primaryError) || bailIfCancelled()) return;
-
-        if (resources.backend === 'webgpu') {
-          fallbackReason = primaryError instanceof Error ? primaryError.message : String(primaryError);
-          const created = createWebGL();
-          resources.backend = 'webgl';
-          resources.localRenderer = created.renderer;
-          resources.localTextureManager = created.textureManager;
-        } else {
-          throw primaryError;
-        }
+        throw primaryError;
       }
 
-      syncLiveResources(liveResources, resources);
       if (bailIfCancelled()) return;
 
-      deviceRef.current = resources.localDevice;
-      webGpuSessionRef.current = resources.localSession;
-      gpuImageAnalysisRef.current = resources.localGpuAnalysis;
-      rendererRef.current = resources.localRenderer;
-      textureManagerRef.current = resources.localTextureManager;
-      setRendererBackend(resources.backend);
+      syncOrchestratorRefs(
+        orchestrator,
+        bootstrappedPrimaryRenderer(orchestrator),
+        orchestratorRef,
+        deviceRef,
+        webGpuSessionRef,
+        gpuImageAnalysisRef,
+        rendererRef,
+        textureManagerRef,
+      );
+      setRendererBackend(backend);
       setRendererFallbackReason(fallbackReason);
-      publishRendererBreadcrumbs(resources.backend, fallbackReason);
+      publishRendererBreadcrumbs(backend, fallbackReason);
 
-      const { localRenderer, localTextureManager } = resources;
+      const localRenderer = rendererRef.current;
+      const localTextureManager = textureManagerRef.current;
       if (!localRenderer || !localTextureManager) return;
 
       try {
@@ -381,22 +322,14 @@ export function useAppWebGPUInit({
 
       if (bailIfCancelled()) return;
       setGpuReady(true);
-  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, deviceRef, webGpuSessionRef, gpuImageAnalysisRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef, ownedObjectUrlsRef, sourceTextureRef]);
+  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, orchestratorRef, deviceRef, webGpuSessionRef, gpuImageAnalysisRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef, ownedObjectUrlsRef, sourceTextureRef]);
 
   useEffect(() => {
-    const canvas = previewTracerRef.current;
     const cancelToken: CancelToken = { cancelled: false };
     const abortController = new AbortController();
-    const liveResources: InitResources = {
-      localRenderer: null,
-      localTextureManager: null,
-      localDevice: null,
-      localSession: null,
-      localGpuAnalysis: null,
-      backend: getRendererPreference(),
-    };
+    const liveOrchestrator: { current: RendererOrchestrator | null } = { current: null };
 
-    init(cancelToken, abortController.signal, liveResources).catch((e) => {
+    init(cancelToken, abortController.signal, liveOrchestrator).catch((e) => {
       if (isCancelled(cancelToken, abortController.signal) || isAbortError(e)) return;
       setGpuError(toBootstrapRuntimeError(e));
     });
@@ -405,18 +338,22 @@ export function useAppWebGPUInit({
       cancelToken.cancelled = true;
       abortController.abort();
 
-      deviceRef.current = null;
-      webGpuSessionRef.current = null;
-      gpuImageAnalysisRef.current = null;
-      rendererRef.current = null;
-      textureManagerRef.current = null;
-      sourceTextureRef.current = null;
+      clearOrchestratorRefs(
+        orchestratorRef,
+        deviceRef,
+        webGpuSessionRef,
+        gpuImageAnalysisRef,
+        rendererRef,
+        textureManagerRef,
+        sourceTextureRef,
+      );
 
       clearClassificationMask();
       for (const objectUrl of ownedObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
       ownedObjectUrlsRef.current = [];
 
-      destroyInitResources(liveResources, canvas);
+      liveOrchestrator.current?.destroy();
+      liveOrchestrator.current = null;
     };
-  }, [init, clearClassificationMask, deviceRef, gpuImageAnalysisRef, ownedObjectUrlsRef, previewTracerRef, rendererRef, setGpuError, textureManagerRef, webGpuSessionRef, sourceTextureRef]);
+  }, [init, clearClassificationMask, orchestratorRef, deviceRef, gpuImageAnalysisRef, ownedObjectUrlsRef, rendererRef, setGpuError, textureManagerRef, webGpuSessionRef, sourceTextureRef]);
 }
