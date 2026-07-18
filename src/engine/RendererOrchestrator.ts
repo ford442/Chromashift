@@ -2,7 +2,9 @@ import { WebGPURenderer } from './WebGPURenderer';
 import { WebGLRenderer } from './WebGLRenderer';
 import { TextureManager } from './TextureManager';
 import { WebGLTextureManager } from './WebGLTextureManager';
-import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './RendererTypes';
+import { GpuImageAnalysis } from './compute/GpuImageAnalysis';
+import { publishGpuComputeBreadcrumbs } from './compute/computeSupport';
+import { getRendererPreference } from './rendererMode';
 import {
   bootstrapWebGpu,
   configureWebGpuCanvas,
@@ -11,21 +13,23 @@ import {
   type GpuRuntimeError,
   type WebGpuSession,
 } from './gpuBootstrap';
-import { GpuImageAnalysis } from './compute/GpuImageAnalysis';
-import { publishGpuComputeBreadcrumbs } from './compute/computeSupport';
-import { getRendererPreference } from './rendererMode';
+import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './RendererTypes';
+
+/** Default slot id for the main viewport canvas. */
+export const PRIMARY_SLOT_ID = 'main';
 
 export interface RendererSlot {
   id: string;
   canvas: HTMLCanvasElement;
   renderer: ChromashiftRenderer;
-  /** Per-slot WebGPU canvas context (undefined for WebGL). */
+  /** Present for WebGPU-backed slots. */
   webgpuContext?: GPUCanvasContext;
 }
 
 export interface RendererOrchestratorOptions {
-  antialias: boolean;
+  antialias?: boolean;
   backend?: RendererBackend;
+  backendPreference?: RendererBackend;
   onRuntimeError?: (error: GpuRuntimeError) => void;
 }
 
@@ -41,7 +45,13 @@ export interface BootstrapRendererOrchestratorResult {
   fallbackReason: string | null;
 }
 
-/** Injectable factories for unit tests (no WebGPU required). */
+export interface RendererOrchestratorBootstrapResult {
+  orchestrator: RendererOrchestrator;
+  backend: RendererBackend;
+  fallbackReason: string | null;
+}
+
+/** Injectable factories for unit tests (no real WebGPU required). */
 export interface RendererOrchestratorDeps {
   bootstrapWebGpu: typeof bootstrapWebGpu;
   configureWebGpuCanvas: typeof configureWebGpuCanvas;
@@ -62,9 +72,10 @@ export interface RendererOrchestratorDeps {
     canvas: HTMLCanvasElement,
     gl: WebGL2RenderingContext,
   ) => ChromashiftRenderer;
-  createTextureManager: (device: GPUDevice) => TextureManager;
-  createWebGLTextureManager: (gl: WebGL2RenderingContext) => WebGLTextureManager;
+  createTextureManager: (device: GPUDevice) => ChromashiftTextureManager;
+  createWebGLTextureManager: (gl: WebGL2RenderingContext) => ChromashiftTextureManager;
   createGpuImageAnalysis: (device: GPUDevice) => GpuImageAnalysis;
+  getRendererPreference: () => RendererBackend;
 }
 
 export const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
@@ -81,6 +92,7 @@ export const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
   createTextureManager: (device) => new TextureManager(device),
   createWebGLTextureManager: (gl) => new WebGLTextureManager(gl),
   createGpuImageAnalysis: (device) => new GpuImageAnalysis(device),
+  getRendererPreference,
 };
 
 /**
@@ -115,34 +127,61 @@ export class RendererOrchestrator {
 
   static async bootstrap(
     options: BootstrapRendererOrchestratorOptions,
+    deps?: RendererOrchestratorDeps,
+  ): Promise<BootstrapRendererOrchestratorResult>;
+  static async bootstrap(
+    primaryCanvas: HTMLCanvasElement,
+    options?: RendererOrchestratorOptions,
+    deps?: RendererOrchestratorDeps,
+  ): Promise<RendererOrchestratorBootstrapResult>;
+  static async bootstrap(
+    primaryCanvasOrOptions: HTMLCanvasElement | BootstrapRendererOrchestratorOptions,
+    optionsOrDeps: RendererOrchestratorOptions | RendererOrchestratorDeps = {},
     deps: RendererOrchestratorDeps = defaultRendererOrchestratorDeps,
-  ): Promise<BootstrapRendererOrchestratorResult> {
-    const preferredBackend = options.backend ?? getRendererPreference();
+  ): Promise<BootstrapRendererOrchestratorResult | RendererOrchestratorBootstrapResult> {
+    const objectStyle = isBootstrapRendererOrchestratorOptions(primaryCanvasOrOptions);
+    const primaryCanvas = objectStyle ? primaryCanvasOrOptions.primaryCanvas : primaryCanvasOrOptions;
+    const baseOptions = objectStyle
+      ? primaryCanvasOrOptions
+      : isRendererOrchestratorDeps(optionsOrDeps)
+        ? {}
+        : optionsOrDeps;
+    const resolvedDeps = objectStyle
+      ? (isRendererOrchestratorDeps(optionsOrDeps) ? optionsOrDeps : deps)
+      : isRendererOrchestratorDeps(optionsOrDeps)
+        ? optionsOrDeps
+        : deps;
+
+    const preferredBackend = baseOptions.backend ?? baseOptions.backendPreference ?? resolvedDeps.getRendererPreference();
     const orchestrator = new RendererOrchestrator(
       preferredBackend,
-      options.antialias,
-      options.onRuntimeError,
-      deps,
+      baseOptions.antialias ?? false,
+      baseOptions.onRuntimeError,
+      resolvedDeps,
     );
-    const primarySlotId = options.primarySlotId ?? 'main';
+
+    const primarySlotId = objectStyle && primaryCanvasOrOptions.primarySlotId
+      ? primaryCanvasOrOptions.primarySlotId
+      : PRIMARY_SLOT_ID;
     let fallbackReason: string | null = null;
     let actualBackend = preferredBackend;
 
     try {
       if (preferredBackend === 'webgl') {
-        orchestrator.bootstrapWebGL(options.primaryCanvas);
-        orchestrator.createSlot(primarySlotId, options.primaryCanvas);
+        orchestrator.bootstrapWebGL(primaryCanvas);
+        orchestrator.createSlot(primarySlotId, primaryCanvas);
       } else {
-        await orchestrator.bootstrapWebGpuSession(options.primaryCanvas);
-        await orchestrator.createPrimaryWebGpuSlot(primarySlotId, options.primaryCanvas);
+        await orchestrator.bootstrapWebGpuSession(primaryCanvas);
+        await orchestrator.createPrimaryWebGpuSlot(primarySlotId, primaryCanvas);
       }
     } catch (primaryError) {
       if (preferredBackend === 'webgpu') {
         fallbackReason = primaryError instanceof Error ? primaryError.message : String(primaryError);
         actualBackend = 'webgl';
+        orchestrator.resetWebGpuResources();
         orchestrator.setBackend('webgl');
-        orchestrator.bootstrapWebGL(options.primaryCanvas);
-        orchestrator.createSlot(primarySlotId, options.primaryCanvas);
+        orchestrator.bootstrapWebGL(primaryCanvas);
+        orchestrator.createSlot(primarySlotId, primaryCanvas);
       } else {
         throw primaryError;
       }
@@ -154,9 +193,17 @@ export class RendererOrchestrator {
       throw new Error(`Primary slot "${primarySlotId}" was not created.`);
     }
 
+    if (objectStyle) {
+      return {
+        orchestrator,
+        primarySlot,
+        backend: actualBackend,
+        fallbackReason,
+      };
+    }
+
     return {
       orchestrator,
-      primarySlot,
       backend: actualBackend,
       fallbackReason,
     };
@@ -192,6 +239,30 @@ export class RendererOrchestrator {
 
   slotIds(): string[] {
     return [...this.slots.keys()];
+  }
+
+  getPrimarySlot(): RendererSlot | undefined {
+    return this.getSlot(PRIMARY_SLOT_ID);
+  }
+
+  listSlots(): readonly RendererSlot[] {
+    return [...this.slots.values()];
+  }
+
+  sharedSession(): WebGpuSession | null {
+    return this.session;
+  }
+
+  sharedTextureManager(): ChromashiftTextureManager | null {
+    return this.textureManager;
+  }
+
+  sharedGpuAnalysis(): GpuImageAnalysis | null {
+    return this.gpuImageAnalysis;
+  }
+
+  backendKind(): RendererBackend {
+    return this.backend;
   }
 
   /**
@@ -230,7 +301,7 @@ export class RendererOrchestrator {
 
   /** Reconfigure every active WebGPU canvas context after resize / DPR changes. */
   resizeAll(): void {
-    if (!this.session) return;
+    if (!this.session || this.backend !== 'webgpu') return;
 
     this.session.reconfigure();
     for (const slot of this.slots.values()) {
@@ -272,8 +343,8 @@ export class RendererOrchestrator {
       canvas: primaryCanvas,
       antialias: this.antialias,
       onRuntimeError: (error) => {
-        if (error.kind === 'device-lost') {
-          this.destroyAllSlots();
+        if (error.kind === 'device-lost' && !this.destroyed) {
+          this.destroy();
         }
         this.onRuntimeError?.(error);
       },
@@ -288,6 +359,20 @@ export class RendererOrchestrator {
     const gl = this.deps.createWebGL2Context(primaryCanvas, { antialias: this.antialias });
     this.webglContext = gl;
     this.textureManager = this.deps.createWebGLTextureManager(gl);
+  }
+
+  private resetWebGpuResources(): void {
+    this.gpuImageAnalysis?.destroy();
+    this.gpuImageAnalysis = null;
+    this.textureManager?.destroy();
+    this.textureManager = null;
+    const session = this.session;
+    this.session = null;
+    if (!session) return;
+
+    session.detach();
+    session.device.destroy();
+    session.context.unconfigure();
   }
 
   private resolveWebGpuContext(canvas: HTMLCanvasElement): GPUCanvasContext {
@@ -364,10 +449,14 @@ export class RendererOrchestrator {
     this.slots.set(id, slot);
     return slot;
   }
+}
 
-  private destroyAllSlots(): void {
-    for (const id of [...this.slots.keys()]) {
-      this.destroySlot(id, { unconfigureContext: true });
-    }
-  }
+function isBootstrapRendererOrchestratorOptions(
+  value: HTMLCanvasElement | BootstrapRendererOrchestratorOptions,
+): value is BootstrapRendererOrchestratorOptions {
+  return typeof value === 'object' && value !== null && 'primaryCanvas' in value;
+}
+
+function isRendererOrchestratorDeps(value: unknown): value is RendererOrchestratorDeps {
+  return typeof value === 'object' && value !== null && 'bootstrapWebGpu' in value;
 }

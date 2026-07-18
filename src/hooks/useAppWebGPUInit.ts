@@ -3,9 +3,9 @@ import { computeAverageLuminanceWith } from '../engine/WasmEngine';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/RendererTypes';
 import { publishRendererBreadcrumbs } from '../engine/rendererMode';
-import { toBootstrapRuntimeError, type GpuRuntimeError } from '../engine/gpuBootstrap';
+import { toBootstrapRuntimeError, type GpuRuntimeError, type WebGpuSession } from '../engine/gpuBootstrap';
 import { listLocalImages } from '../engine/LocalLibrary';
-import { RendererOrchestrator } from '../engine/RendererOrchestrator';
+import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
 
 export interface UseAppWebGPUInitProps {
   previewTracerRef: MutableRefObject<HTMLCanvasElement | null>;
@@ -13,7 +13,7 @@ export interface UseAppWebGPUInitProps {
   setGpuError: (err: GpuRuntimeError | null) => void;
   orchestratorRef: MutableRefObject<RendererOrchestrator | null>;
   deviceRef: MutableRefObject<GPUDevice | null>;
-  webGpuSessionRef: MutableRefObject<import('../engine/gpuBootstrap').WebGpuSession | null>;
+  webGpuSessionRef: MutableRefObject<WebGpuSession | null>;
   gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>;
   rendererRef: MutableRefObject<ChromashiftRenderer | null>;
   textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>;
@@ -55,7 +55,7 @@ function isCancelled(cancelToken: CancelToken, signal: AbortSignal): boolean {
 function clearOrchestratorRefs(
   orchestratorRef: MutableRefObject<RendererOrchestrator | null>,
   deviceRef: MutableRefObject<GPUDevice | null>,
-  webGpuSessionRef: MutableRefObject<import('../engine/gpuBootstrap').WebGpuSession | null>,
+  webGpuSessionRef: MutableRefObject<WebGpuSession | null>,
   gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>,
   rendererRef: MutableRefObject<ChromashiftRenderer | null>,
   textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>,
@@ -75,7 +75,7 @@ function syncOrchestratorRefs(
   primaryRenderer: ChromashiftRenderer,
   orchestratorRef: MutableRefObject<RendererOrchestrator | null>,
   deviceRef: MutableRefObject<GPUDevice | null>,
-  webGpuSessionRef: MutableRefObject<import('../engine/gpuBootstrap').WebGpuSession | null>,
+  webGpuSessionRef: MutableRefObject<WebGpuSession | null>,
   gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>,
   rendererRef: MutableRefObject<ChromashiftRenderer | null>,
   textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>,
@@ -89,7 +89,7 @@ function syncOrchestratorRefs(
 }
 
 function bootstrappedPrimaryRenderer(orchestrator: RendererOrchestrator): ChromashiftRenderer {
-  const primarySlot = orchestrator.getSlot('main');
+  const primarySlot = orchestrator.getSlot(PRIMARY_SLOT_ID);
   if (!primarySlot) {
     throw new Error('Primary renderer slot was not created.');
   }
@@ -152,177 +152,202 @@ export function useAppWebGPUInit({
   setGpuReady,
   setSpecificImageError,
   ownedObjectUrlsRef,
-  sourceTextureRef
+  sourceTextureRef,
 }: UseAppWebGPUInitProps) {
-
   const init = useCallback(async (
     cancelToken: CancelToken,
     signal: AbortSignal,
     liveOrchestrator: { current: RendererOrchestrator | null },
   ): Promise<void> => {
-      const canvas = previewTracerRef.current;
-      if (!canvas) return;
+    const canvas = previewTracerRef.current;
+    if (!canvas) return;
 
-      let orchestrator: RendererOrchestrator | null = null;
-      let fallbackReason: string | null = null;
-      let backend: 'webgpu' | 'webgl' = 'webgpu';
+    let orchestrator: RendererOrchestrator | null = null;
+    let fallbackReason: string | null = null;
+    let backend: RendererBackend = 'webgpu';
 
-      const bailIfCancelled = (): boolean => {
-        if (!isCancelled(cancelToken, signal)) return false;
-        clearOrchestratorRefs(
-          orchestratorRef,
-          deviceRef,
-          webGpuSessionRef,
-          gpuImageAnalysisRef,
-          rendererRef,
-          textureManagerRef,
-          sourceTextureRef,
-        );
-        orchestrator?.destroy();
-        liveOrchestrator.current = null;
-        return true;
-      };
-
-      try {
-        if (!isCancelled(cancelToken, signal)) {
-          setGpuError(null);
-        }
-
-        const bootstrapped = await RendererOrchestrator.bootstrap({
-          primaryCanvas: canvas,
-          antialias: antialiasEnabled,
-          onRuntimeError: (error) => {
-            if (isCancelled(cancelToken, signal)) return;
-            setGpuReady(false);
-            setGpuError(error);
-          },
-        });
-
-        orchestrator = bootstrapped.orchestrator;
-        liveOrchestrator.current = orchestrator;
-        fallbackReason = bootstrapped.fallbackReason;
-        backend = bootstrapped.backend;
-      } catch (primaryError) {
-        if (isAbortError(primaryError) || bailIfCancelled()) return;
-        throw primaryError;
-      }
-
-      if (bailIfCancelled()) return;
-
-      syncOrchestratorRefs(
-        orchestrator,
-        bootstrappedPrimaryRenderer(orchestrator),
+    const bailIfCancelled = (): boolean => {
+      if (!isCancelled(cancelToken, signal)) return false;
+      clearOrchestratorRefs(
         orchestratorRef,
         deviceRef,
         webGpuSessionRef,
         gpuImageAnalysisRef,
         rendererRef,
         textureManagerRef,
+        sourceTextureRef,
       );
-      setRendererBackend(backend);
-      setRendererFallbackReason(fallbackReason);
-      publishRendererBreadcrumbs(backend, fallbackReason);
+      orchestrator?.destroy();
+      liveOrchestrator.current = null;
+      return true;
+    };
 
-      const localRenderer = rendererRef.current;
-      const localTextureManager = textureManagerRef.current;
-      if (!localRenderer || !localTextureManager) return;
+    try {
+      if (!isCancelled(cancelToken, signal)) {
+        setGpuError(null);
+      }
 
-      try {
-        const list = await localTextureManager.fetchImageList('./images.json', signal);
-        if (bailIfCancelled()) return;
+      const bootstrapped = await RendererOrchestrator.bootstrap({
+        primaryCanvas: canvas,
+        antialias: antialiasEnabled,
+        onRuntimeError: (error) => {
+          if (isCancelled(cancelToken, signal)) return;
+          setGpuReady(false);
+          setGpuError(error);
+        },
+      });
 
-        const localRecords = await listLocalImages().catch(() => []);
-        if (bailIfCancelled()) return;
-        const localEntries: ImageEntry[] = localRecords.map((record) => {
-          const url = URL.createObjectURL(record.blob);
-          const thumbUrl = URL.createObjectURL(record.thumbBlob);
-          ownedObjectUrlsRef.current.push(url, thumbUrl);
-          return { url, thumbUrl, label: record.label, localId: record.id };
-        });
+      orchestrator = bootstrapped.orchestrator;
+      liveOrchestrator.current = orchestrator;
+      fallbackReason = bootstrapped.fallbackReason;
+      backend = bootstrapped.backend;
+    } catch (primaryError) {
+      if (isAbortError(primaryError) || bailIfCancelled()) return;
+      throw primaryError;
+    }
 
-        const entries = [...list, ...localEntries];
-        setImageList(entries);
+    if (bailIfCancelled()) return;
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const imgUrl = urlParams.get('img') || urlParams.get('image') || urlParams.get('url');
-        const specificUrl = imgUrl ? decodeURIComponent(imgUrl) : null;
+    syncOrchestratorRefs(
+      orchestrator,
+      bootstrappedPrimaryRenderer(orchestrator),
+      orchestratorRef,
+      deviceRef,
+      webGpuSessionRef,
+      gpuImageAnalysisRef,
+      rendererRef,
+      textureManagerRef,
+    );
+    setRendererBackend(backend);
+    setRendererFallbackReason(fallbackReason);
+    publishRendererBreadcrumbs(backend, fallbackReason);
 
-        if (specificUrl) {
-          try {
-            const tex = await localTextureManager.loadTexture(specificUrl) as GPUTexture;
-            if (bailIfCancelled()) return;
+    const localRenderer = rendererRef.current;
+    const localTextureManager = textureManagerRef.current;
+    if (!localRenderer || !localTextureManager) return;
 
-            localRenderer.setTexture(tex);
-            sourceTextureRef.current = tex;
-            const existingIndex = entries.findIndex((entry) => entry.url === specificUrl);
-            if (existingIndex === -1) {
-              entries.push({ url: specificUrl, label: 'Query Image' });
-              setImageList([...entries]);
-              setCurrentImageIndex(entries.length - 1);
-              setReferenceImage(ensureReferenceImage(entries, entries.length - 1));
-            } else {
-              setCurrentImageIndex(existingIndex);
-              setReferenceImage(ensureReferenceImage(entries, existingIndex));
-            }
+    try {
+      const list = await localTextureManager.fetchImageList('./images.json', signal);
+      if (bailIfCancelled()) return;
 
-            try {
-              const img = await loadPreviewImage(specificUrl, signal);
-              if (bailIfCancelled()) return;
+      const localRecords = await listLocalImages().catch(() => []);
+      if (bailIfCancelled()) return;
+      const localEntries: ImageEntry[] = localRecords.map((record) => {
+        const url = URL.createObjectURL(record.blob);
+        const thumbUrl = URL.createObjectURL(record.thumbBlob);
+        ownedObjectUrlsRef.current.push(url, thumbUrl);
+        return { url, thumbUrl, label: record.label, localId: record.id };
+      });
 
-              if (img.height > 0) setImageAspect(img.width / img.height);
-              let avgLum = 128;
-              try {
-                avgLum = await generateClassificationMaskTexture(img, 128, tex);
-              } catch (e) {
-                console.warn('Could not generate classification mask:', e);
-                clearClassificationMask();
-                try {
-                  avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
-                } catch (lumError) {
-                  console.warn('CORS?', lumError);
-                }
-              }
-              setAvgLuminance(Math.round(avgLum));
-              const previewOrig = previewOriginalRef.current;
-              if (previewOrig) {
-                const ctx = previewOrig.getContext('2d');
-                if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
-              }
-            } catch (previewError) {
-              if (!isAbortError(previewError) && !isCancelled(cancelToken, signal)) {
-                console.warn('Failed to load preview image:', specificUrl, previewError);
-              }
-            }
-          } catch (e) {
-            if (isAbortError(e) || bailIfCancelled()) return;
+      const entries = [...list, ...localEntries];
+      setImageList(entries);
 
-            console.warn('Failed to load specific image from URL:', e);
-            setSpecificImageError(`Failed to load image: ${specificUrl}`);
-            if (entries.length > 0) {
-              const tex = await localTextureManager.loadTexture(entries[0].url);
-              if (bailIfCancelled()) return;
+      const urlParams = new URLSearchParams(window.location.search);
+      const imgUrl = urlParams.get('img') || urlParams.get('image') || urlParams.get('url');
+      const specificUrl = imgUrl ? decodeURIComponent(imgUrl) : null;
 
-              localRenderer.setTexture(tex);
-              sourceTextureRef.current = tex as GPUTexture;
-              setReferenceImage(ensureReferenceImage(entries, 0));
-            }
-          }
-        } else if (entries.length > 0) {
-          const tex = await localTextureManager.loadTexture(entries[0].url);
+      if (specificUrl) {
+        try {
+          const tex = await localTextureManager.loadTexture(specificUrl) as GPUTexture;
           if (bailIfCancelled()) return;
 
           localRenderer.setTexture(tex);
-          sourceTextureRef.current = tex as GPUTexture;
-          setReferenceImage(ensureReferenceImage(entries, 0));
-        }
-      } catch (e) {
-        if (isAbortError(e) || isCancelled(cancelToken, signal)) return;
-        console.warn('Could not load image list:', e);
-      }
+          sourceTextureRef.current = tex;
+          const existingIndex = entries.findIndex((entry) => entry.url === specificUrl);
+          if (existingIndex === -1) {
+            entries.push({ url: specificUrl, label: 'Query Image' });
+            setImageList([...entries]);
+            setCurrentImageIndex(entries.length - 1);
+            setReferenceImage(ensureReferenceImage(entries, entries.length - 1));
+          } else {
+            setCurrentImageIndex(existingIndex);
+            setReferenceImage(ensureReferenceImage(entries, existingIndex));
+          }
 
-      if (bailIfCancelled()) return;
-      setGpuReady(true);
-  }, [antialiasEnabled, clearClassificationMask, ensureReferenceImage, generateClassificationMaskTexture, orchestratorRef, deviceRef, webGpuSessionRef, gpuImageAnalysisRef, rendererRef, textureManagerRef, setRendererBackend, setRendererFallbackReason, setImageList, setReferenceImage, setCurrentImageIndex, setImageAspect, setAvgLuminance, engineModeRef, previewOriginalRef, setGpuReady, setSpecificImageError, setGpuError, previewTracerRef, ownedObjectUrlsRef, sourceTextureRef]);
+          try {
+            const img = await loadPreviewImage(specificUrl, signal);
+            if (bailIfCancelled()) return;
+
+            if (img.height > 0) setImageAspect(img.width / img.height);
+            let avgLum = 128;
+            try {
+              avgLum = await generateClassificationMaskTexture(img, 128, tex);
+            } catch (e) {
+              console.warn('Could not generate classification mask:', e);
+              clearClassificationMask();
+              try {
+                avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
+              } catch (lumError) {
+                console.warn('CORS?', lumError);
+              }
+            }
+            setAvgLuminance(Math.round(avgLum));
+            const previewOrig = previewOriginalRef.current;
+            if (previewOrig) {
+              const ctx = previewOrig.getContext('2d');
+              if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
+            }
+          } catch (previewError) {
+            if (!isAbortError(previewError) && !isCancelled(cancelToken, signal)) {
+              console.warn('Failed to load preview image:', specificUrl, previewError);
+            }
+          }
+        } catch (e) {
+          if (isAbortError(e) || bailIfCancelled()) return;
+
+          console.warn('Failed to load specific image from URL:', e);
+          setSpecificImageError(`Failed to load image: ${specificUrl}`);
+          if (entries.length > 0) {
+            const tex = await localTextureManager.loadTexture(entries[0].url);
+            if (bailIfCancelled()) return;
+
+            localRenderer.setTexture(tex);
+            sourceTextureRef.current = tex as GPUTexture;
+            setReferenceImage(ensureReferenceImage(entries, 0));
+          }
+        }
+      } else if (entries.length > 0) {
+        const tex = await localTextureManager.loadTexture(entries[0].url);
+        if (bailIfCancelled()) return;
+
+        localRenderer.setTexture(tex);
+        sourceTextureRef.current = tex as GPUTexture;
+        setReferenceImage(ensureReferenceImage(entries, 0));
+      }
+    } catch (e) {
+      if (isAbortError(e) || isCancelled(cancelToken, signal)) return;
+      console.warn('Could not load image list:', e);
+    }
+
+    if (bailIfCancelled()) return;
+    setGpuReady(true);
+  }, [
+    antialiasEnabled,
+    clearClassificationMask,
+    ensureReferenceImage,
+    generateClassificationMaskTexture,
+    orchestratorRef,
+    deviceRef,
+    webGpuSessionRef,
+    gpuImageAnalysisRef,
+    rendererRef,
+    textureManagerRef,
+    setRendererBackend,
+    setRendererFallbackReason,
+    setImageList,
+    setReferenceImage,
+    setCurrentImageIndex,
+    setImageAspect,
+    setAvgLuminance,
+    engineModeRef,
+    previewOriginalRef,
+    setGpuReady,
+    setSpecificImageError,
+    setGpuError,
+    previewTracerRef,
+    ownedObjectUrlsRef,
+    sourceTextureRef,
+  ]);
 
   useEffect(() => {
     const cancelToken: CancelToken = { cancelled: false };
@@ -347,10 +372,6 @@ export function useAppWebGPUInit({
         textureManagerRef,
         sourceTextureRef,
       );
-
-      clearClassificationMask();
-      for (const objectUrl of ownedObjectUrlsRef.current) URL.revokeObjectURL(objectUrl);
-      ownedObjectUrlsRef.current = [];
 
       liveOrchestrator.current?.destroy();
       liveOrchestrator.current = null;

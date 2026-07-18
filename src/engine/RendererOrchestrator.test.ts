@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  PRIMARY_SLOT_ID,
   RendererOrchestrator,
   type RendererOrchestratorDeps,
   type RendererSlot,
@@ -12,6 +13,7 @@ import type { GpuImageAnalysis } from './compute/GpuImageAnalysis';
 
 function mockRenderer(): ChromashiftRenderer {
   return {
+    backend: 'webgpu',
     destroy: vi.fn(),
     render: vi.fn(),
     setTexture: vi.fn(),
@@ -21,6 +23,9 @@ function mockRenderer(): ChromashiftRenderer {
     getRenderTiming: vi.fn(),
     requestPreviewReadback: vi.fn(),
     requestCollisionStats: vi.fn(),
+    exportTracerView: vi.fn(async () => null),
+    exportFrame: vi.fn(async () => null),
+    restoreRenderSize: vi.fn(),
   } as unknown as ChromashiftRenderer;
 }
 
@@ -34,17 +39,16 @@ function mockCanvas(id: string, webgpuContext?: GPUCanvasContext): HTMLCanvasEle
   } as unknown as HTMLCanvasElement;
 }
 
-function mockWebGpuContext(): GPUCanvasContext {
+function mockWebGpuContext(canvas?: HTMLCanvasElement): GPUCanvasContext {
   return {
+    canvas,
     configure: vi.fn(),
     unconfigure: vi.fn(),
     getCurrentTexture: vi.fn(),
   } as unknown as GPUCanvasContext;
 }
 
-function mockSession(
-  primaryContext: GPUCanvasContext,
-): WebGpuSession {
+function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
   const device = {
     destroy: vi.fn(),
   } as unknown as GPUDevice;
@@ -77,6 +81,8 @@ function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): Rend
     destroy: vi.fn(),
     fetchImageList: vi.fn(),
     loadTexture: vi.fn(),
+    uploadPixels: vi.fn(),
+    evictExcept: vi.fn(),
   } as unknown as TextureManager;
 
   const gpuImageAnalysis = {
@@ -85,10 +91,7 @@ function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): Rend
   } as unknown as GpuImageAnalysis;
 
   return {
-    bootstrapWebGpu: vi.fn(async () => {
-      const context = mockWebGpuContext();
-      return mockSession(context);
-    }),
+    bootstrapWebGpu: vi.fn(async ({ canvas }) => mockSession(mockWebGpuContext(canvas))),
     configureWebGpuCanvas: vi.fn(),
     createWebGL2Context: vi.fn(() => ({} as WebGL2RenderingContext)),
     createWebGPURenderer: vi.fn(async () => mockRenderer()),
@@ -97,8 +100,13 @@ function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): Rend
     createTextureManager: vi.fn(() => textureManager),
     createWebGLTextureManager: vi.fn(() => ({
       destroy: vi.fn(),
+      fetchImageList: vi.fn(),
+      loadTexture: vi.fn(),
+      uploadPixels: vi.fn(),
+      evictExcept: vi.fn(),
     }) as unknown as WebGLTextureManager),
     createGpuImageAnalysis: vi.fn(() => gpuImageAnalysis),
+    getRendererPreference: vi.fn(() => 'webgpu' as const),
     ...overrides,
   };
 }
@@ -109,16 +117,18 @@ describe('RendererOrchestrator', () => {
     const deps = createMockDeps();
     const onRuntimeError = vi.fn();
 
-    const { orchestrator, primarySlot, backend, fallbackReason } = await RendererOrchestrator.bootstrap(
-      { primaryCanvas: canvas, antialias: true, backend: 'webgpu', onRuntimeError },
-      deps,
-    );
+    const { orchestrator, primarySlot, backend, fallbackReason } = await RendererOrchestrator.bootstrap({
+      primaryCanvas: canvas,
+      antialias: true,
+      backend: 'webgpu',
+      onRuntimeError,
+    }, deps);
 
     expect(backend).toBe('webgpu');
     expect(fallbackReason).toBeNull();
-    expect(primarySlot.id).toBe('main');
+    expect(primarySlot.id).toBe(PRIMARY_SLOT_ID);
     expect(primarySlot.canvas).toBe(canvas);
-    expect(orchestrator.slotIds()).toEqual(['main']);
+    expect(orchestrator.slotIds()).toEqual([PRIMARY_SLOT_ID]);
     expect(orchestrator.sharedDevice()).toBeTruthy();
     expect(orchestrator.textureManagerRef()).toBeTruthy();
     expect(orchestrator.gpuImageAnalysisRef()).toBeTruthy();
@@ -132,10 +142,11 @@ describe('RendererOrchestrator', () => {
     const secondaryCanvas = mockCanvas('compare-b', secondaryContext);
 
     const deps = createMockDeps();
-    const { orchestrator } = await RendererOrchestrator.bootstrap(
-      { primaryCanvas, antialias: false, backend: 'webgpu' },
-      deps,
-    );
+    const { orchestrator } = await RendererOrchestrator.bootstrap({
+      primaryCanvas,
+      antialias: false,
+      backend: 'webgpu',
+    }, deps);
 
     const slotB = orchestrator.createSlot('compare-b', secondaryCanvas);
     expect(orchestrator.slotIds()).toEqual(['main', 'compare-b']);
@@ -174,10 +185,11 @@ describe('RendererOrchestrator', () => {
     const secondaryCanvas = mockCanvas('compare-b', secondaryContext);
 
     const deps = createMockDeps();
-    const { orchestrator } = await RendererOrchestrator.bootstrap(
-      { primaryCanvas, antialias: false, backend: 'webgpu' },
-      deps,
-    );
+    const { orchestrator } = await RendererOrchestrator.bootstrap({
+      primaryCanvas,
+      antialias: false,
+      backend: 'webgpu',
+    }, deps);
     orchestrator.createSlot('compare-b', secondaryCanvas);
 
     const session = orchestrator.sessionRef()!;
@@ -193,10 +205,11 @@ describe('RendererOrchestrator', () => {
     const secondaryCanvas = mockCanvas('compare-b', secondaryContext);
 
     const deps = createMockDeps();
-    const { orchestrator } = await RendererOrchestrator.bootstrap(
-      { primaryCanvas, antialias: false, backend: 'webgpu' },
-      deps,
-    );
+    const { orchestrator } = await RendererOrchestrator.bootstrap({
+      primaryCanvas,
+      antialias: false,
+      backend: 'webgpu',
+    }, deps);
     const slotB = orchestrator.createSlot('compare-b', secondaryCanvas);
     const session = orchestrator.sessionRef()!;
     const textureManager = orchestrator.textureManagerRef() as TextureManager;
@@ -232,7 +245,7 @@ describe('RendererOrchestrator', () => {
       deps,
     );
 
-    const primarySlot = orchestrator.getSlot('main') as RendererSlot;
+    const primarySlot = orchestrator.getSlot(PRIMARY_SLOT_ID) as RendererSlot;
     capturedOnRuntimeError?.({
       kind: 'device-lost',
       message: 'lost',
@@ -246,5 +259,17 @@ describe('RendererOrchestrator', () => {
       message: 'lost',
       recoverable: true,
     });
+  });
+
+  it('rejects a second WebGL slot', async () => {
+    const deps = createMockDeps();
+    const primary = mockCanvas('main');
+
+    const { orchestrator } = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: primary, backend: 'webgl' },
+      deps,
+    );
+
+    expect(() => orchestrator.createSlot('extra', mockCanvas('extra'))).toThrow(/primary canvas slot|single renderer slot/i);
   });
 });
