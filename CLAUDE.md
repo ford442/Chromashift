@@ -36,6 +36,7 @@ Both use strict mode. `skipLibCheck: true` avoids noise from `.d.ts` files in `n
 ## Verifying changes to the lazy-loaded upscaler workers
 
 After touching `src/engine/Upscaler.ts`, `upscaler.worker.ts`, or `nunif.worker.ts`, run
-`npm run build` and confirm `dist/assets/index-*.js` contains no `tfjs`/`ort-wasm`
-references — those should only appear in the separate worker chunks, fetched on demand
-when the user clicks Upscale. See AGENTS.md's "Upscaler (lazy-loaded)" section for why.
+`npm run build` (includes `check:dist`) — `dist/assets/index-*.js` must contain no
+`tfjs`/`ort-wasm` references, and `dist/` must contain no `ort-wasm*.wasm`. Worker
+chunks load on demand when the user clicks Upscale. See AGENTS.md's "Upscaler
+(lazy-loaded)" section for why.

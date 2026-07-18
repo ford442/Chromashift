@@ -64,7 +64,73 @@ describe('preset URL round-trip', () => {
 
   it('encodes a versioned document', () => {
     const doc = decodeSettingsParam(encodeSettingsParam(mutatedState()));
-    expect(doc?.version).toBe(1);
+    expect(doc?.version).toBe(2);
+  });
+
+  it('round-trips v2 compare, reactive, and viewport fields through URL', () => {
+    let original = mutatedState();
+    original = chromashiftReducer(original, {
+      type: 'reactive/patch',
+      patch: { enabled: true, audioEnabled: true, midiEnabled: false },
+    });
+    original = chromashiftReducer(original, {
+      type: 'output/patch',
+      patch: { viewportQuarterZoom: true, performanceHudEnabled: true },
+    });
+    original = chromashiftReducer(original, { type: 'compare/setLayout', layout: 'dual' });
+    original = chromashiftReducer(original, {
+      type: 'compare/setSlotB',
+      label: 'Alt',
+      settings: { layers: { colorMode: 2 } },
+    });
+
+    const restored = createInitialStateFromUrl(
+      new URL(buildPresetUrl(original, 'https://example.com/')).search,
+    );
+
+    expect(restored.reactive.enabled).toBe(true);
+    expect(restored.reactive.audioEnabled).toBe(true);
+    expect(restored.output.viewportQuarterZoom).toBe(true);
+    expect(restored.output.performanceHudEnabled).toBe(true);
+    expect(restored.ui.compareView.layout).toBe('dual');
+    expect(restored.ui.compareView.slotB.label).toBe('Alt');
+    expect(restored.ui.compareView.slotB.settings.layers?.colorMode).toBe(2);
+  });
+
+  it('still accepts v1 preset URLs', () => {
+    const v1 = {
+      version: 1,
+      settings: {
+        layers: { angles: [12, 34, 56], opacity: 0.66 },
+        tracers: { aboveIntensity: 0.42, belowDuration: 3500 },
+        output: { outputMode: 1, stampBoost: 2.5, diagnosticsMode: true },
+      },
+    };
+    const search = `?${PRESET_URL_PARAM}=${toBase64Url(JSON.stringify(v1))}`;
+    const restored = createInitialStateFromUrl(search);
+
+    expect(restored.layers.angles).toEqual([12, 34, 56]);
+    expect(restored.layers.opacity).toBe(0.66);
+    expect(restored.tracers.aboveIntensity).toBe(0.42);
+    expect(restored.output.outputMode).toBe(1);
+    expect(restored.ui.presetLoadError).toBeNull();
+  });
+
+  it('lets ?kiosk=1 override preset kiosk flags', () => {
+    let state = createInitialState();
+    state = chromashiftReducer(state, {
+      type: 'ui/patch',
+      patch: { kioskEnabled: true, kioskUiHidden: false, kioskAttractMode: false },
+    });
+    const presetParam = encodeSettingsParam(state);
+    const restored = createInitialStateFromUrl(`?${PRESET_URL_PARAM}=${presetParam}&kiosk=1`);
+
+    expect(restored.ui.kioskEnabled).toBe(true);
+    expect(restored.ui.kioskUiHidden).toBe(true);
+    expect(restored.ui.kioskAttractMode).toBe(true);
+    expect(restored.ui.isAutoPlayActive).toBe(true);
+    expect(restored.engine.paused).toBe(false);
+    expect(restored.output.livePreviewEnabled).toBe(false);
   });
 
   it('falls back to defaults with a friendly error on an invalid preset', () => {

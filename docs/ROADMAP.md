@@ -20,7 +20,7 @@ unless noted.
 | Lazy upscaler workers | [#80](https://github.com/ford442/Chromashift/issues/80) | ✅ Shipped | `Upscaler.ts`, `upscaler.worker.ts`, `nunif.worker.ts` — workers load only on Upscale click |
 | Local image library | [#88](https://github.com/ford442/Chromashift/issues/88) | ✅ Shipped | `LocalLibrary.ts`, `ImageStrip.tsx` — drag-drop, IndexedDB, LOCAL/REMOTE badges |
 | Doc refresh | [#89](https://github.com/ford442/Chromashift/issues/89) | ✅ Shipped | README / AGENTS / this file |
-| Deploy script hardening | [#90](https://github.com/ford442/Chromashift/issues/90) | ✅ Closed | `deploy.py` — env-var credentials documented; key auth / dry-run remain optional follow-ups |
+| Deploy script hardening | [#90](https://github.com/ford442/Chromashift/issues/90) | ✅ Shipped | `deploy.py` — SSH key auth, `--dry-run`, `--no-clean`, `requirements-deploy.txt`, Deploy workflow |
 | GPU perf HUD | [#91](https://github.com/ford442/Chromashift/issues/91) | ✅ Shipped | `GpuTimestampProfiler.ts`, Diagnostics panel **Perf HUD** toggle |
 | Audio-reactive + MIDI | [#92](https://github.com/ford442/Chromashift/issues/92) | ✅ Shipped | `ReactivePanel.tsx`, `src/engine/reactive/` — layer rates, tracer intensity, MIDI learn |
 | Kiosk / gallery mode | [#85](https://github.com/ford442/Chromashift/issues/85) (partial) | ✅ Desktop kiosk shipped | `?kiosk=1`, [KIOSK.md](KIOSK.md), `useKioskMode.ts` — fullscreen, attract drift, bottom remote |
@@ -33,8 +33,6 @@ unless noted.
 | Target | Issue | Status | Notes |
 |--------|-------|--------|-------|
 | **Compare / multi-view** | [#87](https://github.com/ford442/Chromashift/issues/87) | 🔜 Planned | Dual 2-up, quad grid, swipe split — **not shipped**. Design: [COMPARE_VIEWS.md](COMPARE_VIEWS.md). Types/helpers: `src/engine/compareViews.ts` |
-| Deploy ergonomics | — | Optional | Key-based SFTP auth, `--dry-run`, safer `CLEAN_BEFORE_UPLOAD` defaults |
-
 Compare views are the primary **feature** target: side-by-side preset A/B, quad layout,
 and swipe split without screenshot juggling.
 
@@ -42,7 +40,7 @@ and swipe split without screenshot juggling.
 
 | Target | Issue | Status | Notes |
 |--------|-------|--------|-------|
-| **WebXR / immersive** | [#85](https://github.com/ford442/Chromashift/issues/85) | 🔬 Research | Desktop kiosk is shipped; surround / headset rendering is **not**. See [KIOSK.md](KIOSK.md) § WebXR |
+| **WebXR / immersive** | [#85](https://github.com/ford442/Chromashift/issues/85) | 🔬 Phase-0 spike | WebGL `XRWebGLLayer` at half res — [WebXR.md](WebXR.md); kiosk + XR mutually exclusive |
 | C++ engine depth | [#86](https://github.com/ford442/Chromashift/issues/86) | 🔬 Research | Rotation matrices, band LUT in WASM, offline composite parity with WebGPU |
 
 WebXR depends on browser WebGPU-XR interop maturing; kiosk mode covers gallery installs

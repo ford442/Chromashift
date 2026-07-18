@@ -74,6 +74,68 @@ npm run build
 npm run preview
 ```
 
+## Deploy
+
+Production deploys upload `dist/` to the test server via SFTP (`deploy.py`).
+
+```bash
+npm run build
+pip install -r requirements-deploy.txt
+
+# SSH key (preferred) — agent or explicit key path
+export DEPLOY_USER=your-sftp-user
+export DEPLOY_KEY=~/.ssh/id_ed25519
+python deploy.py
+
+# Password fallback
+export DEPLOY_PASS=your-password
+python deploy.py
+```
+
+Flags:
+
+| Flag | Effect |
+|------|--------|
+| `--dry-run` | Connect and list remote deletions + local uploads; no server changes |
+| `--no-clean` | Upload without wiping the remote target directory first |
+
+By default the script **deletes existing remote files** in the target path before upload.
+Use `--dry-run` to preview changes, or `--no-clean` for incremental uploads.
+
+Optional env overrides: `DEPLOY_HOST` (default `1ink.us`), `DEPLOY_PORT` (default `22`),
+`DEPLOY_REMOTE_DIR` (default `test.1ink.us/chromashift`).
+
+**GitHub Actions:** run the [Deploy workflow](.github/workflows/deploy.yml) manually
+(`workflow_dispatch`). Repository secrets: `DEPLOY_USER`, `DEPLOY_KEY` (private key PEM).
+Never commit credentials or log key/password values.
+
+`npm run build` runs `check:dist`, which fails if `ort-wasm*.wasm` is emitted into
+`dist/` (ORT runtime loads from `VITE_NUNIF_ORT_WASM_BASE` at upscale time instead).
+The deploy script prints total upload size before transferring.
+
+## Testing
+
+```bash
+npm test                 # Vitest unit tests (src/**/*.test.ts)
+npm run test:e2e         # Playwright E2E (all projects)
+npm run test:e2e:webgl   # WebGL smoke, preset URL, kiosk
+npm run test:e2e:webgpu  # WebGPU smoke (--enable-unsafe-webgpu)
+npm run test:e2e:update  # refresh visual snapshots (opt-in opacity spec)
+npm run test:cpp         # C++ host parity tests
+```
+
+E2E coverage (`e2e/`):
+
+| Spec | What it checks |
+|------|----------------|
+| `smoke.spec.ts` | WebGL bootstrap, `window.usingWebGL`, canvas visible |
+| `webgpu-smoke.spec.ts` | WebGPU bootstrap (`chromium-webgpu` project, `--enable-unsafe-webgpu`) |
+| `preset-url.spec.ts` | `?preset=` hydrates layer opacity / tracer intensity; invalid preset error |
+| `kiosk.spec.ts` | `?kiosk=1` hides NUNIF chrome, shows kiosk remote |
+| `opacity-test.spec.ts` | Manual screenshot capture (`RECORD_SCREENSHOTS=1` only) |
+
+Install Playwright browsers once: `npx playwright install --with-deps chromium`.
+
 ## Hybrid Engine (TypeScript + C++ WASM)
 
 Chromashift ships two parallel computation engines:
@@ -124,7 +186,7 @@ src/
   engine/
     WebGPURenderer.ts, WebGPUPipelines.ts, PersistencePass.ts,
     CompositorPass.ts, TracerInspectPass.ts   # 5-pass GPU pipeline (layers → persistence → compositor)
-    WebGLRenderer.ts    # WebGL2 fallback with shared RendererState + debug modes
+    webgl/              # WebGL2 fallback (pass modules + GLSL shaders; WebGLRenderer.ts re-export)
     rendererMode.ts     # URL/localStorage/backend breadcrumb selection
     TextureManager.ts, WebGLTextureManager.ts  # JSON/blob fetch + GPU/WebGL texture upload
     LocalLibrary.ts, fileDrop.ts               # IndexedDB local image library (drag-and-drop)

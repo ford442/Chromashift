@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { waitForWebGL } from './helpers/renderer';
 
 const screenshotsDir = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -13,9 +14,7 @@ test.describe('Chromashift smoke', () => {
   test('boots with WebGL renderer and publishes breadcrumbs', async ({ page }) => {
     await page.goto('/?renderer=webgl');
 
-    await page.waitForFunction(() => window.usingWebGL === true, undefined, {
-      timeout: 30_000,
-    });
+    await waitForWebGL(page);
 
     const breadcrumbs = await page.evaluate(() => ({
       rendererType: window.rendererType,

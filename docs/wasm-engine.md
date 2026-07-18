@@ -13,6 +13,29 @@ the application always works.
 
 ---
 
+## Runtime scope
+
+The C++ WASM engine is a **load-time analysis accelerator**, not a replacement for the GPU
+render loop. Toggling **C++ WASM** in the Engine panel routes specific CPU-side work through
+the compiled module when it is available; the WebGPU/WGSL pipeline remains the source of truth
+for real-time rendering.
+
+| Category | Functions | Role |
+|---|---|---|
+| **In scope (load-time)** | `computeAverageLuminanceWith`, `computeAverageLuminanceStridedWith`, `classifyImageMaskWith`, histogram/band helpers | Average luminance and classification masks when GPU compute analysis (#82) is unavailable; strided luminance for large (4K–8K) and upscaled buffers |
+| **In scope (export / offline)** | `advanceAnglesBy` | Video-export angle stepping when Engine = C++ WASM |
+| **WASM-routed, lightweight** | `durationToDecayWith` | Per-frame tracer decay multiplier when Engine = C++ WASM — parity with C++/WGSL formula, not a performance win |
+| **Out of scope (GPU)** | Layer rotation, persistence/compositing | Handled by WGSL shaders in `WebGPURenderer` / `WebGLRenderer` |
+| **Test / benchmark only** | `simulateTracerDecayWith`, `buildRotationMat3With`, `computeLuminanceHistogramWith`, `computeColorBandCountsWith`, bulk classify helpers | `public/wasm-benchmark.html`, C++ host tests — not used in the live render loop |
+
+**Selection order for image analysis** (see `useClassificationMask.ts`):
+
+1. WebGPU compute histogram + mask (preferred when available).
+2. C++ WASM classification mask + strided/full luminance (when Engine = C++ WASM).
+3. TypeScript fallbacks in `WasmEngine.ts` (always available).
+
+---
+
 ## What is implemented in C++
 
 ### Luminance & colour analysis

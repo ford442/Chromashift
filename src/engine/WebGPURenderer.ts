@@ -444,6 +444,7 @@ export class WebGPURenderer {
       belowDuration: state.tracerBelowDuration ?? 0,
       aboveDuration: state.tracerAboveDuration ?? 1000,
       paused: state.paused ?? false,
+      useWasm: state.wasmEngine,
     });
     profiler?.markPersistenceEnd(enc);
 

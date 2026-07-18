@@ -3,7 +3,7 @@ import { Upscaler, type UpscaleModel } from '../engine/Upscaler';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import {
   computeAverageLuminanceStridedWith,
-  computeAverageLuminanceWith,
+  computeImageAverageLuminanceWith,
 } from '../engine/WasmEngine';
 import { addLocalImage, clearLocalLibrary } from '../engine/LocalLibrary';
 import type { ImageEntry } from '../engine/TextureManager';
@@ -79,7 +79,7 @@ export function useMediaHandlers({
             console.warn('Could not generate classification mask:', e);
             clearClassificationMask();
             try {
-              avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
+              avgLum = computeImageAverageLuminanceWith(img, engineModeRef.current === 'wasm');
             } catch (lumError) {
               console.warn('CORS?', lumError);
             }

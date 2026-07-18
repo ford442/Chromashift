@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { durationToDecayWith } from '../WasmEngine';
 import { durationToDecay } from './decay';
 
 describe('durationToDecay', () => {
@@ -32,5 +33,30 @@ describe('durationToDecay', () => {
   it('returns 0 when fewer than one frame elapses', () => {
     expect(durationToDecay(10, 30)).toBe(0);
     expect(durationToDecay(500, 0)).toBe(0);
+  });
+});
+
+describe('durationToDecayWith (TS fallback)', () => {
+  it('matches durationToDecay when useWasm is false', () => {
+    const cases: Array<[number, number]> = [
+      [500, 30],
+      [2000, 60],
+      [0, 30],
+      [-100, 30],
+      [10, 30],
+      [500, 0],
+    ];
+    for (const [durationMs, fps] of cases) {
+      expect(durationToDecayWith(durationMs, fps, false)).toBe(durationToDecay(durationMs, fps));
+    }
+  });
+
+  it('matches pow(0.1, 1/frames) for typical tracer settings', () => {
+    const fps = 30;
+    const durationMs = 500;
+    const frames = (fps * durationMs) / 1000;
+    const expected = Math.pow(0.1, 1 / frames);
+
+    expect(durationToDecayWith(durationMs, fps, false)).toBeCloseTo(expected, 6);
   });
 });

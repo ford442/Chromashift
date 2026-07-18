@@ -30,7 +30,9 @@ npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
 npm test          # Vitest unit tests (src/**/*.test.ts)
-npm run test:e2e  # Playwright smoke (WebGL renderer; install browsers first)
+npm run test:e2e  # Playwright E2E (all projects; install browsers first)
+npm run test:e2e:webgl   # WebGL smoke, preset URL, kiosk
+npm run test:e2e:webgpu  # WebGPU smoke (chromium-webgpu project)
 npm run test:cpp  # C++ host tests (g++, no Emscripten)
 npm run preview   # Preview the production build locally
 ```
@@ -90,7 +92,12 @@ src/
     ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
     ├── RendererTypes.ts / types/RendererContracts.ts  # Shared renderer/texture contracts
     ├── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
-    ├── WebGLRenderer.ts      # WebGL2 fallback/reference implementation with debug modes
+    ├── WebGLRenderer.ts      # Re-export shim → webgl/WebGLRenderer.ts
+    ├── webgl/                # WebGL2 fallback (mirrors WebGPU pass layout)
+    │   ├── WebGLRenderer.ts, WebGLLayerPass.ts, WebGLPersistencePass.ts,
+    │   │   WebGLCompositorPass.ts, WebGLDebugPasses.ts, WebGLReadback.ts
+    │   ├── resources.ts, programUtils.ts
+    │   └── shaders/          # GLSL sources (common, layers, persistence, compositor, debug)
     ├── WebGPURenderer.ts     # 5-pass GPU renderer orchestration (delegates to the below)
     ├── WebGPUPipelines.ts, BindGroupCache.ts, PersistencePass.ts, CompositorPass.ts,
     │   TracerInspectPass.ts, GpuReadback.ts, GpuTimestampProfiler.ts  # pass/readback + WebGPU perf HUD
@@ -125,7 +132,7 @@ WebGL-only debug helpers are in the Renderer panel:
 - `Rotation UV grid` — transformed UVs and a grid to debug layer rotation/flips.
 - `Layer mask isolation` — shows active per-layer mask output before final compositing.
 
-For shader-based effect work, prototype/inspect in `WebGLRenderer.ts` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL`) — never hardcode them in WGSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/C++ against divergence. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
+For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL`) — never hardcode them in WGSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/C++ against divergence. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
 ### Rendering Pipeline (Detailed)
 
@@ -143,7 +150,7 @@ Render settings serialize to a versioned JSON document (`src/state/serializeSett
 
 ### Kiosk / gallery installation
 
-`?kiosk=1` enables installation mode (see `docs/KIOSK.md`): hides NUNIF chrome, forces autoplay + attract parameter drift, large bottom remote, fullscreen + wake lock (`useKioskMode.ts`), and **Esc** to restore panels. Breadcrumb: `window.kioskMode`. WebXR remains future research — kiosk targets desktop Chrome today.
+`?kiosk=1` enables installation mode (see `docs/KIOSK.md`): hides NUNIF chrome, forces autoplay + attract parameter drift, large bottom remote, fullscreen + wake lock (`useKioskMode.ts`), and **Esc** to restore panels. Breadcrumb: `window.kioskMode`. WebXR Phase-0 spike (`docs/WebXR.md`): `window.xrAvailable`, immersive VR via WebGL bridge — mutually exclusive with kiosk.
 
 ### Compare / multi-view (planned)
 
@@ -159,10 +166,10 @@ Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureM
 
 ### Upscaler (lazy-loaded)
 
-`Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web (and its ~26 MB `ort-wasm-simd-threaded.jsep.wasm`) is fetched on initial page load — only after the user actually invokes an upscale. Verify this stays true after changes by running `npm run build` and confirming `dist/assets/index-*.js` contains no `tfjs`/`ort-wasm` references, or by checking the Network panel on a fresh load.
+`Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web is fetched on initial page load — only after the user actually invokes an upscale. `npm run build` runs `check:dist`, which asserts `dist/` contains no `ort-wasm*.wasm` and that `dist/assets/index-*.js` has no `tfjs`/`ort-wasm` references.
 
 - **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not** bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
-- **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Defaults to a public CDN base (`NUNIF_DEFAULT_BASE` in `Upscaler.ts`); override with `VITE_NUNIF_BASE` to self-host the `models/swin_unet/` and `models/utils/` ONNX files instead. The ORT wasm runtime itself is always loaded from jsDelivr (`ort.env.wasm.wasmPaths` in `nunif.worker.ts`), not bundled, to avoid shipping it in `dist/`.
+- **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Model ONNX files default to `NUNIF_DEFAULT_BASE` in `Upscaler.ts`; override with `VITE_NUNIF_BASE` to self-host `models/swin_unet/` and `models/utils/`. The ORT wasm runtime is **not** bundled in `dist/` — Vite resolves `onnxruntime-web-use-extern-wasm` (see `vite.config.ts`) and the worker loads `ort-wasm-simd-threaded.{mjs,wasm}` at runtime from `VITE_NUNIF_ORT_WASM_BASE` (default `https://test.1ink.us/nunif/ort`). Mirror those two files from `node_modules/onnxruntime-web/dist/` on the server once per ORT version upgrade; for local dev without the mirror, point `VITE_NUNIF_ORT_WASM_BASE` at jsDelivr in `.env.local`.
 
 Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on an actual first-time fetch, not on cache hits.
 
@@ -298,7 +305,7 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | Tier | Command | Scope |
 |------|---------|-------|
 | **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, video export, reactive modulation) |
-| **Playwright** | `npm run test:e2e` | E2E smoke against `?renderer=webgl` (`e2e/smoke.spec.ts` — boots, checks `window.usingWebGL`, screenshots canvas). `e2e/opacity-test.spec.ts` is opt-in (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
+| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/` — WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk bootstrap (`kiosk.spec.ts`), WebGPU smoke (`webgpu-smoke.spec.ts`, `chromium-webgpu` project with `--enable-unsafe-webgpu`). `e2e/opacity-test.spec.ts` is opt-in (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band/decay parity with `chromashift_engine.cpp`; no Emscripten required |
 
 ### CI job matrix
@@ -308,12 +315,14 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | `guard` | Blocks `dist/` and accidental secrets in PR diffs |
 | `web` | `npm run lint`, `npx tsc -b`, `npm run build` |
 | `unit` | `npm test` (Vitest) |
-| `e2e` | `npm run test:e2e` (after `web`; Playwright Chromium) |
+| `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
+| `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu`) |
 | `wasm` | `npm run test:cpp` + `npm run build:wasm` + artifact check (`continue-on-error: true`) |
 
-WebGPU behaviour is not exercised in CI (headless Chromium has no WebGPU); the Playwright
-smoke path uses the WebGL2 fallback intentionally. For local WebGPU validation, use Chrome
-with `?renderer=webgpu`.
+WebGPU E2E runs in the `chromium-webgpu` Playwright project with
+`--enable-unsafe-webgpu` (see `playwright.config.ts`). For local WebGPU validation,
+use Chrome with `?renderer=webgpu`. The WebGL project remains the reliable fallback
+when WebGPU is unavailable in a headless environment.
 
 ## Deployment Process
 
@@ -321,13 +330,21 @@ A Python script (`deploy.py` at repo root) handles deployment:
 
 ```bash
 npm run build
-python deploy.py
+pip install -r requirements-deploy.txt
+export DEPLOY_USER=… DEPLOY_KEY=~/.ssh/id_ed25519   # or DEPLOY_PASS for password fallback
+python deploy.py              # clean remote + upload (default)
+python deploy.py --dry-run    # preview deletions/uploads only
+python deploy.py --no-clean   # skip remote wipe
 ```
 
 - It uses **Paramiko/SFTP** to recursively upload the `dist/` directory.
-- Target server: `1ink.us` (port 22).
-- Remote path: `test.1ink.us/chromashift`.
-- **Security note**: Credentials are read from `DEPLOY_USER` / `DEPLOY_PASS` env vars (falling back to `CHANGEME` placeholders in the script, which refuse to run). There is no password-only, key-based auth path yet, and `CLEAN_BEFORE_UPLOAD = True` is destructive with no dry-run — see issue tracking hardening this further.
+- Target server: `1ink.us` (port 22) — override with `DEPLOY_HOST` / `DEPLOY_PORT`.
+- Remote path: `test.1ink.us/chromashift` — override with `DEPLOY_REMOTE_DIR`.
+- **Auth**: SSH key via `DEPLOY_KEY` or `SSH_AUTH_SOCK` (preferred); `DEPLOY_PASS` password fallback.
+- **Safety**: refuses `CHANGEME` / missing credentials; `--dry-run` lists changes without mutating remote;
+  default cleans remote before upload (`--no-clean` to skip).
+- **CI**: manual [Deploy workflow](.github/workflows/deploy.yml) (`workflow_dispatch`) with
+  `DEPLOY_USER` + `DEPLOY_KEY` GitHub secrets.
 
 ## Browser Requirements
 
@@ -356,12 +373,12 @@ Frontend-only project — no backend/database/services to run. Standard commands
   `http://localhost:5173/` shows a "WebGPU/WebGL2 not supported" prompt. To see the
   canvas actually render, use the WebGL2 fallback path: `http://localhost:5173/?renderer=webgl`.
   This is expected — WebGPU behaviour cannot be validated here; the WebGL2 renderer is an
-  approximate reference. The Playwright smoke test (`npm run test:e2e`) already targets
-  `?renderer=webgl` for this reason.
+  approximate reference. Playwright E2E includes WebGL specs plus a `chromium-webgpu` project
+  (`--enable-unsafe-webgpu`); WebGPU smoke may still fail in this VM — run
+  `npx playwright test --project=chromium` to exercise WebGL/kiosk/preset specs only.
 - **Playwright browsers must be installed once per fresh VM** before `npm run test:e2e`:
   `npx playwright install --with-deps chromium`. This is intentionally not in the update
-  script (heavy, network-dependent). The `opacity-test.spec.ts` spec is skipped by default;
-  only `smoke.spec.ts` runs.
+  script (heavy, network-dependent). The `opacity-test.spec.ts` spec is skipped by default.
 - **Remote images:** `public/images.json` points at `https://cr0p.1ink.us/...`; loading the
   displayed corpus requires outbound network access to that host. Drag-and-drop local images
   work offline.

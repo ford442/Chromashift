@@ -25,6 +25,7 @@ import { useVideoExport } from './hooks/useVideoExport';
 import { useTracerInspectInteraction } from './hooks/useTracerInspectInteraction';
 import { useReactiveInput } from './hooks/useReactiveInput';
 import { useKioskMode } from './hooks/useKioskMode';
+import { useWebXr } from './hooks/useWebXr';
 
 export default function App() {
   const refs = useChromashiftRefs();
@@ -92,6 +93,7 @@ export default function App() {
   useAppKeyboardShortcuts(refs, store, mediaHandlers.swapSourceAndReference);
 
   const kiosk = useKioskMode(refs, store);
+  const webxr = useWebXr(refs, store);
 
   const uiProps = useAppUiProps(refs, store, {
     selectSourceIndex: store.selectSourceIndex,
@@ -111,7 +113,7 @@ export default function App() {
     handleExportTracer,
     ...videoExport,
     ...presets,
-  }, kiosk);
+  }, kiosk, webxr);
 
   return <AppUI {...uiProps} />;
 }

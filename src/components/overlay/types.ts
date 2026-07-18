@@ -44,6 +44,15 @@ export interface RendererPanelProps {
   engineMode: EngineMode;
   wasmAvailable: boolean;
   onEngineModeChange: (mode: EngineMode) => void;
+  xrAvailable: boolean;
+  xrReason: string | null;
+  xrImmersive: boolean;
+  xrBusy: boolean;
+  xrError: string | null;
+  xrEnterAllowed: boolean;
+  kioskEnabled: boolean;
+  onEnterXr: () => void;
+  onExitXr: () => void;
 }
 
 export interface LayerPanelProps {

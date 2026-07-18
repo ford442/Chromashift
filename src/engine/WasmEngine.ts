@@ -348,6 +348,41 @@ export function computeAverageLuminanceStridedWith(
 }
 
 /**
+ * Compute average BT.709 luminance for an image, choosing the best CPU path.
+ *
+ * - Images larger than 256 px on the longest edge use a strided full-resolution
+ *   sample (`stride = floor(max(w,h) / 256)`) via `computeAverageLuminanceStridedWith`.
+ * - Smaller images use the ≤256 px downscale path via `computeAverageLuminanceWith`.
+ *
+ * Prefer GPU histogram from `GpuImageAnalysis` when available; this helper is for
+ * CPU/WASM fallback paths (WebGL, missing compute, or mask generation errors).
+ */
+export function computeImageAverageLuminanceWith(
+  image: HTMLImageElement,
+  useWasm: boolean,
+): number {
+  const width = Math.max(1, image.naturalWidth || image.width || 1);
+  const height = Math.max(1, image.naturalHeight || image.height || 1);
+  const maxDim = Math.max(width, height);
+
+  if (maxDim > 256) {
+    const imageData = getImageDataAtNaturalSize(image);
+    if (imageData) {
+      const stride = Math.max(1, Math.floor(maxDim / 256));
+      return computeAverageLuminanceStridedWith(
+        imageData.data,
+        width,
+        height,
+        stride,
+        useWasm,
+      );
+    }
+  }
+
+  return computeAverageLuminanceWith(image, useWasm);
+}
+
+/**
  * Classify a single pixel into a Chromashift colour band index (0–10).
  *
  * Band mapping (matches WGSL shaders):

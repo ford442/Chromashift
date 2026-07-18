@@ -16,6 +16,7 @@ import type {
   TracersSlice,
   UiSlice,
 } from './types';
+import type { CompareViewState } from '../engine/compareViews';
 import type { MidiBinding, ReactiveSettings } from '../engine/reactive/types';
 
 export type ChromashiftAction =
@@ -52,6 +53,9 @@ export interface ChromashiftSettingsInput {
   engine?: Pick<EngineSlice, 'fps' | 'paused' | 'engineMode' | 'avgLuminance'>;
   ui?: Pick<UiSlice, 'isAutoPlayActive' | 'imageChangeInterval' | 'referenceBlendMode' | 'overlayImageSource' | 'referenceOpacity' | 'upscaleModel'>;
   reactive?: Partial<ReactiveSettings>;
+  compare?: CompareViewState;
+  viewport?: { quarterZoom?: boolean; halfOverlay?: boolean };
+  kiosk?: Pick<UiSlice, 'kioskEnabled' | 'kioskUiHidden' | 'kioskAttractMode'>;
 }
 
 export function chromashiftReducer(
@@ -233,13 +237,12 @@ export function chromashiftReducer(
  * Pure merge of a serializable settings snapshot over full app state.
  * Used both by the `settings/apply` reducer case and by the render loop to
  * build compare-slot states, so both paths share identical merge semantics.
- * Never touches `ui.compareView` (excluded from `ChromashiftSettingsInput.ui`).
  */
 export function applySettingsToState(
   state: ChromashiftState,
   settings: ChromashiftSettingsInput,
 ): ChromashiftState {
-  return {
+  let next: ChromashiftState = {
     ...state,
     layers: settings.layers ? { ...state.layers, ...settings.layers } : state.layers,
     tracers: settings.tracers ? { ...state.tracers, ...settings.tracers } : state.tracers,
@@ -264,6 +267,63 @@ export function applySettingsToState(
         }
       : state.reactive,
   };
+
+  if (settings.viewport) {
+    next = {
+      ...next,
+      output: {
+        ...next.output,
+        viewportQuarterZoom: settings.viewport.quarterZoom ?? next.output.viewportQuarterZoom,
+        viewportHalfOverlay: settings.viewport.halfOverlay ?? next.output.viewportHalfOverlay,
+      },
+    };
+  }
+
+  if (settings.kiosk) {
+    next = {
+      ...next,
+      ui: {
+        ...next.ui,
+        kioskEnabled: settings.kiosk.kioskEnabled ?? next.ui.kioskEnabled,
+        kioskUiHidden: settings.kiosk.kioskUiHidden ?? next.ui.kioskUiHidden,
+        kioskAttractMode: settings.kiosk.kioskAttractMode ?? next.ui.kioskAttractMode,
+      },
+    };
+  }
+
+  if (settings.compare) {
+    const compare = settings.compare;
+    next = {
+      ...next,
+      ui: {
+        ...next.ui,
+        compareView: {
+          ...next.ui.compareView,
+          ...compare,
+          slotA: compare.slotA
+            ? {
+                ...next.ui.compareView.slotA,
+                ...compare.slotA,
+                settings: compare.slotA.settings
+                  ? { ...next.ui.compareView.slotA.settings, ...compare.slotA.settings }
+                  : next.ui.compareView.slotA.settings,
+              }
+            : next.ui.compareView.slotA,
+          slotB: compare.slotB
+            ? {
+                ...next.ui.compareView.slotB,
+                ...compare.slotB,
+                settings: compare.slotB.settings
+                  ? { ...next.ui.compareView.slotB.settings, ...compare.slotB.settings }
+                  : next.ui.compareView.slotB.settings,
+              }
+            : next.ui.compareView.slotB,
+        },
+      },
+    };
+  }
+
+  return next;
 }
 
 export { createInitialState };

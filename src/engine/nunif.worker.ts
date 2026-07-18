@@ -19,13 +19,20 @@
 
 /// <reference lib="webworker" />
 
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/wasm';
 
 declare const self: DedicatedWorkerGlobalScope;
 
-// onnxruntime-web fetches its wasm binaries at runtime; point them at the CDN
-// build matching the installed package version so no extra assets are bundled.
-ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web}/dist/`;
+// ORT wasm runtime is fetched at runtime (not bundled). Default mirrors on test.1ink.us;
+// override with VITE_NUNIF_ORT_WASM_BASE for air-gapped or local dev (e.g. jsDelivr).
+const ORT_WASM_DEFAULT_BASE = 'https://test.1ink.us/nunif/ort';
+
+const ortWasmBase = (
+  (import.meta.env.VITE_NUNIF_ORT_WASM_BASE as string | undefined)
+  ?? ORT_WASM_DEFAULT_BASE
+).replace(/\/$/, '');
+
+ort.env.wasm.wasmPaths = `${ortWasmBase}/`;
 ort.env.wasm.numThreads = 1; // avoids requiring cross-origin isolation (COOP/COEP)
 ort.env.wasm.proxy = false;
 

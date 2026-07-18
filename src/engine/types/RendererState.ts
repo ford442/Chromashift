@@ -44,6 +44,8 @@ export interface RendererState {
   livePreviewEnabled?  : boolean;
   /** When true, WebGPU timestamp queries are written and resolved (Perf HUD). */
   profilePerformance?: boolean;
+  /** When true, tracer decay uses the C++ WASM path when loaded. */
+  wasmEngine?: boolean;
 }
 
 export interface CollisionStats {

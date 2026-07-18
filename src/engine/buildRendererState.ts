@@ -54,6 +54,7 @@ export function buildRendererState(
     halfOverlayAlpha: 0.5,
     livePreviewEnabled: output.livePreviewEnabled,
     profilePerformance: output.performanceHudEnabled,
+    wasmEngine: engine.engineMode === 'wasm',
     ...overrides,
   };
 }

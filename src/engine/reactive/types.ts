@@ -34,6 +34,9 @@ export interface ReactiveModulation {
 
 /** Serializable reactive settings (stored in presets). Runtime flags live separately. */
 export interface ReactiveSettings {
+  enabled?: boolean;
+  audioEnabled?: boolean;
+  midiEnabled?: boolean;
   audioSensitivity: number;
   midiBindings: MidiBinding[];
 }

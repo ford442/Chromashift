@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+/** Headless Chromium needs this flag for WebGPU in CI (see e2e/webgpu-smoke.spec.ts). */
+const WEBGPU_LAUNCH_ARGS = ['--enable-unsafe-webgpu'];
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -16,6 +19,17 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: /webgpu-smoke\.spec\.ts/,
+    },
+    {
+      name: 'chromium-webgpu',
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: {
+          args: WEBGPU_LAUNCH_ARGS,
+        },
+      },
+      testMatch: /webgpu-smoke\.spec\.ts/,
     },
   ],
   webServer: {

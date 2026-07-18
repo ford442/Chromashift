@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { classifyImageMaskWith, isWasmReady } from '../engine/WasmEngine';
+import { classifyImageMaskWith, computeImageAverageLuminanceWith, isWasmReady } from '../engine/WasmEngine';
 import type { ChromashiftRefs } from './useChromashiftStore';
 
 type MaskOwner = 'gpu-analysis' | 'wasm-upload' | null;
@@ -93,7 +93,7 @@ export function useClassificationMask(refs: ChromashiftRefs) {
 
   const generateClassificationMaskTexture = useCallback(async (
     image: HTMLImageElement,
-    avgLumValue: number,
+    _avgLumValue: number,
     sourceTexture?: GPUTexture | null,
   ): Promise<number> => {
     const width = image.naturalWidth;
@@ -108,13 +108,16 @@ export function useClassificationMask(refs: ChromashiftRefs) {
       if (gpu) return gpu.avgLuminance;
     }
 
-    const usedCpu = generateClassificationMaskFromImage(image, avgLumValue);
+    const useWasm = engineModeRef.current === 'wasm' && isWasmReady();
+    const avgLum = computeImageAverageLuminanceWith(image, useWasm);
+    const usedCpu = generateClassificationMaskFromImage(image, avgLum);
     if (!usedCpu) clearClassificationMask();
-    return avgLumValue;
+    return avgLum;
   }, [
     generateClassificationMaskFromTexture,
     generateClassificationMaskFromImage,
     clearClassificationMask,
+    engineModeRef,
   ]);
 
   return {

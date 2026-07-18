@@ -64,6 +64,7 @@ Avoid Firefox/Safari for production installs until stable WebGPU is available; u
 window.kioskMode        // true when ?kiosk=1 was applied
 window.rendererType     // 'webgpu' | 'webgl'
 window.usingWebGPU
+window.xrAvailable      // immersive-vr supported (see docs/WebXR.md)
 ```
 
 ## 10-minute unattended demo checklist
@@ -77,8 +78,8 @@ window.usingWebGPU
 
 ## Future (not shipped)
 
-- WebXR immersive-ar/vr composite layer
+- WebXR immersive viewing — Phase-0 spike in tree; see [WebXR.md](WebXR.md)
 - Stereo or skybox surround
 - MIDI / controller mapping to layer rates
 
-See GitHub issue #85 for the research track.
+Desktop kiosk (`?kiosk=1`) and XR are mutually exclusive until orchestration exists.

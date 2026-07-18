@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import {
-  computeAverageLuminanceWith,
+  computeImageAverageLuminanceWith,
 } from '../engine/WasmEngine';
 import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
@@ -67,7 +67,7 @@ export function useImagePlayback({
               console.warn('Could not generate classification mask:', e);
               clearClassificationMask();
               try {
-                avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
+                avgLum = computeImageAverageLuminanceWith(img, engineModeRef.current === 'wasm');
               } catch (lumError) {
                 console.warn('Could not compute average luminance (CORS?):', lumError);
               }

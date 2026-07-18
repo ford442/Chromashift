@@ -58,12 +58,36 @@ describe('applySettingsToState', () => {
     expect(state).toEqual(snapshot);
   });
 
-  it('never touches ui.compareView', () => {
-    const state = chromashiftReducer(createInitialState(), { type: 'compare/setLayout', layout: 'dual' });
+  it('applies compare when present in settings input', () => {
+    const state = createInitialState();
     const merged = applySettingsToState(state, {
       ...SETTINGS,
-      ui: { isAutoPlayActive: false } as ChromashiftSettingsInput['ui'],
+      compare: {
+        layout: 'dual',
+        syncPlay: false,
+        swipePosition: 0.25,
+        slotA: { id: 'a', label: 'A', settings: { layers: { opacity: 0.8 } } },
+        slotB: { id: 'b', label: 'B', settings: { tracers: { mode: 2 } } },
+      },
     });
-    expect(merged.ui.compareView).toBe(state.ui.compareView);
+    expect(merged.ui.compareView.layout).toBe('dual');
+    expect(merged.ui.compareView.syncPlay).toBe(false);
+    expect(merged.ui.compareView.swipePosition).toBe(0.25);
+    expect(merged.ui.compareView.slotA.label).toBe('A');
+    expect(merged.ui.compareView.slotA.settings.layers?.opacity).toBe(0.8);
+    expect(merged.ui.compareView.slotB.settings.tracers?.mode).toBe(2);
+  });
+
+  it('applies viewport and kiosk slices', () => {
+    const state = createInitialState();
+    const merged = applySettingsToState(state, {
+      viewport: { quarterZoom: true, halfOverlay: true },
+      kiosk: { kioskEnabled: true, kioskUiHidden: true, kioskAttractMode: true },
+    });
+    expect(merged.output.viewportQuarterZoom).toBe(true);
+    expect(merged.output.viewportHalfOverlay).toBe(true);
+    expect(merged.ui.kioskEnabled).toBe(true);
+    expect(merged.ui.kioskUiHidden).toBe(true);
+    expect(merged.ui.kioskAttractMode).toBe(true);
   });
 });

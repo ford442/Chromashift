@@ -6,4 +6,13 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   base: "./",
   plugins: [react(), tailwindcss()],
+  resolve: {
+    conditions: [
+      'onnxruntime-web-use-extern-wasm',
+      'import',
+      'module',
+      'browser',
+      'default',
+    ],
+  },
 })

@@ -3,6 +3,7 @@ import { WebGPURenderer } from '../engine/WebGPURenderer';
 import { GPU_TIMING_HISTORY_SIZE } from '../engine/GpuTimestampProfiler';
 import { buildRendererState } from '../engine/buildRendererState';
 import { advanceAngles, effectiveLayerScaleForMultiView } from '../engine/compareViews';
+import { isXrImmersiveActive } from '../engine/xr/xrSupport';
 import { applySettingsToState } from '../state/chromashiftReducer';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
@@ -94,9 +95,12 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
           renderOverrides.layerScale = effectiveLayerScaleForMultiView(current.layers.scale, 'dual').scale;
           renderOverrides.tracerScale = effectiveLayerScaleForMultiView(current.tracers.scale, 'dual').scale;
         }
-        rendererRef.current?.render(buildRendererState(current, angles, renderOverrides));
+        const xrImmersive = isXrImmersiveActive();
+        if (!xrImmersive) {
+          rendererRef.current?.render(buildRendererState(current, angles, renderOverrides));
+        }
 
-        if (dualActive && rendererB) {
+        if (!xrImmersive && dualActive && rendererB) {
           const stateB = applySettingsToState(current, compareView.slotB.settings);
           const anglesB = compareView.syncPlay
             ? angles

@@ -9,6 +9,15 @@ export function RendererPanel({
   engineMode,
   wasmAvailable,
   onEngineModeChange,
+  xrAvailable,
+  xrReason,
+  xrImmersive,
+  xrBusy,
+  xrError,
+  xrEnterAllowed,
+  kioskEnabled,
+  onEnterXr,
+  onExitXr,
 }: RendererPanelProps) {
   return (
     <div className="space-y-3">
@@ -64,7 +73,44 @@ export function RendererPanel({
       </div>
 
       <div className="panel-3d space-y-2">
+        <div className="section-header">🥽 WebXR (research)</div>
+        <p className="text-[10px] text-amber-100/60 font-mono leading-snug">
+          Phase-0 spike: immersive-vr composite via WebGL bridge at half resolution.
+          Requires WebGL renderer; disabled in kiosk mode.
+        </p>
+        {kioskEnabled && (
+          <p className="text-[10px] text-cyan-200/70 font-mono">Unavailable while kiosk mode is on.</p>
+        )}
+        {!kioskEnabled && rendererBackend !== 'webgl' && (
+          <p className="text-[10px] text-cyan-200/70 font-mono">Switch to WebGL to try XR.</p>
+        )}
+        {!kioskEnabled && rendererBackend === 'webgl' && !xrAvailable && (
+          <p className="text-[10px] text-zinc-400 font-mono">
+            {xrReason ?? 'WebXR immersive-vr not available on this device.'}
+          </p>
+        )}
+        {xrError && (
+          <p className="text-[10px] text-red-300/90 font-mono">{xrError}</p>
+        )}
+        <button
+          type="button"
+          disabled={xrBusy || (!xrImmersive && !xrEnterAllowed)}
+          onClick={() => { void (xrImmersive ? onExitXr() : onEnterXr()); }}
+          className={`w-full text-xs px-3 py-2 rounded font-mono transition-all ${
+            xrImmersive
+              ? 'bg-cyan-700 hover:bg-cyan-600 text-white'
+              : 'bg-zinc-800 hover:bg-zinc-700 border border-cyan-500/40 text-cyan-100 disabled:opacity-40'
+          }`}
+        >
+          {xrBusy ? 'Starting XR…' : xrImmersive ? 'Exit immersive VR' : 'Enter immersive VR'}
+        </button>
+      </div>
+
+      <div className="panel-3d space-y-2">
         <div className="section-header">⚡ Engine</div>
+        <p className="text-[9px] text-zinc-500 leading-tight">
+          Load-time analysis (luminance, masks, decay). GPU rendering is unchanged.
+        </p>
         <div className="flex gap-1">
           <button
             type="button"
@@ -87,7 +133,7 @@ export function RendererPanel({
                 ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-[0_0_8px_rgba(6,182,212,0.4)]'
                 : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30 text-amber-300/70'
             }`}
-            title={wasmAvailable ? 'Use the C++ WASM engine' : 'C++ WASM engine not built — run: npm run build:wasm'}
+            title={wasmAvailable ? 'Use C++ WASM for load-time analysis (luminance, masks)' : 'C++ WASM engine not built — run: npm run build:wasm'}
           >
             C++ WASM
           </button>
@@ -100,10 +146,10 @@ export function RendererPanel({
           }`}
         >
           {engineMode === 'wasm' && wasmAvailable
-            ? '⚡ C++ WASM active'
+            ? '⚡ C++ WASM — load-time analysis'
             : engineMode === 'wasm' && !wasmAvailable
               ? '⚠ WASM unavailable — using TS'
-              : '🔷 TypeScript active'}
+              : '🔷 TypeScript — load-time analysis'}
         </div>
         {!wasmAvailable && (
           <div className="text-[9px] text-zinc-500 font-mono leading-tight">

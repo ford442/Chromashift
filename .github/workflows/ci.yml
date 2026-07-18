@@ -59,10 +59,10 @@ jobs:
       - run: npm test
 
   e2e:
-    name: Playwright smoke
+    name: Playwright E2E (WebGL)
     runs-on: ubuntu-latest
     needs: [web]
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -77,16 +77,39 @@ jobs:
       - run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - name: Run Playwright WebGL specs
+        run: npx playwright test --project=chromium
+        env:
+          CI: true
+
+  e2e-webgpu:
+    name: Playwright E2E (WebGPU)
+    runs-on: ubuntu-latest
+    needs: [web]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run Playwright WebGPU smoke
+        run: npx playwright test --project=chromium-webgpu
         env:
           CI: true
 
   wasm:
-    name: WASM build (optional)
+    name: WASM build
     runs-on: ubuntu-latest
     needs: [guard]
     timeout-minutes: 15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

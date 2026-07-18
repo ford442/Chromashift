@@ -40,7 +40,7 @@ Both renderers consume the same `RendererState` from `App.tsx`:
 - Diagnostics opacity, stamp boost, peak-collision mode.
 - Dual tracer duration/intensity values.
 
-Keep new shared visual controls in `RendererState` first, then implement them in both `WebGPURenderer.ts` and `WebGLRenderer.ts` as needed.
+Keep new shared visual controls in `RendererState` first, then implement them in both `WebGPURenderer.ts` and `src/engine/webgl/` as needed.
 
 ## WebGL Debug Modes
 
@@ -51,7 +51,7 @@ The WebGL-only debug selector in the Renderer panel supports:
 - `Rotation UV grid`: transformed UV coordinates plus grid lines for debugging angle, flip, and aspect correction.
 - `Layer mask isolation`: active colour-band masks before final compositing.
 
-These modes are intended for fast browser-visible checks. The WebGPU renderer ignores `webglDebugMode`.
+These modes are intended for fast browser-visible checks. The WebGPU renderer ignores `webglDebugMode`. Debug shaders live in `src/engine/webgl/shaders/debug.ts`; `WebGLDebugPasses` owns the three debug programs.
 
 ## GPU Performance HUD (WebGPU only)
 
@@ -70,9 +70,9 @@ When the HUD is disabled, Chromashift does not write or resolve timestamp querie
 
 Use this workflow for shader-based image effects:
 
-1. Prototype in `src/engine/WebGLRenderer.ts` when Playwright or manual screenshots need visible pixels.
+1. Prototype in `src/engine/webgl/` (GLSL in `webgl/shaders/`, pass logic in `WebGLLayerPass`, `WebGLCompositorPass`, etc.) when Playwright or manual screenshots need visible pixels.
 2. Keep uniform names and state fields close to the WebGPU equivalents.
-3. Port final logic to `src/engine/shaders.ts` and, when needed, `src/engine/WebGPUPipelines.ts`.
+3. Port final logic to `src/engine/shaders/` and, when needed, `src/engine/WebGPUPipelines.ts`.
 4. Verify `npm run build` and `npm run lint`.
 5. Smoke both `?renderer=webgl` and `?renderer=webgpu` when the environment supports WebGPU.
 

@@ -2,59 +2,23 @@ import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { effectiveLayerScaleForMultiView, multiViewPerformanceNote } from '../engine/compareViews';
 import { isOverlayImageSourceAvailable } from '../engine/overlayImageSource';
 import { isWasmReady } from '../engine/WasmEngine';
-import { DEFAULT_FPS } from '../state/defaults';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
+import type { WebXrControls } from './useWebXr';
+import type {
+  AppUIProps,
+  AppUiHandlerBundle,
+  KioskControls,
+} from '../components/AppUI.types';
 
-interface HandlerBundle {
-  selectSourceIndex: (index: number) => void;
-  handleAngleChange: (layer: 0 | 1 | 2, angle: number) => void;
-  handleExtensionChange: (layer: 0 | 1 | 2, extension: number) => void;
-  handleReset: () => void;
-  handleLoadSpecificImage: (url: string, label?: string) => Promise<void>;
-  handleLoadFile: (file: File) => void;
-  handleLoadReferenceImage: (url: string, label?: string) => void;
-  handleLoadReferenceFile: (file: File) => void;
-  handleDropFiles: (files: File[]) => Promise<void>;
-  handleClearLocalLibrary: () => Promise<void>;
-  swapSourceAndReference: () => void;
-  handleFreezeInspect: () => void;
-  handleUpscaleSource: () => Promise<void>;
-  handleUpscaleOutput: () => Promise<void>;
-  handleExportTracer: () => Promise<void>;
-  exportingVideo: boolean;
-  videoExportProgress: number;
-  videoExportSettings: import('../state/types').VideoExportSettings;
-  codecSupport: import('../engine/videoExport/videoCodecs').VideoCodecSupport;
-  handleExportVideo: () => Promise<void>;
-  handleCancelVideoExport: () => void;
-  onVideoExportDurationChange: (seconds: number) => void;
-  onVideoExportFpsChange: (fps: number) => void;
-  onVideoExportScaleChange: (scale: number) => void;
-  onVideoExportIncludeTracersChange: (include: boolean) => void;
-  onVideoExportPassModeChange: (mode: import('../engine/types/RendererContracts').ExportPassMode) => void;
-  onVideoExportFilenameChange: (filename: string) => void;
-  onVideoExportUsePresetAnglesChange: (usePreset: boolean) => void;
-  builtinPresets: readonly import('../state/presetGallery').BuiltinPreset[];
-  savedPresets: import('../state/presetLibrary').StoredPreset[];
-  presetStatus: string | null;
-  presetError: string | null;
-  handleSavePreset: (name: string) => void;
-  handleLoadPreset: (name: string) => void;
-  handleDeletePreset: (name: string) => void;
-  handleApplyBuiltinPreset: (id: string) => void;
-  handleCompareWithBuiltin: (id: string) => void;
-  handleCompareWithSaved: (name: string) => void;
-  handleCopyPresetUrl: () => void;
-  handleExportPresetFile: () => void;
-  handleImportPresetFile: (file: File) => void;
-}
+export type { AppUiHandlerBundle } from '../components/AppUI.types';
 
 export function useAppUiProps(
   refs: ChromashiftRefs,
   store: ChromashiftStore,
-  handlers: HandlerBundle,
-  kiosk: { isFullscreen: boolean; toggleFullscreen: () => Promise<void> },
-) {
+  handlers: AppUiHandlerBundle,
+  kiosk: KioskControls,
+  webxr: WebXrControls,
+): AppUIProps {
   const { state, actions } = store;
   const { media, layers, tracers, output, engine, ui, reactive } = state;
 
@@ -103,7 +67,6 @@ export function useAppUiProps(
     showCanvasMainView,
     isPaused: engine.paused,
     mainViewMode: output.mainViewMode,
-    MAIN_VIEW_MODES,
     showImageOverlay,
     overlayImageSource,
     overlayPhotoImage,
@@ -114,7 +77,6 @@ export function useAppUiProps(
     previewSeparatedRef: refs.previewSeparatedRef,
     overlaySeparatedRef: refs.overlaySeparatedRef,
     gpuError: engine.gpuError,
-    gpuReady: engine.gpuReady,
     rendererBackend: engine.backend,
     rendererFallbackReason: engine.fallbackReason,
     webglDebugMode: output.webglDebugMode,
@@ -123,7 +85,7 @@ export function useAppUiProps(
     isAutoPlayActive: ui.isAutoPlayActive,
     setIsAutoPlayActive: actions.setIsAutoPlayActive,
     isImageStripOpen: ui.isImageStripOpen,
-    setIsImageStripOpen: actions.setIsImageStripOpen,
+    toggleImageStrip: actions.toggleImageStrip,
     imageList: media.imageList,
     currentImageIndex: media.currentIndex,
     selectSourceIndex: handlers.selectSourceIndex,
@@ -140,7 +102,6 @@ export function useAppUiProps(
     handleFreezeInspect: handlers.handleFreezeInspect,
     tracerInspectZoom: output.tracerInspect.zoom,
     setTracerInspectZoom: actions.setTracerInspectZoom,
-    tracerInspectPan: output.tracerInspect.pan,
     tracerInspectHeatmap: output.tracerInspect.heatmap,
     setTracerInspectHeatmap: actions.setTracerInspectHeatmap,
     tracerInspectExposure: output.tracerInspect.exposure,
@@ -193,7 +154,6 @@ export function useAppUiProps(
     handleExtensionChange: handlers.handleExtensionChange,
     frameRate: engine.fps,
     setFrameRate: actions.setFrameRate,
-    DEFAULT_FPS,
     layerOpacity: layers.opacity,
     setLayerOpacity: actions.setLayerOpacity,
     layerOpacities: layers.opacities,
@@ -261,6 +221,14 @@ export function useAppUiProps(
     engineMode: engine.engineMode,
     setEngineMode: actions.setEngineMode,
     wasmAvailable: engine.wasmAvailable,
+    xrAvailable: webxr.xrAvailable,
+    xrReason: webxr.xrReason,
+    xrImmersive: webxr.xrImmersive,
+    xrBusy: webxr.xrBusy,
+    xrError: webxr.xrError,
+    xrEnterAllowed: webxr.xrEnterAllowed,
+    onEnterXr: () => { void webxr.enterXr(); },
+    onExitXr: webxr.exitXr,
     specificImageError: media.specificError,
     renderCpuTiming: ui.renderCpuTiming,
     avgLuminance: engine.avgLuminance,
@@ -280,10 +248,7 @@ export function useAppUiProps(
     setSpecificImageError: actions.setSpecificImageError,
     kioskEnabled: ui.kioskEnabled,
     kioskUiHidden: ui.kioskUiHidden,
-    kioskAttractMode: ui.kioskAttractMode,
     shortcutsOverlayVisible: ui.shortcutsOverlayVisible,
-    setKioskUiHidden: actions.setKioskUiHidden,
-    setKioskAttractMode: actions.setKioskAttractMode,
     setShortcutsOverlayVisible: actions.setShortcutsOverlayVisible,
     kioskFullscreen: kiosk.isFullscreen,
     toggleKioskFullscreen: kiosk.toggleFullscreen,
