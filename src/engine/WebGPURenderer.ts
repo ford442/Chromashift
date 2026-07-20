@@ -314,7 +314,13 @@ export class WebGPURenderer {
     if (!this.currentTexture) return;
     const renderStart = performance.now();
 
-    const canvasTex = this.context.getCurrentTexture();
+    let canvasTex: GPUTexture;
+    try {
+      canvasTex = this.context.getCurrentTexture();
+    } catch (error) {
+      console.warn('[WebGPURenderer] Canvas texture unavailable:', error);
+      return;
+    }
     this.layerScale = state.layerScale ?? 1.0;
     this.tracerScale = state.tracerScale ?? 1.0;
     this.ensureTextures(canvasTex.width, canvasTex.height);

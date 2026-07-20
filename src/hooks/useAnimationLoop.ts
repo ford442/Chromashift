@@ -26,6 +26,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
     lastAngleSyncRef,
     lastRenderMetricSyncRef,
     rendererRef,
+    orchestratorRef,
     renderStateRef,
     capturePreviewAfterRender,
     pendingPreviewTargetsRef,
@@ -97,6 +98,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
         }
         const xrImmersive = isXrImmersiveActive();
         if (!xrImmersive) {
+          orchestratorRef.current?.reconfigureIfNeeded();
           rendererRef.current?.render(buildRendererState(current, angles, renderOverrides));
         }
 
@@ -215,7 +217,6 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
       if (animFrame !== null) cancelAnimationFrame(animFrame);
     };
   }, [
-    store,
     actions,
     gpuReady,
     frameRate,
@@ -227,6 +228,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
     lastAngleSyncRef,
     lastRenderMetricSyncRef,
     rendererRef,
+    orchestratorRef,
     renderStateRef,
     capturePreviewAfterRender,
     pendingPreviewTargetsRef,
