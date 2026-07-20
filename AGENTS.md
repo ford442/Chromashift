@@ -182,6 +182,22 @@ Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser
 
 Both are disabled while viewing the full-res tracer or any non-composite view mode.
 
+### Preview strip & view hierarchy
+
+The floating **Original / Separated / Tracer** thumbnails (`PreviewStrip.tsx`) are
+**stationary reference frames** at panel preset angles (`layers.angles`). Only the
+**main viewport canvas** (`mainCanvasRef`) animates layer rotation.
+
+| Preview | Objective | Implementation |
+|---------|-----------|----------------|
+| **Original** | Raw decoded source | 2D `drawImage` (`previewOriginalRef`) |
+| **Separated** | Colour-band mapping, no tracers | `StationaryPreviewRenderer` / `useStationaryPreviews` |
+| **Tracer** | Coincidence map at preset angles | Isolated persistence warmup + tracers pass (`previewTracerRef`) |
+| **Main canvas** | Live rotating composite + tracers | `mainCanvasRef` swapchain render |
+
+Full spec: **[docs/PREVIEW_VIEWS.md](docs/PREVIEW_VIEWS.md)**. Compare layouts:
+**[docs/COMPARE_VIEWS.md](docs/COMPARE_VIEWS.md)**.
+
 ### Video Export
 
 `src/engine/videoExport/` renders offline frames (independent of the live canvas/animation loop) to produce a WebM or PNG-sequence export at a configurable duration, FPS, resolution scale, and pass mode (composite/tracers/layers). Driven by `useVideoExport.ts` + `ExportPanel.tsx`. See `docs/VIDEO_EXPORT.md`.

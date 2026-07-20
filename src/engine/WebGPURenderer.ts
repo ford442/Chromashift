@@ -15,6 +15,8 @@ import { CompositorPass } from './CompositorPass';
 import { TracerInspectPass } from './TracerInspectPass';
 import { GpuReadback } from './GpuReadback';
 import { GpuTimestampProfiler, publishGpuTimestampBreadcrumbs } from './GpuTimestampProfiler';
+import { StationaryPreviewRenderer } from './StationaryPreviewRenderer';
+import type { StationaryPreviewOptions, StationaryPreviewResult } from './stationaryPreview';
 import type { ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, GpuRenderTiming, RenderTiming } from './types/RendererContracts';
 import { EMPTY_GPU_RENDER_TIMING } from './types/RendererContracts';
 import type { CollisionStats, RendererState } from './types/RendererState';
@@ -77,6 +79,7 @@ export class WebGPURenderer {
   private readonly readback: GpuReadback;
   private readonly gpuProfiler: GpuTimestampProfiler | null;
   private readonly compositorSampler: GPUSampler;
+  private readonly stationaryPreview: StationaryPreviewRenderer;
   private readonly layerBindGroupCache = createLayerBindGroupCache(3);
 
   private lastRenderCpuMs = 0;
@@ -124,6 +127,13 @@ export class WebGPURenderer {
     this.compositor = new CompositorPass(device, this.pipelines, this.compositorSampler);
     this.tracerInspect = new TracerInspectPass(device, this.pipelines, this.compositorSampler);
     this.readback = new GpuReadback(device, format, this.pipelines);
+    this.stationaryPreview = new StationaryPreviewRenderer(
+      device,
+      this.pipelines,
+      this.internalFormat,
+      format,
+      this.compositorSampler,
+    );
     this.gpuProfiler = GpuTimestampProfiler.create(device);
     publishGpuTimestampBreadcrumbs(
       this.gpuProfiler !== null,
@@ -194,11 +204,13 @@ export class WebGPURenderer {
 
   setTexture(texture: unknown): void {
     this.currentTexture = texture as GPUTexture;
+    this.stationaryPreview.setSourceTexture(this.currentTexture);
     invalidateLayerBindGroupCache(this.layerBindGroupCache);
   }
 
   setClassificationMaskTexture(texture: GPUTexture | null): void {
     this.classificationMaskTexture = texture;
+    this.stationaryPreview.setMaskTexture(texture);
     for (const entry of this.layerBindGroupCache) {
       entry.bindGroup = null;
       entry.maskTexture = null;
@@ -232,8 +244,16 @@ export class WebGPURenderer {
     return this.persistence.aboveTextures[this.persistence.pingPong];
   }
 
+  /** @deprecated Side previews use {@link renderStationaryPreviews}. Kept for collision-stats blit path. */
   requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean {
     return this.readback.requestPreviewReadback(callback);
+  }
+
+  async renderStationaryPreviews(
+    state: RendererState,
+    options?: StationaryPreviewOptions,
+  ): Promise<StationaryPreviewResult> {
+    return this.stationaryPreview.render(state, options);
   }
 
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean {
@@ -589,6 +609,7 @@ export class WebGPURenderer {
     this.compositor.destroy();
     this.tracerInspect.destroy();
     this.readback.destroy();
+    this.stationaryPreview.destroy();
     this.gpuProfiler?.destroy();
     this.fallbackMaskTexture.destroy();
   }

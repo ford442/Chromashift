@@ -16,7 +16,9 @@ import { WebGLDebugPasses } from './WebGLDebugPasses';
 import { WebGLLayerPass } from './WebGLLayerPass';
 import { WebGLPersistencePass } from './WebGLPersistencePass';
 import { WebGLReadback } from './WebGLReadback';
+import { WebGLStationaryPreviewRenderer } from './WebGLStationaryPreviewRenderer';
 import { createTarget, destroyTarget, type RenderTarget } from './resources';
+import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { WebGLRenderViewport } from './types';
 
 export type { WebGLRenderViewport } from './types';
@@ -48,6 +50,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
   private readonly persistencePass: WebGLPersistencePass;
   private readonly compositorPass: WebGLCompositorPass;
   private readonly readback: WebGLReadback;
+  private readonly stationaryPreview: WebGLStationaryPreviewRenderer;
   private currentTexture: WebGLImageTexture | null = null;
   private lastCpuMs = 0;
   private avgCpuMs = 0;
@@ -60,6 +63,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.persistencePass = new WebGLPersistencePass(gl);
     this.compositorPass = new WebGLCompositorPass(gl);
     this.readback = new WebGLReadback(gl);
+    this.stationaryPreview = new WebGLStationaryPreviewRenderer(gl);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.BLEND);
@@ -70,6 +74,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
       throw new Error('WebGLRenderer expected a WebGLImageTexture.');
     }
     this.currentTexture = texture;
+    this.stationaryPreview.setSourceTexture(texture);
     this.clearPersistence();
   }
 
@@ -85,6 +90,14 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.persistencePass.clear();
   }
 
+  async renderStationaryPreviews(
+    state: RendererState,
+    options?: StationaryPreviewOptions,
+  ): Promise<StationaryPreviewResult> {
+    return this.stationaryPreview.render(state, options);
+  }
+
+  /** @deprecated Side previews use {@link renderStationaryPreviews}. */
   requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean {
     return this.readback.requestPreviewReadback(callback);
   }
@@ -195,6 +208,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
 
   destroy(): void {
     this.readback.destroy();
+    this.stationaryPreview.destroy();
     this.layerPass.destroy();
     this.persistencePass.destroy();
     this.compositorPass.destroy();

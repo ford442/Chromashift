@@ -21,6 +21,9 @@ Exported files download as WebM (VP9/VP8) or MP4 (H.264) depending on browser su
 
 Disable **Tracers On** to force a layers-only composite regardless of pass mode.
 
+Side previews ([PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md)) should use the same pass modes at
+**preset angles** (`layers.angles`): Separated → `layers`, Tracer → `tracers`.
+
 ## Determinism
 
 Given the same:

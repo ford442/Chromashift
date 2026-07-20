@@ -6,10 +6,10 @@ export function useTracerInspectInteraction(refs: ChromashiftRefs, store: Chroma
   const { state, actions } = store;
   const { paused } = state.engine;
   const { mainViewMode } = state.output;
-  const { previewTracerRef, tracerDragRef, renderStateRef } = refs;
+  const { mainCanvasRef, tracerDragRef, renderStateRef } = refs;
 
   useEffect(() => {
-    const canvas = previewTracerRef.current;
+    const canvas = mainCanvasRef.current;
     if (!canvas || !paused || mainViewMode !== MAIN_VIEW_MODES.FULL_RES_TRACER) return;
 
     const clampPan = (x: number, y: number, zoom: number) => {
@@ -93,5 +93,5 @@ export function useTracerInspectInteraction(refs: ChromashiftRefs, store: Chroma
       window.removeEventListener('keydown', handleKeyDown);
       tracerDragRef.current = null;
     };
-  }, [previewTracerRef, tracerDragRef, renderStateRef, actions, paused, mainViewMode]);
+  }, [mainCanvasRef, tracerDragRef, renderStateRef, actions, paused, mainViewMode]);
 }

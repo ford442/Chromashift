@@ -8,7 +8,7 @@ import { listLocalImages } from '../engine/LocalLibrary';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
 
 export interface UseAppWebGPUInitProps {
-  previewTracerRef: MutableRefObject<HTMLCanvasElement | null>;
+  mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
   antialiasEnabled: boolean;
   setGpuError: (err: GpuRuntimeError | null) => void;
   orchestratorRef: MutableRefObject<RendererOrchestrator | null>;
@@ -128,7 +128,7 @@ function loadPreviewImage(url: string, signal: AbortSignal): Promise<HTMLImageEl
 }
 
 export function useAppWebGPUInit({
-  previewTracerRef,
+  mainCanvasRef,
   antialiasEnabled,
   setGpuError,
   orchestratorRef,
@@ -159,7 +159,7 @@ export function useAppWebGPUInit({
     signal: AbortSignal,
     liveOrchestrator: { current: RendererOrchestrator | null },
   ): Promise<void> => {
-    const canvas = previewTracerRef.current;
+    const canvas = mainCanvasRef.current;
     if (!canvas) return;
 
     let orchestrator: RendererOrchestrator | null = null;
@@ -355,7 +355,7 @@ export function useAppWebGPUInit({
     setGpuReady,
     setSpecificImageError,
     setGpuError,
-    previewTracerRef,
+    mainCanvasRef,
     ownedObjectUrlsRef,
     sourceTextureRef,
   ]);

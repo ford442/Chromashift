@@ -3,7 +3,7 @@ import type { PreviewStripProps } from './AppUI.types';
 export function PreviewStrip({
   previewOriginalRef,
   previewSeparatedRef,
-  canvasRef,
+  previewTracerRef,
   tracerPreviewFrozen,
   setTracerPreviewFrozen,
   livePreviewEnabled,
@@ -33,13 +33,13 @@ export function PreviewStrip({
 
       <div className="absolute bottom-3 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
-          ref={canvasRef}
+          ref={previewTracerRef}
           width={300}
           height={300}
           style={{ display: 'block', width: '300px', height: '300px', imageRendering: 'pixelated' }}
         />
         <div className="flex items-center justify-between px-2 py-1">
-          <span className="text-xs text-amber-400 font-mono">Composite</span>
+          <span className="text-xs text-amber-400 font-mono">Tracer</span>
           <div className="flex items-center gap-1">
             <button
               onClick={() => setTracerPreviewFrozen(!tracerPreviewFrozen)}
@@ -59,7 +59,7 @@ export function PreviewStrip({
                   ? 'bg-amber-700 hover:bg-amber-600 text-amber-100'
                   : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
               }`}
-              title={livePreviewEnabled ? 'Disable live thumbnail updates' : 'Enable live thumbnail updates'}
+              title={livePreviewEnabled ? 'Disable tracer thumbnail refresh' : 'Enable tracer thumbnail refresh'}
             >
               {livePreviewEnabled ? 'Preview On' : 'Preview Off'}
             </button>

@@ -6,7 +6,7 @@ import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
   const { state, actions } = store;
-  const { rendererRef, previewTracerRef, animAnglesRef } = refs;
+  const { rendererRef, mainCanvasRef, animAnglesRef } = refs;
   const abortRef = useRef<AbortController | null>(null);
 
   const codecSupport = useMemo(() => detectVideoCodecSupport(), []);
@@ -20,7 +20,7 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
     if (!renderer || state.ui.exportingVideo) return;
 
     const settings = state.ui.videoExportSettings;
-    const mainCanvas = previewTracerRef.current;
+    const mainCanvas = mainCanvasRef.current;
     const baseWidth = Math.max(1, Math.round(mainCanvas?.width ?? 1024));
     const baseHeight = Math.max(1, Math.round(mainCanvas?.height ?? 1024));
 
@@ -62,7 +62,7 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
       actions.setIsAutoPlayActive(wasAutoPlay);
       actions.setIsPaused(wasPaused);
     }
-  }, [rendererRef, previewTracerRef, animAnglesRef, state, actions]);
+  }, [rendererRef, mainCanvasRef, animAnglesRef, state, actions]);
 
   const patchVideoExportSettings = actions.patchVideoExportSettings;
 

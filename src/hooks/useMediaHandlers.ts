@@ -222,7 +222,7 @@ export function useUpscalerHandlers(
     engineModeRef,
     capturePreviewAfterRender: capturePreviewAfterRenderRef,
     previewOriginalRef,
-    previewTracerRef,
+    mainCanvasRef,
   } = refs;
 
   const parseUpscaleModel = useCallback((value: string): UpscaleModel => {
@@ -328,7 +328,7 @@ export function useUpscalerHandlers(
   ]);
 
   const handleUpscaleOutput = useCallback(async () => {
-    if (!previewTracerRef.current) return;
+    if (!mainCanvasRef.current) return;
     if (upscalerRef.current?.isBusy()) return;
 
     upscalerRef.current ??= new Upscaler();
@@ -337,7 +337,7 @@ export function useUpscalerHandlers(
     actions.setUpscaleInfo('Capturing canvas…');
 
     try {
-      const canvas = previewTracerRef.current;
+      const canvas = mainCanvasRef.current;
       const scratch = document.createElement('canvas');
       scratch.width = canvas.width;
       scratch.height = canvas.height;
@@ -373,7 +373,7 @@ export function useUpscalerHandlers(
     } finally {
       actions.setUpscaleBusy(false);
     }
-  }, [previewTracerRef, upscalerRef, ui.upscaleModel, actions, parseUpscaleModel]);
+  }, [mainCanvasRef, upscalerRef, ui.upscaleModel, actions, parseUpscaleModel]);
 
   return { handleUpscaleSource, handleUpscaleOutput };
 }
@@ -383,14 +383,14 @@ export function useTracerExport(
   store: ChromashiftStore,
 ) {
   const { state, actions } = store;
-  const { rendererRef, previewTracerRef } = refs;
+  const { rendererRef, mainCanvasRef } = refs;
 
   const handleExportTracer = useCallback(async () => {
     const renderer = rendererRef.current;
     if (!renderer || state.ui.exportingTracer) return;
     actions.setExportingTracer(true);
     try {
-      const mainCanvas = previewTracerRef.current;
+      const mainCanvas = mainCanvasRef.current;
       const baseWidth = Math.max(1, Math.round(mainCanvas?.width ?? 2048));
       const baseHeight = Math.max(1, Math.round(mainCanvas?.height ?? 2048));
       const longestEdge = Math.max(baseWidth, baseHeight);
@@ -437,7 +437,7 @@ export function useTracerExport(
     } finally {
       actions.setExportingTracer(false);
     }
-  }, [rendererRef, previewTracerRef, state, actions]);
+  }, [rendererRef, mainCanvasRef, state, actions]);
 
   return { handleExportTracer };
 }

@@ -60,7 +60,7 @@ export function useAppUiProps(
   return {
     containerRef: refs.containerRef,
     mainViewportRef: refs.mainViewportRef,
-    previewTracerRef: refs.previewTracerRef,
+    mainCanvasRef: refs.mainCanvasRef,
     photoModeImage,
     isReferenceCompareMode,
     referenceImage: media.reference,
@@ -232,7 +232,7 @@ export function useAppUiProps(
     specificImageError: media.specificError,
     renderCpuTiming: ui.renderCpuTiming,
     avgLuminance: engine.avgLuminance,
-    canvasRef: refs.canvasRef,
+    previewTracerRef: refs.previewTracerRef,
     setTracerPreviewFrozen: actions.setTracerPreviewFrozen,
     tracerPreviewFrozen: output.tracerPreviewFrozen,
     setLivePreviewEnabled: actions.setLivePreviewEnabled,

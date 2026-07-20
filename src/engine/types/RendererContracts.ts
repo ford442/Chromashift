@@ -1,5 +1,6 @@
 import type { CollisionStats, RendererState } from './RendererState';
 import type { ImageEntry } from '../TextureManager';
+import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 
@@ -78,6 +79,12 @@ export interface ChromashiftRenderer {
   setAntialiasing(enabled: boolean): void;
   clearPersistence(): void;
   render(state: RendererState, fps?: number): void;
+  /** Stationary side previews at panel preset angles (Original/Separated/Tracer strip). */
+  renderStationaryPreviews(
+    state: RendererState,
+    options?: StationaryPreviewOptions,
+  ): Promise<StationaryPreviewResult>;
+  /** @deprecated Side previews use {@link renderStationaryPreviews}. */
   requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean;
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean;
   getRenderTiming(): RenderTiming;

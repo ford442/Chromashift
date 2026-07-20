@@ -71,12 +71,12 @@ export interface KioskControls {
 export interface AppUIRefsProps {
   containerRef: RefObject<HTMLDivElement | null>;
   mainViewportRef: RefObject<HTMLDivElement | null>;
-  previewTracerRef: RefObject<HTMLCanvasElement | null>;
+  mainCanvasRef: RefObject<HTMLCanvasElement | null>;
   canvasBRef: RefObject<HTMLCanvasElement | null>;
   previewOriginalRef: RefObject<HTMLCanvasElement | null>;
   previewSeparatedRef: RefObject<HTMLCanvasElement | null>;
   overlaySeparatedRef: RefObject<HTMLCanvasElement | null>;
-  canvasRef: RefObject<HTMLCanvasElement | null>;
+  previewTracerRef: RefObject<HTMLCanvasElement | null>;
   rendererRef: ChromashiftRefs['rendererRef'];
 }
 
@@ -310,7 +310,7 @@ export type AppUIProps =
 
 export type MainViewportProps = Pick<
   AppUIRefsProps,
-  'mainViewportRef' | 'previewTracerRef' | 'canvasBRef' | 'overlaySeparatedRef'
+  'mainViewportRef' | 'mainCanvasRef' | 'canvasBRef' | 'overlaySeparatedRef'
 > &
   Pick<
     AppUIMainViewportProps,
@@ -332,7 +332,7 @@ export type MainViewportProps = Pick<
 
 export type PreviewStripProps = Pick<
   AppUIRefsProps,
-  'previewOriginalRef' | 'previewSeparatedRef' | 'canvasRef'
+  'previewOriginalRef' | 'previewSeparatedRef' | 'previewTracerRef'
 > &
   Pick<
     AppUIPreviewStripProps,

@@ -1,16 +1,18 @@
 # Compare & Multi-View Layouts
 
-Researchers comparing CR0P bands, tracer modes, and blend modes need **side-by-side** views without screenshot juggling. This document defines the planned layout modes, how they map to today's codebase, and the implementation order.
+Researchers comparing CR0P bands, tracer modes, and blend modes need **side-by-side** views without screenshot juggling. This document defines layout modes, how they map to today's codebase, and the implementation order.
 
-**Status:** planned (after renderer pass modularization and preset plumbing are stable). Foundation types live in `src/engine/compareViews.ts`.
+**View objectives** (which views rotate vs stay stationary) are defined in [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md). Quad reference cells follow the same stationary rules as the preview strip; only the composite cell animates.
+
+**Status:** dual 2-up is shipped; swipe and quad remain planned. Foundation types live in `src/engine/compareViews.ts`.
 
 ## Layout concepts
 
 | Mode | Description | Primary use |
 |------|-------------|-------------|
-| **Single** | Current default — one main canvas + optional reference overlay | Production / kiosk |
-| **Dual (2-up)** | Same source image, two independent `RendererState`s (preset A vs B) | A/B tracer or blend comparison |
-| **Quad** | Original \| Layers \| Tracer \| Composite in one grid | Promote today's preview strip to first-class layout |
+| **Single** | Current default — one **rotating** main canvas + stationary preview strip | Production / kiosk |
+| **Dual (2-up)** | Same source image, two independent `RendererState`s (preset A vs B), **both rotating** | A/B tracer or blend comparison in motion |
+| **Quad** | Original \| Layers \| Tracer \| Composite — three stationary cells + one live composite | Promote today's preview strip to first-class layout ([PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md)) |
 | **Swipe / split** | Generalize reference `split` blend to preset A \| preset B | Quick swipe between two full composites |
 
 ### Animation clocks
@@ -28,11 +30,14 @@ Image selection and autoplay remain **shared** (one corpus index); only render p
 |----------------|----------|----------------------|
 | Reference split overlay | `AppUI.tsx` + `ui.referenceBlendMode === 'split'` | Pattern for 50/50 viewport clip |
 | Compare composite pass | `TracerInspectPass` + `compareFragmentSource` | `MAIN_VIEW_MODES.COMPARE_*` — source vs composite in **one** renderer |
-| Preview strip (Original / Separated / Composite) | `previewOriginalRef`, `previewSeparatedRef`, `canvasRef` + throttled readback | Quad layout replaces floating previews with equal grid cells |
+| Preview strip (Original / Separated / Tracer) | `previewOriginalRef`, `previewSeparatedRef`, `canvasRef` — see [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md) | Stationary reference frames; quad promotes them to equal grid cells (only composite cell rotates) |
 | Preset snapshots | `serializeSettings` / `ChromashiftSettingsInput` | Slot A/B settings bags |
 | `buildRendererState()` | `src/engine/buildRendererState.ts` | Call once per slot with different `ChromashiftState` overlays |
 
-**Gap:** all of the above share **one** `ChromashiftRenderer` and one animation loop. Dual/quad requires **N render targets per frame** (or N renderer instances on one `GPUDevice`).
+**Gaps:**
+
+- Preview strip Separated/Tracer thumbnails still mirror the live compositor at animation angles — see implementation checklist in [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md).
+- Swipe and quad layouts are not fully shipped. Dual uses two `WebGPURenderer` instances on one `GPUDevice`; quad will need up to four render targets per frame.
 
 ## Technical design
 
@@ -123,8 +128,9 @@ Readback / collision stats: **slot A only** (or disable in multi-view).
 
 ### Phase 3 — Quad grid
 
+- [ ] Align preview strip with [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md) (preset-angle Separated + Tracer readbacks) before or alongside quad
 - [ ] Replace floating previews when quad active
-- [ ] Fixed cells: Original, Layer 0 (or cycle), Tracer, Composite
+- [ ] Fixed cells per `QUAD_VIEW_CELLS`: Original, Layer 0 (or cycle), Tracer — **stationary**; Composite — **live rotation only**
 - [ ] Optional: per-cell diagnostic mode
 
 ### Phase 4 — Research
@@ -144,6 +150,7 @@ Same browser guidance as [gpu-bootstrap.md](./gpu-bootstrap.md). Use Diagnostics
 
 ## Related docs
 
+- [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md) — stationary vs rotating view objectives (canonical)
 - [PRESETS.md](./PRESETS.md) — slot A/B preset payloads
 - [webgl-fallback.md](./webgl-fallback.md) — WebGL may not support dual GPU path
 - [KIOSK.md](./KIOSK.md) — incompatible with multi-view until explicitly supported

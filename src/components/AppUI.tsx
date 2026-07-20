@@ -11,12 +11,12 @@ export function AppUI(props: AppUIProps) {
   const {
     containerRef,
     mainViewportRef,
-    previewTracerRef,
+    mainCanvasRef,
     canvasBRef,
     overlaySeparatedRef,
     previewOriginalRef,
     previewSeparatedRef,
-    canvasRef,
+    previewTracerRef,
     photoModeImage,
     isReferenceCompareMode,
     referenceImage,
@@ -127,7 +127,7 @@ export function AppUI(props: AppUIProps) {
 
       <MainViewport
         mainViewportRef={mainViewportRef}
-        previewTracerRef={previewTracerRef}
+        mainCanvasRef={mainCanvasRef}
         canvasBRef={canvasBRef}
         overlaySeparatedRef={overlaySeparatedRef}
         photoModeImage={photoModeImage}
@@ -150,7 +150,7 @@ export function AppUI(props: AppUIProps) {
         <PreviewStrip
           previewOriginalRef={previewOriginalRef}
           previewSeparatedRef={previewSeparatedRef}
-          canvasRef={canvasRef}
+          previewTracerRef={previewTracerRef}
           tracerPreviewFrozen={tracerPreviewFrozen}
           setTracerPreviewFrozen={setTracerPreviewFrozen}
           livePreviewEnabled={livePreviewEnabled}

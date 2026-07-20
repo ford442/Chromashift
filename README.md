@@ -227,7 +227,7 @@ as of the 2026-07 audit — all foundation work through **#92** is closed.
 | Status | Highlights |
 |--------|------------|
 | **Shipped** | Lazy upscaler workers, local IndexedDB library, GPU perf HUD, audio-reactive + MIDI panel, desktop kiosk (`?kiosk=1`) — see [KIOSK.md](docs/KIOSK.md) |
-| **Next feature** | [Compare / multi-view layouts](docs/COMPARE_VIEWS.md) ([#87](https://github.com/ford442/Chromashift/issues/87)) — dual 2-up, quad grid, swipe split |
+| **Next feature** | [Preview strip alignment](docs/PREVIEW_VIEWS.md) (stationary Separated/Tracer); [Compare / multi-view](docs/COMPARE_VIEWS.md) ([#87](https://github.com/ford442/Chromashift/issues/87)) — dual shipped, quad/swipe planned |
 | **Research** | WebXR / immersive surround ([#85](https://github.com/ford442/Chromashift/issues/85)); deeper C++ WASM offline composite ([#86](https://github.com/ford442/Chromashift/issues/86)) |
 
 Full per-issue detail and file pointers: **[docs/ROADMAP.md](docs/ROADMAP.md)**.

@@ -1,9 +1,8 @@
 /**
  * Multi-view comparison layout types and GPU budget helpers.
  *
- * Full dual/quad rendering is not wired yet — see docs/COMPARE_VIEWS.md for the
- * implementation plan. These exports are the shared contract future UI and
- * render orchestration should use.
+ * View objectives (stationary previews vs rotating main canvas): docs/PREVIEW_VIEWS.md
+ * Layout rollout (dual shipped, swipe/quad planned): docs/COMPARE_VIEWS.md
  */
 
 import type { ChromashiftSettingsInput } from '../state/chromashiftReducer';
@@ -41,6 +40,7 @@ export const MULTI_VIEW_LAYER_SCALE_FACTORS: Record<CompareLayoutMode, number> =
   swipe: 0.85,
 };
 
+/** Quad grid cells — first three are stationary; only Composite animates (see docs/PREVIEW_VIEWS.md). */
 export const QUAD_VIEW_CELLS: ReadonlyArray<{
   id: CompareSlotConfig['id'];
   label: string;

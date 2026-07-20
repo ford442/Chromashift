@@ -3,7 +3,7 @@ import type { MainViewportProps } from './AppUI.types';
 
 export function MainViewport({
   mainViewportRef,
-  previewTracerRef,
+  mainCanvasRef,
   canvasBRef,
   overlaySeparatedRef,
   photoModeImage,
@@ -27,7 +27,7 @@ export function MainViewport({
       style={{ position: 'absolute' }}
     >
       <canvas
-        ref={previewTracerRef}
+        ref={mainCanvasRef}
         style={{
           position: 'absolute',
           top: 0,

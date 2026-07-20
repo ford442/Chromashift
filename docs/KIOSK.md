@@ -18,7 +18,7 @@ Combine with a shared preset and WebGPU renderer:
 
 On load:
 
-- NUNIF and peripheral previews are **hidden** for a clean canvas
+- NUNIF and peripheral previews are **hidden** for a clean canvas (see [PREVIEW_VIEWS.md](PREVIEW_VIEWS.md) — only the main canvas is shown in kiosk)
 - **Autoplay** cycles images every 10 seconds
 - **Attract mode** slowly drifts tracer intensity, stamp boost, and average luminance
 - **Pause is disabled** while chrome is hidden (rotation keeps running)

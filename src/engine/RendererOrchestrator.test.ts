@@ -21,6 +21,7 @@ function mockRenderer(): ChromashiftRenderer {
     setClassificationMaskTexture: vi.fn(),
     setAntialiasing: vi.fn(),
     getRenderTiming: vi.fn(),
+    renderStationaryPreviews: vi.fn(async () => ({ separated: null, tracer: null })),
     requestPreviewReadback: vi.fn(),
     requestCollisionStats: vi.fn(),
     exportTracerView: vi.fn(async () => null),

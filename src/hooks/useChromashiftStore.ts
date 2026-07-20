@@ -18,7 +18,7 @@ import type { ChromashiftState, LayerTriple } from '../state/types';
 import type { ReactiveModulation } from '../engine/reactive/types';
 
 export interface ChromashiftRefs {
-  canvasRef: RefObject<HTMLCanvasElement | null>;
+  previewTracerRef: RefObject<HTMLCanvasElement | null>;
   orchestratorRef: RefObject<import('../engine/RendererOrchestrator').RendererOrchestrator | null>;
   rendererRef: RefObject<import('../engine/RendererTypes').ChromashiftRenderer | null>;
   textureManagerRef: RefObject<import('../engine/RendererTypes').ChromashiftTextureManager | null>;
@@ -29,12 +29,10 @@ export interface ChromashiftRefs {
   previewOriginalRef: RefObject<HTMLCanvasElement | null>;
   previewSeparatedRef: RefObject<HTMLCanvasElement | null>;
   overlaySeparatedRef: RefObject<HTMLCanvasElement | null>;
-  previewTracerRef: RefObject<HTMLCanvasElement | null>;
+  mainCanvasRef: RefObject<HTMLCanvasElement | null>;
   upscalerRef: RefObject<import('../engine/Upscaler').Upscaler | null>;
   tracerScratchRef: RefObject<HTMLCanvasElement | null>;
   capturePreviewAfterRender: MutableRefObject<boolean>;
-  pendingPreviewTargetsRef: MutableRefObject<number>;
-  lastReadbackMsRef: MutableRefObject<number>;
   tracerDragRef: MutableRefObject<{ pointerId: number; x: number; y: number } | null>;
   animAnglesRef: MutableRefObject<LayerTriple<number>>;
   /** Compare slot B (dual layout): canvas, renderer, independent angle clock. */
@@ -58,7 +56,7 @@ export interface ChromashiftRefs {
 }
 
 export function useChromashiftRefs(): ChromashiftRefs {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewTracerRef = useRef<HTMLCanvasElement>(null);
   const orchestratorRef = useRef<import('../engine/RendererOrchestrator').RendererOrchestrator | null>(null);
   const rendererRef = useRef<import('../engine/RendererTypes').ChromashiftRenderer | null>(null);
   const textureManagerRef = useRef<import('../engine/RendererTypes').ChromashiftTextureManager | null>(null);
@@ -69,12 +67,10 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const previewOriginalRef = useRef<HTMLCanvasElement>(null);
   const previewSeparatedRef = useRef<HTMLCanvasElement>(null);
   const overlaySeparatedRef = useRef<HTMLCanvasElement>(null);
-  const previewTracerRef = useRef<HTMLCanvasElement>(null);
+  const mainCanvasRef = useRef<HTMLCanvasElement>(null);
   const upscalerRef = useRef<import('../engine/Upscaler').Upscaler | null>(null);
   const tracerScratchRef = useRef<HTMLCanvasElement | null>(null);
   const capturePreviewAfterRender = useRef(false);
-  const pendingPreviewTargetsRef = useRef(0);
-  const lastReadbackMsRef = useRef(0);
   const tracerDragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const animAnglesRef = useRef<LayerTriple<number>>([0, 0, 0]);
   const canvasBRef = useRef<HTMLCanvasElement>(null);
@@ -94,7 +90,7 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const reactiveModRef = useRef<ReactiveModulation | null>(null);
 
   return {
-    canvasRef,
+    previewTracerRef,
     orchestratorRef,
     rendererRef,
     textureManagerRef,
@@ -105,12 +101,10 @@ export function useChromashiftRefs(): ChromashiftRefs {
     previewOriginalRef,
     previewSeparatedRef,
     overlaySeparatedRef,
-    previewTracerRef,
+    mainCanvasRef,
     upscalerRef,
     tracerScratchRef,
     capturePreviewAfterRender,
-    pendingPreviewTargetsRef,
-    lastReadbackMsRef,
     tracerDragRef,
     animAnglesRef,
     canvasBRef,

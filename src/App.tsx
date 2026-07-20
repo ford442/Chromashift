@@ -22,6 +22,7 @@ import {
 } from './hooks/useMediaHandlers';
 import { usePresets } from './hooks/usePresets';
 import { useVideoExport } from './hooks/useVideoExport';
+import { useStationaryPreviews } from './hooks/useStationaryPreviews';
 import { useTracerInspectInteraction } from './hooks/useTracerInspectInteraction';
 import { useReactiveInput } from './hooks/useReactiveInput';
 import { useKioskMode } from './hooks/useKioskMode';
@@ -40,7 +41,7 @@ export default function App() {
   useCollisionStatsPoll(refs, engine.gpuReady, actions.setCollisionStats);
 
   useAppWebGPUInit({
-    previewTracerRef: refs.previewTracerRef,
+    mainCanvasRef: refs.mainCanvasRef,
     antialiasEnabled: output.antialiasEnabled,
     setGpuError: actions.setGpuError,
     orchestratorRef: refs.orchestratorRef,
@@ -71,6 +72,7 @@ export default function App() {
   useCompareSlotRenderer(refs, store);
 
   useImagePlayback({ refs, store, clearClassificationMask, generateClassificationMaskTexture });
+  useStationaryPreviews(refs, store);
   useAnimationLoop(refs, store);
   useReactiveInput(refs, store);
   useTracerInspectInteraction(refs, store);

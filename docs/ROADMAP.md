@@ -32,9 +32,11 @@ unless noted.
 
 | Target | Issue | Status | Notes |
 |--------|-------|--------|-------|
-| **Compare / multi-view** | [#87](https://github.com/ford442/Chromashift/issues/87) | 🔜 Planned | Dual 2-up, quad grid, swipe split — **not shipped**. Design: [COMPARE_VIEWS.md](COMPARE_VIEWS.md). Types/helpers: `src/engine/compareViews.ts` |
-Compare views are the primary **feature** target: side-by-side preset A/B, quad layout,
-and swipe split without screenshot juggling.
+| **Preview strip alignment** | — | ✅ Shipped | Stationary Separated + Tracer at preset angles — [PREVIEW_VIEWS.md](PREVIEW_VIEWS.md), `useStationaryPreviews.ts` |
+| **Compare / multi-view** | [#87](https://github.com/ford442/Chromashift/issues/87) | 🔜 Partial | Dual 2-up shipped; swipe + quad remain — [COMPARE_VIEWS.md](COMPARE_VIEWS.md) |
+
+Compare views are the primary **layout** target: side-by-side preset A/B, quad grid,
+and swipe split. Preview-strip pass/angle alignment should land before or with quad.
 
 ## Research
 

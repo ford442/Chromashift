@@ -1,15 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { WebGPURenderer } from '../engine/WebGPURenderer';
 import { GPU_TIMING_HISTORY_SIZE } from '../engine/GpuTimestampProfiler';
 import { buildRendererState } from '../engine/buildRendererState';
 import { advanceAngles, effectiveLayerScaleForMultiView } from '../engine/compareViews';
 import { isXrImmersiveActive } from '../engine/xr/xrSupport';
 import { applySettingsToState } from '../state/chromashiftReducer';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
-
-const PREVIEW_TARGET_LIVE = 1;
-const PREVIEW_TARGET_SEPARATED = 2;
-const PREVIEW_TARGET_OVERLAY_SEPARATED = 4;
 
 export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore): void {
   const { state, actions } = store;
@@ -28,13 +23,6 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
     rendererRef,
     orchestratorRef,
     renderStateRef,
-    capturePreviewAfterRender,
-    pendingPreviewTargetsRef,
-    lastReadbackMsRef,
-    canvasRef,
-    previewSeparatedRef,
-    overlaySeparatedRef,
-    tracerScratchRef,
     reactiveModRef,
   } = refs;
 
@@ -147,66 +135,6 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
             }
           }
         }
-
-        if (capturePreviewAfterRender.current) {
-          pendingPreviewTargetsRef.current |= PREVIEW_TARGET_SEPARATED;
-          if (renderStateRef.current.ui.overlayImageSource === 'separated') {
-            pendingPreviewTargetsRef.current |= PREVIEW_TARGET_OVERLAY_SEPARATED;
-          }
-          capturePreviewAfterRender.current = false;
-        }
-
-        const readbackIntervalMs = 1000 / 5;
-        const overlayWantsSeparated = current.ui.referenceBlendMode !== 'hidden'
-          && current.ui.overlayImageSource === 'separated';
-        const wantLiveReadback = current.output.livePreviewEnabled
-          && !current.output.tracerPreviewFrozen
-          && (now - lastReadbackMsRef.current >= readbackIntervalMs);
-        const wantOverlaySeparatedReadback = overlayWantsSeparated
-          && (now - lastReadbackMsRef.current >= readbackIntervalMs);
-        if (wantLiveReadback || wantOverlaySeparatedReadback) {
-          lastReadbackMsRef.current = now;
-          if (wantLiveReadback) {
-            pendingPreviewTargetsRef.current |= PREVIEW_TARGET_LIVE;
-          }
-          if (wantOverlaySeparatedReadback) {
-            pendingPreviewTargetsRef.current |= PREVIEW_TARGET_OVERLAY_SEPARATED;
-          }
-        }
-
-        if (pendingPreviewTargetsRef.current !== 0 && rendererRef.current) {
-          const captureTargets = pendingPreviewTargetsRef.current;
-          const thumbCanvas = canvasRef.current;
-          const previewSep = previewSeparatedRef.current;
-          const overlaySep = overlaySeparatedRef.current;
-          const sz = WebGPURenderer.PREVIEW_SIZE;
-          const queued = rendererRef.current.requestPreviewReadback((data) => {
-            let scratch = tracerScratchRef.current;
-            if (!scratch) {
-              scratch = document.createElement('canvas');
-              scratch.width = sz;
-              scratch.height = sz;
-              tracerScratchRef.current = scratch;
-            }
-            const sctx = scratch.getContext('2d');
-            if (!sctx) return;
-            sctx.putImageData(new ImageData(data, sz, sz), 0, 0);
-
-            if ((captureTargets & PREVIEW_TARGET_LIVE) !== 0 && thumbCanvas) {
-              const dctx = thumbCanvas.getContext('2d');
-              dctx?.drawImage(scratch, 0, 0, thumbCanvas.width, thumbCanvas.height);
-            }
-            if ((captureTargets & PREVIEW_TARGET_SEPARATED) !== 0 && previewSep) {
-              const dctx = previewSep.getContext('2d');
-              dctx?.drawImage(scratch, 0, 0, previewSep.width, previewSep.height);
-            }
-            if ((captureTargets & PREVIEW_TARGET_OVERLAY_SEPARATED) !== 0 && overlaySep) {
-              const dctx = overlaySep.getContext('2d');
-              dctx?.drawImage(scratch, 0, 0, overlaySep.width, overlaySep.height);
-            }
-          });
-          if (queued) pendingPreviewTargetsRef.current = 0;
-        }
       }
 
       animFrame = requestAnimationFrame(loop);
@@ -230,13 +158,6 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
     rendererRef,
     orchestratorRef,
     renderStateRef,
-    capturePreviewAfterRender,
-    pendingPreviewTargetsRef,
-    lastReadbackMsRef,
-    canvasRef,
-    previewSeparatedRef,
-    overlaySeparatedRef,
-    tracerScratchRef,
     reactiveModRef,
   ]);
 }
