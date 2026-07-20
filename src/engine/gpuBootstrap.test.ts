@@ -54,21 +54,27 @@ function mockAdapter(features: GPUFeatureName[] = []): GPUAdapter {
 }
 
 describe('deriveRequiredLimits', () => {
-  it('requests at least the canvas long edge capped by adapter', () => {
+  it('requests 8K headroom when requestHeadroom is enabled', () => {
+    const limits = mockAdapterLimits({ maxTextureDimension2D: 16384 });
+    const required = deriveRequiredLimits(limits, 1920, 1080, { requestHeadroom: true });
+    expect(required?.maxTextureDimension2D).toBe(CHROMASHIFT_TARGET_MAX_TEXTURE);
+  });
+
+  it('requests only canvas size by default (bootstrap-safe)', () => {
     const limits = mockAdapterLimits({ maxTextureDimension2D: 16384 });
     const required = deriveRequiredLimits(limits, 1920, 1080);
-    expect(required?.maxTextureDimension2D).toBe(CHROMASHIFT_TARGET_MAX_TEXTURE);
+    expect(required?.maxTextureDimension2D).toBe(1920);
   });
 
   it('never exceeds adapter maxTextureDimension2D', () => {
     const limits = mockAdapterLimits({ maxTextureDimension2D: 4096 });
-    const required = deriveRequiredLimits(limits, 7680, 4320);
+    const required = deriveRequiredLimits(limits, 7680, 4320, { requestHeadroom: true });
     expect(required?.maxTextureDimension2D).toBe(4096);
   });
 
   it('covers very large canvases up to adapter cap', () => {
     const limits = mockAdapterLimits({ maxTextureDimension2D: 16384 });
-    const required = deriveRequiredLimits(limits, 9000, 5000);
+    const required = deriveRequiredLimits(limits, 9000, 5000, { requestHeadroom: true });
     expect(required?.maxTextureDimension2D).toBe(9000);
   });
 });
@@ -79,7 +85,7 @@ describe('listAvailableOptionalFeatures', () => {
     expect(listAvailableOptionalFeatures(adapter)).toEqual(['timestamp-query']);
   });
 
-  it('feeds requestDevice requiredFeatures at bootstrap', () => {
+  it('lists multiple optional features when the adapter supports them', () => {
     const adapter = mockAdapter(['timestamp-query', 'float32-filterable']);
     expect(listAvailableOptionalFeatures(adapter)).toEqual([
       'timestamp-query',
