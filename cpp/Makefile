@@ -34,6 +34,7 @@ EMFLAGS_COMMON := \
   -msse2 \
   -fno-exceptions \
   -fno-rtti \
+  -DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s EXPORT_NAME="ChromashiftEngine" \
