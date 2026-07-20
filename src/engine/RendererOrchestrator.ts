@@ -354,7 +354,7 @@ export class RendererOrchestrator {
       canvas: primaryCanvas,
       antialias: this.antialias,
       onRuntimeError: (error) => {
-        if (!this.destroyed) {
+        if (error.kind === 'device-lost' && !this.destroyed) {
           this.destroy();
         }
         this.onRuntimeError?.(error);

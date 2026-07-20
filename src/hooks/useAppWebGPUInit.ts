@@ -192,6 +192,7 @@ export function useAppWebGPUInit({
         antialias: antialiasEnabled,
         onRuntimeError: (error) => {
           if (isCancelled(cancelToken, signal)) return;
+          if (error.kind !== 'device-lost') return;
           clearOrchestratorRefs(
             orchestratorRef,
             deviceRef,

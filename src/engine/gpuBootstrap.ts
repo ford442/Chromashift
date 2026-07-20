@@ -54,17 +54,29 @@ export interface WebGpuSession {
 
 type SupportedLimits = GPUAdapter['limits'];
 
+export interface DeriveRequiredLimitsOptions {
+  targetMaxTexture?: number;
+  /** When true, request up to 8K texture headroom; when false, only canvas size (safer for requestDevice). */
+  requestHeadroom?: boolean;
+}
+
 export function deriveRequiredLimits(
   adapterLimits: SupportedLimits,
   canvasPixelWidth: number,
   canvasPixelHeight: number,
-  targetMaxTexture = CHROMASHIFT_TARGET_MAX_TEXTURE,
+  targetMaxTextureOrOptions: number | DeriveRequiredLimitsOptions = { requestHeadroom: false },
 ): GPUDeviceDescriptor['requiredLimits'] {
+  const options = typeof targetMaxTextureOrOptions === 'number'
+    ? { targetMaxTexture: targetMaxTextureOrOptions, requestHeadroom: true }
+    : { requestHeadroom: false, ...targetMaxTextureOrOptions };
+  const targetMaxTexture = options.targetMaxTexture ?? CHROMASHIFT_TARGET_MAX_TEXTURE;
+  const requestHeadroom = options.requestHeadroom ?? false;
+
   const longestEdge = Math.max(1, canvasPixelWidth, canvasPixelHeight);
-  const maxTextureDimension2D = Math.min(
-    adapterLimits.maxTextureDimension2D,
-    Math.max(longestEdge, Math.min(targetMaxTexture, adapterLimits.maxTextureDimension2D)),
-  );
+  const desiredMax = requestHeadroom
+    ? Math.max(longestEdge, Math.min(targetMaxTexture, adapterLimits.maxTextureDimension2D))
+    : longestEdge;
+  const maxTextureDimension2D = Math.min(adapterLimits.maxTextureDimension2D, desiredMax);
 
   return {
     maxTextureDimension2D,
@@ -75,6 +87,55 @@ export function deriveRequiredLimits(
     maxColorAttachments: Math.min(adapterLimits.maxColorAttachments, 8),
     maxColorAttachmentBytesPerSample: adapterLimits.maxColorAttachmentBytesPerSample,
   };
+}
+
+export async function requestWebGpuAdapter(
+  powerPreference: GPUPowerPreference = 'high-performance',
+): Promise<GPUAdapter | null> {
+  const attempts: GPUPowerPreference[] = powerPreference === 'high-performance'
+    ? ['high-performance', 'low-power']
+    : [powerPreference, 'high-performance'];
+
+  for (const preference of attempts) {
+    const adapter = await navigator.gpu!.requestAdapter({ powerPreference: preference });
+    if (adapter) return adapter;
+  }
+
+  return navigator.gpu!.requestAdapter();
+}
+
+export async function requestWebGpuDevice(
+  adapter: GPUAdapter,
+  canvasPixelWidth: number,
+  canvasPixelHeight: number,
+  targetMaxTexture?: number,
+): Promise<GPUDevice> {
+  const canvasLimits = deriveRequiredLimits(
+    adapter.limits,
+    canvasPixelWidth,
+    canvasPixelHeight,
+    { targetMaxTexture, requestHeadroom: false },
+  );
+
+  try {
+    return await adapter.requestDevice();
+  } catch (minimalError) {
+    console.warn('[Chromashift:GPU] Default device request failed, retrying with canvas limits', minimalError);
+  }
+
+  try {
+    return await adapter.requestDevice({ requiredLimits: canvasLimits });
+  } catch (limitedError) {
+    console.warn('[Chromashift:GPU] Limited device request failed, retrying with 8K headroom', limitedError);
+  }
+
+  const headroomLimits = deriveRequiredLimits(
+    adapter.limits,
+    canvasPixelWidth,
+    canvasPixelHeight,
+    { targetMaxTexture, requestHeadroom: true },
+  );
+  return adapter.requestDevice({ requiredLimits: headroomLimits });
 }
 
 export function listAvailableOptionalFeatures(adapter: GPUAdapter): GPUFeatureName[] {
@@ -135,8 +196,11 @@ export function buildWebGpuCanvasConfiguration(
     alphaMode: 'opaque',
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     colorSpace: options?.colorSpace ?? 'srgb',
-    toneMapping: { mode: options?.toneMappingMode ?? 'standard' },
   };
+
+  if (options?.toneMappingMode) {
+    config.toneMapping = { mode: options.toneMappingMode };
+  }
 
   return config;
 }
@@ -147,7 +211,15 @@ export function configureWebGpuCanvas(
   format: GPUTextureFormat,
   options?: WebGpuCanvasOptions,
 ): void {
-  context.configure(buildWebGpuCanvasConfiguration(device, format, options));
+  try {
+    context.configure(buildWebGpuCanvasConfiguration(device, format, {
+      ...options,
+      toneMappingMode: options?.toneMappingMode ?? 'standard',
+    }));
+  } catch (error) {
+    console.warn('[Chromashift:GPU] Canvas configure with tone mapping failed, retrying without', error);
+    context.configure(buildWebGpuCanvasConfiguration(device, format, options));
+  }
 }
 
 export function attachDeviceDiagnostics(
@@ -233,9 +305,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
     throw new Error('WebGPU is not supported in this browser.');
   }
 
-  const adapter = await navigator.gpu.requestAdapter({
-    powerPreference: options.powerPreference ?? 'high-performance',
-  });
+  const adapter = await requestWebGpuAdapter(options.powerPreference ?? 'high-performance');
   if (!adapter) {
     throw new Error('No WebGPU adapter found.');
   }
@@ -246,19 +316,21 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
     adapter.limits,
     canvasPixelWidth,
     canvasPixelHeight,
-    options.targetMaxTexture,
+    { targetMaxTexture: options.targetMaxTexture, requestHeadroom: false },
   );
 
   const adapterInfo = await readAdapterInfo(adapter);
   const adapterReport = buildAdapterReport(adapterInfo, adapter);
-  const requiredFeatures = listAvailableOptionalFeatures(adapter);
   logAdapterReport(adapterReport, requiredLimits);
 
-  const device = await adapter.requestDevice({
-    requiredLimits,
-    requiredFeatures,
-  });
-  const timestampQueryAvailable = device.features.has('timestamp-query');
+  const device = await requestWebGpuDevice(
+    adapter,
+    canvasPixelWidth,
+    canvasPixelHeight,
+    options.targetMaxTexture,
+  );
+  const timestampQueryAvailable = adapter.features.has('timestamp-query')
+    && device.features.has('timestamp-query');
   const context = options.canvas.getContext('webgpu');
   if (!context) {
     device.destroy();
@@ -279,8 +351,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
       options.onRuntimeError?.(deviceLostRuntimeError(info));
     },
     onUncapturedError: (error) => {
-      console.error('[Chromashift:GPU] Uncaptured error', error);
-      options.onRuntimeError?.(uncapturedRuntimeError(error));
+      console.error('[Chromashift:GPU] Uncaptured error (rendering continues):', error);
     },
   });
 
