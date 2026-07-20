@@ -64,14 +64,33 @@ export function useCanvasResize(
 
       const dpr = Math.max(1, window.devicePixelRatio || 1);
       const canvasCssW = dual ? (cssW - 2) / 2 : cssW;
-      mainCanvasEl.width = Math.floor(canvasCssW * dpr);
-      mainCanvasEl.height = Math.floor(cssH * dpr);
+      const nextMainW = Math.floor(canvasCssW * dpr);
+      const nextMainH = Math.floor(cssH * dpr);
+
+      let gpuResizeNeeded = false;
+      if (mainCanvasEl.width !== nextMainW || mainCanvasEl.height !== nextMainH) {
+        mainCanvasEl.width = nextMainW;
+        mainCanvasEl.height = nextMainH;
+        gpuResizeNeeded = true;
+      }
+
       const canvasBEl = canvasBRef.current;
       if (dual && canvasBEl) {
-        canvasBEl.width = Math.floor(canvasCssW * dpr);
-        canvasBEl.height = Math.floor(cssH * dpr);
+        const nextBW = Math.floor(canvasCssW * dpr);
+        const nextBH = Math.floor(cssH * dpr);
+        if (canvasBEl.width !== nextBW || canvasBEl.height !== nextBH) {
+          canvasBEl.width = nextBW;
+          canvasBEl.height = nextBH;
+          gpuResizeNeeded = true;
+        }
       }
-      orchestratorRef.current?.resizeAll();
+
+      // Only reconfigure WebGPU contexts when backing-store dimensions change.
+      // ResizeObserver can fire repeatedly at the same size; calling configure()
+      // every frame races getCurrentTexture() and causes garbled output + stutter.
+      if (gpuResizeNeeded) {
+        orchestratorRef.current?.resizeAll();
+      }
     }
 
     resizeCanvas();
