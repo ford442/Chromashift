@@ -194,7 +194,9 @@ describe('RendererOrchestrator', () => {
 
     const session = orchestrator.sessionRef()!;
     orchestrator.resizeAll();
+    expect(session.reconfigure).not.toHaveBeenCalled();
 
+    orchestrator.reconfigureIfNeeded();
     expect(session.reconfigure).toHaveBeenCalledOnce();
     expect(deps.configureWebGpuCanvas).toHaveBeenCalled();
   });

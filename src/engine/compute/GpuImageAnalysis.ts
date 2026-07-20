@@ -45,6 +45,8 @@ export class GpuImageAnalysis {
   private cachedMaskTexture: GPUTexture | null = null;
   private cachedMaskWidth = 0;
   private cachedMaskHeight = 0;
+  /** Serializes overlapping analyze() calls that share staging buffers. */
+  private analyzeChain: Promise<unknown> = Promise.resolve();
 
   /** Read back mask bytes for golden / e2e validation. */
   async readMaskPixels(width: number, height: number): Promise<Uint8Array | null> {
@@ -102,6 +104,24 @@ export class GpuImageAnalysis {
   ): Promise<GpuImageAnalysisResult | null> {
     if (!this.canAnalyze(width, height)) return null;
 
+    let result: GpuImageAnalysisResult | null = null;
+    const run = this.analyzeChain.then(() => this.analyzeOnce(source, width, height, avgLumHint));
+    this.analyzeChain = run.then(() => undefined, () => undefined);
+    try {
+      result = await run;
+    } catch (error) {
+      console.warn('GPU image analysis failed:', error);
+      return null;
+    }
+    return result;
+  }
+
+  private async analyzeOnce(
+    source: GPUTexture,
+    width: number,
+    height: number,
+    avgLumHint?: number,
+  ): Promise<GpuImageAnalysisResult | null> {
     this.ensurePipelines();
     const isSrgb = isSrgbTextureFormat(source.format);
     const srcView = source.createView({ baseMipLevel: 0, mipLevelCount: 1 });

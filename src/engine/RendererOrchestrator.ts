@@ -112,6 +112,7 @@ export class RendererOrchestrator {
   private readonly onRuntimeError?: (error: GpuRuntimeError) => void;
   private readonly deps: RendererOrchestratorDeps;
   private destroyed = false;
+  private resizePending = false;
 
   private constructor(
     backend: RendererBackend,
@@ -302,6 +303,16 @@ export class RendererOrchestrator {
   /** Reconfigure every active WebGPU canvas context after resize / DPR changes. */
   resizeAll(): void {
     if (!this.session || this.backend !== 'webgpu') return;
+    this.resizePending = true;
+  }
+
+  /**
+   * Apply a pending canvas resize before the next render frame so configure()
+   * never races with an in-flight getCurrentTexture() from ResizeObserver.
+   */
+  reconfigureIfNeeded(): void {
+    if (!this.resizePending || !this.session || this.backend !== 'webgpu') return;
+    this.resizePending = false;
 
     this.session.reconfigure();
     for (const slot of this.slots.values()) {
@@ -343,7 +354,7 @@ export class RendererOrchestrator {
       canvas: primaryCanvas,
       antialias: this.antialias,
       onRuntimeError: (error) => {
-        if (error.kind === 'device-lost' && !this.destroyed) {
+        if (!this.destroyed) {
           this.destroy();
         }
         this.onRuntimeError?.(error);

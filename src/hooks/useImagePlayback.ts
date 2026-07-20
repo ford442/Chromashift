@@ -108,8 +108,12 @@ export function useImagePlayback({
   }, [ui.isAutoPlayActive, engine.paused, ui.exportingVideo, ui.imageChangeInterval, media.imageList.length, selectSourceIndex]);
 
   useEffect(() => {
-    if (!engine.gpuReady || media.imageList.length === 0) return;
-    const activeImage = media.imageList[media.currentIndex];
+    if (!engine.gpuReady) return;
+
+    const index = refs.currentImageIndexRef.current;
+    const list = refs.imageListRef.current;
+    if (list.length === 0) return;
+    const activeImage = list[index];
     if (!activeImage) return;
     const url = activeImage.url;
 
@@ -126,9 +130,8 @@ export function useImagePlayback({
       img.src = url;
     }).catch(() => clearClassificationMask());
   }, [
+    refs,
     engine.gpuReady,
-    media.imageList,
-    media.currentIndex,
     engine.avgLuminance,
     textureManagerRef,
     clearClassificationMask,

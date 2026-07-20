@@ -192,6 +192,16 @@ export function useAppWebGPUInit({
         antialias: antialiasEnabled,
         onRuntimeError: (error) => {
           if (isCancelled(cancelToken, signal)) return;
+          clearOrchestratorRefs(
+            orchestratorRef,
+            deviceRef,
+            webGpuSessionRef,
+            gpuImageAnalysisRef,
+            rendererRef,
+            textureManagerRef,
+            sourceTextureRef,
+          );
+          liveOrchestrator.current = null;
           setGpuReady(false);
           setGpuError(error);
         },
@@ -354,6 +364,8 @@ export function useAppWebGPUInit({
     const abortController = new AbortController();
     const liveOrchestrator: { current: RendererOrchestrator | null } = { current: null };
 
+    setGpuReady(false);
+
     init(cancelToken, abortController.signal, liveOrchestrator).catch((e) => {
       if (isCancelled(cancelToken, abortController.signal) || isAbortError(e)) return;
       setGpuError(toBootstrapRuntimeError(e));
@@ -362,6 +374,7 @@ export function useAppWebGPUInit({
     return () => {
       cancelToken.cancelled = true;
       abortController.abort();
+      setGpuReady(false);
 
       clearOrchestratorRefs(
         orchestratorRef,
@@ -376,5 +389,5 @@ export function useAppWebGPUInit({
       liveOrchestrator.current?.destroy();
       liveOrchestrator.current = null;
     };
-  }, [init, clearClassificationMask, orchestratorRef, deviceRef, gpuImageAnalysisRef, ownedObjectUrlsRef, rendererRef, setGpuError, textureManagerRef, webGpuSessionRef, sourceTextureRef]);
+  }, [init, clearClassificationMask, orchestratorRef, deviceRef, gpuImageAnalysisRef, ownedObjectUrlsRef, rendererRef, setGpuError, setGpuReady, textureManagerRef, webGpuSessionRef, sourceTextureRef]);
 }
