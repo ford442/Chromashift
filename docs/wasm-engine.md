@@ -141,14 +141,23 @@ LUT on a synthetic 3840×2160 buffer. Acceptance target: LUT ≥2× faster in Ch
 |---|---|---|---|
 | `npm run build:wasm` | `make release` | `-O3` | Production / default dev |
 | `npm run build:wasm:debug` | `make debug` | `-O0 -g -s ASSERTIONS=1` | WASM debugging |
+| `npm run build:wasm:force` | `make rebuild` | `-O3` after `clean` | Force recompile (stale artifacts / equal mtimes) |
 | `npm run codegen:band` | — | — | Regenerate `cpp/band_table.h` from `shared/band.json` |
 
 ```bash
 npm run codegen:band   # shared/band.json → cpp/band_table.h
 npm run build:wasm     # release: public/chromashift_engine.{js,wasm}
 npm run build:wasm:debug
-# equivalent: cd cpp && make release | make debug
+npm run build:wasm:force   # clean + release when make says "Nothing to be done"
+# equivalent: cd cpp && make release | make debug | make rebuild
 ```
+
+`make` tracks build mode (release/debug) and emcc flags in local stamp files
+(`cpp/.wasm_mode`, `cpp/.wasm_flags`). Switching mode, editing `EXPORTED_FUNCS`,
+or changing `shared/band.json` invalidates `public/chromashift_engine.*` so the
+next build is not a silent no-op. If you still see `Nothing to be done for 'all'`
+with stale glue (common after a git checkout of committed WASM), run
+`make -C cpp rebuild` or `npm run build:wasm:force`.
 
 The release build also passes `-fno-exceptions -fno-rtti` for smaller glue (embind-compatible).
 

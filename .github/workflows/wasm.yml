@@ -39,12 +39,15 @@ jobs:
       - name: Verify export list matches header
         run: make -C cpp verify-exports
 
-      - name: Rebuild WASM
-        run: npm run build:wasm
+      # Force a clean recompile. Plain `make release` is a no-op when committed
+      # public/chromashift_engine.* are newer than cpp sources (or share equal
+      # checkout mtimes), which silently skips the freshness check.
+      - name: Rebuild WASM from scratch
+        run: npm run build:wasm:force
 
       - name: Fail if committed WASM artifacts are stale
         run: |
           if ! git diff --exit-code -- public/chromashift_engine.js public/chromashift_engine.wasm; then
-            echo "::error::WASM artifacts are out of date. Run 'npm run build:wasm' and commit public/chromashift_engine.{js,wasm}."
+            echo "::error::WASM artifacts are out of date. Run 'npm run build:wasm:force' and commit public/chromashift_engine.{js,wasm}."
             exit 1
           fi

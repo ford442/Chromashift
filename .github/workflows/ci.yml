@@ -121,6 +121,6 @@ jobs:
           version: 3.1.64
           cache: true
       - run: npm run test:cpp
-      - run: npm run build:wasm
+      - run: npm run build:wasm:force
       - name: Verify WASM artifacts exist
         run: test -f public/chromashift_engine.js && test -f public/chromashift_engine.wasm

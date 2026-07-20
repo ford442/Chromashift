@@ -43,5 +43,16 @@ const lines = [
   '',
 ];
 
-writeFileSync(outPath, lines.join('\n'));
-console.log(`Wrote ${outPath} (${values.length} thresholds)`);
+const next = lines.join('\n');
+let prev = null;
+try {
+  prev = readFileSync(outPath, 'utf8');
+} catch {
+  // first generation
+}
+if (prev === next) {
+  console.log(`Unchanged ${outPath} (${values.length} thresholds)`);
+} else {
+  writeFileSync(outPath, next);
+  console.log(`Wrote ${outPath} (${values.length} thresholds)`);
+}

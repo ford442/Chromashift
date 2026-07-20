@@ -19,6 +19,7 @@
     "test:e2e:update": "playwright test --update-snapshots",
     "build:wasm": "npm run codegen:band && make -C cpp release",
     "build:wasm:debug": "npm run codegen:band && make -C cpp debug",
+    "build:wasm:force": "npm run codegen:band && make -C cpp rebuild",
     "codegen:band": "node scripts/codegen-band.mjs",
     "check:wasm": "make -C cpp check",
     "clean:wasm": "make -C cpp clean",

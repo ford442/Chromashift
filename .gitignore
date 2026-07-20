@@ -16,6 +16,11 @@ dist-ssr
 __pycache__/
 *.py[cod]
 
+# WASM build stamps (mode / flags invalidation)
+cpp/.wasm_mode
+cpp/.wasm_flags
+cpp/.wasm_flags.new
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
