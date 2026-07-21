@@ -36,8 +36,8 @@ Image selection and autoplay remain **shared** (one corpus index); only render p
 
 **Gaps:**
 
-- Preview strip Separated/Tracer thumbnails still mirror the live compositor at animation angles — see implementation checklist in [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md).
-- Swipe and quad layouts are not fully shipped. Dual uses two `WebGPURenderer` instances on one `GPUDevice`; quad will need up to four render targets per frame.
+- Preview strip Separated/Tracer are aligned to preset angles — see [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md).
+- Swipe and quad layouts are not fully shipped ([#116](https://github.com/ford442/Chromashift/issues/116), [#117](https://github.com/ford442/Chromashift/issues/117)). Dual uses two `WebGPURenderer` instances on one `GPUDevice`; quad will need up to four render targets per frame.
 
 ## Technical design
 
@@ -121,14 +121,14 @@ Readback / collision stats: **slot A only** (or disable in multi-view).
 - [x] **Sync play** toggle in Viewport panel
 - [x] Performance note when layer scale auto-reduced
 
-### Phase 2 — Swipe split
+### Phase 2 — Swipe split ([#116](https://github.com/ford442/Chromashift/issues/116))
 
 - [ ] Drag handle between A/B composites (generalize reference split)
 - [ ] `swipePosition` uniform or CSS clip on two full canvases
 
-### Phase 3 — Quad grid
+### Phase 3 — Quad grid ([#117](https://github.com/ford442/Chromashift/issues/117))
 
-- [ ] Align preview strip with [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md) (preset-angle Separated + Tracer readbacks) before or alongside quad
+- [x] Align preview strip with [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md) (preset-angle Separated + Tracer) — shipped
 - [ ] Replace floating previews when quad active
 - [ ] Fixed cells per `QUAD_VIEW_CELLS`: Original, Layer 0 (or cycle), Tracer — **stationary**; Composite — **live rotation only**
 - [ ] Optional: per-cell diagnostic mode

@@ -333,7 +333,7 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | `unit` | `npm test` (Vitest) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu`) |
-| `wasm` | `npm run test:cpp` + `npm run build:wasm` + artifact check (`continue-on-error: true`) |
+| `wasm` | `npm run test:cpp` + `npm run build:wasm` + artifact check |
 
 WebGPU E2E runs in the `chromium-webgpu` Playwright project with
 `--enable-unsafe-webgpu` (see `playwright.config.ts`). For local WebGPU validation,
