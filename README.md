@@ -221,13 +221,12 @@ See [AGENTS.md](AGENTS.md#browser-requirements) for the full matrix with version
 ## Roadmap
 
 **[docs/ROADMAP.md](docs/ROADMAP.md)** is the maintained roadmap (shipped vs. planned).
-The [issue tracker](https://github.com/ford442/Chromashift/issues) has zero open issues
-as of the 2026-07 audit — all foundation work through **#92** is closed.
+Open strategic backlog: **[#115](https://github.com/ford442/Chromashift/issues/115)–[#124](https://github.com/ford442/Chromashift/issues/124)**.
 
 | Status | Highlights |
 |--------|------------|
-| **Shipped** | Lazy upscaler workers, local IndexedDB library, GPU perf HUD, audio-reactive + MIDI panel, desktop kiosk (`?kiosk=1`) — see [KIOSK.md](docs/KIOSK.md) |
-| **Next feature** | [Preview strip alignment](docs/PREVIEW_VIEWS.md) (stationary Separated/Tracer); [Compare / multi-view](docs/COMPARE_VIEWS.md) ([#87](https://github.com/ford442/Chromashift/issues/87)) — dual shipped, quad/swipe planned |
-| **Research** | WebXR / immersive surround ([#85](https://github.com/ford442/Chromashift/issues/85)); deeper C++ WASM offline composite ([#86](https://github.com/ford442/Chromashift/issues/86)) |
+| **Shipped** | Dual A/B compare, renderer orchestration, settings schema v2, stationary preview strip, kiosk, reactive/MIDI, GPU perf HUD, local library — see [ROADMAP.md](docs/ROADMAP.md) |
+| **Next** | Typed texture contracts ([#115](https://github.com/ford442/Chromashift/issues/115)); compare swipe ([#116](https://github.com/ford442/Chromashift/issues/116)) + quad ([#117](https://github.com/ford442/Chromashift/issues/117)) — [COMPARE_VIEWS.md](docs/COMPARE_VIEWS.md) |
+| **Research** | WebXR Phase 1 navigation ([#124](https://github.com/ford442/Chromashift/issues/124)); WebGPU-XR deferred — [WebXR.md](docs/WebXR.md) |
 
 Full per-issue detail and file pointers: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
