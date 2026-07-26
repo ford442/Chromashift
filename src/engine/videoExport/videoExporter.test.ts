@@ -4,6 +4,108 @@ import type { ChromashiftRenderer, ExportFrameOptions } from '../types/RendererC
 import type { RendererState } from '../types/RendererState';
 import type { LayerTriple } from '../../state/types';
 import { exportVideo, type VideoExportRequest } from './VideoExporter';
+import type { VideoExportCapabilities } from './videoCodecs';
+
+const mediaRecorderCaps: VideoExportCapabilities = {
+  mediaRecorder: true,
+  webCodecs: true,
+  webCodecsUsable: false,
+  preferredPath: 'mediarecorder',
+  webCodecsContainer: null,
+  webCodecsCodec: null,
+  preferredMimeType: 'video/webm;codecs=vp9',
+  supportedMimeTypes: ['video/webm;codecs=vp9'],
+  encodingLabel: 'MediaRecorder (video/webm;codecs=vp9)',
+};
+
+const webCodecsCaps: VideoExportCapabilities = {
+  mediaRecorder: true,
+  webCodecs: true,
+  webCodecsUsable: true,
+  preferredPath: 'webcodecs',
+  webCodecsContainer: 'webm',
+  webCodecsCodec: 'vp9',
+  preferredMimeType: 'video/webm;codecs=vp9',
+  supportedMimeTypes: ['video/webm;codecs=vp9'],
+  encodingLabel: 'WebCodecs (VP9 WebM)',
+};
+
+vi.mock('./videoCodecs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./videoCodecs')>();
+  return {
+    ...actual,
+    probeVideoExportCapabilities: vi.fn(async () => mediaRecorderCaps),
+  };
+});
+
+const canvasSourceAdds: Array<{ timestamp: number; duration: number }> = [];
+const canvasSourceConfigs: unknown[] = [];
+
+vi.mock('mediabunny', () => {
+  class FakeWebMOutputFormat {
+    getSupportedVideoCodecs() {
+      return ['vp9'];
+    }
+
+    get mimeType() {
+      return 'video/webm';
+    }
+  }
+
+  class FakeBufferTarget {
+    buffer: ArrayBuffer | null = null;
+  }
+
+  class FakeOutput {
+    state = 'pending';
+    target: FakeBufferTarget;
+
+    constructor(opts: { format: unknown; target: FakeBufferTarget }) {
+      this.target = opts.target;
+    }
+
+    addVideoTrack() {}
+
+    async start() {
+      this.state = 'started';
+    }
+
+    async getMimeType() {
+      return 'video/webm;codecs=vp9';
+    }
+
+    async cancel() {
+      this.state = 'canceled';
+    }
+
+    async finalize() {
+      this.target.buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+      this.state = 'finalized';
+    }
+  }
+
+  class FakeCanvasSource {
+    add = vi.fn(async (timestamp: number, duration = 1 / 30) => {
+      canvasSourceAdds.push({ timestamp, duration });
+    });
+
+    constructor(_canvas: unknown, config: unknown) {
+      canvasSourceConfigs.push(config);
+    }
+  }
+
+  return {
+    WebMOutputFormat: FakeWebMOutputFormat,
+    Mp4OutputFormat: FakeWebMOutputFormat,
+    BufferTarget: FakeBufferTarget,
+    Output: FakeOutput,
+    CanvasSource: FakeCanvasSource,
+    getFirstEncodableVideoCodec: vi.fn(async () => 'vp9'),
+    QUALITY_HIGH: { level: 'high' },
+    QUALITY_MEDIUM: { level: 'medium' },
+    QUALITY_LOW: { level: 'low' },
+  };
+});
 
 class FakeVideoTrack {
   requestFrame = vi.fn();
@@ -46,15 +148,17 @@ class FakeImageData {
   }
 }
 
-function makeFakeCanvas(track: FakeVideoTrack) {
+function makeFakeCanvas(track?: FakeVideoTrack) {
   return {
     width: 0,
     height: 0,
     getContext: () => ({ putImageData: vi.fn() }),
-    captureStream: () => ({
-      getVideoTracks: () => [track],
-      getTracks: () => [track],
-    }),
+    captureStream: track
+      ? () => ({
+          getVideoTracks: () => [track],
+          getTracks: () => [track],
+        })
+      : undefined,
   };
 }
 
@@ -106,13 +210,17 @@ function makeRequest(overrides: Partial<VideoExportRequest> = {}): VideoExportRe
     passMode: 'composite',
     filename: 'test-export',
     usePresetAngles: true,
+    container: 'auto',
+    quality: 'high',
     ...overrides,
   };
 }
 
 describe('exportVideo (offline render loop)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     FakeMediaRecorder.instances = [];
+    canvasSourceAdds.length = 0;
+    canvasSourceConfigs.length = 0;
     const track = new FakeVideoTrack();
     vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
     vi.stubGlobal('ImageData', FakeImageData);
@@ -122,6 +230,9 @@ describe('exportVideo (offline render loop)', () => {
         return makeFakeCanvas(track);
       },
     });
+
+    const codecs = await import('./videoCodecs');
+    vi.mocked(codecs.probeVideoExportCapabilities).mockResolvedValue(mediaRecorderCaps);
   });
 
   afterEach(() => {
@@ -171,10 +282,8 @@ describe('exportVideo (offline render loop)', () => {
     await exportVideo(runA.renderer, state, [999, 999, 999], 320, 240, request);
     await exportVideo(runB.renderer, state, [1, 2, 3], 320, 240, request);
 
-    // usePresetAngles ignores live angles entirely: frame 0 is the preset.
     expect(runA.frameAngles[0]).toEqual([12, 34, 56]);
     expect(runA.frameAngles).toEqual(runB.frameAngles);
-    // Angles actually advance between frames.
     expect(runA.frameAngles[1]).not.toEqual(runA.frameAngles[0]);
   });
 
@@ -199,7 +308,6 @@ describe('exportVideo (offline render loop)', () => {
 
     expect(run30.frameAngles).toHaveLength(30);
     expect(run60.frameAngles).toHaveLength(60);
-    // Same wall-clock time: frame i at 30 FPS ↔ frame 2i at 60 FPS.
     for (const i of [0, 10, 20, 29] as const) {
       const a = run30.frameAngles[i];
       const b = run60.frameAngles[i * 2];
@@ -271,5 +379,79 @@ describe('exportVideo (offline render loop)', () => {
     expect(fake.frameOptions[0].passMode).toBe('layers');
     expect(fake.frameStates[0].tracerAboveIntensity).toBe(0);
     expect(fake.frameStates[0].tracerBelowIntensity).toBe(0);
+  });
+});
+
+describe('exportVideo (WebCodecs path)', () => {
+  beforeEach(async () => {
+    canvasSourceAdds.length = 0;
+    canvasSourceConfigs.length = 0;
+    vi.stubGlobal('ImageData', FakeImageData);
+    vi.stubGlobal('document', {
+      createElement: (tag: string) => {
+        if (tag !== 'canvas') throw new Error(`unexpected createElement(${tag})`);
+        return makeFakeCanvas();
+      },
+    });
+
+    const codecs = await import('./videoCodecs');
+    vi.mocked(codecs.probeVideoExportCapabilities).mockResolvedValue(webCodecsCaps);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('encodes duration × fps frames via CanvasSource and restores render size', async () => {
+    const fake = makeFakeRenderer();
+    const state = createInitialState();
+
+    const result = await exportVideo(
+      fake.renderer,
+      state,
+      [0, 0, 0],
+      640,
+      480,
+      makeRequest({ durationSec: 5, fps: 30, quality: 'medium' }),
+    );
+
+    expect(fake.frameAngles).toHaveLength(150);
+    expect(canvasSourceAdds).toHaveLength(150);
+    expect(canvasSourceAdds[0]).toEqual({ timestamp: 0, duration: 1 / 30 });
+    expect(fake.restoreRenderSize).toHaveBeenCalledWith(640, 480);
+    expect(result.frameCount).toBe(150);
+    expect(result.mimeType).toBe('video/webm;codecs=vp9');
+    expect(result.blob.size).toBeGreaterThan(0);
+    expect(canvasSourceConfigs[0]).toMatchObject({
+      codec: 'vp9',
+      bitrate: { level: 'medium' },
+    });
+  });
+
+  it('rejects with AbortError on cancel and still restores render size', async () => {
+    const fake = makeFakeRenderer();
+    const state = createInitialState();
+    const controller = new AbortController();
+
+    await expect(
+      exportVideo(
+        fake.renderer,
+        state,
+        [0, 0, 0],
+        320,
+        240,
+        makeRequest({
+          durationSec: 10,
+          fps: 30,
+          signal: controller.signal,
+          onProgress: (frame) => {
+            if (frame === 5) controller.abort();
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(fake.frameAngles.length).toBeLessThan(300);
+    expect(fake.restoreRenderSize).toHaveBeenCalledWith(320, 240);
   });
 });

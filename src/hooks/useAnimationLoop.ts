@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { GPU_TIMING_HISTORY_SIZE } from '../engine/GpuTimestampProfiler';
 import { buildRendererState } from '../engine/buildRendererState';
-import { advanceAngles, effectiveLayerScaleForMultiView } from '../engine/compareViews';
+import { advanceAngles, effectiveLayerScaleForMultiView, isQuadCompareLayout, isTwoSlotCompareLayout } from '../engine/compareViews';
+import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { isXrImmersiveActive } from '../engine/xr/xrSupport';
 import { applySettingsToState } from '../state/chromashiftReducer';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
@@ -75,10 +76,18 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
 
         const compareView = current.ui.compareView;
         const rendererB = rendererBRef.current;
-        const dualActive = compareView.layout === 'dual' && rendererB !== null;
-        if (dualActive) {
-          renderOverrides.layerScale = effectiveLayerScaleForMultiView(current.layers.scale, 'dual').scale;
-          renderOverrides.tracerScale = effectiveLayerScaleForMultiView(current.tracers.scale, 'dual').scale;
+        const compareLayout = compareView.layout;
+        const twoSlotActive = isTwoSlotCompareLayout(compareLayout) && rendererB !== null;
+        const quadActive = isQuadCompareLayout(compareLayout);
+        if (twoSlotActive || quadActive) {
+          renderOverrides.layerScale = effectiveLayerScaleForMultiView(current.layers.scale, compareLayout).scale;
+          renderOverrides.tracerScale = effectiveLayerScaleForMultiView(current.tracers.scale, compareLayout).scale;
+        }
+        if (quadActive) {
+          renderOverrides.mainViewMode = MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
+          renderOverrides.showTracerView = false;
+          renderOverrides.livePreviewEnabled = false;
+          renderOverrides.profilePerformance = false;
         }
         const xrImmersive = isXrImmersiveActive();
         if (!xrImmersive) {
@@ -86,7 +95,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
           rendererRef.current?.render(buildRendererState(current, angles, renderOverrides));
         }
 
-        if (!xrImmersive && dualActive && rendererB) {
+        if (!xrImmersive && twoSlotActive && rendererB) {
           const stateB = applySettingsToState(current, compareView.slotB.settings);
           const anglesB = compareView.syncPlay
             ? angles
@@ -96,8 +105,8 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
                 stateB.engine.fps,
               ));
           rendererB.render(buildRendererState(stateB, anglesB, {
-            layerScale: effectiveLayerScaleForMultiView(stateB.layers.scale, 'dual').scale,
-            tracerScale: effectiveLayerScaleForMultiView(stateB.tracers.scale, 'dual').scale,
+            layerScale: effectiveLayerScaleForMultiView(stateB.layers.scale, compareLayout).scale,
+            tracerScale: effectiveLayerScaleForMultiView(stateB.tracers.scale, compareLayout).scale,
             livePreviewEnabled: false,
             profilePerformance: false,
           }));

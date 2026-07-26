@@ -1,17 +1,22 @@
 import type { ImageEntry } from './TextureManager';
 import type { ChromashiftTextureManager } from './RendererTypes';
+import { publishTextureCacheBreadcrumbs } from './textureCacheBreadcrumbs';
+import {
+  estimateWebGlTextureBytes,
+  TextureCacheTracker,
+} from './textureCachePolicy';
+import {
+  createWebGlTextureHandle,
+  type ChromashiftTextureHandle,
+  type WebGlTextureHandle,
+} from './types/TextureHandle';
 
-export interface WebGLImageTexture {
-  kind: 'webgl-image-texture';
-  texture: WebGLTexture;
-  width: number;
-  height: number;
-  cacheKey: string;
-}
+export type { WebGLImageTexture, WebGlTextureHandle } from './types/TextureHandle';
 
 export class WebGLTextureManager implements ChromashiftTextureManager {
   private gl: WebGL2RenderingContext;
-  private textures = new Map<string, WebGLImageTexture>();
+  private textures = new Map<string, WebGlTextureHandle>();
+  private cacheTracker = new TextureCacheTracker();
 
   constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
@@ -25,9 +30,13 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
     return await response.json() as ImageEntry[];
   }
 
-  async loadTexture(url: string): Promise<WebGLImageTexture> {
+  async loadTexture(url: string): Promise<ChromashiftTextureHandle> {
     const cached = this.textures.get(url);
-    if (cached) return cached;
+    if (cached) {
+      const bytes = this.cacheTracker.bytesFor(url);
+      if (bytes !== undefined) this.cacheTracker.touch(url, bytes);
+      return cached;
+    }
 
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
@@ -38,20 +47,23 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
     });
 
     const texture = this.createTextureFromSource(image);
-    const entry: WebGLImageTexture = {
-      kind: 'webgl-image-texture',
+    const entry = createWebGlTextureHandle(
       texture,
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-      cacheKey: url,
-    };
+      image.naturalWidth,
+      image.naturalHeight,
+      url,
+    );
     this.textures.set(url, entry);
+    this.cacheTracker.touch(url, estimateWebGlTextureBytes(image.naturalWidth, image.naturalHeight));
     return entry;
   }
 
-  uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): WebGLImageTexture {
+  uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): ChromashiftTextureHandle {
     const previous = this.textures.get(cacheKey);
-    if (previous) this.gl.deleteTexture(previous.texture);
+    if (previous) {
+      this.gl.deleteTexture(previous.texture);
+      this.cacheTracker.remove(cacheKey);
+    }
 
     const texture = this.gl.createTexture();
     if (!texture) throw new Error('Failed to create WebGL texture.');
@@ -62,8 +74,10 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
     this.configureTexture(width, height);
 
-    const entry: WebGLImageTexture = { kind: 'webgl-image-texture', texture, width, height, cacheKey };
+    const entry = createWebGlTextureHandle(texture, width, height, cacheKey);
     this.textures.set(cacheKey, entry);
+    this.cacheTracker.touch(cacheKey, estimateWebGlTextureBytes(width, height));
+    publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
     return entry;
   }
 
@@ -72,17 +86,21 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
       this.gl.deleteTexture(entry.texture);
     }
     this.textures.clear();
+    this.cacheTracker.clear();
+    publishTextureCacheBreadcrumbs(0, 0);
   }
 
-  /** See `TextureManager.evictExcept` — mirrors the same local-blob eviction policy for the WebGL backend. */
+  /** See `TextureManager.evictExcept` — same LRU byte budget and blob fast-path policy. */
   evictExcept(keepUrls: Iterable<string>): void {
-    const keep = new Set(keepUrls);
-    for (const [url, entry] of this.textures) {
-      if (url.startsWith('blob:') && !keep.has(url)) {
-        this.gl.deleteTexture(entry.texture);
-        this.textures.delete(url);
-      }
-    }
+    this.cacheTracker.evictToBudget(keepUrls, (key) => this.destroyKey(key));
+    publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
+  }
+
+  private destroyKey(key: string): void {
+    const entry = this.textures.get(key);
+    if (entry) this.gl.deleteTexture(entry.texture);
+    this.textures.delete(key);
+    this.cacheTracker.remove(key);
   }
 
   private createTextureFromSource(source: HTMLImageElement): WebGLTexture {

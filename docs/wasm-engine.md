@@ -99,9 +99,10 @@ Band thresholds are authored once in `shared/band.json` and consumed by:
 |---|---|
 | TypeScript | `import` in `bandClassification.ts` |
 | C++ | `npm run codegen:band` → `cpp/band_table.h` |
-| WGSL | `BAND_WGSL` literals generated from the same TS `BAND` object |
+| WGSL | `BAND_WGSL` in `bandLiterals.ts` (from the same TS `BAND` object) |
+| GLSL (WebGL) | `BAND_GLSL` in `bandLiterals.ts`, interpolated in `webgl/shaders/bandGlsl.ts` |
 
-Run `npm run codegen:band` after editing the JSON, then rebuild WASM.
+Edit `shared/band.json` — WGSL/GLSL/TS pick up changes on the next `npm run dev`, `npm test`, or `npm run build` (no emsdk). Run `npm run codegen:band` when the JSON changes so `cpp/band_table.h` stays in sync, then rebuild WASM.
 
 ---
 

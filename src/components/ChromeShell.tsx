@@ -9,6 +9,8 @@ export function ChromeShell({
   showChrome,
   showKioskRemote,
   gpuError,
+  onRetryGpu,
+  isGpuRetrying,
   collisionStats,
   avgLuminance,
   engineMode,
@@ -139,11 +141,19 @@ export function ChromeShell({
             )}
             <p className="text-amber-200/70 text-xs mt-3">
               {gpuError.kind === 'device-lost'
-                ? 'The GPU process may have restarted. Reload the page or switch to the WebGL2 fallback.'
+                ? 'The GPU process may have restarted. Try Retry GPU first, or switch to the WebGL2 fallback.'
                 : 'Use Chrome/Edge with WebGPU, or open with ?renderer=webgl for the WebGL2 fallback.'}
             </p>
             {gpuError.recoverable && (
               <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 text-xs font-mono hover:bg-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={onRetryGpu}
+                  disabled={isGpuRetrying}
+                >
+                  {isGpuRetrying ? 'Retrying…' : 'Retry GPU'}
+                </button>
                 <button
                   type="button"
                   className="px-3 py-1.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-100 text-xs font-mono hover:bg-amber-500/30"

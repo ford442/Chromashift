@@ -4,7 +4,7 @@ Researchers comparing CR0P bands, tracer modes, and blend modes need **side-by-s
 
 **View objectives** (which views rotate vs stay stationary) are defined in [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md). Quad reference cells follow the same stationary rules as the preview strip; only the composite cell animates.
 
-**Status:** dual 2-up is shipped; swipe and quad remain planned. Foundation types live in `src/engine/compareViews.ts`.
+**Status:** dual 2-up, swipe split, and quad grid are shipped on WebGPU. Foundation types live in `src/engine/compareViews.ts`.
 
 ## Layout concepts
 
@@ -36,8 +36,7 @@ Image selection and autoplay remain **shared** (one corpus index); only render p
 
 **Gaps:**
 
-- Preview strip Separated/Tracer are aligned to preset angles — see [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md).
-- Swipe and quad layouts are not fully shipped ([#116](https://github.com/ford442/Chromashift/issues/116), [#117](https://github.com/ford442/Chromashift/issues/117)). Dual uses two `WebGPURenderer` instances on one `GPUDevice`; quad will need up to four render targets per frame.
+- Quad layout is WebGPU-only (same gate as dual/swipe). WebGL fallback does not create multi-slot renderers.
 
 ## Technical design
 
@@ -56,7 +55,17 @@ GPUDevice (single bootstrap)
 - **Share** `GPUTexture` for the decoded source image (and classification mask when enabled) across slots.
 - Configure each context with the same `GPUDevice` from `WebGpuSession`.
 
-WebGL fallback: dual mode may be WebGPU-only initially (memory + duplicate FBO cost).
+WebGL fallback: dual, swipe, and quad modes are WebGPU-only (memory + duplicate FBO cost). Kiosk mode rejects all multi-view layouts.
+
+### Swipe split presentation (CSS clip)
+
+Swipe reuses the dual two-renderer path but presents both canvases at **full viewport resolution**, stacked and clipped in the DOM (same technique as the reference `split` blend overlay):
+
+- **Canvas A** (live settings): `clip-path: inset(0 {1-pos} 0 0)` — visible left of the divider
+- **Canvas B** (slot B preset): `clip-path: inset(0 0 0 {pos})` — visible right of the divider
+- **Divider**: draggable handle updates `ui.compareView.swipePosition` (0–1); `←` / `→` nudge ±0.02
+
+We chose CSS clip over a compositor `swipePosition` uniform to avoid shader risk and keep the WebGPU render path identical to dual. Trade-off: both canvases rasterize at full resolution (higher fill cost than dual half-cells) while layer scale auto-reduces to ×0.85 for VRAM.
 
 ### GPU memory budget
 
@@ -123,14 +132,16 @@ Readback / collision stats: **slot A only** (or disable in multi-view).
 
 ### Phase 2 — Swipe split ([#116](https://github.com/ford442/Chromashift/issues/116))
 
-- [ ] Drag handle between A/B composites (generalize reference split)
-- [ ] `swipePosition` uniform or CSS clip on two full canvases
+- [x] Viewport panel: layout `Swipe` toggle (WebGPU-only, same gate as dual)
+- [x] Drag handle between A/B composites (generalize reference split)
+- [x] CSS `clip-path` on two full-size canvases (`swipePosition` in state + preset URL v2)
+- [x] `←` / `→` keyboard nudge; `window.compareLayout` / `window.compareSwipePosition` breadcrumbs
 
 ### Phase 3 — Quad grid ([#117](https://github.com/ford442/Chromashift/issues/117))
 
 - [x] Align preview strip with [PREVIEW_VIEWS.md](./PREVIEW_VIEWS.md) (preset-angle Separated + Tracer) — shipped
-- [ ] Replace floating previews when quad active
-- [ ] Fixed cells per `QUAD_VIEW_CELLS`: Original, Layer 0 (or cycle), Tracer — **stationary**; Composite — **live rotation only**
+- [x] Replace floating previews when quad active (strip hidden; cells A–C in grid)
+- [x] Fixed cells per `QUAD_VIEW_CELLS`: Original, Layer 0/1/2 (cycle), Tracer — **stationary**; Composite — **live rotation only**
 - [ ] Optional: per-cell diagnostic mode
 
 ### Phase 4 — Research

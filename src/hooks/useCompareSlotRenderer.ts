@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
+import { isTwoSlotCompareLayout } from '../engine/compareViews';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 const COMPARE_SLOT_ID = 'compare-b';
 
 /**
- * Lifecycle for the compare slot B renderer (dual layout).
+ * Lifecycle for the compare slot B renderer (dual / swipe layouts).
  *
  * Delegates to RendererOrchestrator so slot B shares the bootstrapped device
  * and texture manager without duplicating init/teardown. Must run after
@@ -12,7 +13,7 @@ const COMPARE_SLOT_ID = 'compare-b';
  */
 export function useCompareSlotRenderer(refs: ChromashiftRefs, store: ChromashiftStore): void {
   const { state } = store;
-  const dualActive = state.ui.compareView.layout === 'dual';
+  const twoSlotActive = isTwoSlotCompareLayout(state.ui.compareView.layout);
   const gpuReady = state.engine.gpuReady;
   const backend = state.engine.backend;
   const {
@@ -26,7 +27,7 @@ export function useCompareSlotRenderer(refs: ChromashiftRefs, store: Chromashift
   } = refs;
 
   useEffect(() => {
-    if (!dualActive || !gpuReady || backend !== 'webgpu') return;
+    if (!twoSlotActive || !gpuReady || backend !== 'webgpu') return;
     const orchestrator = orchestratorRef.current;
     const canvas = canvasBRef.current;
     if (!orchestrator || !canvas) return;
@@ -42,7 +43,7 @@ export function useCompareSlotRenderer(refs: ChromashiftRefs, store: Chromashift
       rendererBRef.current = null;
     };
   }, [
-    dualActive,
+    twoSlotActive,
     gpuReady,
     backend,
     canvasBRef,

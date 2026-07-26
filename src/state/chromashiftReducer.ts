@@ -43,7 +43,10 @@ export type ChromashiftAction =
   | { type: 'settings/apply'; settings: ChromashiftSettingsInput }
   | { type: 'compare/setLayout'; layout: import('../engine/compareViews').CompareLayoutMode }
   | { type: 'compare/setSyncPlay'; syncPlay: boolean }
-  | { type: 'compare/setSlotB'; label: string; settings: ChromashiftSettingsInput };
+  | { type: 'compare/setSlotB'; label: string; settings: ChromashiftSettingsInput }
+  | { type: 'compare/setSwipePosition'; swipePosition: number }
+  | { type: 'compare/setQuadLayerIndex'; quadLayerIndex: import('../engine/compareViews').QuadLayerIndex }
+  | { type: 'compare/cycleQuadLayer' };
 
 /** Serializable preset payload (excludes runtime GPU/media corpus state). */
 export interface ChromashiftSettingsInput {
@@ -228,6 +231,41 @@ export function chromashiftReducer(
         },
       };
 
+    case 'compare/setSwipePosition':
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          compareView: {
+            ...state.ui.compareView,
+            swipePosition: Math.max(0, Math.min(1, action.swipePosition)),
+          },
+        },
+      };
+
+    case 'compare/setQuadLayerIndex':
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          compareView: {
+            ...state.ui.compareView,
+            quadLayerIndex: action.quadLayerIndex,
+          },
+        },
+      };
+
+    case 'compare/cycleQuadLayer': {
+      const next = ((state.ui.compareView.quadLayerIndex + 1) % 3) as import('../engine/compareViews').QuadLayerIndex;
+      return {
+        ...state,
+        ui: {
+          ...state.ui,
+          compareView: { ...state.ui.compareView, quadLayerIndex: next },
+        },
+      };
+    }
+
     default:
       return state;
   }
@@ -300,6 +338,7 @@ export function applySettingsToState(
         compareView: {
           ...next.ui.compareView,
           ...compare,
+          quadLayerIndex: compare.quadLayerIndex ?? next.ui.compareView.quadLayerIndex,
           slotA: compare.slotA
             ? {
                 ...next.ui.compareView.slotA,

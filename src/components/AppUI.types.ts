@@ -11,6 +11,7 @@ import type { VideoCodecSupport } from '../engine/videoExport/videoCodecs';
 import type { BuiltinPreset } from '../state/presetGallery';
 import type { StoredPreset } from '../state/presetLibrary';
 import type { LayerTriple, VideoExportSettings } from '../state/types';
+import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
 import type { AudioLevelSnapshot, MidiBinding, MidiParamId } from '../engine/reactive/types';
 import type {
   EngineMode,
@@ -20,6 +21,8 @@ import type {
 } from './overlay/types';
 
 export interface AppUiHandlerBundle {
+  retryGpuBootstrap: () => Promise<void>;
+  isGpuRetrying: boolean;
   selectSourceIndex: (index: number) => void;
   handleAngleChange: (layer: LayerIndex, angle: number) => void;
   handleExtensionChange: (layer: LayerIndex, extension: number) => void;
@@ -48,6 +51,8 @@ export interface AppUiHandlerBundle {
   onVideoExportPassModeChange: (mode: ExportPassMode) => void;
   onVideoExportFilenameChange: (filename: string) => void;
   onVideoExportUsePresetAnglesChange: (usePreset: boolean) => void;
+  onVideoExportContainerChange: (container: VideoExportContainer) => void;
+  onVideoExportQualityChange: (quality: VideoExportQuality) => void;
   builtinPresets: readonly BuiltinPreset[];
   savedPresets: StoredPreset[];
   presetStatus: string | null;
@@ -72,7 +77,9 @@ export interface AppUIRefsProps {
   containerRef: RefObject<HTMLDivElement | null>;
   mainViewportRef: RefObject<HTMLDivElement | null>;
   mainCanvasRef: RefObject<HTMLCanvasElement | null>;
+  canvasARef: RefObject<HTMLCanvasElement | null>;
   canvasBRef: RefObject<HTMLCanvasElement | null>;
+  canvasCRef: RefObject<HTMLCanvasElement | null>;
   previewOriginalRef: RefObject<HTMLCanvasElement | null>;
   previewSeparatedRef: RefObject<HTMLCanvasElement | null>;
   overlaySeparatedRef: RefObject<HTMLCanvasElement | null>;
@@ -93,8 +100,11 @@ export interface AppUIMainViewportProps {
   overlayUsesSeparatedCanvas: boolean;
   referenceBlendMode: ReferenceBlendMode;
   referenceOpacity: number;
-  compareDualActive: boolean;
+  compareLayout: CompareLayoutMode;
+  compareSwipePosition: number;
   compareSlotBLabel: string;
+  quadLayerIndex: import('../engine/compareViews').QuadLayerIndex;
+  onQuadLayerCycle: () => void;
 }
 
 export interface AppUIPreviewStripProps {
@@ -106,6 +116,8 @@ export interface AppUIPreviewStripProps {
 
 export interface AppUIChromeProps {
   gpuError: GpuRuntimeError | null;
+  onRetryGpu: () => void;
+  isGpuRetrying: boolean;
   collisionStats: CollisionStats;
   avgLuminance: number;
   engineMode: EngineMode;
@@ -177,6 +189,8 @@ export interface AppUIControlProps {
   onVideoExportPassModeChange: (mode: ExportPassMode) => void;
   onVideoExportFilenameChange: (filename: string) => void;
   onVideoExportUsePresetAnglesChange: (usePreset: boolean) => void;
+  onVideoExportContainerChange: (container: VideoExportContainer) => void;
+  onVideoExportQualityChange: (quality: VideoExportQuality) => void;
   builtinPresets: readonly BuiltinPreset[];
   savedPresets: StoredPreset[];
   presetStatus: string | null;
@@ -194,6 +208,7 @@ export interface AppUIControlProps {
   comparePerformanceNote: string | null;
   onCompareLayoutChange: (layout: CompareLayoutMode) => void;
   onCompareSyncPlayToggle: (sync: boolean) => void;
+  onCompareSwipePositionChange: (position: number) => void;
   onCompareWithBuiltin: (id: string) => void;
   onCompareWithSaved: (name: string) => void;
   layerAngles: LayerTriple<number>;
@@ -310,7 +325,7 @@ export type AppUIProps =
 
 export type MainViewportProps = Pick<
   AppUIRefsProps,
-  'mainViewportRef' | 'mainCanvasRef' | 'canvasBRef' | 'overlaySeparatedRef'
+  'mainViewportRef' | 'mainCanvasRef' | 'canvasARef' | 'canvasBRef' | 'canvasCRef' | 'overlaySeparatedRef'
 > &
   Pick<
     AppUIMainViewportProps,
@@ -326,8 +341,11 @@ export type MainViewportProps = Pick<
     | 'overlayUsesSeparatedCanvas'
     | 'referenceBlendMode'
     | 'referenceOpacity'
-    | 'compareDualActive'
+    | 'compareLayout'
+    | 'compareSwipePosition'
     | 'compareSlotBLabel'
+    | 'quadLayerIndex'
+    | 'onQuadLayerCycle'
   >;
 
 export type PreviewStripProps = Pick<

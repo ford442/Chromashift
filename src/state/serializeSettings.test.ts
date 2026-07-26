@@ -85,6 +85,34 @@ describe('serializeSettings', () => {
     expect(restored.ui.compareView.slotB.settings.tracers?.mode).toBe(2);
   });
 
+  it('round-trips swipe layout and swipePosition', () => {
+    let state = createInitialState();
+    state = chromashiftReducer(state, { type: 'compare/setLayout', layout: 'swipe' });
+    state = chromashiftReducer(state, { type: 'compare/setSwipePosition', swipePosition: 0.3 });
+
+    const doc = deserializeSettings(settingsToJson(state));
+    expect(doc?.settings.compare?.layout).toBe('swipe');
+    expect(doc?.settings.compare?.swipePosition).toBe(0.3);
+
+    const restored = applySettingsToState(createInitialState(), doc!.settings);
+    expect(restored.ui.compareView.layout).toBe('swipe');
+    expect(restored.ui.compareView.swipePosition).toBe(0.3);
+  });
+
+  it('round-trips quad layout and quadLayerIndex', () => {
+    let state = createInitialState();
+    state = chromashiftReducer(state, { type: 'compare/setLayout', layout: 'quad' });
+    state = chromashiftReducer(state, { type: 'compare/cycleQuadLayer' });
+
+    const doc = deserializeSettings(settingsToJson(state));
+    expect(doc?.settings.compare?.layout).toBe('quad');
+    expect(doc?.settings.compare?.quadLayerIndex).toBe(1);
+
+    const restored = applySettingsToState(createInitialState(), doc!.settings);
+    expect(restored.ui.compareView.layout).toBe('quad');
+    expect(restored.ui.compareView.quadLayerIndex).toBe(1);
+  });
+
   it('migrates v1 documents to normalized v2', () => {
     const v1 = {
       version: 1,

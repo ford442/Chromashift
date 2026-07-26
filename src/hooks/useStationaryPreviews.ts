@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import { isQuadCompareLayout } from '../engine/compareViews';
 import {
   STATIONARY_PREVIEW_SIZE,
   buildStationaryRendererState,
@@ -107,12 +108,13 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
 
   const gpuReady = state.engine.gpuReady;
   const exportingVideo = state.ui.exportingVideo;
+  const quadActive = isQuadCompareLayout(state.ui.compareView.layout);
   const livePreviewEnabled = state.output.livePreviewEnabled;
   const tracerPreviewFrozen = state.output.tracerPreviewFrozen;
   const settingsFingerprint = stationaryPreviewFingerprint(state);
 
   useEffect(() => {
-    if (!gpuReady || exportingVideo) return;
+    if (!gpuReady || exportingVideo || quadActive) return;
 
     const forced = capturePreviewAfterRender.current;
     if (forced) capturePreviewAfterRender.current = false;
@@ -124,13 +126,14 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
   }, [
     gpuReady,
     exportingVideo,
+    quadActive,
     settingsFingerprint,
     refreshPreviews,
     capturePreviewAfterRender,
   ]);
 
   useEffect(() => {
-    if (!gpuReady || exportingVideo || !livePreviewEnabled || tracerPreviewFrozen) return;
+    if (!gpuReady || exportingVideo || quadActive || !livePreviewEnabled || tracerPreviewFrozen) return;
 
     const interval = window.setInterval(() => {
       void refreshPreviews({ separated: false, tracer: true });
@@ -140,6 +143,7 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
   }, [
     gpuReady,
     exportingVideo,
+    quadActive,
     livePreviewEnabled,
     tracerPreviewFrozen,
     refreshPreviews,

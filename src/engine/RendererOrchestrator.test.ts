@@ -275,4 +275,63 @@ describe('RendererOrchestrator', () => {
 
     expect(() => orchestrator.createSlot('extra', mockCanvas('extra'))).toThrow(/primary canvas slot|single renderer slot/i);
   });
+
+  it('re-bootstraps a fresh primary slot after destroy', async () => {
+    const canvas = mockCanvas('main');
+    const deps = createMockDeps();
+
+    const first = await RendererOrchestrator.bootstrap({
+      primaryCanvas: canvas,
+      antialias: false,
+      backend: 'webgpu',
+    }, deps);
+
+    first.orchestrator.destroy();
+    expect(first.orchestrator.slotIds()).toEqual([]);
+
+    const second = await RendererOrchestrator.bootstrap({
+      primaryCanvas: canvas,
+      antialias: false,
+      backend: 'webgpu',
+    }, deps);
+
+    expect(second.orchestrator.slotIds()).toEqual([PRIMARY_SLOT_ID]);
+    expect(second.primarySlot.renderer).toBeTruthy();
+    expect(deps.bootstrapWebGpu).toHaveBeenCalledTimes(2);
+    expect(deps.createWebGPURenderer).toHaveBeenCalledTimes(2);
+    expect(deps.createTextureManager).toHaveBeenCalledTimes(2);
+    expect(deps.createGpuImageAnalysis).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-bootstraps after device loss', async () => {
+    const canvas = mockCanvas('main');
+    let capturedOnRuntimeError: ((error: GpuRuntimeError) => void) | undefined;
+    const deps = createMockDeps({
+      bootstrapWebGpu: vi.fn(async (options) => {
+        capturedOnRuntimeError = options.onRuntimeError;
+        return mockSession(mockWebGpuContext(options.canvas));
+      }),
+    });
+
+    const first = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: canvas, antialias: false, backend: 'webgpu' },
+      deps,
+    );
+
+    capturedOnRuntimeError?.({
+      kind: 'device-lost',
+      message: 'lost',
+      recoverable: true,
+    });
+    expect(first.orchestrator.slotIds()).toEqual([]);
+
+    const second = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: canvas, antialias: false, backend: 'webgpu' },
+      deps,
+    );
+
+    expect(second.orchestrator.slotIds()).toEqual([PRIMARY_SLOT_ID]);
+    expect(second.primarySlot.renderer).toBeTruthy();
+    expect(deps.bootstrapWebGpu).toHaveBeenCalledTimes(2);
+  });
 });

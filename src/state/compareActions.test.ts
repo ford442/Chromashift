@@ -22,8 +22,39 @@ describe('compare view actions', () => {
     state.ui.kioskEnabled = true;
     const next = chromashiftReducer(state, { type: 'compare/setLayout', layout: 'dual' });
     expect(next.ui.compareView.layout).toBe('single');
+    const swipe = chromashiftReducer(state, { type: 'compare/setLayout', layout: 'swipe' });
+    expect(swipe.ui.compareView.layout).toBe('single');
+    const quad = chromashiftReducer(state, { type: 'compare/setLayout', layout: 'quad' });
+    expect(quad.ui.compareView.layout).toBe('single');
     const backToSingle = chromashiftReducer(state, { type: 'compare/setLayout', layout: 'single' });
     expect(backToSingle.ui.compareView.layout).toBe('single');
+  });
+
+  it('cycles quad layer index', () => {
+    const first = chromashiftReducer(createInitialState(), { type: 'compare/cycleQuadLayer' });
+    expect(first.ui.compareView.quadLayerIndex).toBe(1);
+    const second = chromashiftReducer(first, { type: 'compare/cycleQuadLayer' });
+    expect(second.ui.compareView.quadLayerIndex).toBe(2);
+    const third = chromashiftReducer(second, { type: 'compare/cycleQuadLayer' });
+    expect(third.ui.compareView.quadLayerIndex).toBe(0);
+  });
+
+  it('sets and clamps swipe position', () => {
+    const next = chromashiftReducer(createInitialState(), {
+      type: 'compare/setSwipePosition',
+      swipePosition: 0.3,
+    });
+    expect(next.ui.compareView.swipePosition).toBe(0.3);
+    const clampedHigh = chromashiftReducer(next, {
+      type: 'compare/setSwipePosition',
+      swipePosition: 1.5,
+    });
+    expect(clampedHigh.ui.compareView.swipePosition).toBe(1);
+    const clampedLow = chromashiftReducer(next, {
+      type: 'compare/setSwipePosition',
+      swipePosition: -0.1,
+    });
+    expect(clampedLow.ui.compareView.swipePosition).toBe(0);
   });
 
   it('toggles sync play', () => {
@@ -66,6 +97,7 @@ describe('applySettingsToState', () => {
         layout: 'dual',
         syncPlay: false,
         swipePosition: 0.25,
+        quadLayerIndex: 2,
         slotA: { id: 'a', label: 'A', settings: { layers: { opacity: 0.8 } } },
         slotB: { id: 'b', label: 'B', settings: { tracers: { mode: 2 } } },
       },
@@ -73,6 +105,7 @@ describe('applySettingsToState', () => {
     expect(merged.ui.compareView.layout).toBe('dual');
     expect(merged.ui.compareView.syncPlay).toBe(false);
     expect(merged.ui.compareView.swipePosition).toBe(0.25);
+    expect(merged.ui.compareView.quadLayerIndex).toBe(2);
     expect(merged.ui.compareView.slotA.label).toBe('A');
     expect(merged.ui.compareView.slotA.settings.layers?.opacity).toBe(0.8);
     expect(merged.ui.compareView.slotB.settings.tracers?.mode).toBe(2);

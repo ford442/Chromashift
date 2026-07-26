@@ -20,6 +20,7 @@ import type { StationaryPreviewOptions, StationaryPreviewResult } from './statio
 import type { ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, GpuRenderTiming, RenderTiming } from './types/RendererContracts';
 import { EMPTY_GPU_RENDER_TIMING } from './types/RendererContracts';
 import type { CollisionStats, RendererState } from './types/RendererState';
+import type { ChromashiftTextureHandle } from './types/TextureHandle';
 import { layerRotationUniforms } from './math/rotation';
 
 /**
@@ -202,8 +203,11 @@ export class WebGPURenderer {
     this.invalidateBindGroupCaches();
   }
 
-  setTexture(texture: unknown): void {
-    this.currentTexture = texture as GPUTexture;
+  setTexture(handle: ChromashiftTextureHandle): void {
+    if (handle.backend !== 'webgpu') {
+      throw new Error(`Expected a webgpu texture handle, received ${handle.backend}.`);
+    }
+    this.currentTexture = handle.texture;
     this.stationaryPreview.setSourceTexture(this.currentTexture);
     invalidateLayerBindGroupCache(this.layerBindGroupCache);
   }

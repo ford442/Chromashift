@@ -1,6 +1,7 @@
 import type { CollisionStats, RendererState } from './RendererState';
 import type { ImageEntry } from '../TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
+import type { ChromashiftTextureHandle } from './TextureHandle';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 
@@ -74,7 +75,7 @@ export type ExportFrameResult = ExportTracerResult;
 
 export interface ChromashiftRenderer {
   readonly backend: RendererBackend;
-  setTexture(texture: unknown): void;
+  setTexture(texture: ChromashiftTextureHandle): void;
   setClassificationMaskTexture(texture: GPUTexture | null): void;
   setAntialiasing(enabled: boolean): void;
   clearPersistence(): void;
@@ -98,9 +99,9 @@ export interface ChromashiftRenderer {
 
 export interface ChromashiftTextureManager {
   fetchImageList(endpoint: string, signal?: AbortSignal): Promise<ImageEntry[]>;
-  loadTexture(url: string): Promise<unknown>;
-  uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): unknown;
+  loadTexture(url: string): Promise<ChromashiftTextureHandle>;
+  uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): ChromashiftTextureHandle;
   destroy(): void;
-  /** Evict cached local-blob textures not in `keepUrls`, freeing GPU memory until reselected. */
+  /** Evict cached textures outside keep set: blobs immediately; others via LRU byte budget + entry cap. */
   evictExcept(keepUrls: Iterable<string>): void;
 }

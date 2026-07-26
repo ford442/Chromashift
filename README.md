@@ -118,21 +118,29 @@ The deploy script prints total upload size before transferring.
 ```bash
 npm test                 # Vitest unit tests (src/**/*.test.ts)
 npm run test:e2e         # Playwright E2E (all projects)
-npm run test:e2e:webgl   # WebGL smoke, preset URL, kiosk
-npm run test:e2e:webgpu  # WebGPU smoke (--enable-unsafe-webgpu)
-npm run test:e2e:update  # refresh visual snapshots (opt-in opacity spec)
+npm run test:e2e:webgl   # WebGL smoke, preset URL, kiosk, viewport transforms
+npm run test:e2e:webgpu  # WebGPU smoke + compare layouts (--enable-unsafe-webgpu)
+npm run test:e2e:update  # refresh visual snapshots (opt-in screenshot specs)
 npm run test:cpp         # C++ host parity tests
 ```
 
 E2E coverage (`e2e/`):
 
-| Spec | What it checks |
-|------|----------------|
-| `smoke.spec.ts` | WebGL bootstrap, `window.usingWebGL`, canvas visible |
-| `webgpu-smoke.spec.ts` | WebGPU bootstrap (`chromium-webgpu` project, `--enable-unsafe-webgpu`) |
-| `preset-url.spec.ts` | `?preset=` hydrates layer opacity / tracer intensity; invalid preset error |
-| `kiosk.spec.ts` | `?kiosk=1` hides NUNIF chrome, shows kiosk remote |
-| `opacity-test.spec.ts` | Manual screenshot capture (`RECORD_SCREENSHOTS=1` only) |
+| Spec | Project | What it checks |
+|------|---------|----------------|
+| `smoke.spec.ts` | chromium | WebGL bootstrap, `window.usingWebGL`, canvas visible |
+| `preset-url.spec.ts` | chromium | `?preset=` hydrates layer opacity / tracer intensity; invalid preset error |
+| `kiosk.spec.ts` | chromium | `?kiosk=1` hides NUNIF chrome, shows kiosk remote |
+| `viewport-transforms.spec.ts` | chromium | Quarter-zoom / half-overlay toggles + preset hydrate |
+| `webgpu-smoke.spec.ts` | chromium-webgpu | WebGPU bootstrap (`--enable-unsafe-webgpu`) |
+| `compare-dual.spec.ts` | chromium-webgpu | Dual layout, Compare-with slot B, sync-play, perf banner |
+| `compare-swipe.spec.ts` | chromium-webgpu | Swipe divider drag + `window.compareSwipePosition` |
+| `compare-quad.spec.ts` | chromium-webgpu | Quad grid cells + layer cycle |
+| `preset-compare.spec.ts` | chromium-webgpu | v2 `compare.layout=dual` URL hydrate + reload round-trip |
+| `opacity-test.spec.ts` | chromium | Opt-in screenshot capture (`RECORD_SCREENSHOTS=1`) |
+| `renderer-parity.spec.ts` | chromium | Opt-in WebGL debug-mode screenshots (`RECORD_SCREENSHOTS=1`) |
+
+Compare specs stub `images.json` to `/e2e-fixture.png` so CI does not depend on the remote corpus.
 
 Install Playwright browsers once: `npx playwright install --with-deps chromium`.
 

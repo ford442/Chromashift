@@ -62,13 +62,24 @@ if (indexChunks.length === 0) {
   fail('no dist/assets/index-*.js entry chunk found');
 }
 
-for (const chunk of indexChunks) {
+const indexHtml = await readFile(join(DIST, 'index.html'), 'utf8').catch(() => null);
+const entryMatch = indexHtml?.match(/src="\.\/assets\/(index-[^"]+\.js)"/);
+const entryChunkPath = entryMatch ? join(DIST, 'assets', entryMatch[1]) : indexChunks[0];
+
+if (!indexChunks.some((chunk) => chunk === entryChunkPath)) {
+  fail(`entry chunk ${entryMatch?.[1] ?? 'unknown'} not found under dist/assets/`);
+}
+
+for (const chunk of [entryChunkPath]) {
   const text = await readFile(chunk, 'utf8');
   if (/ort-wasm/i.test(text)) {
     fail(`${chunk} references ort-wasm — lazy upscaler deps must stay out of the main bundle`);
   }
   if (/\btfjs\b|@tensorflow\/tfjs/i.test(text)) {
     fail(`${chunk} references tfjs — lazy upscaler deps must stay out of the main bundle`);
+  }
+  if (/\bmediabunny\b/i.test(text)) {
+    fail(`${chunk} references mediabunny — export muxer must stay out of the main bundle`);
   }
 }
 

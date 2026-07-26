@@ -12,7 +12,9 @@ export function AppUI(props: AppUIProps) {
     containerRef,
     mainViewportRef,
     mainCanvasRef,
+    canvasARef,
     canvasBRef,
+    canvasCRef,
     overlaySeparatedRef,
     previewOriginalRef,
     previewSeparatedRef,
@@ -29,13 +31,18 @@ export function AppUI(props: AppUIProps) {
     overlayUsesSeparatedCanvas,
     referenceBlendMode,
     referenceOpacity,
-    compareDualActive,
+    compareLayout,
+    compareSwipePosition,
     compareSlotBLabel,
+    quadLayerIndex,
+    onQuadLayerCycle,
     tracerPreviewFrozen,
     setTracerPreviewFrozen,
     livePreviewEnabled,
     setLivePreviewEnabled,
     gpuError,
+    onRetryGpu,
+    isGpuRetrying,
     collisionStats,
     avgLuminance,
     engineMode,
@@ -128,7 +135,9 @@ export function AppUI(props: AppUIProps) {
       <MainViewport
         mainViewportRef={mainViewportRef}
         mainCanvasRef={mainCanvasRef}
+        canvasARef={canvasARef}
         canvasBRef={canvasBRef}
+        canvasCRef={canvasCRef}
         overlaySeparatedRef={overlaySeparatedRef}
         photoModeImage={photoModeImage}
         isReferenceCompareMode={isReferenceCompareMode}
@@ -142,11 +151,14 @@ export function AppUI(props: AppUIProps) {
         overlayUsesSeparatedCanvas={overlayUsesSeparatedCanvas}
         referenceBlendMode={referenceBlendMode}
         referenceOpacity={referenceOpacity}
-        compareDualActive={compareDualActive}
+        compareLayout={compareLayout}
+        compareSwipePosition={compareSwipePosition}
         compareSlotBLabel={compareSlotBLabel}
+        quadLayerIndex={quadLayerIndex}
+        onQuadLayerCycle={onQuadLayerCycle}
       />
 
-      {showChrome && (
+      {showChrome && compareLayout !== 'quad' && (
         <PreviewStrip
           previewOriginalRef={previewOriginalRef}
           previewSeparatedRef={previewSeparatedRef}
@@ -162,6 +174,8 @@ export function AppUI(props: AppUIProps) {
         showChrome={showChrome}
         showKioskRemote={showKioskRemote}
         gpuError={gpuError}
+        onRetryGpu={onRetryGpu}
+        isGpuRetrying={isGpuRetrying}
         collisionStats={collisionStats}
         avgLuminance={avgLuminance}
         engineMode={engineMode}

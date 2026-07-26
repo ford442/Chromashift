@@ -1,8 +1,14 @@
 import { expect, test } from '@playwright/test';
+import { setE2eViewport } from './helpers/mockCorpus';
+import { primeOverlaySections } from './helpers/overlaySections';
 import { encodePresetParam, SAMPLE_PRESET_DOCUMENT } from './helpers/presetParam';
 import { waitForWebGL } from './helpers/renderer';
 
 test.describe('Preset URL hydration', () => {
+  test.beforeEach(async ({ page }) => {
+    await setE2eViewport(page);
+  });
+
   test('applies layer opacity and tracer intensity from ?preset=', async ({ page }) => {
     const preset = encodePresetParam(SAMPLE_PRESET_DOCUMENT);
 
@@ -18,11 +24,11 @@ test.describe('Preset URL hydration', () => {
   });
 
   test('shows a friendly error for an invalid ?preset= value', async ({ page }) => {
+    await primeOverlaySections(page, { presets: true });
     await page.goto('/?renderer=webgl&preset=%%%broken%%%');
     await waitForWebGL(page);
     await expect(page.getByText('NUNIF Controls')).toBeVisible();
 
-    await page.getByText('💾 Presets').click();
     await expect(
       page.getByText(/could not be read/i),
     ).toBeVisible();

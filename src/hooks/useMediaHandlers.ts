@@ -16,7 +16,7 @@ interface MediaHandlersOptions {
   generateClassificationMaskTexture: (
     image: HTMLImageElement,
     avgLum: number,
-    sourceTexture?: GPUTexture | null,
+    sourceTexture?: import('../engine/types/TextureHandle').ChromashiftTextureHandle | null,
   ) => Promise<number>;
 }
 
@@ -49,6 +49,9 @@ export function useMediaHandlers({
     try {
       const tex = await textureManagerRef.current.loadTexture(url);
       applySourceTexture(refs, tex);
+      textureManagerRef.current.evictExcept(
+        [url, media.reference?.url].filter((u): u is string => !!u),
+      );
       rendererRef.current.clearPersistence();
       clearClassificationMask();
       capturePreviewAfterRenderRef.current = true;
@@ -74,7 +77,7 @@ export function useMediaHandlers({
         void (async () => {
           let avgLum = 128;
           try {
-            avgLum = await generateClassificationMaskTexture(img, 128, tex as GPUTexture);
+            avgLum = await generateClassificationMaskTexture(img, 128, tex);
           } catch (e) {
             console.warn('Could not generate classification mask:', e);
             clearClassificationMask();

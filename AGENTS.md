@@ -31,8 +31,8 @@ npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
 npm test          # Vitest unit tests (src/**/*.test.ts)
 npm run test:e2e  # Playwright E2E (all projects; install browsers first)
-npm run test:e2e:webgl   # WebGL smoke, preset URL, kiosk
-npm run test:e2e:webgpu  # WebGPU smoke (chromium-webgpu project)
+npm run test:e2e:webgl   # WebGL smoke, preset URL, kiosk, viewport transforms
+npm run test:e2e:webgpu  # WebGPU smoke + compare layouts (chromium-webgpu project)
 npm run test:cpp  # C++ host tests (g++, no Emscripten)
 npm run preview   # Preview the production build locally
 ```
@@ -63,18 +63,24 @@ src/
 │       │   PresetsPanel.tsx, UpscalePanel.tsx  # one panel per settings group
 │       └── useOverlaySections.ts, types.ts, constants.ts
 ├── hooks/                    # App.tsx's logic, extracted so the component stays declarative
-│   ├── useChromashiftStore.ts    # Reducer-backed store (state slices) + refs bundle
+│   ├── useChromashiftStore.ts    # Thin façade: reducer + ref-sync + composed actions (see refs/, store/)
+│   ├── refs/                     # Typed ref sub-bundles (Dom, Gpu, Media, Compare, Reactive) + textureRouting
+│   ├── store/                    # Ref-dependent store helpers (selectSourceIndex, angle handlers)
+│   ├── appUiProps/               # Segment prop builders aligned with AppUI.types segments
+│   ├── useAppUiProps.ts          # Composes appUiProps/* builders into AppUIProps
 │   ├── useAppWebGPUInit.ts       # WebGPU/WebGL bootstrap, initial image list + local library merge
 │   ├── useImagePlayback.ts       # Loads the current/reference texture on index change, evicts old ones
 │   ├── useMediaHandlers.ts       # File/drop/upscale handlers (handleDropFiles, handleLoadFile, …)
 │   ├── useAnimationLoop.ts, useAppLifecycle.ts, useClassificationMask.ts,
-│   │   useTracerInspectInteraction.ts, useVideoExport.ts, usePresets.ts, useAppUiProps.ts
+│   │   useTracerInspectInteraction.ts, useVideoExport.ts, usePresets.ts
 ├── state/                    # Reducer, slices, and (de)serialization — see `ChromashiftState`
 │   ├── chromashiftReducer.ts, defaults.ts, types.ts
+│   ├── actions/                  # Dispatch wrapper factories mirroring reducer slices (media, compare, reactive, …)
 │   └── serializeSettings.ts, presetUrl.ts, presetLibrary.ts, presetGallery.ts  # see docs/PRESETS.md
 └── engine/
     ├── shaders/              # WGSL modules assembled in TS (thin assembler)
     │   ├── index.ts          # Re-exports all shader sources (import via './shaders')
+    │   ├── bandLiterals.ts   # BAND_WGSL / BAND_GLSL f32 literals from shared/band.json
     │   ├── common.ts         # Vertex shaders, colour/blend helpers, BAND_WGSL
     │   │                     # (band thresholds generated from math/bandClassification.ts BAND)
     │   ├── layers.ts         # 3 layer fragment shaders (shared header/prelude)
@@ -101,13 +107,15 @@ src/
     ├── WebGPURenderer.ts     # 5-pass GPU renderer orchestration (delegates to the below)
     ├── WebGPUPipelines.ts, BindGroupCache.ts, PersistencePass.ts, CompositorPass.ts,
     │   TracerInspectPass.ts, GpuReadback.ts, GpuTimestampProfiler.ts  # pass/readback + WebGPU perf HUD
-    ├── videoExport/          # Offline frame-by-frame WebM/PNG-sequence export — see docs/VIDEO_EXPORT.md
+    ├── videoExport/          # Offline frame-by-frame WebM/MP4 export (WebCodecs + mediabunny, MediaRecorder fallback) — see docs/VIDEO_EXPORT.md
     ├── compute/
     │   ├── GpuImageAnalysis.ts   # WebGPU histogram + r8uint classification mask
     │   ├── computeSupport.ts     # Feature detection + window breadcrumbs
     │   └── wgslSnippets.ts       # Shared WGSL threshold helpers (C++ parity)
     └── math/                 # Pure TS (bandClassification, rotation, decay) shared with tests/C++ parity
 ```
+
+**Store layout:** `useChromashiftStore` is a thin composer — refs live in `hooks/refs/` (Dom, Gpu, Media, Compare, Reactive sub-bundles), dispatch wrappers in `state/actions/` (one module per reducer slice), and ref-dependent callbacks in `hooks/store/`. New compare or reactive setters belong in `state/actions/compareActions.ts` or `state/actions/reactiveActions.ts`, not inline in the store hook. `useAppUiProps` composes segment builders from `hooks/appUiProps/` that align with the `AppUI.types` prop segments.
 
 ### Renderer Selection / WebGL2 Fallback
 
@@ -132,7 +140,7 @@ WebGL-only debug helpers are in the Renderer panel:
 - `Rotation UV grid` — transformed UVs and a grid to debug layer rotation/flips.
 - `Layer mask isolation` — shows active per-layer mask output before final compositing.
 
-For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL`) — never hardcode them in WGSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/C++ against divergence. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
+For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
 ### Rendering Pipeline (Detailed)
 
@@ -152,9 +160,9 @@ Render settings serialize to a versioned JSON document (`src/state/serializeSett
 
 `?kiosk=1` enables installation mode (see `docs/KIOSK.md`): hides NUNIF chrome, forces autoplay + attract parameter drift, large bottom remote, fullscreen + wake lock (`useKioskMode.ts`), and **Esc** to restore panels. Breadcrumb: `window.kioskMode`. WebXR Phase-0 spike (`docs/WebXR.md`): `window.xrAvailable`, immersive VR via WebGL bridge — mutually exclusive with kiosk.
 
-### Compare / multi-view (planned)
+### Compare / multi-view
 
-Side-by-side preset comparison (dual 2-up, quad grid, swipe split) is **not shipped yet**. Architecture, GPU budget rules, and phased acceptance criteria: `docs/COMPARE_VIEWS.md`. Shared types/helpers: `src/engine/compareViews.ts` (`CompareLayoutMode`, `effectiveLayerScaleForMultiView`, `multiViewPerformanceNote`).
+Dual 2-up, swipe split, and quad analytical grid are shipped on WebGPU (see [docs/COMPARE_VIEWS.md](docs/COMPARE_VIEWS.md)). Shared types/helpers: `src/engine/compareViews.ts` (`CompareLayoutMode`, `QUAD_VIEW_CELLS`, `effectiveLayerScaleForMultiView`, `multiViewPerformanceNote`). WebGL fallback supports single-view only.
 
 ### Local Image Library (drag-and-drop)
 
@@ -162,7 +170,7 @@ Dropping image files (or whole folders) anywhere on `#chromashift-container` per
 
 `ImageStrip` shows a LOCAL/REMOTE badge per entry (using `thumbUrl`, not the full-res `url`, to avoid decoding full images just for a 144px thumbnail) and a "Clear Library" button that wipes IndexedDB and drops every `localId`-tagged entry from the corpus.
 
-Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureManager` need no special-casing to decode them (no CORS, unlike some remote hosts). The one addition is `evictExcept(keepUrls)`, called after each texture swap in `useImagePlayback`: it destroys any cached GPU texture backed by a `blob:` URL that isn't the current source or reference, so switching away frees GPU memory and switching back simply re-decodes from the (already-resident) blob on demand. Remote `http(s)` textures are still cached forever.
+Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureManager` need no special-casing to decode them (no CORS, unlike some remote hosts). `evictExcept(keepUrls)` runs after each texture swap in `useImagePlayback` (and `handleLoadSpecificImage`): local `blob:` textures outside the keep set are destroyed immediately so switching away frees GPU memory and switching back re-decodes from the resident IndexedDB blob on demand. Remote `http(s)` and other cached keys follow LRU eviction against an estimated mip-chain byte budget (256 MB default) and a hard entry cap (12 default); the keep set is the current source URL plus the reference image URL. Compare layouts share one decoded texture per URL via the orchestrator's single texture manager. Breadcrumbs: `window.textureCacheSize` and `window.textureCacheBytes`.
 
 ### Upscaler (lazy-loaded)
 
@@ -200,7 +208,7 @@ Full spec: **[docs/PREVIEW_VIEWS.md](docs/PREVIEW_VIEWS.md)**. Compare layouts:
 
 ### Video Export
 
-`src/engine/videoExport/` renders offline frames (independent of the live canvas/animation loop) to produce a WebM or PNG-sequence export at a configurable duration, FPS, resolution scale, and pass mode (composite/tracers/layers). Driven by `useVideoExport.ts` + `ExportPanel.tsx`. See `docs/VIDEO_EXPORT.md`.
+`src/engine/videoExport/` renders offline frames (independent of the live canvas/animation loop) to produce a WebM or MP4 export at a configurable duration, FPS, resolution scale, and pass mode (composite/tracers/layers). Prefers WebCodecs + mediabunny when available; falls back to MediaRecorder. Driven by `useVideoExport.ts` + `ExportPanel.tsx`. See `docs/VIDEO_EXPORT.md`.
 
 ### GPU Image Analysis (Compute)
 
@@ -321,7 +329,7 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | Tier | Command | Scope |
 |------|---------|-------|
 | **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, video export, reactive modulation) |
-| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/` — WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk bootstrap (`kiosk.spec.ts`), WebGPU smoke (`webgpu-smoke.spec.ts`, `chromium-webgpu` project with `--enable-unsafe-webgpu`). `e2e/opacity-test.spec.ts` is opt-in (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
+| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band/decay parity with `chromashift_engine.cpp`; no Emscripten required |
 
 ### CI job matrix

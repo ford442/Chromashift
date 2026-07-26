@@ -1,13 +1,15 @@
 import { useCallback, useRef } from 'react';
 import { classifyImageMaskWith, computeImageAverageLuminanceWith, isWasmReady } from '../engine/WasmEngine';
+import type { ChromashiftTextureHandle } from '../engine/types/TextureHandle';
+import { webGpuTextureFromHandle } from '../engine/types/TextureHandle';
 import type { ChromashiftRefs } from './useChromashiftStore';
+import { applyClassificationMaskToRenderers } from './useChromashiftStore';
 
 type MaskOwner = 'gpu-analysis' | 'wasm-upload' | null;
 
 export function useClassificationMask(refs: ChromashiftRefs) {
   const {
     rendererRef,
-    rendererBRef,
     maskTextureRef,
     engineModeRef,
     deviceRef,
@@ -16,14 +18,13 @@ export function useClassificationMask(refs: ChromashiftRefs) {
   const maskOwnerRef = useRef<MaskOwner>(null);
 
   const clearClassificationMask = useCallback(() => {
-    rendererRef.current?.setClassificationMaskTexture(null);
-    rendererBRef.current?.setClassificationMaskTexture(null);
+    applyClassificationMaskToRenderers(refs, null);
     if (maskOwnerRef.current === 'wasm-upload') {
       maskTextureRef.current?.destroy();
     }
     maskTextureRef.current = null;
     maskOwnerRef.current = null;
-  }, [rendererRef, rendererBRef, maskTextureRef]);
+  }, [refs, maskTextureRef]);
 
   const bindMaskTexture = useCallback((texture: GPUTexture, owner: MaskOwner) => {
     if (maskOwnerRef.current === 'wasm-upload' && maskTextureRef.current) {
@@ -31,9 +32,8 @@ export function useClassificationMask(refs: ChromashiftRefs) {
     }
     maskTextureRef.current = texture;
     maskOwnerRef.current = owner;
-    rendererRef.current?.setClassificationMaskTexture(texture);
-    rendererBRef.current?.setClassificationMaskTexture(texture);
-  }, [rendererRef, rendererBRef, maskTextureRef]);
+    applyClassificationMaskToRenderers(refs, texture);
+  }, [refs, maskTextureRef]);
 
   const generateClassificationMaskFromTexture = useCallback(async (
     source: GPUTexture,
@@ -94,14 +94,15 @@ export function useClassificationMask(refs: ChromashiftRefs) {
   const generateClassificationMaskTexture = useCallback(async (
     image: HTMLImageElement,
     _avgLumValue: number,
-    sourceTexture?: GPUTexture | null,
+    sourceTexture?: ChromashiftTextureHandle | null,
   ): Promise<number> => {
     const width = image.naturalWidth;
     const height = image.naturalHeight;
+    const gpuSource = webGpuTextureFromHandle(sourceTexture);
 
-    if (sourceTexture && width > 0 && height > 0) {
+    if (gpuSource && width > 0 && height > 0) {
       const gpu = await generateClassificationMaskFromTexture(
-        sourceTexture,
+        gpuSource,
         width,
         height,
       );

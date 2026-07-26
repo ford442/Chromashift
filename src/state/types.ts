@@ -6,6 +6,7 @@ import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
+import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
 import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
 import type { CompareViewState } from '../engine/compareViews';
 export type { ReactiveSlice } from '../engine/reactive/types';
@@ -89,6 +90,8 @@ export interface EngineSlice {
   avgLuminance: number;
 }
 
+export type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
+
 export interface VideoExportSettings {
   durationSec: number;
   fps: number;
@@ -97,6 +100,8 @@ export interface VideoExportSettings {
   passMode: ExportPassMode;
   filename: string;
   usePresetAngles: boolean;
+  container: VideoExportContainer;
+  quality: VideoExportQuality;
 }
 
 export interface UiSlice {

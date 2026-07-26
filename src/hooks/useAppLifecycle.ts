@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { loadWasmEngine } from '../engine/WasmEngine';
 import type { ChromashiftRefs } from './useChromashiftStore';
 import type { ChromashiftState } from '../state/types';
+import { isQuadCompareLayout, isTwoSlotCompareLayout } from '../engine/compareViews';
 
 export function useCanvasResize(
   refs: ChromashiftRefs,
@@ -9,8 +10,11 @@ export function useCanvasResize(
   imageAspect: number,
   compareLayout: import('../engine/compareViews').CompareLayoutMode = 'single',
 ): void {
-  const { containerRef, mainCanvasRef, mainViewportRef, orchestratorRef, canvasBRef } = refs;
+  const { containerRef, mainCanvasRef, mainViewportRef, orchestratorRef, canvasARef, canvasBRef, canvasCRef } = refs;
   const dual = compareLayout === 'dual';
+  const quad = isQuadCompareLayout(compareLayout);
+  const twoSlot = isTwoSlotCompareLayout(compareLayout);
+  const multiCell = dual || quad;
 
   useEffect(() => {
     const mainCanvas = mainCanvasRef.current;
@@ -31,29 +35,34 @@ export function useCanvasResize(
       const boxW = containerW;
       const boxH = Math.floor(Math.min(maxSize, containerH));
 
-      // In dual layout each slot gets a half-width cell; fit the aspect per cell
-      // and size the viewport to two cells plus a 2px divider.
-      const fitW = dual ? Math.floor((boxW - 2) / 2) : boxW;
+      const fitW = multiCell ? Math.floor((boxW - 2) / 2) : boxW;
+      const fitH = quad ? Math.floor((boxH - 2) / 2) : boxH;
 
-      let targetW = fitW;
-      let targetH = boxH;
+      let cellW = fitW;
+      let cellH = fitH;
 
       if (squareCanvas) {
-        const side = Math.floor(Math.min(fitW, boxH));
-        targetW = side;
-        targetH = side;
-      } else if (fitW / boxH > imageAspect) {
-        targetH = boxH;
-        targetW = Math.floor(targetH * imageAspect);
+        const side = Math.floor(Math.min(fitW, fitH));
+        cellW = side;
+        cellH = side;
+      } else if (fitW / fitH > imageAspect) {
+        cellH = fitH;
+        cellW = Math.floor(cellH * imageAspect);
       } else {
-        targetW = fitW;
-        targetH = Math.floor(targetW / imageAspect);
+        cellW = fitW;
+        cellH = Math.floor(cellW / imageAspect);
       }
 
-      if (dual) targetW = targetW * 2 + 2;
+      let viewportW = cellW;
+      let viewportH = cellH;
+      if (dual) viewportW = cellW * 2 + 2;
+      if (quad) {
+        viewportW = cellW * 2 + 2;
+        viewportH = cellH * 2 + 2;
+      }
 
-      const cssW = Math.floor(targetW);
-      const cssH = Math.floor(targetH);
+      const cssW = Math.floor(viewportW);
+      const cssH = Math.floor(viewportH);
       const cssLeft = Math.floor((containerW - cssW) / 2);
       const cssTop = Math.floor((containerH - cssH) / 2);
 
@@ -63,31 +72,34 @@ export function useCanvasResize(
       mainViewportEl.style.top = `${cssTop}px`;
 
       const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const canvasCssW = dual ? (cssW - 2) / 2 : cssW;
-      const nextMainW = Math.floor(canvasCssW * dpr);
-      const nextMainH = Math.floor(cssH * dpr);
+      const canvasCssW = multiCell ? (cssW - 2) / 2 : cssW;
+      const canvasCssH = quad ? (cssH - 2) / 2 : cssH;
 
       let gpuResizeNeeded = false;
-      if (mainCanvasEl.width !== nextMainW || mainCanvasEl.height !== nextMainH) {
-        mainCanvasEl.width = nextMainW;
-        mainCanvasEl.height = nextMainH;
-        gpuResizeNeeded = true;
-      }
 
-      const canvasBEl = canvasBRef.current;
-      if (dual && canvasBEl) {
-        const nextBW = Math.floor(canvasCssW * dpr);
-        const nextBH = Math.floor(cssH * dpr);
-        if (canvasBEl.width !== nextBW || canvasBEl.height !== nextBH) {
-          canvasBEl.width = nextBW;
-          canvasBEl.height = nextBH;
+      const resizeOne = (canvas: HTMLCanvasElement | null, w: number, h: number) => {
+        if (!canvas) return;
+        const nextW = Math.floor(w * dpr);
+        const nextH = Math.floor(h * dpr);
+        if (canvas.width !== nextW || canvas.height !== nextH) {
+          canvas.width = nextW;
+          canvas.height = nextH;
           gpuResizeNeeded = true;
+        }
+      };
+
+      if (quad) {
+        resizeOne(canvasARef.current, canvasCssW, canvasCssH);
+        resizeOne(canvasBRef.current, canvasCssW, canvasCssH);
+        resizeOne(canvasCRef.current, canvasCssW, canvasCssH);
+        resizeOne(mainCanvasEl, canvasCssW, canvasCssH);
+      } else {
+        resizeOne(mainCanvasEl, canvasCssW, cssH);
+        if (twoSlot) {
+          resizeOne(canvasBRef.current, canvasCssW, cssH);
         }
       }
 
-      // Only reconfigure WebGPU contexts when backing-store dimensions change.
-      // ResizeObserver can fire repeatedly at the same size; calling configure()
-      // every frame races getCurrentTexture() and causes garbled output + stutter.
       if (gpuResizeNeeded) {
         orchestratorRef.current?.resizeAll();
       }
@@ -102,7 +114,7 @@ export function useCanvasResize(
       observer.disconnect();
       window.removeEventListener('resize', resizeCanvas);
     };
-  }, [containerRef, mainCanvasRef, mainViewportRef, orchestratorRef, canvasBRef, squareCanvas, imageAspect, dual]);
+  }, [containerRef, mainCanvasRef, mainViewportRef, orchestratorRef, canvasARef, canvasBRef, canvasCRef, squareCanvas, imageAspect, dual, quad, twoSlot, multiCell]);
 }
 
 export function useWasmEngineLoader(

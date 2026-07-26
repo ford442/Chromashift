@@ -23,12 +23,16 @@ export interface CompareSlotConfig {
   mainViewMode?: MainViewMode;
 }
 
+export type QuadLayerIndex = 0 | 1 | 2;
+
 export interface CompareViewState {
   layout: CompareLayoutMode;
   /** When true, all slots share one animation angle clock. */
   syncPlay: boolean;
   /** Swipe split position 0–1 (swipe layout only). */
   swipePosition: number;
+  /** Quad Layers cell: which layer isolation view to show (0–2). */
+  quadLayerIndex: QuadLayerIndex;
   slotA: CompareSlotConfig;
   slotB: CompareSlotConfig;
 }
@@ -52,6 +56,28 @@ export const QUAD_VIEW_CELLS: ReadonlyArray<{
   { id: 'c', label: 'Tracer', mainViewMode: MAIN_VIEW_MODES.FULL_RES_TRACER },
   { id: 'd', label: 'Composite', mainViewMode: MAIN_VIEW_MODES.PROCESSED_COMPOSITE },
 ];
+
+/** True when two GPU render slots (A + B) are active — dual side-by-side or swipe split. */
+export function isTwoSlotCompareLayout(layout: CompareLayoutMode): boolean {
+  return layout === 'dual' || layout === 'swipe';
+}
+
+export function isQuadCompareLayout(layout: CompareLayoutMode): boolean {
+  return layout === 'quad';
+}
+
+export function isMultiViewLayout(layout: CompareLayoutMode): boolean {
+  return layout !== 'single';
+}
+
+/** Map quad Layers cell index to a layer isolation main-view mode. */
+export function quadLayerMainViewMode(index: QuadLayerIndex): MainViewMode {
+  return (MAIN_VIEW_MODES.LAYER_0 + index) as MainViewMode;
+}
+
+export function nextQuadLayerIndex(index: QuadLayerIndex): QuadLayerIndex {
+  return ((index + 1) % 3) as QuadLayerIndex;
+}
 
 export function activeViewCount(layout: CompareLayoutMode): number {
   switch (layout) {

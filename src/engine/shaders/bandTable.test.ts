@@ -9,14 +9,25 @@ import {
   type BandName,
 } from '../math/bandClassification';
 import { CLASSIFICATION_COMPUTE_SHADER } from '../compute/wgslSnippets';
+import { LAYER_FRAGMENT_SOURCE } from '../webgl/shaders/layers';
+import { LAYER_ISOLATION_DEBUG_FRAGMENT } from '../webgl/shaders/debug';
 import {
+  BAND_GLSL,
   BAND_WGSL,
+  DARK_BAND_RGB_MAX,
+} from './bandLiterals';
+import {
   fragmentShaderGreenYellow,
   fragmentShaderRedOrange,
   fragmentShaderVioletBlue,
 } from './index';
 
 const BAND_NAMES = Object.keys(BAND) as BandName[];
+
+/** Band threshold literals that must not appear as hand-written values in WebGL shader TS. */
+const STALE_BAND_LITERALS = BAND_NAMES.filter((name) => name !== 'yellow').map(
+  (name) => BAND_GLSL[name],
+);
 
 describe('canonical band table', () => {
   it('orders thresholds strictly descending (band index = position)', () => {
@@ -64,6 +75,32 @@ describe('WGSL shaders consume the canonical table', () => {
   it('compute classification shader contains every threshold', () => {
     for (const name of BAND_NAMES) {
       expect(CLASSIFICATION_COMPUTE_SHADER).toContain(`rgb > ${BAND_WGSL[name]}`);
+    }
+  });
+});
+
+describe('WebGL GLSL shaders consume the canonical table', () => {
+  const webglSources = [
+    ['layer fragment', LAYER_FRAGMENT_SOURCE],
+    ['layer isolation debug', LAYER_ISOLATION_DEBUG_FRAGMENT],
+  ] as const;
+
+  it.each(webglSources)('%s contains every band threshold', (_name, source) => {
+    for (const band of BAND_NAMES) {
+      expect(source).toContain(BAND_GLSL[band]);
+    }
+    expect(source).toContain(DARK_BAND_RGB_MAX);
+  });
+
+  it('webgl shader modules do not hardcode stale band literals', () => {
+    const shaderDir = join(__dirname, '../webgl/shaders');
+    for (const file of ['layers.ts', 'debug.ts'] as const) {
+      const source = readFileSync(join(shaderDir, file), 'utf8');
+      for (const literal of STALE_BAND_LITERALS) {
+        expect(source, `${file} must not contain hardcoded ${literal}`).not.toMatch(
+          new RegExp(`\\b${literal.replace('.', '\\.')}\\b`),
+        );
+      }
     }
   });
 });

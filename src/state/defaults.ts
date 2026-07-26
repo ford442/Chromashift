@@ -33,6 +33,8 @@ export const DEFAULT_VIDEO_EXPORT_SETTINGS = {
   passMode: 'composite' as ExportPassMode,
   filename: 'chromashift-export',
   usePresetAngles: true,
+  container: 'auto' as const,
+  quality: 'high' as const,
 };
 
 export function createInitialState(): ChromashiftState {
@@ -130,6 +132,7 @@ export function createInitialState(): ChromashiftState {
         layout: 'single',
         syncPlay: true,
         swipePosition: 0.5,
+        quadLayerIndex: 0,
         slotA: defaultCompareSlot('a', 'Live'),
         slotB: defaultCompareSlot('b', 'Preset B'),
       },

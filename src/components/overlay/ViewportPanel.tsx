@@ -18,18 +18,24 @@ export function ViewportPanel({
   onCompareLayoutChange,
   onCompareSyncPlayToggle,
 }: ViewportPanelProps) {
-  const dualActive = compareLayout === 'dual';
+  const multiViewActive = compareLayout === 'dual' || compareLayout === 'swipe';
+  const quadActive = compareLayout === 'quad';
+  const multiViewUnavailableTitle = 'Requires the WebGPU renderer (and kiosk mode off)';
+
+  const layoutButtonClass = (active: boolean) =>
+    `text-xs px-2 py-0.5 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+      active
+        ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+        : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
+    }`;
+
   return (
     <div className="panel-3d space-y-2">
       <div className="grid grid-cols-2 gap-1">
         <button
           type="button"
           onClick={() => onCompareLayoutChange('single')}
-          className={`text-xs px-2 py-0.5 rounded transition-all ${
-            !dualActive
-              ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
-              : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
-          }`}
+          className={layoutButtonClass(compareLayout === 'single')}
         >
           ▢ Single
         </button>
@@ -39,18 +45,36 @@ export function ViewportPanel({
           onClick={() => onCompareLayoutChange('dual')}
           title={compareDualAvailable
             ? 'Side-by-side A/B comparison of two preset snapshots'
-            : 'Requires the WebGPU renderer (and kiosk mode off)'}
-          className={`text-xs px-2 py-0.5 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
-            dualActive
-              ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
-              : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
-          }`}
+            : multiViewUnavailableTitle}
+          className={layoutButtonClass(compareLayout === 'dual')}
         >
           ▢▢ Dual
         </button>
+        <button
+          type="button"
+          disabled={!compareDualAvailable}
+          onClick={() => onCompareLayoutChange('swipe')}
+          title={compareDualAvailable
+            ? 'Swipe split between preset A and B on one viewport'
+            : multiViewUnavailableTitle}
+          className={layoutButtonClass(compareLayout === 'swipe')}
+        >
+          ⇔ Swipe
+        </button>
+        <button
+          type="button"
+          disabled={!compareDualAvailable}
+          onClick={() => onCompareLayoutChange('quad')}
+          title={compareDualAvailable
+            ? '2×2 analytical grid: Original, Layers, Tracer, live Composite'
+            : multiViewUnavailableTitle}
+          className={layoutButtonClass(compareLayout === 'quad')}
+        >
+          ⊞ Quad
+        </button>
       </div>
 
-      {dualActive && (
+      {multiViewActive && (
         <button
           type="button"
           onClick={() => onCompareSyncPlayToggle(!compareSyncPlay)}
@@ -86,7 +110,7 @@ export function ViewportPanel({
       <button
         type="button"
         onClick={() => onViewportQuarterZoomToggle(!viewportQuarterZoom)}
-        disabled={isViewingTracer || mainViewMode !== 0 || viewportHalfOverlay}
+        disabled={isViewingTracer || mainViewMode !== 0 || viewportHalfOverlay || quadActive}
         className={`w-full text-xs px-2 py-0.5 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
           viewportQuarterZoom
             ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
@@ -102,7 +126,7 @@ export function ViewportPanel({
       <button
         type="button"
         onClick={() => onViewportHalfOverlayToggle(!viewportHalfOverlay)}
-        disabled={isViewingTracer || mainViewMode !== 0 || viewportQuarterZoom}
+        disabled={isViewingTracer || mainViewMode !== 0 || viewportQuarterZoom || quadActive}
         className={`w-full text-xs px-2 py-0.5 rounded transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
           viewportHalfOverlay
             ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'

@@ -21,6 +21,7 @@ function cloneCompareView(compareView: CompareViewState): CompareViewState {
     layout: compareView.layout,
     syncPlay: compareView.syncPlay,
     swipePosition: compareView.swipePosition,
+    quadLayerIndex: compareView.quadLayerIndex ?? 0,
     slotA: {
       ...compareView.slotA,
       settings: { ...compareView.slotA.settings },

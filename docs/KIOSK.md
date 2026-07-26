@@ -58,6 +58,17 @@ Press **Esc** again after restoring panels to use NUNIF normally. Remove `?kiosk
 
 Avoid Firefox/Safari for production installs until stable WebGPU is available; use `?renderer=webgl` only as emergency fallback.
 
+## GPU recovery
+
+If the GPU device is lost (driver reset, browser GPU process restart), a fullscreen error overlay appears. For kiosk installs this does **not** exit kiosk mode or show NUNIF panels.
+
+| Step | Action |
+|------|--------|
+| 1 | Tap **Retry GPU** on the overlay — re-initializes WebGPU without reloading the page; attract mode and autoplay continue |
+| 2 | If retry fails, tap **Switch to WebGL2** or **Reload page** |
+
+After a successful retry, confirm `window.usingWebGPU === true` in DevTools. The current image and preset settings should be unchanged.
+
 ### Automation breadcrumbs
 
 ```js

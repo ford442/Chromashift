@@ -1,4 +1,4 @@
-import type { ChromashiftDispatch } from '../../hooks/useChromashiftStore';
+import type { ChromashiftDispatch } from '../../state/actions';
 import type { MidiParamId } from './types';
 import { midiValueToParam } from './modulation';
 

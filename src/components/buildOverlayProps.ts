@@ -91,6 +91,8 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     onVideoExportPassModeChange: p.onVideoExportPassModeChange,
     onVideoExportFilenameChange: p.onVideoExportFilenameChange,
     onVideoExportUsePresetAnglesChange: p.onVideoExportUsePresetAnglesChange,
+    onVideoExportContainerChange: p.onVideoExportContainerChange,
+    onVideoExportQualityChange: p.onVideoExportQualityChange,
     squareCanvas: p.squareCanvas,
     antialiasEnabled: p.antialiasEnabled,
     viewportQuarterZoom: p.viewportQuarterZoom,

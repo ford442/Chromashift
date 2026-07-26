@@ -19,7 +19,7 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /webgpu-smoke\.spec\.ts/,
+      testIgnore: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts/,
     },
     {
       name: 'chromium-webgpu',
@@ -29,7 +29,7 @@ export default defineConfig({
           args: WEBGPU_LAUNCH_ARGS,
         },
       },
-      testMatch: /webgpu-smoke\.spec\.ts/,
+      testMatch: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts/,
     },
   ],
   webServer: {

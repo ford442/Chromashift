@@ -1,17 +1,5 @@
-import { BAND, type BandName } from '../math/bandClassification';
-
-/**
- * Band thresholds formatted as WGSL f32 literals (e.g. "229.0"), generated
- * from the canonical BAND table so GPU shaders cannot drift from the TS/C++
- * classifiers. Interpolate these into WGSL template strings instead of
- * writing numeric thresholds by hand.
- */
-export const BAND_WGSL = Object.fromEntries(
-  (Object.entries(BAND) as [BandName, number][]).map(([name, value]) => [
-    name,
-    value.toFixed(1),
-  ]),
-) as Record<BandName, string>;
+export { BAND_GLSL, BAND_SHADER_FLOAT, BAND_WGSL, DARK_BAND_RGB_MAX } from './bandLiterals';
+import { BAND_WGSL } from './bandLiterals';
 
 // ─── Vertex: rotate/flip layers (3 copies, one per layer) ──────────────────────────────────────────────────
 export const vertexShaderSource = /* wgsl */ `

@@ -85,14 +85,14 @@ When `ui.compareView.layout === 'dual'`, **both** main canvases (slot A and slot
 rotation. That mode compares two **presets** in motion, not reference stills. Side preview
 strip rules above still apply to the floating thumbnails.
 
-### Quad layout (planned)
+### Quad layout (shipped)
 
-`QUAD_VIEW_CELLS` in `compareViews.ts` maps four equal cells:
+`QUAD_VIEW_CELLS` in `compareViews.ts` maps four equal cells in the Viewport **Quad** layout (WebGPU only). The floating preview strip is hidden while quad is active — the grid replaces that GPU work.
 
 | Cell | Mode | Rotation |
 |------|------|----------|
 | Original | `SOURCE_IMAGE` | Stationary |
-| Layers | `LAYER_0` (or cycle) | Stationary at preset angles |
+| Layers | `LAYER_0` / `LAYER_1` / `LAYER_2` (click label to cycle) | Stationary at preset angles |
 | Tracer | `FULL_RES_TRACER` | Stationary at preset angles |
 | Composite | `PROCESSED_COMPOSITE` | **Live** (only this cell) |
 

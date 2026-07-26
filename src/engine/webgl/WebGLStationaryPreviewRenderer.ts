@@ -1,7 +1,7 @@
 import { MAIN_VIEW_MODES } from '../viewModes';
 import { durationToDecayWith } from '../WasmEngine';
 import type { RendererState } from '../types/RendererState';
-import type { WebGLImageTexture } from '../WebGLTextureManager';
+import type { WebGlTextureHandle } from '../types/TextureHandle';
 import {
   STATIONARY_PREVIEW_SIZE,
   STATIONARY_TRACER_WARMUP_FRAMES,
@@ -31,7 +31,7 @@ export class WebGLStationaryPreviewRenderer {
   private readonly layerPass: WebGLLayerPass;
   private readonly persistencePass: WebGLPersistencePass;
   private readonly compositorPass: WebGLCompositorPass;
-  private sourceTexture: WebGLImageTexture | null = null;
+  private sourceTexture: WebGlTextureHandle | null = null;
   private outputTarget: RenderTarget | null = null;
 
   constructor(gl: WebGL2RenderingContext) {
@@ -42,7 +42,7 @@ export class WebGLStationaryPreviewRenderer {
     this.compositorPass = new WebGLCompositorPass(gl);
   }
 
-  setSourceTexture(texture: WebGLImageTexture | null): void {
+  setSourceTexture(texture: WebGlTextureHandle | null): void {
     this.sourceTexture = texture;
   }
 

@@ -1,6 +1,6 @@
 import type { ExportPassMode } from '../../engine/types/RendererContracts';
 import type { VideoCodecSupport } from '../../engine/videoExport/videoCodecs';
-import type { VideoExportSettings } from '../../state/types';
+import type { VideoExportContainer, VideoExportQuality, VideoExportSettings } from '../../state/types';
 
 export interface ExportPanelProps {
   exportingVideo: boolean;
@@ -16,12 +16,26 @@ export interface ExportPanelProps {
   onVideoExportPassModeChange: (mode: ExportPassMode) => void;
   onVideoExportFilenameChange: (filename: string) => void;
   onVideoExportUsePresetAnglesChange: (usePreset: boolean) => void;
+  onVideoExportContainerChange: (container: VideoExportContainer) => void;
+  onVideoExportQualityChange: (quality: VideoExportQuality) => void;
 }
 
 const PASS_MODE_LABELS: Record<ExportPassMode, string> = {
   composite: 'Composite',
   tracers: 'Tracers only',
   layers: 'Layers only',
+};
+
+const CONTAINER_LABELS: Record<VideoExportContainer, string> = {
+  auto: 'Auto',
+  webm: 'WebM',
+  mp4: 'MP4',
+};
+
+const QUALITY_LABELS: Record<VideoExportQuality, string> = {
+  high: 'High',
+  medium: 'Medium',
+  low: 'Low',
 };
 
 export function ExportPanel({
@@ -38,9 +52,12 @@ export function ExportPanel({
   onVideoExportPassModeChange,
   onVideoExportFilenameChange,
   onVideoExportUsePresetAnglesChange,
+  onVideoExportContainerChange,
+  onVideoExportQualityChange,
 }: ExportPanelProps) {
   const progressPct = Math.round(videoExportProgress * 100);
-  const canExport = codecSupport.mediaRecorder && !exportingVideo;
+  const canExport = (codecSupport.webCodecsUsable || codecSupport.mediaRecorder) && !exportingVideo;
+  const showWebCodecsControls = codecSupport.webCodecsUsable;
 
   return (
     <div className="space-y-3">
@@ -119,6 +136,37 @@ export function ExportPanel({
           </select>
         </label>
 
+        {showWebCodecsControls && (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[10px] text-emerald-200/70 font-mono">
+              Container
+              <select
+                value={videoExportSettings.container}
+                disabled={exportingVideo}
+                onChange={(e) => onVideoExportContainerChange(e.target.value as VideoExportContainer)}
+                className="mt-0.5 w-full text-[10px] bg-zinc-900 border border-emerald-500/30 rounded px-1.5 py-1 text-emerald-100"
+              >
+                {(Object.keys(CONTAINER_LABELS) as VideoExportContainer[]).map((container) => (
+                  <option key={container} value={container}>{CONTAINER_LABELS[container]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-[10px] text-emerald-200/70 font-mono">
+              Quality
+              <select
+                value={videoExportSettings.quality}
+                disabled={exportingVideo}
+                onChange={(e) => onVideoExportQualityChange(e.target.value as VideoExportQuality)}
+                className="mt-0.5 w-full text-[10px] bg-zinc-900 border border-emerald-500/30 rounded px-1.5 py-1 text-emerald-100"
+              >
+                {(Object.keys(QUALITY_LABELS) as VideoExportQuality[]).map((quality) => (
+                  <option key={quality} value={quality}>{QUALITY_LABELS[quality]}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-1">
           <button
             type="button"
@@ -181,12 +229,11 @@ export function ExportPanel({
         </div>
 
         <div className="text-[9px] font-mono text-emerald-300/60 leading-tight">
-          Codec: {codecSupport.preferredMimeType ?? 'unsupported'}
-          {codecSupport.webCodecs ? ' · WebCodecs available' : ''}
+          Encoding: {codecSupport.encodingLabel ?? 'unsupported'}
         </div>
-        {!codecSupport.mediaRecorder && (
+        {!canExport && !exportingVideo && (
           <div className="text-[9px] text-rose-300/90 font-mono bg-rose-900/20 border border-rose-500/20 rounded px-1.5 py-1">
-            MediaRecorder is not available in this browser. See docs/VIDEO_EXPORT.md.
+            Neither WebCodecs nor MediaRecorder is available in this browser. See docs/VIDEO_EXPORT.md.
           </div>
         )}
       </div>

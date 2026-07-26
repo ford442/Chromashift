@@ -11,7 +11,10 @@ import { useAnimationLoop } from './hooks/useAnimationLoop';
 import { useAppUiProps } from './hooks/useAppUiProps';
 import { useCanvasResize, useCollisionStatsPoll, useWasmEngineLoader } from './hooks/useAppLifecycle';
 import { useClassificationMask } from './hooks/useClassificationMask';
+import { useCompareQuadSlots } from './hooks/useCompareQuadSlots';
 import { useCompareSlotRenderer } from './hooks/useCompareSlotRenderer';
+import { useQuadStationaryRefresh } from './hooks/useQuadStationaryRefresh';
+import { useCompareSwipeInteraction } from './hooks/useCompareSwipeInteraction';
 import { useChromashiftRefs, useChromashiftStore } from './hooks/useChromashiftStore';
 import { useImagePlayback } from './hooks/useImagePlayback';
 import {
@@ -40,7 +43,7 @@ export default function App() {
   useCanvasResize(refs, output.squareCanvas, media.aspect, state.ui.compareView.layout);
   useCollisionStatsPoll(refs, engine.gpuReady, actions.setCollisionStats);
 
-  useAppWebGPUInit({
+  const { retryGpuBootstrap, isGpuRetrying } = useAppWebGPUInit({
     mainCanvasRef: refs.mainCanvasRef,
     antialiasEnabled: output.antialiasEnabled,
     setGpuError: actions.setGpuError,
@@ -70,9 +73,12 @@ export default function App() {
 
   // After useAppWebGPUInit so slot B cleanup runs before the shared device is destroyed.
   useCompareSlotRenderer(refs, store);
+  useCompareQuadSlots(refs, store);
+  useCompareSwipeInteraction(refs, store);
 
   useImagePlayback({ refs, store, clearClassificationMask, generateClassificationMaskTexture });
   useStationaryPreviews(refs, store);
+  useQuadStationaryRefresh(refs, store);
   useAnimationLoop(refs, store);
   useReactiveInput(refs, store);
   useTracerInspectInteraction(refs, store);
@@ -98,6 +104,8 @@ export default function App() {
   const webxr = useWebXr(refs, store);
 
   const uiProps = useAppUiProps(refs, store, {
+    retryGpuBootstrap,
+    isGpuRetrying,
     selectSourceIndex: store.selectSourceIndex,
     handleAngleChange: store.handleAngleChange,
     handleExtensionChange: store.handleExtensionChange,

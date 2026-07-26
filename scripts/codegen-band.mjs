@@ -4,9 +4,11 @@
  *
  *   node scripts/codegen-band.mjs
  *
- * TypeScript and WGSL consume the same table via src/engine/math/bandClassification.ts
- * (which imports shared/band.json). Run this script before `make -C cpp` when the JSON
- * changes, or via `npm run codegen:band`.
+ * TypeScript, WGSL, and GLSL consume the same table via
+ * src/engine/math/bandClassification.ts (which imports shared/band.json) and
+ * src/engine/shaders/bandLiterals.ts (BAND_WGSL / BAND_GLSL). This script is
+ * C++-only — run it before `make -C cpp` when the JSON changes, or via
+ * `npm run codegen:band`. Web/GLSL builds do not require emsdk.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';

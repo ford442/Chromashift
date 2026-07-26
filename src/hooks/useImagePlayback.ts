@@ -11,7 +11,7 @@ interface ImagePlaybackOptions {
   generateClassificationMaskTexture: (
     image: HTMLImageElement,
     avgLum: number,
-    sourceTexture?: GPUTexture | null,
+    sourceTexture?: import('../engine/types/TextureHandle').ChromashiftTextureHandle | null,
   ) => Promise<number>;
 }
 
@@ -26,6 +26,7 @@ export function useImagePlayback({
   const {
     textureManagerRef,
     rendererRef,
+    quadRenderersRef,
     loadGenRef,
     previewOriginalRef,
     engineModeRef,
@@ -40,6 +41,7 @@ export function useImagePlayback({
     const gen = ++loadGenRef.current;
     clearClassificationMask();
     rendererRef.current?.clearPersistence();
+    quadRenderersRef.current.c?.clearPersistence();
 
     textureManagerRef.current?.loadTexture(url).then((tex) => {
       if (gen !== loadGenRef.current) return;
@@ -61,7 +63,7 @@ export function useImagePlayback({
               avgLum = await generateClassificationMaskTexture(
                 img,
                 128,
-                tex as GPUTexture,
+                tex,
               );
             } catch (e) {
               console.warn('Could not generate classification mask:', e);
@@ -91,6 +93,7 @@ export function useImagePlayback({
     actions,
     textureManagerRef,
     rendererRef,
+    quadRenderersRef,
     loadGenRef,
     previewOriginalRef,
     engineModeRef,
@@ -121,7 +124,7 @@ export function useImagePlayback({
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        void generateClassificationMaskTexture(img, engine.avgLuminance, tex as GPUTexture).catch((e) => {
+        void generateClassificationMaskTexture(img, engine.avgLuminance, tex).catch((e) => {
           console.warn('Could not refresh classification mask:', e);
           clearClassificationMask();
         });

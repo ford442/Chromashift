@@ -10,7 +10,7 @@ import type {
 } from '../types/RendererContracts';
 import { EMPTY_GPU_RENDER_TIMING } from '../types/RendererContracts';
 import { durationToDecayWith } from '../WasmEngine';
-import type { WebGLImageTexture } from '../WebGLTextureManager';
+import type { ChromashiftTextureHandle, WebGlTextureHandle } from '../types/TextureHandle';
 import { WebGLCompositorPass } from './WebGLCompositorPass';
 import { WebGLDebugPasses } from './WebGLDebugPasses';
 import { WebGLLayerPass } from './WebGLLayerPass';
@@ -22,10 +22,6 @@ import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stati
 import type { WebGLRenderViewport } from './types';
 
 export type { WebGLRenderViewport } from './types';
-
-function isWebGLImageTexture(texture: unknown): texture is WebGLImageTexture {
-  return typeof texture === 'object' && texture !== null && (texture as WebGLImageTexture).kind === 'webgl-image-texture';
-}
 
 function computeLayerOpacities(state: RendererState): [number, number, number] {
   const globalLayerOpacity = state.layerOpacity ?? 1.0;
@@ -51,7 +47,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
   private readonly compositorPass: WebGLCompositorPass;
   private readonly readback: WebGLReadback;
   private readonly stationaryPreview: WebGLStationaryPreviewRenderer;
-  private currentTexture: WebGLImageTexture | null = null;
+  private currentTexture: WebGlTextureHandle | null = null;
   private lastCpuMs = 0;
   private avgCpuMs = 0;
 
@@ -69,16 +65,17 @@ export class WebGLRenderer implements ChromashiftRenderer {
     gl.disable(gl.BLEND);
   }
 
-  setTexture(texture: unknown): void {
-    if (!isWebGLImageTexture(texture)) {
-      throw new Error('WebGLRenderer expected a WebGLImageTexture.');
+  setTexture(handle: ChromashiftTextureHandle): void {
+    if (handle.backend !== 'webgl') {
+      throw new Error(`Expected a webgl texture handle, received ${handle.backend}.`);
     }
-    this.currentTexture = texture;
-    this.stationaryPreview.setSourceTexture(texture);
+    this.currentTexture = handle;
+    this.stationaryPreview.setSourceTexture(handle);
     this.clearPersistence();
   }
 
-  setClassificationMaskTexture(): void {
+  setClassificationMaskTexture(texture: GPUTexture | null): void {
+    void texture;
     // WebGL fallback intentionally derives masks in GLSL from the shared source image.
   }
 

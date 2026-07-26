@@ -7,6 +7,14 @@
  * to the GPU via `copyExternalImageToTexture`.
  */
 
+import type { ChromashiftTextureManager } from './RendererTypes';
+import { publishTextureCacheBreadcrumbs } from './textureCacheBreadcrumbs';
+import {
+  estimateRgba8MipChainBytes,
+  TextureCacheTracker,
+} from './textureCachePolicy';
+import { createWebGpuTextureHandle, type ChromashiftTextureHandle } from './types/TextureHandle';
+
 export interface ImageEntry {
   url: string;
   label?: string;
@@ -16,9 +24,10 @@ export interface ImageEntry {
   thumbUrl?: string;
 }
 
-export class TextureManager {
+export class TextureManager implements ChromashiftTextureManager {
   private device: GPUDevice;
   private textures: Map<string, GPUTexture> = new Map();
+  private cacheTracker = new TextureCacheTracker();
 
   // Mipmap generation resources (lazy-initialised)
   private mipmapPipeline: GPURenderPipeline | null = null;
@@ -43,9 +52,12 @@ export class TextureManager {
    * Load an image from a URL and upload it to a GPU texture with full mip chain.
    * Returns the cached texture if already loaded.
    */
-  async loadTexture(url: string): Promise<GPUTexture> {
-    if (this.textures.has(url)) {
-      return this.textures.get(url)!;
+  async loadTexture(url: string): Promise<ChromashiftTextureHandle> {
+    const cached = this.textures.get(url);
+    if (cached) {
+      const bytes = this.cacheTracker.bytesFor(url);
+      if (bytes !== undefined) this.cacheTracker.touch(url, bytes);
+      return createWebGpuTextureHandle(cached);
     }
 
     const image = new Image();
@@ -88,7 +100,8 @@ export class TextureManager {
     // perceptually correct results without gamma-space banding.
     this.generateMipmaps(texture, mipLevelCount);
     this.textures.set(url, texture);
-    return texture;
+    this.cacheTracker.touch(url, estimateRgba8MipChainBytes(imageBitmap.width, imageBitmap.height));
+    return createWebGpuTextureHandle(texture);
   }
 
   /** Destroy all managed GPU textures and free GPU memory. */
@@ -97,22 +110,25 @@ export class TextureManager {
       texture.destroy();
     }
     this.textures.clear();
+    this.cacheTracker.clear();
+    publishTextureCacheBreadcrumbs(0, 0);
   }
 
   /**
-   * Destroy and evict any cached texture backed by a local `blob:` URL (drag-dropped
-   * uploads) that isn't in `keepUrls`. Remote `http(s)` textures are left cached
-   * indefinitely, matching prior behavior. The evicted image reloads from its
-   * IndexedDB-backed blob on demand next time it's selected.
+   * Evict cached textures outside the keep set. Local `blob:` URLs are destroyed
+   * immediately when not kept; remote and other keys follow LRU eviction until the
+   * entry cap and estimated mip-chain byte budget are satisfied.
    */
   evictExcept(keepUrls: Iterable<string>): void {
-    const keep = new Set(keepUrls);
-    for (const [url, texture] of this.textures) {
-      if (url.startsWith('blob:') && !keep.has(url)) {
-        texture.destroy();
-        this.textures.delete(url);
-      }
-    }
+    this.cacheTracker.evictToBudget(keepUrls, (key) => this.destroyKey(key));
+    publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
+  }
+
+  private destroyKey(key: string): void {
+    const texture = this.textures.get(key);
+    if (texture) texture.destroy();
+    this.textures.delete(key);
+    this.cacheTracker.remove(key);
   }
 
   /**
@@ -120,9 +136,12 @@ export class TextureManager {
    * `cacheKey` (replacing any previous texture cached under that key). Used
    * by the upscaler flow to swap in a higher-resolution version of an image.
    */
-  uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): GPUTexture {
+  uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): ChromashiftTextureHandle {
     const prev = this.textures.get(cacheKey);
-    if (prev) prev.destroy();
+    if (prev) {
+      prev.destroy();
+      this.cacheTracker.remove(cacheKey);
+    }
 
     // srgb for upscaled pixels too (they come from 2D canvas which is sRGB).
     // See comment above in loadTexture for why srgb improves colour fidelity.
@@ -149,7 +168,9 @@ export class TextureManager {
     );
     this.generateMipmaps(texture, mipLevelCount);
     this.textures.set(cacheKey, texture);
-    return texture;
+    this.cacheTracker.touch(cacheKey, estimateRgba8MipChainBytes(width, height));
+    publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
+    return createWebGpuTextureHandle(texture);
   }
 
   // ─── Mipmap generation ────────────────────────────────────────────────────────

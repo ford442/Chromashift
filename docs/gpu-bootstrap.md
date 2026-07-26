@@ -33,6 +33,7 @@ orchestrator.destroy();   // tears down all slots + device
 | WebGPU bootstrap | First canvas creates `WebGpuSession` (device + primary context); extra slots call `configureWebGpuCanvas` on their own contexts |
 | WebGL fallback | Single slot only (primary canvas); compare/multi-view is WebGPU-only |
 | `device.lost` | Orchestrator destroys all active slots; shared `onRuntimeError` surfaces the recoverable overlay |
+| In-app retry | **Retry GPU** on the error overlay re-runs `RendererOrchestrator.bootstrap` without navigation; reducer state and current image index are preserved |
 | Resize | `resizeAll()` reconfigures the session context and every secondary slot context |
 | Tests | `RendererOrchestrator.test.ts` mocks bootstrap/factories — no WebGPU adapter required in CI |
 
@@ -79,7 +80,7 @@ orchestrator.destroy()                          // tears down all slots + device
 | Compare slot B | `COMPARE_SLOT_B_ID` (`'compare-b'`) via `useCompareSlotRenderer` |
 | Ref wiring from React | `useAppWebGPUInit` → `orchestratorRef` + legacy `rendererRef` / `deviceRef` |
 | Canvas resize | `useCanvasResize` → `orchestrator.resizeAll()` |
-| `device.lost` | Session callback → `teardownAllSlots()`; recoverable overlay unchanged |
+| `device.lost` | Session callback → `teardownAllSlots()`; recoverable overlay with **Retry GPU** |
 
 `useAppWebGPUInit` delegates bootstrap and primary-slot creation to the orchestrator; image corpus loading stays in the hook. Secondary slots must be created **after** bootstrap and destroyed **before** `orchestrator.destroy()` (compare hook runs between init and unmount for this ordering).
 
@@ -89,9 +90,19 @@ Unit tests in `src/engine/RendererOrchestrator.test.ts` mock GPU factories so CI
 
 | Event | Handler | UI |
 |---|---|---|
-| `device.lost` (non-destroyed) | `deviceLostRuntimeError` | Recoverable overlay: reload or `?renderer=webgl` |
+| `device.lost` (non-destroyed) | `deviceLostRuntimeError` | Recoverable overlay: **Retry GPU**, reload, or `?renderer=webgl` |
 | `device.onuncapturederror` | Logged + `uncapturedRuntimeError` | Console + non-recoverable notice |
 | Bootstrap failure | `toBootstrapRuntimeError` | Recoverable overlay |
+
+### Recovery actions
+
+| Action | Behaviour |
+|---|---|
+| **Retry GPU** (in-app) | Re-runs `RendererOrchestrator.bootstrap`; preserves reducer settings, compare layout, kiosk flags, and current image index. `useImagePlayback` reloads the active texture when `gpuReady` becomes true again. Compare slots reattach via `useCompareSlotRenderer` / `useCompareQuadSlots`. |
+| **Switch to WebGL2** | Full navigation via `switchRendererPreference` (settings preserved via preset URL / localStorage) |
+| **Reload page** | Full navigation |
+
+After a successful retry, automation breadcrumbs (`window.usingWebGPU`, `window.usingWebGL`, `window.rendererType`) are updated via `publishRendererBreadcrumbs`.
 
 After canvas resize or DPR changes, `RendererOrchestrator.resizeAll()` reconfigures the primary session context and every additional slot context (replacing a direct `WebGpuSession.reconfigure()` call from React hooks).
 

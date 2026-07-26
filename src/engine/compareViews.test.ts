@@ -3,8 +3,13 @@ import {
   activeViewCount,
   advanceAngles,
   effectiveLayerScaleForMultiView,
+  isQuadCompareLayout,
+  isTwoSlotCompareLayout,
   multiViewPerformanceNote,
+  nextQuadLayerIndex,
+  quadLayerMainViewMode,
 } from './compareViews';
+import { MAIN_VIEW_MODES } from './viewModes';
 
 describe('compareViews budget helpers', () => {
   it('counts active views per layout', () => {
@@ -18,6 +23,32 @@ describe('compareViews budget helpers', () => {
     const { scale, reduced } = effectiveLayerScaleForMultiView(1, 'dual');
     expect(scale).toBe(0.75);
     expect(reduced).toBe(true);
+  });
+
+  it('reduces layer scale in swipe mode', () => {
+    const { scale, reduced } = effectiveLayerScaleForMultiView(1, 'swipe');
+    expect(scale).toBe(0.85);
+    expect(reduced).toBe(true);
+  });
+
+  it('identifies two-slot compare layouts', () => {
+    expect(isTwoSlotCompareLayout('single')).toBe(false);
+    expect(isTwoSlotCompareLayout('dual')).toBe(true);
+    expect(isTwoSlotCompareLayout('swipe')).toBe(true);
+    expect(isTwoSlotCompareLayout('quad')).toBe(false);
+  });
+
+  it('identifies quad layout', () => {
+    expect(isQuadCompareLayout('quad')).toBe(true);
+    expect(isQuadCompareLayout('dual')).toBe(false);
+  });
+
+  it('maps quad layer index to main view modes', () => {
+    expect(quadLayerMainViewMode(0)).toBe(MAIN_VIEW_MODES.LAYER_0);
+    expect(quadLayerMainViewMode(1)).toBe(MAIN_VIEW_MODES.LAYER_1);
+    expect(quadLayerMainViewMode(2)).toBe(MAIN_VIEW_MODES.LAYER_2);
+    expect(nextQuadLayerIndex(0)).toBe(1);
+    expect(nextQuadLayerIndex(2)).toBe(0);
   });
 
   it('does not mark single view as reduced', () => {

@@ -16,3 +16,18 @@ export type {
   ChromashiftRenderer,
   ChromashiftTextureManager,
 } from './types/RendererContracts';
+
+export type {
+  ChromashiftTextureHandle,
+  WebGpuTextureHandle,
+  WebGlTextureHandle,
+  WebGLImageTexture,
+} from './types/TextureHandle';
+
+export {
+  createWebGpuTextureHandle,
+  createWebGlTextureHandle,
+  isChromashiftTextureHandle,
+  assertTextureBackend,
+  webGpuTextureFromHandle,
+} from './types/TextureHandle';

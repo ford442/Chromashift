@@ -1,7 +1,9 @@
 import type { ChromashiftState } from '../state/types';
 import type { LayerTriple } from '../state/types';
 import { buildRendererState } from './buildRendererState';
+import type { ChromashiftRenderer } from './RendererTypes';
 import type { RendererState } from './types/RendererState';
+import { MAIN_VIEW_MODES } from './viewModes';
 
 /** Thumbnail edge length for side previews (matches GpuReadback.PREVIEW_SIZE). */
 export const STATIONARY_PREVIEW_SIZE = 128;
@@ -72,4 +74,31 @@ export function stationaryPreviewFingerprint(state: ChromashiftState): string {
       peakCollisionsOnly: output.peakCollisionsOnly,
     },
   });
+}
+
+/** Fingerprint for quad stationary cells (includes layer cycle index). */
+export function quadStationaryFingerprint(state: ChromashiftState): string {
+  return `${stationaryPreviewFingerprint(state)}|quadLayer:${state.ui.compareView.quadLayerIndex}`;
+}
+
+/**
+ * Warm up tracer persistence at preset angles before displaying a stationary tracer view.
+ * Used by quad cell C and {@link StationaryPreviewRenderer}.
+ */
+export function warmupTracerPersistence(
+  renderer: ChromashiftRenderer,
+  warmupState: RendererState,
+  fps: number,
+  frames: number = STATIONARY_TRACER_WARMUP_FRAMES,
+): void {
+  renderer.clearPersistence();
+  const compositeState: RendererState = {
+    ...warmupState,
+    mainViewMode: MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
+    showTracerView: false,
+    paused: false,
+  };
+  for (let i = 0; i < frames; i += 1) {
+    renderer.render(compositeState, fps);
+  }
 }
