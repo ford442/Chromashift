@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  EXTENSION_REFERENCE_FPS,
   buildRotationMat3,
+  extensionStepsForFps,
   wrapAngleDeg,
 } from './rotation';
 
@@ -18,6 +20,32 @@ describe('wrapAngleDeg', () => {
   it('preserves angles already in range', () => {
     expect(wrapAngleDeg(90)).toBe(90);
     expect(wrapAngleDeg(0)).toBe(0);
+  });
+});
+
+describe('extensionStepsForFps', () => {
+  it('leaves steps unchanged at the reference FPS', () => {
+    expect(extensionStepsForFps([130, 230, 330], EXTENSION_REFERENCE_FPS)).toEqual([
+      130, 230, 330,
+    ]);
+  });
+
+  it('halves per-frame steps at 2× reference FPS', () => {
+    const steps = extensionStepsForFps([130, 230, 330], 60);
+    expect(steps[0]).toBeCloseTo(65);
+    expect(steps[1]).toBeCloseTo(115);
+    expect(steps[2]).toBeCloseTo(165);
+  });
+
+  it('keeps total rotation over one second constant across FPS', () => {
+    const ext: [number, number, number] = [130, 230, 330];
+    for (const fps of [20, 30, 60] as const) {
+      const perFrame = extensionStepsForFps(ext, fps);
+      const perSecond = perFrame.map((d) => d * fps);
+      expect(perSecond[0]).toBeCloseTo(ext[0] * EXTENSION_REFERENCE_FPS);
+      expect(perSecond[1]).toBeCloseTo(ext[1] * EXTENSION_REFERENCE_FPS);
+      expect(perSecond[2]).toBeCloseTo(ext[2] * EXTENSION_REFERENCE_FPS);
+    }
   });
 });
 

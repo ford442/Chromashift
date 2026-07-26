@@ -50,7 +50,7 @@ export function LayerPanel({
                 max={360}
                 step={1}
                 onChange={(step) => onExtensionChange(i, step)}
-                label="Step"
+                label="Rate"
                 unit="°"
                 size="small"
               />
@@ -73,6 +73,9 @@ export function LayerPanel({
             className="w-20 h-1 accent-amber-400"
           />
         </div>
+        <p className="text-[10px] text-amber-400/50 font-mono leading-snug">
+          FPS samples motion only — layer Rate keeps wall-clock spin speed.
+        </p>
 
         <div className="flex items-center gap-2">
           <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">

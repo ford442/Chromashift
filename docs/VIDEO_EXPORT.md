@@ -30,11 +30,11 @@ Given the same:
 
 - source image and renderer settings (layers, tracers, blend modes, luminance),
 - **Preset Angles** starting position (`layers.angles` in the panel),
-- per-frame extensions (`layers.extensions`),
-- export FPS (used for tracer decay timing),
+- layer spin rates (`layers.extensions`; FPS-independent — see `extensionStepsForFps`),
+- export FPS (tracer decay timing + per-frame angle scaling),
 - duration and resolution scale,
 
-…the angle sequence and tracer accumulation are reproducible. The export path uses `advanceAnglesBy()` (WASM when enabled, TypeScript fallback otherwise), matching the live loop’s stepping semantics.
+…the angle sequence and tracer accumulation are reproducible. Over a fixed duration, total rotation is the same at 20 or 60 FPS; higher FPS only densifies samples. The export path uses `extensionStepsForFps()` then `advanceAnglesBy()` (WASM when enabled, TypeScript fallback otherwise), matching the live loop.
 
 ## Browser codec support matrix
 

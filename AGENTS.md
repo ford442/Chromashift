@@ -287,7 +287,7 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
 
 ### State & Animation Loop (`App.tsx`)
 
-- Default per-frame rotation steps: `[-130, 230, 330]` degrees per frame (layer 0 subtracts, layers 1 & 2 add).
+- Default layer spin rates: `[130, 230, 330]` (normalized degrees; wall-clock °/s = value × 30). FPS only changes sampling density — not angular speed.
 - Default FPS: 30.
 - Auto-play: every `imageChangeInterval` seconds the current image index changes to a random entry from `images.json`.
 - Canvas sizing: the main canvas is kept square and sized to `min(95vh, container width, container height)` with `devicePixelRatio` scaling.

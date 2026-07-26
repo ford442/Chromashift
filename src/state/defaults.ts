@@ -13,6 +13,7 @@ export const DEFAULT_AUDIO_LEVELS = {
 } as const;
 
 export const DEFAULT_ANGLES: LayerTriple<number> = [0, 0, 0];
+/** Spin rates (°), normalized to 30 FPS — wall-clock °/s = value × 30. */
 export const DEFAULT_EXTENSIONS: LayerTriple<number> = [130, 230, 330];
 export const DEFAULT_FPS = 30;
 

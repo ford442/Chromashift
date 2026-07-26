@@ -57,9 +57,9 @@ export interface ReactiveSlice extends ReactiveSettings {
 }
 
 export const MIDI_PARAM_LABELS: Record<MidiParamId, string> = {
-  'layers.extensions.0': 'Layer 0 step (°/frame)',
-  'layers.extensions.1': 'Layer 1 step (°/frame)',
-  'layers.extensions.2': 'Layer 2 step (°/frame)',
+  'layers.extensions.0': 'Layer 0 rate (°)',
+  'layers.extensions.1': 'Layer 1 rate (°)',
+  'layers.extensions.2': 'Layer 2 rate (°)',
   'tracers.aboveIntensity': 'Tracer above intensity',
   'tracers.belowIntensity': 'Tracer below intensity',
   'engine.avgLuminance': 'Avg luminance',

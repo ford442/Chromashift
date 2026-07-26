@@ -636,8 +636,11 @@ export function durationToDecayWith(
 }
 
 /**
- * Advance three layer rotation angles by their per-frame step sizes,
+ * Advance three layer rotation angles by per-frame step sizes,
  * keeping all results in [0, 360).
+ *
+ * Callers that own FPS-independent rates should scale with
+ * `extensionStepsForFps()` before passing steps here (live loop + video export).
  *
  * @param angles   Current angles in degrees for layers [0, 1, 2].
  * @param steps    Per-frame step sizes in degrees for layers [0, 1, 2].

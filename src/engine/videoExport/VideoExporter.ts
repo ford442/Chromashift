@@ -1,3 +1,4 @@
+import { extensionStepsForFps } from '../math/rotation';
 import { advanceAnglesBy } from '../WasmEngine';
 import { buildRendererState } from '../buildRendererState';
 import type { ChromashiftRenderer, ExportPassMode } from '../types/RendererContracts';
@@ -96,7 +97,8 @@ export async function exportVideo(
   const width = evenDimension(baseWidth * scale);
   const height = evenDimension(baseHeight * scale);
   const passMode = resolvePassMode(request.includeTracers, request.passMode);
-  const extensions = state.layers.extensions;
+  // Scale stored steps so total rotation over durationSec is FPS-independent.
+  const frameSteps = extensionStepsForFps(state.layers.extensions, fps);
   const useWasm = state.engine.engineMode === 'wasm';
 
   const canvasWidth = Math.max(1, Math.round(baseWidth));
@@ -164,7 +166,7 @@ export async function exportVideo(
         videoTrack.requestFrame();
       }
 
-      angles = advanceAnglesBy(angles, extensions, useWasm);
+      angles = advanceAnglesBy(angles, frameSteps, useWasm);
       request.onProgress?.(frame + 1, totalFrames);
 
       if (frame % 2 === 1) {

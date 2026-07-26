@@ -178,6 +178,37 @@ describe('exportVideo (offline render loop)', () => {
     expect(runA.frameAngles[1]).not.toEqual(runA.frameAngles[0]);
   });
 
+  it('produces matching total rotation at 30 and 60 FPS over the same duration', async () => {
+    const state = createInitialState();
+    state.layers.angles = [0, 0, 0];
+    state.layers.extensions = [130, 230, 330];
+
+    const run30 = makeFakeRenderer();
+    const run60 = makeFakeRenderer();
+
+    await exportVideo(run30.renderer, state, [0, 0, 0], 320, 240, makeRequest({
+      durationSec: 1,
+      fps: 30,
+      usePresetAngles: true,
+    }));
+    await exportVideo(run60.renderer, state, [0, 0, 0], 320, 240, makeRequest({
+      durationSec: 1,
+      fps: 60,
+      usePresetAngles: true,
+    }));
+
+    expect(run30.frameAngles).toHaveLength(30);
+    expect(run60.frameAngles).toHaveLength(60);
+    // Same wall-clock time: frame i at 30 FPS ↔ frame 2i at 60 FPS.
+    for (const i of [0, 10, 20, 29] as const) {
+      const a = run30.frameAngles[i];
+      const b = run60.frameAngles[i * 2];
+      expect(a[0]).toBeCloseTo(b[0], 5);
+      expect(a[1]).toBeCloseTo(b[1], 5);
+      expect(a[2]).toBeCloseTo(b[2], 5);
+    }
+  });
+
   it('starts from live angles when usePresetAngles is off', async () => {
     const fake = makeFakeRenderer();
     const state = createInitialState();

@@ -56,12 +56,8 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
 
         const mod = current.reactive.enabled ? reactiveModRef.current : null;
         const extensions = mod?.extensions ?? current.layers.extensions;
-
-        const angles: [number, number, number] = [
-          (animAnglesRef.current[0] + extensions[0]) % 360,
-          (animAnglesRef.current[1] + extensions[1]) % 360,
-          (animAnglesRef.current[2] + extensions[2]) % 360,
-        ];
+        const fps = current.engine.fps;
+        const angles = advanceAngles(animAnglesRef.current, extensions, fps);
         animAnglesRef.current = angles;
 
         if (now - lastAngleSyncRef.current > 200) {
@@ -94,7 +90,11 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
           const stateB = applySettingsToState(current, compareView.slotB.settings);
           const anglesB = compareView.syncPlay
             ? angles
-            : (animAnglesBRef.current = advanceAngles(animAnglesBRef.current, stateB.layers.extensions));
+            : (animAnglesBRef.current = advanceAngles(
+                animAnglesBRef.current,
+                stateB.layers.extensions,
+                stateB.engine.fps,
+              ));
           rendererB.render(buildRendererState(stateB, anglesB, {
             layerScale: effectiveLayerScaleForMultiView(stateB.layers.scale, 'dual').scale,
             tracerScale: effectiveLayerScaleForMultiView(stateB.tracers.scale, 'dual').scale,

@@ -6,6 +6,7 @@
  */
 
 import type { ChromashiftSettingsInput } from '../state/chromashiftReducer';
+import { extensionStepsForFps, wrapAngleDeg } from './math/rotation';
 import type { MainViewMode } from './viewModes';
 import { MAIN_VIEW_MODES } from './viewModes';
 
@@ -84,15 +85,21 @@ export function multiViewPerformanceNote(layout: CompareLayoutMode): string | nu
   return `Multi-view (${views}× GPU): layer scale ×${factor} to fit VRAM budget.`;
 }
 
-/** Advance an animation angle clock by per-layer extension deltas (degrees, mod 360). */
+/**
+ * Advance an animation angle clock by per-layer extension steps (mod 360).
+ * When `fps` is supplied, steps are scaled so wall-clock °/s stays constant
+ * (see {@link extensionStepsForFps}); omit `fps` only for raw delta tests.
+ */
 export function advanceAngles(
   prev: readonly [number, number, number],
   extensions: readonly [number, number, number],
+  fps?: number,
 ): [number, number, number] {
+  const steps = fps === undefined ? extensions : extensionStepsForFps(extensions, fps);
   return [
-    (prev[0] + extensions[0]) % 360,
-    (prev[1] + extensions[1]) % 360,
-    (prev[2] + extensions[2]) % 360,
+    wrapAngleDeg(prev[0] + steps[0]),
+    wrapAngleDeg(prev[1] + steps[1]),
+    wrapAngleDeg(prev[2] + steps[2]),
   ];
 }
 

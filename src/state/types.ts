@@ -32,6 +32,10 @@ export interface MediaSlice {
 
 export interface LayersSlice {
   angles: LayerTriple<number>;
+  /**
+   * Per-layer spin rate in degrees, normalized so wall-clock °/s = value × 30.
+   * Changing FPS only changes sampling density, not angular speed.
+   */
   extensions: LayerTriple<number>;
   opacity: number;
   opacities: LayerTriple<number>;
