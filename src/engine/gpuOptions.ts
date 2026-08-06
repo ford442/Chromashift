@@ -5,6 +5,8 @@
 
 export interface RendererCanvasOptions {
   antialias: boolean;
+  preserveDrawingBuffer?: boolean;
+  xrCompatible?: boolean;
 }
 
 /** Maximum 2D texture edge Chromashift targets (8K long edge). Capped by adapter limits. */
@@ -45,9 +47,11 @@ export function getWebGL2ContextAttributes(
   return {
     alpha: RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.alpha,
     antialias: options.antialias,
-    preserveDrawingBuffer: RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.preserveDrawingBuffer,
+    preserveDrawingBuffer:
+      options.preserveDrawingBuffer ?? RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.preserveDrawingBuffer,
     depth: RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.depth,
     stencil: RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.stencil,
     premultipliedAlpha: RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.premultipliedAlpha,
+    xrCompatible: options.xrCompatible,
   };
 }

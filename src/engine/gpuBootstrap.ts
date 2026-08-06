@@ -27,6 +27,14 @@ export interface GpuAdapterReport {
   };
 }
 
+export interface WebGpuCapabilityReport {
+  adapterOptionalFeatures: GPUFeatureName[];
+  requestedOptionalFeatures: GPUFeatureName[];
+  grantedOptionalFeatures: GPUFeatureName[];
+  missingRequestedFeatures: GPUFeatureName[];
+  timestampQueryAvailable: boolean;
+}
+
 export interface WebGpuCanvasOptions {
   colorSpace?: PredefinedColorSpace;
   toneMappingMode?: GPUCanvasToneMappingMode;
@@ -46,6 +54,7 @@ export interface WebGpuSession {
   context: GPUCanvasContext;
   format: GPUTextureFormat;
   adapterReport: GpuAdapterReport;
+  capabilities: WebGpuCapabilityReport;
   /** True when `timestamp-query` was requested and granted on the device. */
   timestampQueryAvailable: boolean;
   reconfigure: () => void;
@@ -109,6 +118,7 @@ export async function requestWebGpuDevice(
   canvasPixelWidth: number,
   canvasPixelHeight: number,
   targetMaxTexture?: number,
+  requiredFeatures: readonly GPUFeatureName[] = [],
 ): Promise<GPUDevice> {
   const canvasLimits = deriveRequiredLimits(
     adapter.limits,
@@ -116,15 +126,17 @@ export async function requestWebGpuDevice(
     canvasPixelHeight,
     { targetMaxTexture, requestHeadroom: false },
   );
+  const requestedFeatures = [...requiredFeatures];
+  const withFeatures = requestedFeatures.length > 0 ? { requiredFeatures: requestedFeatures } : {};
 
   try {
-    return await adapter.requestDevice();
+    return await adapter.requestDevice(withFeatures);
   } catch (minimalError) {
     console.warn('[Chromashift:GPU] Default device request failed, retrying with canvas limits', minimalError);
   }
 
   try {
-    return await adapter.requestDevice({ requiredLimits: canvasLimits });
+    return await adapter.requestDevice({ ...withFeatures, requiredLimits: canvasLimits });
   } catch (limitedError) {
     console.warn('[Chromashift:GPU] Limited device request failed, retrying with 8K headroom', limitedError);
   }
@@ -135,11 +147,28 @@ export async function requestWebGpuDevice(
     canvasPixelHeight,
     { targetMaxTexture, requestHeadroom: true },
   );
-  return adapter.requestDevice({ requiredLimits: headroomLimits });
+  return adapter.requestDevice({ ...withFeatures, requiredLimits: headroomLimits });
 }
 
 export function listAvailableOptionalFeatures(adapter: GPUAdapter): GPUFeatureName[] {
   return CHROMASHIFT_OPTIONAL_FEATURES.filter((feature) => adapter.features.has(feature));
+}
+
+export function buildWebGpuCapabilityReport(
+  adapter: GPUAdapter,
+  device: GPUDevice,
+  requestedOptionalFeatures: readonly GPUFeatureName[],
+): WebGpuCapabilityReport {
+  const adapterOptionalFeatures = listAvailableOptionalFeatures(adapter);
+  const grantedOptionalFeatures = requestedOptionalFeatures.filter((feature) => device.features.has(feature));
+  const missingRequestedFeatures = requestedOptionalFeatures.filter((feature) => !device.features.has(feature));
+  return {
+    adapterOptionalFeatures,
+    requestedOptionalFeatures: [...requestedOptionalFeatures],
+    grantedOptionalFeatures,
+    missingRequestedFeatures,
+    timestampQueryAvailable: grantedOptionalFeatures.includes('timestamp-query'),
+  };
 }
 
 export async function readAdapterInfo(adapter: GPUAdapter): Promise<GPUAdapterInfo> {
@@ -322,15 +351,17 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
   const adapterInfo = await readAdapterInfo(adapter);
   const adapterReport = buildAdapterReport(adapterInfo, adapter);
   logAdapterReport(adapterReport, requiredLimits);
+  const requestedOptionalFeatures = listAvailableOptionalFeatures(adapter);
 
   const device = await requestWebGpuDevice(
     adapter,
     canvasPixelWidth,
     canvasPixelHeight,
     options.targetMaxTexture,
+    requestedOptionalFeatures,
   );
-  const timestampQueryAvailable = adapter.features.has('timestamp-query')
-    && device.features.has('timestamp-query');
+  const capabilities = buildWebGpuCapabilityReport(adapter, device, requestedOptionalFeatures);
+  const timestampQueryAvailable = capabilities.timestampQueryAvailable;
   const context = options.canvas.getContext('webgpu');
   if (!context) {
     device.destroy();
@@ -361,6 +392,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
     context,
     format,
     adapterReport,
+    capabilities,
     timestampQueryAvailable,
     reconfigure,
     detach,
