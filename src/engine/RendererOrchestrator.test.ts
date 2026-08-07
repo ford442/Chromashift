@@ -71,6 +71,13 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
         maxColorAttachmentBytesPerSample: 32,
       },
     },
+    capabilities: {
+      adapterOptionalFeatures: [],
+      requestedOptionalFeatures: [],
+      grantedOptionalFeatures: [],
+      missingRequestedFeatures: [],
+      timestampQueryAvailable: false,
+    },
     timestampQueryAvailable: false,
     reconfigure: vi.fn(),
     detach: vi.fn(),

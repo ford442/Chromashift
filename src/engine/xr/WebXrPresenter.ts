@@ -1,6 +1,7 @@
 import { WebGLRenderer } from '../webgl/WebGLRenderer';
 import { WebGLTextureManager } from '../WebGLTextureManager';
 import type { RendererState } from '../types/RendererState';
+import { getWebGL2ContextAttributes } from '../gpuOptions';
 
 export const XR_RENDER_SCALE = 0.5;
 
@@ -38,13 +39,11 @@ export class WebXrPresenter {
 
   constructor() {
     this.canvas = document.createElement('canvas');
-    const gl = this.canvas.getContext('webgl2', {
-      alpha: false,
+    const gl = this.canvas.getContext('webgl2', getWebGL2ContextAttributes({
       antialias: false,
-      depth: false,
-      stencil: false,
+      preserveDrawingBuffer: false,
       xrCompatible: true,
-    }) as WebGL2RenderingContext | null;
+    })) as WebGL2RenderingContext | null;
     if (!gl) {
       throw new Error('WebGL2 (xrCompatible) is required for WebXR.');
     }

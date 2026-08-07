@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildWebGpuCapabilityReport,
   deriveRequiredLimits,
   listAvailableOptionalFeatures,
+  requestWebGpuDevice,
   toBootstrapRuntimeError,
   deviceLostRuntimeError,
 } from './gpuBootstrap';
@@ -94,6 +96,44 @@ describe('listAvailableOptionalFeatures', () => {
   });
 });
 
+describe('requestWebGpuDevice', () => {
+  it('requests supported optional features on the first device attempt', async () => {
+    const calls: GPUDeviceDescriptor[] = [];
+    const device = { features: new Set(['timestamp-query']) } as unknown as GPUDevice;
+    const adapter = {
+      features: new Set(['timestamp-query']),
+      limits: mockAdapterLimits(),
+      requestDevice: async (descriptor?: GPUDeviceDescriptor) => {
+        calls.push(descriptor ?? {});
+        return device;
+      },
+    } as unknown as GPUAdapter;
+
+    await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
+
+    expect(calls[0]?.requiredFeatures).toEqual(['timestamp-query']);
+  });
+});
+
+describe('buildWebGpuCapabilityReport', () => {
+  it('reports granted and missing optional features', () => {
+    const adapter = mockAdapter(['timestamp-query', 'float32-filterable']);
+    const device = {
+      features: new Set(['float32-filterable']),
+    } as unknown as GPUDevice;
+
+    const report = buildWebGpuCapabilityReport(adapter, device, [
+      'timestamp-query',
+      'float32-filterable',
+    ]);
+
+    expect(report.adapterOptionalFeatures).toEqual(['timestamp-query', 'float32-filterable']);
+    expect(report.grantedOptionalFeatures).toEqual(['float32-filterable']);
+    expect(report.missingRequestedFeatures).toEqual(['timestamp-query']);
+    expect(report.timestampQueryAvailable).toBe(false);
+  });
+});
+
 describe('getWebGL2ContextAttributes', () => {
   it('maps antialias from renderer options', () => {
     expect(getWebGL2ContextAttributes({ antialias: true }).antialias).toBe(true);
@@ -104,6 +144,16 @@ describe('getWebGL2ContextAttributes', () => {
     const attrs = getWebGL2ContextAttributes({ antialias: false });
     expect(attrs.alpha).toBe(false);
     expect(attrs.preserveDrawingBuffer).toBe(true);
+  });
+
+  it('allows callers to override preserveDrawingBuffer and xr compatibility', () => {
+    const attrs = getWebGL2ContextAttributes({
+      antialias: false,
+      preserveDrawingBuffer: false,
+      xrCompatible: true,
+    });
+    expect(attrs.preserveDrawingBuffer).toBe(false);
+    expect(attrs.xrCompatible).toBe(true);
   });
 });
 
