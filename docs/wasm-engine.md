@@ -4,7 +4,7 @@ Chromashift ships two parallel computation engines:
 
 | Engine | Source | Always available? |
 |--------|--------|-------------------|
-| **TypeScript** | `src/engine/WasmEngine.ts` (fallback implementations) | ✅ Yes |
+| **TypeScript** | `src/engine/WasmEngine.ts` (barrel) → `src/engine/wasm/` (loader, dispatch, fallbacks) | ✅ Yes |
 | **C++ WASM** | `cpp/chromashift_engine.cpp` → `public/chromashift_engine.{js,wasm}` | After building (see below) |
 
 Both engines expose the same public API through `src/engine/WasmEngine.ts`. If the WASM
@@ -33,6 +33,31 @@ for real-time rendering.
 1. WebGPU compute histogram + mask (preferred when available).
 2. C++ WASM classification mask + strided/full luminance (when Engine = C++ WASM).
 3. TypeScript fallbacks in `WasmEngine.ts` (always available).
+
+---
+
+## Call-site matrix
+
+Every production call site of a `*With()` dispatcher (or of `loadWasmEngine` / `isWasmReady`),
+grouped by phase. Functions with no row here are exercised only by `public/wasm-benchmark.html`
+and the unit/C++ host tests — see "Test / benchmark only" above.
+
+| Function | Called from | Phase |
+|---|---|---|
+| `loadWasmEngine` | `hooks/useAppLifecycle.ts` | App startup |
+| `isWasmReady` | `hooks/appUiProps/buildControlProps.ts` | UI state (Engine badge) |
+| `computeAverageLuminanceWith` | `hooks/useAppWebGPUInit.ts` | Load-time (image load) |
+| `computeAverageLuminanceStridedWith` | `engine/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
+| `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts`, `hooks/useClassificationMask.ts` | Load-time |
+| `classifyImageMaskWith` | `hooks/useClassificationMask.ts` | Load-time (mask generation) |
+| `durationToDecayWith` | `engine/PersistencePass.ts`, `engine/webgl/WebGLRenderer.ts`, `engine/webgl/WebGLStationaryPreviewRenderer.ts` | **Per-frame** — intentionally WASM-routed for formula parity only, not a performance win (see above) |
+| `advanceAnglesBy` | `engine/videoExport/exportVideoFrameLoop.ts` | Video export |
+
+No `*With()` dispatcher other than `durationToDecayWith` is called from a per-frame render
+or animation-loop path (`useAnimationLoop.ts`, `WebGPURenderer.ts` compositor passes). New
+per-frame call sites into `src/engine/wasm/` should be treated as a scope violation unless
+they are an intentional, documented WASM-routed exception like the one above — update this
+table when adding one.
 
 ---
 
@@ -210,6 +235,27 @@ same functions for the TS bridge, and `verify-exports` guards the underscored ex
 
 ---
 
+## Emscripten flag audit
+
+Findings from auditing `cpp/Makefile`'s `EMFLAGS_COMMON` against what `src/engine/wasm/`
+actually calls at runtime (tracking issue: WASM engine reorganisation).
+
+| Flag | Verdict | Reasoning |
+|---|---|---|
+| `--bind` (embind) | **Keep — required** | Every dispatcher in `wasm/dispatch/*.ts` and `wasm/loadEngine.ts` calls the module by its bare JS-friendly name (`mod.computeAverageLuminance(...)`, `mod.classifyPixel(...)`, `mod.durationToDecay(...)`, …). Those names exist **only** via the `EMSCRIPTEN_BINDINGS(chromashift_engine) { function(...) }` block in `chromashift_engine.cpp` — the `EXPORTED_FUNCTIONS` list only produces underscored raw symbols (`_computeAverageLuminance`, …). Dropping `--bind` would break every call site; it is not dead weight, it is the mechanism the whole TS bridge is built on. Revisit only if the bridge is rewritten to call `_`-prefixed exports directly with manual pointer/arg marshalling — a larger, separate change than this reorganisation. |
+| `-s EXPORTED_FUNCTIONS=[...]` | **Keep** | Still needed for `_malloc` / `_free` (called directly by every dispatcher for heap buffers) and for `verify-exports` to guard the underscored C ABI surface as a stable, embind-independent fallback contract. |
+| `-s INITIAL_MEMORY=67108864` (64 MiB) | **Keep — documented, not dead** | 64 MiB = 8192 × 8192 bytes, i.e. exactly one full-resolution single-channel classification mask for an 8K-square image (`classifyImageMaskWith`'s `computeClassificationMask(Lut)` output buffer). Sizing the initial heap to cover that common load-time allocation without a growth event avoids the first-touch pause `ALLOW_MEMORY_GROWTH` growth otherwise causes on the largest images Chromashift documents supporting (4K–8K). Larger simultaneous allocations (input RGBA + mask output together can exceed 64 MiB for 8K) still rely on `ALLOW_MEMORY_GROWTH=1` to grow past this floor — 64 MiB is a "no growth stall for the common case" starting point, not a hard ceiling. |
+| `-s ALLOW_MEMORY_GROWTH=1` | **Keep** | Required so allocations above the 64 MiB floor (e.g. concurrent input + output buffers for `classifyPixelsBulkWith` / `classifyImageMaskWith` on 8K images) don't hard-fail. |
+| `-s MODULARIZE=1` + `-s EXPORT_ES6=1` | **Keep** | Correct for Vite — `loadEngine.ts` does a dynamic `import()` of `/chromashift_engine.js` and calls the default export as a factory (`await glue.default()`); a non-modularized build would attach a global instead. |
+| `-fno-exceptions -fno-rtti` | **Keep** | Smaller release glue; the C API surface here (`chromashift_engine.h`) does not throw or use RTTI, and embind itself is exception/RTTI-optional when compiled this way. |
+| `-msimd128 -msse2` | **Keep** | See "SIMD status" below — Emscripten falls back to scalar automatically on unsupported browsers, so there is no separate scalar build to maintain. |
+
+**Net result:** no flags were removed. The audit's conclusion is that the current flag set is
+already minimal for what the TS bridge requires — `--bind` in particular looked like a
+candidate for removal in isolation, but is load-bearing given the current calling convention.
+
+---
+
 ## SIMD status and browser support
 
 The WASM engine is compiled with `-msimd128 -msse2`, which enables the
@@ -310,15 +356,31 @@ public/
 └── chromashift_engine.wasm  (generated) Binary WASM payload
 
 src/engine/
-└── WasmEngine.ts            TS bridge — async loader, TS fallbacks, public API
+├── WasmEngine.ts            Thin barrel — re-exports the public API, stable import path
+└── wasm/
+    ├── types.ts             ChromashiftWasmModule interface, EngineKind, export-name list
+    ├── loadEngine.ts        Async loader, module-level state, persistent heap buffer, SIMD probe
+    ├── imageBytes.ts         Shared canvas→RGBA byte helpers (used by dispatch + fallbacks)
+    ├── fallbacks/
+    │   ├── luminance.ts     Pure TS luminance fallbacks
+    │   └── decay.ts         Pure TS decay/angle fallbacks (re-exports math/decay.ts)
+    └── dispatch/
+        ├── luminance.ts      computeAverageLuminance(Strided)?With, computeImageAverageLuminanceWith
+        ├── classification.ts classifyPixel(sBulk)?With, classifyImageMaskWith, histogram/band-count
+        └── animation.ts      durationToDecayWith, advanceAnglesBy, buildRotationMat3With, simulateTracerDecayWith
 ```
 
-`WasmEngine.ts` is the single integration point consumed by `App.tsx`.  It:
+`WasmEngine.ts` is the single integration point consumed by `App.tsx`, and stays a thin
+re-export barrel so the rest of the app keeps importing from `'./engine/WasmEngine'` /
+`'../engine/WasmEngine'` regardless of how the implementation underneath is organised. The
+loader in `wasm/loadEngine.ts`:
 
 1. Tries `import('/chromashift_engine.js')` on first use.
 2. If successful, calls `Module._malloc` / `Module.<function>` / `Module._free`
-   with WASM heap copies of pixel/float data.
-3. If the import fails (file not found), silently falls back to the TypeScript implementation.
+   with WASM heap copies of pixel/float data — see `wasm/dispatch/*.ts` for the per-function
+   marshalling.
+3. If the import fails (file not found), silently falls back to the TypeScript implementation
+   in `wasm/fallbacks/`.
 4. Exposes `isWasmReady()` so the UI can show the correct engine label.
 
 ### Classification mask data flow (optional runtime path)
