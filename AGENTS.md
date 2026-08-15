@@ -132,16 +132,22 @@ src/
 
 ### Renderer Selection / WebGL2 Fallback
 
-The primary backend remains WebGPU. A WebGL2 fallback is available for visual debugging, Playwright screenshots, and shader-porting reference work:
+> **WebGPU is required for this development phase — WebGL2 fallback is DISABLED.**
+> A failed adapter/device init **hard-fails** with a blocking error screen; the
+> WebGL renderer does not start and `window.usingWebGL` stays false. Automatic
+> `WebGPU → WebGL` fallback hid Chrome-vs-Edge device bugs behind what looked
+> like visual-parity differences. Restoring it is a later issue wave — see
+> **[docs/webgl-fallback.md](docs/webgl-fallback.md)**.
+
+`WEBGL_BACKEND_ENABLED` in `src/engine/rendererMode.ts` is the single switch. While it is `false`, `?renderer=webgl`, `?webgl`, the NUNIF **Renderer** control, and a stored `localStorage.chromashift.renderer = webgl` are all ignored — none of them can rescue a failed WebGPU boot.
 
 ```bash
 npm run dev
-# Primary path
+# The only supported path this phase
 http://localhost:5173/?renderer=webgpu
-# Fallback/reference path
-http://localhost:5173/?renderer=webgl
-http://localhost:5173/?webgl
 ```
+
+**Boot probe**: `probeWebGPU()` (`src/engine/webgpuProbe.ts`) pre-flights secure context → `navigator.gpu` → `requestAdapter`, publishing `window.webgpuProbe` `{ ok, browser, stage, reason, adapter, features, limits }`. It deliberately stops before `requestDevice()` so the real bootstrap owns the only device request — and so a failed probe leaves nothing for gpu-chores to adopt.
 
 The NUNIF panel exposes a **Renderer** control that persists `chromashift.renderer` in localStorage and reloads with the selected `?renderer=` parameter. Runtime breadcrumbs are intentionally global for automation: `window.rendererType`, `window.usingWebGPU`, `window.usingWebGL`, and `window.rendererFallbackReason`.
 
@@ -451,13 +457,15 @@ Frontend-only project — no backend/database/services to run. Standard commands
 "Common Commands" above (`npm run dev`, `npm run build`, `npm run lint`, `npm test`).
 
 - **No WebGPU in the cloud VM.** The headless Chrome available here does not expose
-  WebGPU (and the default WebGL2 detection can also fail on first load), so the default
-  `http://localhost:5173/` shows a "WebGPU/WebGL2 not supported" prompt. To see the
-  canvas actually render, use the WebGL2 fallback path: `http://localhost:5173/?renderer=webgl`.
-  This is expected — WebGPU behaviour cannot be validated here; the WebGL2 renderer is an
-  approximate reference. Playwright E2E includes WebGL specs plus a `chromium-webgpu` project
-  (`--enable-unsafe-webgpu`); WebGPU smoke may still fail in this VM — run
-  `npx playwright test --project=chromium` to exercise WebGL/kiosk/preset specs only.
+  WebGPU, so `http://localhost:5173/` now shows the **blocking** "WebGPU is required and
+  failed to initialize" screen with the probe stage and adapter detail. This is expected —
+  WebGPU behaviour cannot be validated here, and the WebGL2 escape hatch is disabled for
+  this phase (see `docs/webgl-fallback.md`). Read `window.webgpuProbe` in the console to
+  confirm the failure stage.
+  Playwright's `chromium` (WebGL) project self-skips while the backend is disabled, so
+  `npx playwright test --project=chromium` reports those specs as pending rather than
+  failing. The `chromium-webgpu` project (`--enable-unsafe-webgpu`) may still fail in
+  this VM.
 - **Playwright browsers must be installed once per fresh VM** before `npm run test:e2e`:
   `npx playwright install --with-deps chromium`. This is intentionally not in the update
   script (heavy, network-dependent). The `opacity-test.spec.ts` spec is skipped by default.

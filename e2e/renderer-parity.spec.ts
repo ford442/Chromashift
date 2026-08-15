@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stubMinimalCorpus } from './helpers/mockCorpus';
 import { waitForWebGL } from './helpers/renderer';
+import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
 
 const screenshotsDir = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -23,6 +24,7 @@ const recordScreenshots = Boolean(process.env.RECORD_SCREENSHOTS);
 (recordScreenshots ? test.describe : test.describe.skip)(
   'WebGL renderer parity',
   () => {
+    skipWhileWebGlDisabled();
     test.beforeEach(async ({ page }) => {
       await stubMinimalCorpus(page);
     });

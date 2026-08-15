@@ -1,10 +1,78 @@
 # WebGL2 Fallback Renderer
 
-Chromashift's production renderer is still WebGPU/WGSL. The WebGL2 backend exists as an opt-in reference path for visual debugging, Playwright screenshots, and safer iteration on shader effects when WebGPU output is hard to inspect.
+> [!IMPORTANT]
+> **WebGL2 fallback is DISABLED for this development phase.** WebGPU is
+> required. If adapter or device init fails, Chromashift **hard-fails** with a
+> blocking error screen — it does not start the WebGL renderer.
+>
+> Restoring the fallback is a later issue wave. Until then the code below is
+> documentation of a deferred path, not current behaviour.
 
-## Selecting A Renderer
+## Why it is disabled
 
-Use URL flags:
+Automatic `WebGPU → WebGL` fallback **hid** Chrome-vs-Edge WebGPU
+disagreements. A machine where Edge failed to get a device would quietly render
+through WebGL2 instead, so the bug presented as "the two browsers look
+different" — a visual-parity problem — when it was really a device/init
+problem. Failing loudly, with the adapter and browser named, turns that back
+into a one-line diagnosis.
+
+## Current behaviour (fallback disabled)
+
+`WEBGL_BACKEND_ENABLED` in `src/engine/rendererMode.ts` is the single switch.
+While it is `false`:
+
+- `?renderer=webgl`, `?webgl`, and a stored `localStorage.chromashift.renderer = webgl`
+  are **ignored** — `getRendererPreference()` returns `webgpu` and logs a warning.
+  None of them can rescue a failed WebGPU boot.
+- `switchRendererPreference('webgl')` refuses to persist, and the NUNIF
+  **Renderer** panel's WebGL button is disabled with an explanatory tooltip.
+- `RendererOrchestrator.bootstrap()` no longer catches a WebGPU failure to
+  retry on WebGL. It tears down the partial boot and rethrows, so **no device
+  survives** for gpu-chores to adopt.
+- The GPU error overlay no longer offers "Switch to WebGL2".
+- Playwright specs that drive `?renderer=webgl` self-skip via
+  `skipWhileWebGlDisabled()` (`e2e/helpers/rendererPhase.ts`) and report as
+  pending. Run them with `CHROMASHIFT_E2E_WEBGL=1` against a build with the
+  flag flipped on.
+
+Explicitly passing `backend: 'webgl'` to `RendererOrchestrator.bootstrap()`
+still works — the WebGL renderer itself is untouched. Only *automatic*
+fallback and *user* selection are gated.
+
+## Boot probe
+
+`probeWebGPU()` (`src/engine/webgpuProbe.ts`) is the single pre-flight check
+`useAppWebGPUInit` runs before touching the orchestrator. It stops
+**before** `requestDevice()` — the real bootstrap owns the one and only device
+request — so a successful probe followed by a real boot performs exactly one
+`requestDevice()`, and a *failed* probe means gpu-chores never sees a device at
+all.
+
+Stages, in order: `secure-context` → `navigator-gpu` → `adapter` → `device` →
+`context` → `ok`. Device- and context-stage outcomes are folded back into the
+same published result, so `window.webgpuProbe` always describes how far boot
+actually got.
+
+On any failure the app shows a **blocking** error screen (not a toast) naming
+the stage, reason, browser, and adapter.
+
+## Breadcrumbs
+
+```js
+window.webgpuProbe        // { ok, browser, stage, reason, adapter, features, limits }
+window.usingWebGPU        // true only when device + swapchain are live
+window.usingWebGL         // pinned false while fallback is disabled
+window.rendererType       // null on a hard-failed boot
+window.rendererFallbackReason  // the hard-fail detail string
+```
+
+`window.usingWebGL` never becomes true on a failure path, so automation can
+treat it as a fallback-happened signal without ambiguity.
+
+## Selecting A Renderer (deferred)
+
+Once the fallback wave re-enables `WEBGL_BACKEND_ENABLED`, these apply again:
 
 ```text
 ?renderer=webgpu
@@ -14,17 +82,6 @@ Use URL flags:
 ```
 
 The NUNIF panel also exposes a **Renderer** control. It persists the selected backend in `localStorage.chromashift.renderer` and reloads with the matching `?renderer=` parameter.
-
-Automation can read:
-
-```js
-window.rendererType
-window.usingWebGPU
-window.usingWebGL
-window.rendererFallbackReason
-```
-
-If the default WebGPU initialization fails, the app tries WebGL2 and records the failure message in `window.rendererFallbackReason`.
 
 ## Shared State Contract
 

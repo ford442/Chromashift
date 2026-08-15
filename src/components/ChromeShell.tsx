@@ -2,7 +2,6 @@ import { ImageStrip } from './ImageStrip';
 import { KioskRemote } from './KioskRemote';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
-import { switchRendererPreference } from '../engine/rendererMode';
 import type { ChromeShellProps } from './AppUI.types';
 
 export function ChromeShell({
@@ -152,8 +151,12 @@ export function ChromeShell({
             )}
             <p className="text-amber-200/70 text-xs mt-3">
               {gpuError.kind === 'device-lost'
-                ? 'The GPU process may have restarted. Try Retry GPU first, or switch to the WebGL2 fallback.'
-                : 'Use Chrome/Edge with WebGPU, or open with ?renderer=webgl for the WebGL2 fallback.'}
+                ? 'The GPU process may have restarted. Try Retry GPU, or reload the page.'
+                : 'WebGPU is required for this build. Update or switch to a browser with working '
+                  + 'WebGPU, or check chrome://gpu (edge://gpu) for a blocked or fallback adapter.'}
+            </p>
+            <p className="text-slate-400/70 text-[11px] mt-2 font-mono">
+              WebGL2 fallback is disabled for this development phase.
             </p>
             {gpuError.recoverable && (
               <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
@@ -171,13 +174,6 @@ export function ChromeShell({
                   onClick={() => window.location.reload()}
                 >
                   Reload page
-                </button>
-                <button
-                  type="button"
-                  className="px-3 py-1.5 rounded bg-cyan-500/20 border border-cyan-400/40 text-cyan-100 text-xs font-mono hover:bg-cyan-500/30"
-                  onClick={() => switchRendererPreference('webgl')}
-                >
-                  Switch to WebGL2
                 </button>
               </div>
             )}

@@ -17,6 +17,11 @@ export default defineConfig({
   },
   projects: [
     {
+      // The WebGL lane. Every spec here drives the app with `?renderer=webgl`,
+      // which is disabled for this development phase — they self-skip via
+      // `skipWhileWebGlDisabled()` and report as pending until the later
+      // fallback wave. Run them with CHROMASHIFT_E2E_WEBGL=1 against a build
+      // that has WEBGL_BACKEND_ENABLED flipped on.
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
       testIgnore: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts/,

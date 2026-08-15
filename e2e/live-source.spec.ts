@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { waitForWebGL } from './helpers/renderer';
 import { setE2eViewport, stubMinimalCorpus } from './helpers/mockCorpus';
+import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
 
 const fixtureVideo = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -11,6 +12,7 @@ const fixtureVideo = path.join(
 );
 
 test.describe('Live source (video file)', () => {
+  skipWhileWebGlDisabled();
   test('loading a local video file drives the composite and publishes breadcrumbs', async ({ page }) => {
     await setE2eViewport(page);
     await stubMinimalCorpus(page);

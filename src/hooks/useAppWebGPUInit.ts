@@ -3,7 +3,14 @@ import { computeAverageLuminanceWith } from '../engine/WasmEngine';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/RendererTypes';
 import type { ChromashiftTextureHandle } from '../engine/types/TextureHandle';
-import { publishRendererBreadcrumbs } from '../engine/rendererMode';
+import { publishRendererBootFailure, publishRendererBreadcrumbs } from '../engine/rendererMode';
+import {
+  probeFailureMessage,
+  probeWebGPU,
+  publishWebGpuProbe,
+  recordProbeStageFailure,
+  recordProbeSuccess,
+} from '../engine/webgpuProbe';
 import { toBootstrapRuntimeError, type GpuRuntimeError, type WebGpuSession } from '../engine/gpuBootstrap';
 import { listLocalImages } from '../engine/LocalLibrary';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
@@ -169,12 +176,29 @@ export function useAppWebGPUInit({
     activeOrchestratorRef.current = null;
   }, []);
 
+  /** Returns true when a WebGPU renderer is live; false on a hard-failed boot. */
   const bootstrapGpu = useCallback(async (
     cancelToken: CancelToken,
     signal: AbortSignal,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const canvas = mainCanvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return false;
+
+    // WebGPU is required for this phase. Pre-flight before touching the
+    // orchestrator so an unsupported browser produces a blocking screen with
+    // adapter/browser detail rather than a silent WebGL slide.
+    const probe = await probeWebGPU();
+    publishWebGpuProbe(probe);
+    if (isCancelled(cancelToken, signal)) return false;
+
+    if (!probe.ok) {
+      const { message, detail } = probeFailureMessage(probe);
+      console.error(`[Chromashift:GPU] ${message} ${detail}`, probe);
+      publishRendererBootFailure(detail);
+      // Not recoverable by retry: the browser/device cannot run this app.
+      setGpuError({ kind: 'bootstrap', message, detail, recoverable: false });
+      return false;
+    }
 
     let orchestrator: RendererOrchestrator | null = null;
 
@@ -223,11 +247,21 @@ export function useAppWebGPUInit({
       orchestrator = bootstrapped.orchestrator;
       activeOrchestratorRef.current = orchestrator;
     } catch (primaryError) {
-      if (isAbortError(primaryError) || bailIfCancelled()) return;
+      if (isAbortError(primaryError) || bailIfCancelled()) return false;
+      // The adapter was fine but device/context/pipeline creation failed —
+      // exactly the Chrome-vs-Edge case. Record which stage died, then
+      // hard-fail. No WebGL renderer is started.
+      const reason = primaryError instanceof Error
+        ? primaryError.message
+        : String(primaryError);
+      const failed = recordProbeStageFailure(probe, 'device', reason);
+      const { message, detail } = probeFailureMessage(failed);
+      console.error(`[Chromashift:GPU] ${message} ${detail}`, failed);
+      publishRendererBootFailure(detail);
       throw primaryError;
     }
 
-    if (bailIfCancelled()) return;
+    if (bailIfCancelled()) return false;
 
     syncOrchestratorRefs(
       orchestrator,
@@ -243,6 +277,9 @@ export function useAppWebGPUInit({
     const fallbackReason = orchestrator.getFallbackReason();
     setRendererFallbackReason(fallbackReason);
     publishRendererBreadcrumbs(orchestrator.getBackend(), fallbackReason);
+    // Device + swapchain are live; promote the probe to a full success.
+    recordProbeSuccess(probe);
+    return true;
   }, [
     antialiasEnabled,
     orchestratorRef,
@@ -383,8 +420,10 @@ export function useAppWebGPUInit({
     cancelToken: CancelToken,
     signal: AbortSignal,
   ): Promise<void> => {
-    await bootstrapGpu(cancelToken, signal);
-    if (isCancelled(cancelToken, signal)) return;
+    // A hard-failed boot must not report gpuReady: there is no renderer, and
+    // no WebGL fallback is coming.
+    const booted = await bootstrapGpu(cancelToken, signal);
+    if (!booted || isCancelled(cancelToken, signal)) return;
     await loadInitialCorpus(cancelToken, signal);
     if (isCancelled(cancelToken, signal)) return;
     setGpuReady(true);
@@ -411,8 +450,8 @@ export function useAppWebGPUInit({
     setIsGpuRetrying(true);
 
     try {
-      await bootstrapGpu(cancelToken, abortController.signal);
-      if (isCancelled(cancelToken, abortController.signal)) return;
+      const booted = await bootstrapGpu(cancelToken, abortController.signal);
+      if (!booted || isCancelled(cancelToken, abortController.signal)) return;
       setGpuReady(true);
     } catch (e) {
       if (isCancelled(cancelToken, abortController.signal) || isAbortError(e)) return;
