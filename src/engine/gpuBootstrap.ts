@@ -113,12 +113,12 @@ export async function requestWebGpuAdapter(
   return navigator.gpu!.requestAdapter();
 }
 
-export async function requestWebGpuDevice(
+async function requestWebGpuDeviceAttempts(
   adapter: GPUAdapter,
   canvasPixelWidth: number,
   canvasPixelHeight: number,
-  targetMaxTexture?: number,
-  requiredFeatures: readonly GPUFeatureName[] = [],
+  targetMaxTexture: number | undefined,
+  requiredFeatures: GPUFeatureName[],
 ): Promise<GPUDevice> {
   const canvasLimits = deriveRequiredLimits(
     adapter.limits,
@@ -126,8 +126,7 @@ export async function requestWebGpuDevice(
     canvasPixelHeight,
     { targetMaxTexture, requestHeadroom: false },
   );
-  const requestedFeatures = [...requiredFeatures];
-  const withFeatures = requestedFeatures.length > 0 ? { requiredFeatures: requestedFeatures } : {};
+  const withFeatures = requiredFeatures.length > 0 ? { requiredFeatures } : {};
 
   try {
     return await adapter.requestDevice(withFeatures);
@@ -148,6 +147,33 @@ export async function requestWebGpuDevice(
     { targetMaxTexture, requestHeadroom: true },
   );
   return adapter.requestDevice({ ...withFeatures, requiredLimits: headroomLimits });
+}
+
+export async function requestWebGpuDevice(
+  adapter: GPUAdapter,
+  canvasPixelWidth: number,
+  canvasPixelHeight: number,
+  targetMaxTexture?: number,
+  requiredFeatures: readonly GPUFeatureName[] = [],
+): Promise<GPUDevice> {
+  const requestedFeatures = [...requiredFeatures];
+
+  try {
+    return await requestWebGpuDeviceAttempts(
+      adapter,
+      canvasPixelWidth,
+      canvasPixelHeight,
+      targetMaxTexture,
+      requestedFeatures,
+    );
+  } catch (featuresError) {
+    if (requestedFeatures.length === 0) throw featuresError;
+    console.warn(
+      '[Chromashift:GPU] Device request with optional features failed on every limit tier, retrying with no optional features',
+      featuresError,
+    );
+    return requestWebGpuDeviceAttempts(adapter, canvasPixelWidth, canvasPixelHeight, targetMaxTexture, []);
+  }
 }
 
 export function listAvailableOptionalFeatures(adapter: GPUAdapter): GPUFeatureName[] {

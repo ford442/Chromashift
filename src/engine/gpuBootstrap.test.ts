@@ -113,6 +113,64 @@ describe('requestWebGpuDevice', () => {
 
     expect(calls[0]?.requiredFeatures).toEqual(['timestamp-query']);
   });
+
+  it('requests the same features across every limit fallback tier', async () => {
+    const calls: GPUDeviceDescriptor[] = [];
+    const device = { features: new Set(['timestamp-query']) } as unknown as GPUDevice;
+    const adapter = {
+      features: new Set(['timestamp-query']),
+      limits: mockAdapterLimits(),
+      requestDevice: async (descriptor?: GPUDeviceDescriptor) => {
+        calls.push(descriptor ?? {});
+        if (calls.length < 3) throw new Error('simulated failure');
+        return device;
+      },
+    } as unknown as GPUAdapter;
+
+    await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
+
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      expect(call.requiredFeatures).toEqual(['timestamp-query']);
+    }
+  });
+
+  it('degrades gracefully by retrying without optional features when every feature-bearing attempt fails', async () => {
+    const calls: GPUDeviceDescriptor[] = [];
+    const device = { features: new Set() } as unknown as GPUDevice;
+    const adapter = {
+      features: new Set(['timestamp-query']),
+      limits: mockAdapterLimits(),
+      requestDevice: async (descriptor?: GPUDeviceDescriptor) => {
+        calls.push(descriptor ?? {});
+        if (Array.from(descriptor?.requiredFeatures ?? []).length > 0) {
+          throw new Error('simulated driver quirk rejecting requiredFeatures');
+        }
+        return device;
+      },
+    } as unknown as GPUAdapter;
+
+    const result = await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
+
+    expect(result).toBe(device);
+    expect(calls.length).toBeGreaterThan(3);
+    expect(calls.slice(0, 3).every((c) => Array.from(c.requiredFeatures ?? []).length > 0)).toBe(true);
+    expect(Array.from(calls[calls.length - 1]?.requiredFeatures ?? [])).toEqual([]);
+  });
+
+  it('propagates the error when the device request fails with no optional features requested', async () => {
+    const adapter = {
+      features: new Set(),
+      limits: mockAdapterLimits(),
+      requestDevice: async () => {
+        throw new Error('no adapter available');
+      },
+    } as unknown as GPUAdapter;
+
+    await expect(requestWebGpuDevice(adapter, 1920, 1080, undefined, [])).rejects.toThrow(
+      'no adapter available',
+    );
+  });
 });
 
 describe('buildWebGpuCapabilityReport', () => {
