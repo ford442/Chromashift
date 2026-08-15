@@ -28,26 +28,8 @@ import { ProfileLutTexture } from './color/ProfileLutTexture';
  * WebGPURenderer — thin orchestrator over the 5-pass GPU pipeline.
  */
 
-export function computeAverageLuminance(image: HTMLImageElement): number {
-  const canvas = document.createElement('canvas');
-  const MAX_SIZE = 256;
-  const scale = Math.min(1, MAX_SIZE / Math.max(image.naturalWidth, image.naturalHeight));
-  canvas.width = Math.max(1, Math.floor(image.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.floor(image.naturalHeight * scale));
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return 128;
-  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imgData.data;
-  let sum = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    sum += r * 0.2126 + g * 0.7152 + b * 0.0722;
-  }
-  return sum / (data.length / 4);
-}
+/** Size contract for helpers that only need texture dimensions, not the GPU resource itself. */
+type TextureSize = { readonly width: number; readonly height: number };
 
 export class WebGPURenderer {
   readonly backend = 'webgpu' as const;
@@ -247,11 +229,6 @@ export class WebGPURenderer {
     this.invalidateBindGroupCaches();
   }
 
-  /** @deprecated Use requestPreviewReadback() for preview thumbnails. */
-  getPersistenceTexture(): GPUTexture | null {
-    return this.persistence.aboveTextures[this.persistence.pingPong];
-  }
-
   /** @deprecated Side previews use {@link renderStationaryPreviews}. Kept for collision-stats blit path. */
   requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean {
     return this.readback.requestPreviewReadback(callback);
@@ -286,7 +263,7 @@ export class WebGPURenderer {
   private encodeLayerPasses(
     enc: GPUCommandEncoder,
     state: RendererState,
-    canvasTex: GPUTexture,
+    canvasSize: TextureSize,
     layerOpacities: [number, number, number],
   ): void {
     const maskTexture = this.classificationMaskTexture ?? this.fallbackMaskTexture;
@@ -298,7 +275,7 @@ export class WebGPURenderer {
     const profileLightDark = state.colorProfileLightDark ?? 1;
     const sobelEnabled = state.sobelEnabled ? 1 : 0;
     const softCropEnabled = state.softCropEnabled ? 1 : 0;
-    const aspect = canvasTex.width / canvasTex.height;
+    const aspect = canvasSize.width / canvasSize.height;
 
     for (let i = 0; i < 3; i++) {
       const lp = this.layerPipelines[i];
@@ -469,9 +446,9 @@ export class WebGPURenderer {
     const tracerMode = state.tracerMode ?? 0.0;
     const layerTextures = this.getLayerTexturesTuple();
     const { below: persistBelow, above: persistAbove } = this.getTracerTextures();
-    const canvasDims = { width, height } as GPUTexture;
+    const canvasSize: TextureSize = { width, height };
 
-    this.encodeLayerPasses(enc, state, canvasDims, layerOpacities);
+    this.encodeLayerPasses(enc, state, canvasSize, layerOpacities);
     profiler?.markLayersEnd(enc);
 
     this.persistence.encode(enc, layerTextures, {
