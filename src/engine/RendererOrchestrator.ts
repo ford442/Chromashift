@@ -3,7 +3,7 @@ import { WebGLRenderer } from './WebGLRenderer';
 import { TextureManager } from './TextureManager';
 import { WebGLTextureManager } from './WebGLTextureManager';
 import { GpuImageAnalysis } from './compute/GpuImageAnalysis';
-import { publishGpuComputeBreadcrumbs } from './compute/computeSupport';
+import { publishGpuComputeBreadcrumbs, readGpuComputeDiagnostics } from './compute/computeSupport';
 import { getRendererPreference } from './rendererMode';
 import {
   bootstrapWebGpu,
@@ -362,7 +362,10 @@ export class RendererOrchestrator {
     });
     this.textureManager = this.deps.createTextureManager(this.session.device);
     this.gpuImageAnalysis = this.deps.createGpuImageAnalysis(this.session.device);
-    publishGpuComputeBreadcrumbs(this.gpuImageAnalysis.support);
+    publishGpuComputeBreadcrumbs(
+      this.gpuImageAnalysis.support,
+      readGpuComputeDiagnostics(this.session.device),
+    );
   }
 
   private bootstrapWebGL(primaryCanvas: HTMLCanvasElement): void {

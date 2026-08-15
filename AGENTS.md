@@ -113,9 +113,18 @@ src/
     │   ├── colorProfileLibrary.ts  # localStorage user profiles + resolution order
     │   └── ProfileLutTexture.ts    # 256×3 RGBA LUT texture bound to every layer pipeline
     ├── compute/
-    │   ├── GpuImageAnalysis.ts   # WebGPU histogram + r8uint classification mask
-    │   ├── computeSupport.ts     # Feature detection + window breadcrumbs
-    │   └── wgslSnippets.ts       # Shared WGSL threshold helpers (C++ parity)
+    │   ├── chores/              # gpu-chores facade — the shared kit boundary
+    │   │   ├── types.ts             # Kit API shapes (ChoreJob/ChoreResult/backend order)
+    │   │   ├── runtime.ts           # runJob() — walks webgpu → wasm → ts
+    │   │   ├── webgpuBackend.ts     # WebGPU compute lane (adopts renderer device)
+    │   │   ├── cpuBackend.ts        # WASM + TypeScript lanes (injected host)
+    │   │   ├── kernels.ts           # Shared WGSL threshold helpers (C++ parity)
+    │   │   ├── support.ts           # Feature detection, kill switch, breadcrumbs
+    │   │   ├── chromashiftHost.ts   # Binds the CPU lanes to WasmEngine (app-specific)
+    │   │   └── index.ts             # Public entry — sibling apps import from here
+    │   ├── GpuImageAnalysis.ts   # Thin adapter over the chores WebGPU lane
+    │   ├── computeSupport.ts     # Re-export shim → chores/support
+    │   └── wgslSnippets.ts       # Re-export shim → chores/kernels
     └── math/                 # Pure TS (bandClassification, rotation, decay) shared with tests/C++ parity
 ```
 
@@ -249,21 +258,33 @@ Full spec: **[docs/PREVIEW_VIEWS.md](docs/PREVIEW_VIEWS.md)**. Compare layouts:
 
 ### GPU Image Analysis (Compute)
 
-Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K) images. Implemented in `src/engine/compute/GpuImageAnalysis.ts`:
+Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K) images. The kernels and device plumbing live behind the **`gpu-chores`** facade (`src/engine/compute/chores/`); Chromashift is its reference consumer, and sibling apps (`clip_stacker`, `image_video_effects`, `flac_player`, `mod-player`, `web_sequencer`) depend on the same shapes. `GpuImageAnalysis.ts` is now a thin adapter over the facade's WebGPU lane:
 
 1. **Histogram pass** — BT.709 luminance per pixel → 256-bin atomic histogram on GPU; average luminance derived from the histogram (256-entry readback only).
 2. **Classification pass** — writes an `r8uint` band-index mask texture (thresholds in `wgslSnippets.ts`, matching `chromashift_engine.cpp` / `bandClassification.ts`).
 3. **Layer binding** — mask is fed into existing layer pipelines via `setClassificationMaskTexture()` when `colorMode === 0` (Original CR0P fixed).
 
-**Selection order** (`useClassificationMask.ts`):
+**Selection order** — encoded once in `CHORE_BACKEND_ORDER` and walked by `runJob({ op: 'image-analysis', prefer: 'auto' })`; `useClassificationMask.ts` calls the facade rather than branching itself:
 
-1. WebGPU compute (preferred when `renderer.backend === 'webgpu'` and `GpuImageAnalysis.isSupported()`).
-2. WASM `computeClassificationMask` (when Engine mode = WASM).
-3. TypeScript `classifyImageMaskWith` fallback.
+1. **WebGPU compute** — primary. Requires `renderer.backend === 'webgpu'` and a GPU-resident source texture.
+2. **WASM** `computeClassificationMask` — default fallback (CI / headless / flaky Edge or Chrome). Declines unless Engine mode = WASM *and* the module is loaded.
+3. **TypeScript** `classifyImageMaskWith` — terminal fallback.
 
-**Feature detection**: `detectGpuComputeSupport(device)` gates on adapter `maxTextureDimension2D`. Breadcrumbs: `window.gpuComputeAvailable`, `window.gpuComputeReason`. WebGL mode skips compute entirely.
+**WebGL2 is deliberately not a lane.** Histogram atomics have no workable GL2 story, and running a compute device *and* a GL context for one analysis is the failure mode the kit exists to prevent. On a WebGL backend no `webgpu` lane is registered at all, so the fallthrough to WASM/TS is structural rather than a runtime check.
 
-**Parity tests**: `src/engine/compute/goldenMask.test.ts` checks the TS fallback against an f32-accurate port of C++ `computeClassificationMask` on a golden image (exact match, several avgLum values), asserts the WGSL `classify_band()` chain is generated from `BAND_THRESHOLDS`, and bounds the histogram-derived average within one bucket of the exact BT.709 average. `BAND_THRESHOLDS` in `src/engine/math/bandClassification.ts` is the single source of truth for band thresholds — the WGSL threshold chain is generated from it.
+A pinned `prefer` (`'webgpu' | 'wasm' | 'ts'`) never slides to another lane — parity tests depend on that. Failures are never silent: `runJob` returns `{ ok: false, reason, attempts }` recording why every candidate declined or threw.
+
+**Device policy**: the WebGPU lane **adopts** the renderer-owned `GPUDevice` from `RendererOrchestrator`. It must never call `requestAdapter`/`requestDevice`. `useClassificationMask` registers the orchestrator's existing lane instance (`GpuImageAnalysis.backend`) rather than constructing a second one, so pipelines, staging buffers, and the reused mask texture stay shared — repeated image loads do not grow VRAM.
+
+**CPU contract**: 256-bin histogram readback only. The mask stays a `GPUTexture` on the GPU lane; never add a full-image readback. The CPU lanes return a `Uint8Array` that the caller uploads into an `r8uint` texture.
+
+**Feature detection**: `detectGpuComputeSupport(device)` gates on adapter `maxTextureDimension2D`.
+
+**Kill switch**: `?no_gpu_compute` closes the WebGPU lane and reports itself as the reason (rather than masquerading as a capability problem). WebGL mode skips compute entirely.
+
+**Breadcrumbs** (Chrome-vs-Edge diagnosis): `window.gpuComputeAvailable`, `window.gpuComputeReason`, `window.gpuComputeDiagnostics` (adapter vendor/architecture/device/description, `features`, and compute `limits`), plus `window.gpuChoreBackend` / `window.gpuChoreReason` recording which lane served the last job and why the others did not.
+
+**Parity tests**: `src/engine/compute/chores/runtime.test.ts` covers the fallback order, pinned-lane behaviour, and the no-silent-skip contract; `src/engine/compute/chores/support.test.ts` covers detection, the kill switch, and breadcrumbs. `src/engine/compute/goldenMask.test.ts` checks the TS fallback against an f32-accurate port of C++ `computeClassificationMask` on a golden image (exact match, several avgLum values), asserts the WGSL `classify_band()` chain is generated from `BAND_THRESHOLDS`, and bounds the histogram-derived average within one bucket of the exact BT.709 average. `BAND_THRESHOLDS` in `src/engine/math/bandClassification.ts` is the single source of truth for band thresholds — the WGSL threshold chain is generated from it.
 
 ### WebGPU MSAA
 
