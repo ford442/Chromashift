@@ -1,3 +1,4 @@
+import { WEBGL_BACKEND_ENABLED } from '../../engine/rendererMode';
 import type { RendererPanelProps } from './types';
 
 export function RendererPanel({
@@ -33,23 +34,39 @@ export function RendererPanel({
             </div>
           </div>
           <div className="flex gap-1">
-            {(['webgpu', 'webgl'] as const).map((backend) => (
-              <button
-                key={backend}
-                type="button"
-                onClick={() => onRendererBackendChange(backend)}
-                className={`text-[10px] px-2 py-1 rounded font-mono transition-all ${
-                  rendererBackend === backend
-                    ? 'bg-amber-600 text-white shadow-[0_0_10px_rgba(245,158,11,0.35)]'
-                    : 'bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-100'
-                }`}
-                title={`Persist ${backend.toUpperCase()} and reload with ?renderer=${backend}`}
-              >
-                {backend.toUpperCase()}
-              </button>
-            ))}
+            {(['webgpu', 'webgl'] as const).map((backend) => {
+              // WebGL selection is disabled for this development phase; the
+              // button stays visible (so the deferral is discoverable) but
+              // cannot be used to escape a failed WebGPU boot.
+              const disabled = backend === 'webgl' && !WEBGL_BACKEND_ENABLED;
+              return (
+                <button
+                  key={backend}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => onRendererBackendChange(backend)}
+                  className={`text-[10px] px-2 py-1 rounded font-mono transition-all ${
+                    disabled
+                      ? 'bg-zinc-900 border border-zinc-700 text-zinc-500 cursor-not-allowed'
+                      : rendererBackend === backend
+                        ? 'bg-amber-600 text-white shadow-[0_0_10px_rgba(245,158,11,0.35)]'
+                        : 'bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-100'
+                  }`}
+                  title={disabled
+                    ? 'WebGL2 backend is deferred to a later issue wave — WebGPU is required.'
+                    : `Persist ${backend.toUpperCase()} and reload with ?renderer=${backend}`}
+                >
+                  {backend.toUpperCase()}
+                </button>
+              );
+            })}
           </div>
         </div>
+        {!WEBGL_BACKEND_ENABLED && (
+          <div className="text-[10px] leading-snug text-zinc-400/80 font-mono">
+            WebGPU required — WebGL2 fallback disabled for this phase.
+          </div>
+        )}
         {rendererFallbackReason && (
           <div className="text-[10px] leading-snug text-cyan-200/75 font-mono">
             WebGPU fallback: {rendererFallbackReason}

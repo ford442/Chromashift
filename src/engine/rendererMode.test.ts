@@ -2,8 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getRendererPreference,
   getStoredRendererPreference,
+  isWebGlRequestIgnored,
+  publishRendererBootFailure,
   publishRendererBreadcrumbs,
+  readRequestedBackend,
   setStoredRendererPreference,
+  switchRendererPreference,
 } from './rendererMode';
 
 const STORAGE_KEY = 'chromashift.renderer';
@@ -35,27 +39,53 @@ describe('getRendererPreference', () => {
     vi.unstubAllGlobals();
   });
 
-  it('prefers explicit ?renderer=webgl', () => {
+  it('ignores explicit ?renderer=webgl while the WebGL backend is disabled', () => {
     installBrowserGlobals('?renderer=webgl');
-    expect(getRendererPreference()).toBe('webgl');
+    expect(getRendererPreference()).toBe('webgpu');
+    // The request is still readable, so the UI can say it was ignored.
+    expect(readRequestedBackend()).toBe('webgl');
+    expect(isWebGlRequestIgnored()).toBe(true);
   });
 
   it('prefers explicit ?renderer=webgpu', () => {
     installBrowserGlobals('?renderer=webgpu');
     expect(getRendererPreference()).toBe('webgpu');
+    expect(isWebGlRequestIgnored()).toBe(false);
   });
 
-  it('treats ?webgl flag as webgl', () => {
+  it('ignores the bare ?webgl flag', () => {
     installBrowserGlobals('?webgl');
-    expect(getRendererPreference()).toBe('webgl');
+    expect(getRendererPreference()).toBe('webgpu');
+    expect(readRequestedBackend()).toBe('webgl');
   });
 
-  it('falls back to localStorage then webgpu default', () => {
+  it('a stored webgl preference cannot rescue a failed WebGPU boot', () => {
     installBrowserGlobals('');
     expect(getRendererPreference()).toBe('webgpu');
 
+    // switchRendererPreference refuses to persist it in the first place...
+    switchRendererPreference('webgl');
+    expect(getStoredRendererPreference()).toBeNull();
+
+    // ...and even a pre-existing stored value is ignored.
     setStoredRendererPreference('webgl');
-    expect(getRendererPreference()).toBe('webgl');
+    expect(getRendererPreference()).toBe('webgpu');
+  });
+});
+
+describe('publishRendererBootFailure', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('pins usingWebGL false so a hard fail is not read as a fallback', () => {
+    const win = installBrowserGlobals('') as unknown as Record<string, unknown>;
+    publishRendererBootFailure('[adapter] No WebGPU adapter found.');
+
+    expect(win.usingWebGPU).toBe(false);
+    expect(win.usingWebGL).toBe(false);
+    expect(win.rendererType).toBeNull();
+    expect(win.rendererFallbackReason).toContain('No WebGPU adapter');
   });
 });
 

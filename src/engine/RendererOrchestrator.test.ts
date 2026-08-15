@@ -167,7 +167,7 @@ describe('RendererOrchestrator', () => {
     expect(secondaryContext.unconfigure).toHaveBeenCalledOnce();
   });
 
-  it('falls back to WebGL when WebGPU bootstrap fails', async () => {
+  it('hard-fails instead of falling back to WebGL when WebGPU bootstrap fails', async () => {
     const canvas = mockCanvas('main');
     const deps = createMockDeps({
       bootstrapWebGpu: vi.fn(async () => {
@@ -175,15 +175,50 @@ describe('RendererOrchestrator', () => {
       }),
     });
 
-    const { orchestrator, backend, fallbackReason } = await RendererOrchestrator.bootstrap(
+    await expect(RendererOrchestrator.bootstrap(
       { primaryCanvas: canvas, antialias: true, backend: 'webgpu' },
+      deps,
+    )).rejects.toThrow('No adapter');
+
+    // WebGPU is required for this phase: nothing WebGL may be constructed on
+    // the failure path.
+    expect(deps.createWebGLRenderer).not.toHaveBeenCalled();
+    expect(deps.createWebGL2Context).not.toHaveBeenCalled();
+    expect(deps.createWebGLTextureManager).not.toHaveBeenCalled();
+  });
+
+  it('tears down a partial WebGPU boot so no device survives the failure', async () => {
+    const canvas = mockCanvas('main');
+    // Session bootstrap succeeds but the renderer fails to build; the partial
+    // boot must still be torn down so gpu-chores cannot adopt a device from a
+    // dead orchestrator.
+    const deps = createMockDeps({
+      createWebGPURenderer: vi.fn(async () => {
+        throw new Error('Pipeline creation failed');
+      }),
+    });
+
+    await expect(RendererOrchestrator.bootstrap(
+      { primaryCanvas: canvas, antialias: true, backend: 'webgpu' },
+      deps,
+    )).rejects.toThrow('Pipeline creation failed');
+
+    expect(deps.createWebGLRenderer).not.toHaveBeenCalled();
+  });
+
+  it('still honours an explicitly requested WebGL backend', async () => {
+    // Only automatic fallback is removed; the WebGL path itself remains for
+    // tests and the later fallback wave.
+    const canvas = mockCanvas('main');
+    const deps = createMockDeps();
+
+    const { orchestrator, backend } = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: canvas, antialias: true, backend: 'webgl' },
       deps,
     );
 
     expect(backend).toBe('webgl');
-    expect(fallbackReason).toBe('No adapter');
     expect(orchestrator.getBackend()).toBe('webgl');
-    expect(orchestrator.sharedDevice()).toBeNull();
     expect(deps.createWebGLRenderer).toHaveBeenCalledOnce();
   });
 

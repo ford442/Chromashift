@@ -3,11 +3,13 @@ import { setE2eViewport, stubMinimalCorpus } from './helpers/mockCorpus';
 import { primeOverlaySections } from './helpers/overlaySections';
 import { encodePresetParam } from './helpers/presetParam';
 import { waitForWebGL } from './helpers/renderer';
+import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
 
 /** Colour profile selector in the Layers panel (docs/COLOR_PROFILES.md). */
 const profileSelect = 'select[title^="Named colour profile"]';
 
 test.describe('Colour profiles', () => {
+  skipWhileWebGlDisabled();
   test.beforeEach(async ({ page }) => {
     await setE2eViewport(page);
     await stubMinimalCorpus(page);

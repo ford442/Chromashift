@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { waitForWebGL } from './helpers/renderer';
+import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
 
 const screenshotsDir = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -11,6 +12,7 @@ const screenshotsDir = path.join(
 );
 
 test.describe('Chromashift smoke', () => {
+  skipWhileWebGlDisabled();
   test('boots with WebGL renderer and publishes breadcrumbs', async ({ page }) => {
     await page.goto('/?renderer=webgl');
 

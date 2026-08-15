@@ -164,26 +164,30 @@ export class RendererOrchestrator {
     const primarySlotId = objectStyle && primaryCanvasOrOptions.primarySlotId
       ? primaryCanvasOrOptions.primarySlotId
       : PRIMARY_SLOT_ID;
-    let fallbackReason: string | null = null;
-    let actualBackend = preferredBackend;
+    // Always null while automatic WebGL fallback is disabled; retained so the
+    // bootstrap result shape survives into the later fallback wave.
+    const fallbackReason: string | null = null;
+    const actualBackend = preferredBackend;
 
-    try {
-      if (preferredBackend === 'webgl') {
-        orchestrator.bootstrapWebGL(primaryCanvas);
-        orchestrator.createSlot(primarySlotId, primaryCanvas);
-      } else {
+    // WebGPU is required for this development phase: a failed WebGPU boot
+    // hard-fails rather than silently starting the WebGL2 renderer, because
+    // that slide disguised device/init bugs as visual-parity bugs. The
+    // WebGL branch below is reachable only when a caller passes
+    // `backend: 'webgl'` explicitly (tests, and the later fallback wave) —
+    // never as automatic recovery. See docs/webgl-fallback.md.
+    if (preferredBackend === 'webgl') {
+      orchestrator.bootstrapWebGL(primaryCanvas);
+      orchestrator.createSlot(primarySlotId, primaryCanvas);
+    } else {
+      try {
         await orchestrator.bootstrapWebGpuSession(primaryCanvas);
         await orchestrator.createPrimaryWebGpuSlot(primarySlotId, primaryCanvas);
-      }
-    } catch (primaryError) {
-      if (preferredBackend === 'webgpu') {
-        fallbackReason = primaryError instanceof Error ? primaryError.message : String(primaryError);
-        actualBackend = 'webgl';
+      } catch (primaryError) {
+        // Release anything the partial WebGPU boot allocated, then rethrow so
+        // the caller can render a blocking error screen. Crucially this leaves
+        // no device behind, so gpu-chores never adopts one after a failed boot.
         orchestrator.resetWebGpuResources();
-        orchestrator.setBackend('webgl');
-        orchestrator.bootstrapWebGL(primaryCanvas);
-        orchestrator.createSlot(primarySlotId, primaryCanvas);
-      } else {
+        orchestrator.destroy();
         throw primaryError;
       }
     }
@@ -342,10 +346,6 @@ export class RendererOrchestrator {
     this.session = null;
     this.primaryCanvas = null;
     this.webglContext = null;
-  }
-
-  private setBackend(backend: RendererBackend): void {
-    this.backend = backend;
   }
 
   private async bootstrapWebGpuSession(primaryCanvas: HTMLCanvasElement): Promise<void> {

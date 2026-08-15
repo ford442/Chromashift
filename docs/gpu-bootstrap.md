@@ -125,7 +125,7 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 
 | Event | Handler | UI |
 |---|---|---|
-| `device.lost` (non-destroyed) | `deviceLostRuntimeError` | Recoverable overlay: **Retry GPU**, reload, or `?renderer=webgl` |
+| `device.lost` (non-destroyed) | `deviceLostRuntimeError` | Recoverable overlay: **Retry GPU** or reload |
 | `device.onuncapturederror` | Logged + `uncapturedRuntimeError` | Console + non-recoverable notice |
 | Bootstrap failure | `toBootstrapRuntimeError` | Recoverable overlay |
 
@@ -134,10 +134,13 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 | Action | Behaviour |
 |---|---|
 | **Retry GPU** (in-app) | Re-runs `RendererOrchestrator.bootstrap`; preserves reducer settings, compare layout, kiosk flags, and current image index. `useImagePlayback` reloads the active texture when `gpuReady` becomes true again. Compare slots reattach via `useCompareSlotRenderer` / `useCompareQuadSlots`. |
-| **Switch to WebGL2** | Full navigation via `switchRendererPreference` (settings preserved via preset URL / localStorage) |
 | **Reload page** | Full navigation |
 
-After a successful retry, automation breadcrumbs (`window.usingWebGPU`, `window.usingWebGL`, `window.rendererType`) are updated via `publishRendererBreadcrumbs`.
+> **Switch to WebGL2** was removed: WebGL2 fallback is disabled for this
+> development phase, so a failed WebGPU boot hard-fails instead of offering an
+> escape hatch. See [webgl-fallback.md](webgl-fallback.md).
+
+After a successful retry, automation breadcrumbs (`window.usingWebGPU`, `window.usingWebGL`, `window.rendererType`) are updated via `publishRendererBreadcrumbs`. On a **hard-failed** boot `publishRendererBootFailure` pins `usingWebGPU` and `usingWebGL` false and `rendererType` null, so a failure can never be misread as a successful fallback.
 
 After canvas resize or DPR changes, `RendererOrchestrator.resizeAll()` reconfigures the primary session context and every additional slot context (replacing a direct `WebGpuSession.reconfigure()` call from React hooks).
 
@@ -150,7 +153,10 @@ After canvas resize or DPR changes, `RendererOrchestrator.resizeAll()` reconfigu
 | RAM | 8K intermediate textures need adapters with `maxTextureDimension2D ≥ 8192` |
 | Flags | If WebGPU is missing: `chrome://flags/#enable-unsafe-webgpu` (older builds) |
 
-WebGL2 fallback works on any browser with WebGL2 for debugging and screenshots.
+WebGPU is **required** for this development phase — there is no WebGL2 fallback
+to catch an unsupported browser. A missing adapter or a failed `requestDevice`
+produces a blocking error screen naming the probe stage, browser, and adapter.
+See [webgl-fallback.md](webgl-fallback.md).
 
 ## Testing
 
