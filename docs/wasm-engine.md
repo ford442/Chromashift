@@ -28,11 +28,20 @@ for real-time rendering.
 | **Out of scope (GPU)** | Layer rotation, persistence/compositing | Handled by WGSL shaders in `WebGPURenderer` / `WebGLRenderer` |
 | **Test / benchmark only** | `simulateTracerDecayWith`, `buildRotationMat3With`, `computeLuminanceHistogramWith`, `computeColorBandCountsWith`, bulk classify helpers | `public/wasm-benchmark.html`, C++ host tests — not used in the live render loop |
 
-**Selection order for image analysis** (see `useClassificationMask.ts`):
+**Selection order for image analysis** — encoded in the **`gpu-chores`** facade
+(`src/engine/compute/chores/`) as `CHORE_BACKEND_ORDER` and walked by
+`runJob({ op: 'image-analysis', prefer: 'auto' })`. `useClassificationMask.ts`
+calls the facade rather than branching itself:
 
 1. WebGPU compute histogram + mask (preferred when available).
 2. C++ WASM classification mask + strided/full luminance (when Engine = C++ WASM).
 3. TypeScript fallbacks in `WasmEngine.ts` (always available).
+
+WebGL2 is deliberately not a lane. The WASM and TypeScript lanes are bound to
+`WasmEngine` by `chores/chromashiftHost.ts`, which is also the seam a sibling
+app replaces with its own CPU implementation. Failures are never silent:
+`runJob` returns `{ ok: false, reason, attempts }` naming why each lane
+declined. See [docs/gpu-bootstrap.md](gpu-bootstrap.md#gpu-chores-compute-device-adoption).
 
 ---
 

@@ -1,0 +1,79 @@
+/**
+ * `gpu-chores` — WASM and TypeScript lanes.
+ *
+ * Both lanes share one implementation and differ only in the `useWasm` flag
+ * threaded into Chromashift's dispatch helpers, which is exactly how the
+ * pre-facade code chose between them. The WASM lane declines when the WASM
+ * module is not ready, so `auto` slides to `ts` rather than silently
+ * producing nothing.
+ *
+ * These lanes return a `Uint8Array` mask. Uploading it into an `r8uint`
+ * texture stays with the caller: the kit does not own a device on this path.
+ */
+
+import type {
+  ChoreBackend,
+  ChoreBackendImpl,
+  ChoreJob,
+  CpuImageAnalysisOutput,
+  ImageAnalysisJob,
+} from './types';
+
+/**
+ * Host-supplied CPU implementation. Injected rather than imported so this
+ * module stays free of Chromashift-specific dependencies — sibling apps
+ * supply their own equivalents.
+ */
+export interface CpuChoreHost {
+  /** True when the WASM module is loaded and callable. */
+  isWasmReady(): boolean;
+  computeImageAverageLuminanceWith(image: HTMLImageElement, useWasm: boolean): number;
+  classifyImageMaskWith(
+    image: HTMLImageElement,
+    avgLum: number,
+    useWasm: boolean,
+  ): { mask: Uint8Array; width: number; height: number } | null;
+}
+
+export class CpuChoreBackend implements ChoreBackendImpl {
+  readonly backend: ChoreBackend;
+
+  private readonly host: CpuChoreHost;
+  private readonly useWasm: boolean;
+
+  constructor(backend: 'wasm' | 'ts', host: CpuChoreHost) {
+    this.backend = backend;
+    this.host = host;
+    this.useWasm = backend === 'wasm';
+  }
+
+  canRun(job: ChoreJob): boolean {
+    if (!job.image) return false;
+    if (this.useWasm && !this.host.isWasmReady()) return false;
+    return true;
+  }
+
+  declineReason(job: ChoreJob): string {
+    if (!job.image) return 'No CPU-decodable source image';
+    if (this.useWasm && !this.host.isWasmReady()) return 'WASM module not ready';
+    return 'Unavailable';
+  }
+
+  async run(job: ImageAnalysisJob): Promise<CpuImageAnalysisOutput | null> {
+    if (!this.canRun(job)) return null;
+    const image = job.image!;
+
+    const avgLuminance = job.avgLumHint
+      ?? this.host.computeImageAverageLuminanceWith(image, this.useWasm);
+    const result = this.host.classifyImageMaskWith(image, avgLuminance, this.useWasm);
+    if (!result) return null;
+
+    return {
+      kind: 'cpu-mask',
+      avgLuminance,
+      mask: result.mask,
+      width: result.width,
+      height: result.height,
+    };
+  }
+}

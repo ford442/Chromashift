@@ -65,6 +65,7 @@ Multi-canvas layouts (compare dual/quad, kiosk monitors, future WebXR layers) sh
 RendererOrchestrator.bootstrap(primaryCanvas)
 ├── WebGpuSession (device + primary context)  OR  WebGL2 context
 ├── shared TextureManager + GpuImageAnalysis (WebGPU only)
+│      └── gpu-chores WebGPU lane — adopts this device, never requests one
 └── slot "primary" → ChromashiftRenderer on primary canvas
 
 orchestrator.createSlot('compare-b', canvasB)   // extra WebGPU contexts, same device
@@ -85,6 +86,40 @@ orchestrator.destroy()                          // tears down all slots + device
 `useAppWebGPUInit` delegates bootstrap and primary-slot creation to the orchestrator; image corpus loading stays in the hook. Secondary slots must be created **after** bootstrap and destroyed **before** `orchestrator.destroy()` (compare hook runs between init and unmount for this ordering).
 
 Unit tests in `src/engine/RendererOrchestrator.test.ts` mock GPU factories so CI does not require WebGPU.
+
+## gpu-chores: compute device adoption
+
+Load-time image analysis (BT.709 histogram + `r8uint` classification mask) runs behind the **`gpu-chores`** facade in `src/engine/compute/chores/`. Chromashift is the reference consumer; the sibling apps in the rollout (`clip_stacker`, `image_video_effects`, `flac_player`, `mod-player`, `web_sequencer`) depend on the same shapes, so treat `chores/index.ts` as the module boundary and keep app-specific wiring in `chromashiftHost.ts`.
+
+**One device, always adopted.** `bootstrapWebGpuSession()` constructs `GpuImageAnalysis` from `session.device`, and that instance owns the single `WebGpuChoreBackend`. `useClassificationMask` registers *that* lane (`GpuImageAnalysis.backend`) with its runtime rather than building a new one, so:
+
+- there is never a second `requestAdapter`/`requestDevice`;
+- pipelines, the histogram staging buffer, and the reused `r8uint` mask texture are shared, so repeated image loads do not grow VRAM;
+- on a **WebGL** backend there is no device, no `GpuImageAnalysis`, and therefore no `webgpu` lane registered at all — a GL context and a compute device are structurally unable to be live for the same analysis.
+
+**Fallback order** is fixed in `CHORE_BACKEND_ORDER` and walked by `runJob({ prefer: 'auto' })`:
+
+```
+webgpu  →  wasm  →  ts
+```
+
+WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GPU Image Analysis (Compute)* for the full contract.
+
+**Diagnosing a Chrome-vs-Edge divergence.** A lane that closes always records why, so a failure degrades to WASM with a reason instead of a blank analysis. After a load, read:
+
+| Breadcrumb | Meaning |
+|---|---|
+| `window.gpuComputeAvailable` | WebGPU compute lane usable at all |
+| `window.gpuComputeReason` | Why it is not (`null` when available) |
+| `window.gpuComputeDiagnostics` | Adapter `vendor` / `architecture` / `device` / `description`, granted `features`, and compute `limits` |
+| `window.gpuChoreBackend` | Which lane served the last job (`webgpu` / `wasm` / `ts`, `null` on total failure) |
+| `window.gpuChoreReason` | Joined decline/failure reasons when no lane ran |
+
+`runJob`'s `ChoreFailure.attempts` carries the same per-lane detail programmatically.
+
+**Kill switch**: `?no_gpu_compute` closes the WebGPU lane and names itself in `gpuComputeReason`, so a disabled run is never mistaken for a capability failure.
+
+**Break-even**: the GPU lane wins on 4K–8K images, where the two compute passes dwarf pipeline setup plus the single 1 KiB histogram map. Small stills are dominated by that fixed cost and by `mapAsync` latency; they still take the GPU lane when a source texture already exists, because the alternative is a CPU decode of an image the GPU already holds. Add a resolution floor only with a microbench to justify it.
 
 ## Device loss and errors
 
