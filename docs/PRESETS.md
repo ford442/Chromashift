@@ -8,9 +8,9 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "settings": {
-    "layers": { "…": "…" },
+    "layers": { "colorProfileId": "cr0p-classic", "colorProfile": null, "…": "…" },
     "tracers": { "…": "…" },
     "output": { "…": "…" },
     "engine": { "fps": 30, "paused": false, "engineMode": "ts", "avgLuminance": 128 },
@@ -39,9 +39,9 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 }
 ```
 
-`SETTINGS_SCHEMA_VERSION` is **2**. Runtime-only state (GPU handles, media corpus, export progress, mic/MIDI runtime errors, GPU timing sparklines) is never serialized.
+`SETTINGS_SCHEMA_VERSION` is **3**. Runtime-only state (GPU handles, media corpus, export progress, mic/MIDI runtime errors, GPU timing sparklines) is never serialized.
 
-### v2 field groups
+### v3 field groups
 
 | Key | Purpose |
 |-----|---------|
@@ -51,11 +51,14 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 | `viewport` | Quarter-zoom and half-overlay display transforms (hoisted from `output` in v2) |
 | `compare` | Multi-view layout, sync play, swipe position, and slot A/B `ChromashiftSettingsInput` bags |
 | `kiosk` | Installation-mode flags (`kioskEnabled`, `kioskUiHidden`, `kioskAttractMode`) |
+| `layers.colorProfileId` | Active named colour profile (v3) — see [COLOR_PROFILES.md](COLOR_PROFILES.md) |
+| `layers.colorProfile` | Full profile table, embedded for user profiles in file exports; `null` for built-ins and in share URLs |
 
-## Migration from v1
+## Migration from v1 / v2
 
-- **Reading:** `deserializeSettings()` accepts both `version: 1` and `version: 2` documents and normalizes them to v2. v1 URLs and saved files continue to work.
-- **Writing:** All new exports (share URL, JSON file, localStorage save) emit `version: 2`.
+- **Reading:** `deserializeSettings()` accepts `version: 1`, `2`, and `3` documents and normalizes them to v3 (`migrateToLatest`). Older URLs and saved files continue to work.
+- **Writing:** All new exports (share URL, JSON file, localStorage save) emit `version: 3`.
+- **v2 → v3 colour profiles:** documents that predate profiles migrate to `cr0p-classic`, the look they were saved with. An embedded profile table is re-validated on read and dropped when invalid or when its `id` doesn't match `colorProfileId`. Share URLs omit the table and carry the id alone to stay short.
 - **v1 → v2 defaults:** Missing reactive toggles default to `false`. Missing `viewport` is hoisted from legacy `output.viewportQuarterZoom` / `viewportHalfOverlay` when present. Missing `compare` and `kiosk` default to the app's initial single-view / non-kiosk state.
 - **Kiosk precedence:** When both a preset and `?kiosk=1` are present, the URL installation bootstrap wins (hides chrome, forces autoplay, etc.).
 

@@ -9,6 +9,7 @@ import {
   invalidateLayerBindGroupCache,
 } from './BindGroupCache';
 import { CompositorPass } from './CompositorPass';
+import { ProfileLutTexture } from './color/ProfileLutTexture';
 import { GpuReadback } from './GpuReadback';
 import { PersistencePass } from './PersistencePass';
 import {
@@ -42,6 +43,7 @@ export class StationaryPreviewRenderer {
   private sourceTexture: GPUTexture | null = null;
   private maskTexture: GPUTexture | null = null;
   private readonly fallbackMaskTexture: GPUTexture;
+  private readonly profileLut: ProfileLutTexture;
 
   constructor(
     device: GPUDevice,
@@ -66,6 +68,8 @@ export class StationaryPreviewRenderer {
       { bytesPerRow: 1, rowsPerImage: 1 },
       [1, 1, 1],
     );
+
+    this.profileLut = new ProfileLutTexture(device);
 
     for (const src of [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow]) {
       this.layerPipelines.push(pipelines.createLayerPipeline(src, 1));
@@ -94,6 +98,7 @@ export class StationaryPreviewRenderer {
     for (const t of this.layerTextures) t.destroy();
     this.outputTexture?.destroy();
     this.fallbackMaskTexture.destroy();
+    this.profileLut.destroy();
     this.persistence.destroy();
     this.compositor.destroy();
     this.tracerInspect.destroy();
@@ -176,6 +181,10 @@ export class StationaryPreviewRenderer {
     const maskTexture = this.maskTexture ?? this.fallbackMaskTexture;
     const colorMode = state.colorMode ?? 1.0;
     const useMask = this.maskTexture && colorMode === 0 ? 1 : 0;
+    // Non-classic colour profiles render from the baked LUT (docs/COLOR_PROFILES.md).
+    this.profileLut.update(state.colorProfileLut);
+    const profileMode = state.colorProfileLut && state.colorProfileMode ? 1 : 0;
+    const profileLightDark = state.colorProfileLightDark ?? 1;
     const sobelEnabled = state.sobelEnabled ? 1 : 0;
     const softCropEnabled = state.softCropEnabled ? 1 : 0;
     const aspect = 1;
@@ -190,7 +199,7 @@ export class StationaryPreviewRenderer {
 
       lp.fragData.set([
         state.avgLuminance, layerOpacities[i], colorMode, useMask,
-        sobelEnabled, softCropEnabled, 0, 0,
+        sobelEnabled, softCropEnabled, profileMode, profileLightDark,
       ]);
       this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 32);
 
@@ -203,6 +212,7 @@ export class StationaryPreviewRenderer {
         this.sampler,
         lp.rotationBuffer,
         lp.fragUniformBuffer,
+        this.profileLut.texture,
       );
 
       const pass = enc.beginRenderPass({

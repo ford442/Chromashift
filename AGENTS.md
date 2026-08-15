@@ -108,6 +108,10 @@ src/
     ├── WebGPUPipelines.ts, BindGroupCache.ts, PersistencePass.ts, CompositorPass.ts,
     │   TracerInspectPass.ts, GpuReadback.ts, GpuTimestampProfiler.ts  # pass/readback + WebGPU perf HUD
     ├── videoExport/          # Offline frame-by-frame WebM/MP4 export (WebCodecs + mediabunny, MediaRecorder fallback) — see docs/VIDEO_EXPORT.md
+    ├── color/               # Named colour profiles — schema, validation, LUT baking
+    │   ├── colorProfile.ts      # Types, built-ins (shared/colorProfiles.json), buildColorProfileLut
+    │   ├── colorProfileLibrary.ts  # localStorage user profiles + resolution order
+    │   └── ProfileLutTexture.ts    # 256×3 RGBA LUT texture bound to every layer pipeline
     ├── compute/
     │   ├── GpuImageAnalysis.ts   # WebGPU histogram + r8uint classification mask
     │   ├── computeSupport.ts     # Feature detection + window breadcrumbs
@@ -152,9 +156,28 @@ For shader-based effect work, prototype/inspect in `src/engine/webgl/` when brow
    - 1 compositor pipeline that blends tracers + live layers and writes to the swap-chain.
 4. Each frame, `renderer.render(state)` receives the shared `RendererState`. WebGPU encodes all passes into a single command buffer; WebGL runs equivalent GLSL/FBO passes for debugging/reference output.
 
+### Named Colour Profiles
+
+The colour separation is a selectable **profile**, not a single hard-coded look — see
+[docs/COLOR_PROFILES.md](docs/COLOR_PROFILES.md). Built-ins live in
+`shared/colorProfiles.json` (`cr0p-classic`, `cr0p-soft-gradient`, `diagnostic-grey`);
+user profiles are imported as JSON into localStorage (`chromashift.colorProfiles`).
+State: `layers.colorProfileId` + optional embedded `layers.colorProfile`; UI: the
+**Colour profile** control in the Layers panel.
+
+Rendering is **hybrid**: `cr0p-classic` keeps the existing branchy WGSL/GLSL band
+branches, so the default look is unchanged; every other profile is baked into a 256×3
+RGBA8 LUT (column = preprocessed luminance, row = layer) sampled with
+`textureLoad(profileLut, …)` (WebGPU binding 5) / `texelFetch(u_profileLut, …)` (WebGL).
+`buildRendererState` resolves the profile and memoizes the LUT per profile + average
+luminance, so renderers re-upload only when it actually changes. While a non-classic
+profile is active the `r8uint` classification mask is bypassed — it encodes classic band
+indices only. Band bounds for `cr0p-classic` must stay in sync with `shared/band.json`
+(guarded by `src/engine/color/colorProfile.test.ts`).
+
 ### Presets & Shareable URLs
 
-Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 1`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. See `docs/PRESETS.md`.
+Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 3`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. Schema v3 adds `layers.colorProfileId` (+ an embedded table in file exports only — share URLs carry the id alone); v1/v2 documents migrate to the classic profile. See `docs/PRESETS.md`.
 
 ### Kiosk / gallery installation
 
@@ -342,8 +365,8 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 
 | Tier | Command | Scope |
 |------|---------|-------|
-| **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, video export, reactive modulation) |
-| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
+| **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
+| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band/decay parity with `chromashift_engine.cpp`; no Emscripten required |
 
 ### CI job matrix

@@ -25,6 +25,7 @@ import {
   useUpscalerHandlers,
 } from './hooks/useMediaHandlers';
 import { usePresets } from './hooks/usePresets';
+import { useColorProfiles } from './hooks/useColorProfiles';
 import { useVideoExport } from './hooks/useVideoExport';
 import { useStationaryPreviews } from './hooks/useStationaryPreviews';
 import { useTracerInspectInteraction } from './hooks/useTracerInspectInteraction';
@@ -99,6 +100,7 @@ export default function App() {
   const { handleExportTracer } = useTracerExport(refs, store);
   const videoExport = useVideoExport(refs, store);
   const presets = usePresets(store);
+  const colorProfiles = useColorProfiles(store);
 
   useAppKeyboardShortcuts(refs, store, mediaHandlers.swapSourceAndReference);
 
@@ -125,6 +127,7 @@ export default function App() {
     handleExportTracer,
     ...videoExport,
     ...presets,
+    ...colorProfiles,
     ...liveSource,
   }, kiosk, webxr);
 

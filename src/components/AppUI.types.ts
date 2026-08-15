@@ -1,3 +1,4 @@
+import type { ColorProfileControls } from '../hooks/useColorProfiles';
 import type { RefObject } from 'react';
 import type { ChromashiftRefs } from '../hooks/useChromashiftStore';
 import type { ImageEntry } from '../engine/TextureManager';
@@ -70,6 +71,8 @@ export interface AppUiHandlerBundle {
   handleCopyPresetUrl: () => void;
   handleExportPresetFile: () => void;
   handleImportPresetFile: (file: File) => void;
+  /** Colour-profile selection / library controls (docs/COLOR_PROFILES.md). */
+  colorProfiles: ColorProfileControls;
 }
 
 export interface KioskControls {
@@ -211,6 +214,7 @@ export interface AppUIControlProps {
   handleCopyPresetUrl: () => void;
   handleExportPresetFile: () => void;
   handleImportPresetFile: (file: File) => void;
+  colorProfiles: ColorProfileControls;
   compareLayout: CompareLayoutMode;
   compareSyncPlay: boolean;
   compareDualAvailable: boolean;

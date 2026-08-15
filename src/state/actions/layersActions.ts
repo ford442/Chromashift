@@ -1,3 +1,4 @@
+import type { ColorProfile } from '../../engine/color/colorProfile';
 import type { LayerTriple } from '../types';
 import type { ChromashiftDispatch } from './types';
 
@@ -19,5 +20,11 @@ export function createLayersActions(dispatch: ChromashiftDispatch) {
       dispatch({ type: 'layers/patch', patch: { sobelEnabled } }),
     setSoftCropEnabled: (softCropEnabled: boolean) =>
       dispatch({ type: 'layers/patch', patch: { softCropEnabled } }),
+    /**
+     * Select a colour profile. `profile` is embedded in state (and therefore in
+     * exported presets) for user profiles; pass `null` for built-ins.
+     */
+    setColorProfile: (colorProfileId: string, colorProfile: ColorProfile | null = null) =>
+      dispatch({ type: 'layers/patch', patch: { colorProfileId, colorProfile } }),
   };
 }

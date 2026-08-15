@@ -9,6 +9,7 @@ import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
 import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
 import type { CompareViewState } from '../engine/compareViews';
+import type { ColorProfile } from '../engine/color/colorProfile';
 export type { ReactiveSlice } from '../engine/reactive/types';
 
 export type LayerTriple<T> = [T, T, T];
@@ -63,6 +64,17 @@ export interface LayersSlice {
   colorMode: number;
   sobelEnabled: boolean;
   softCropEnabled: boolean;
+  /**
+   * Active named colour profile (see docs/COLOR_PROFILES.md). `cr0p-classic`
+   * keeps the branchy shader path; any other id renders through the LUT path.
+   */
+  colorProfileId: string;
+  /**
+   * Full profile document for non-built-in profiles, embedded so a preset file
+   * carries the table with it. `null` for built-ins and for ids resolved from
+   * the local profile library.
+   */
+  colorProfile: ColorProfile | null;
 }
 
 export interface TracersSlice {

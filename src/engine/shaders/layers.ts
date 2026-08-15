@@ -8,6 +8,7 @@ ${WGSL_COLOR_HELPERS}
 @group(0) @binding(1) var texSampler : sampler;
 @group(0) @binding(2) var tex        : texture_2d<f32>;
 @group(0) @binding(4) var classMask  : texture_2d<u32>;
+@group(0) @binding(5) var profileLut : texture_2d<f32>;
 
 struct FragUniforms {
   avgLuminance     : f32,
@@ -16,10 +17,35 @@ struct FragUniforms {
   useMask          : f32,
   sobelEnabled     : f32,
   softCropEnabled  : f32,
-  _pad0            : f32,
-  _pad1            : f32,
+  /** 1 = sample the colour-profile LUT instead of the classic band branches. */
+  profileMode      : f32,
+  /** 1 = lift luminance by the classic lightDark term before LUT lookup. */
+  profileLightDark : f32,
 };
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
+
+/**
+ * Named colour profile lookup (docs/COLOR_PROFILES.md). Column = preprocessed
+ * luminance bucket, row = layer index. \`ceil\` matches the CPU band rule
+ * (\`value > min && value <= max\`) exactly for integer band bounds.
+ */
+fn profileColor(layerIndex : i32, lum : f32) -> vec4<f32> {
+  let lift  = select(
+    0.0,
+    (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5,
+    fragUniforms.profileLightDark > 0.5,
+  );
+  let value = clamp(lum + lift, 0.0, 255.0);
+  let col   = clamp(i32(ceil(value)), 0, 255);
+  return textureLoad(profileLut, vec2<i32>(col, layerIndex), 0);
+}
+`;
+
+// Colour-profile early-out — every non-classic profile renders from the LUT.
+const layerProfileBranch = (layerIndex: 0 | 1 | 2) => /* wgsl */ `
+  if (fragUniforms.profileMode > 0.5) {
+    return profileColor(${layerIndex}, lum);
+  }
 `;
 
 // Per-pixel luminance + classification-mask lookup at the top of each main().
@@ -41,6 +67,7 @@ ${LAYER_FRAG_HEADER}
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 ${LAYER_FRAG_PRELUDE}
+${layerProfileBranch(0)}
   if (fragUniforms.colorMode == 1.0) {
     // --- CHROMASHIFT GRADIENT ---
     if (lum > ${B.greyHighlight})      { result = vec4<f32>(band_gradient(lum, ${B.greyHighlight}, 255.0, 45.0, 60.0, 0.3, 0.80, 1.0), 1.0); }
@@ -115,6 +142,7 @@ ${LAYER_FRAG_HEADER}
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 ${LAYER_FRAG_PRELUDE}
+${layerProfileBranch(1)}
   if (fragUniforms.colorMode == 1.0) {
     // --- CHROMASHIFT GRADIENT ---
     if (lum > ${B.violet} && lum <= ${B.borderRed})      { result = vec4<f32>(band_gradient(lum, ${B.violet}, ${B.borderRed}, 255.0, 290.0, 1.0, 0.40, 0.55), 1.0); }
@@ -174,6 +202,7 @@ ${LAYER_FRAG_HEADER}
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 ${LAYER_FRAG_PRELUDE}
+${layerProfileBranch(2)}
   if (fragUniforms.colorMode == 1.0) {
     // --- CHROMASHIFT GRADIENT ---
     if (lum > ${B.green} && lum <= ${B.borderBlue})      { result = vec4<f32>(band_gradient(lum, ${B.green}, ${B.borderBlue}, 90.0, 130.0, 1.0, 0.38, 0.50), 1.0); }

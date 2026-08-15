@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "description": "Built-in Chromashift colour profiles. A profile maps a preprocessed luminance value (see `preprocess`) to a per-layer RGBA colour. Band bounds are `min` (exclusive) / `max` (inclusive) on that value. `cr0p-classic` must keep the same band bounds as shared/band.json — colorProfile.test.ts guards it.",
+  "profiles": [
+    {
+      "id": "cr0p-classic",
+      "name": "CR0P Classic",
+      "version": 1,
+      "builtin": true,
+      "description": "The original cr0p fixed-colour scale: orange/red, violet/blue, green/yellow with avgLuminance-driven desaturation and grey highlight/shadow bands. Rendered by the branchy shader path, not the LUT.",
+      "preprocess": { "diffScale": 32, "lightDarkMode": "classic" },
+      "layers": [
+        {
+          "name": "warm",
+          "bands": [
+            { "name": "greyHighlight", "min": 229, "max": 255, "rgb": [0, 0, 0], "grey": "highlight" },
+            { "name": "orange", "min": 209, "max": 229, "rgb": [255, 128, 0], "diffTint": [0, 1, 0] },
+            { "name": "red", "min": 193, "max": 209, "rgb": [255, 0, 0], "diffTint": [1, 0, 0] },
+            { "name": "borderRed", "min": 190, "max": 193, "rgb": [255, 0, 0] },
+            { "name": "dark", "min": -1, "max": 126, "rgb": [0, 0, 0], "grey": "shadow" }
+          ]
+        },
+        {
+          "name": "cool",
+          "bands": [
+            { "name": "violet", "min": 177, "max": 190, "rgb": [128, 0, 255], "diffTint": [1, 0, 0] },
+            { "name": "blue", "min": 161, "max": 177, "rgb": [0, 0, 255], "diffTint": [0, 0, 1] },
+            { "name": "borderBlue", "min": 158, "max": 161, "rgb": [0, 0, 255] },
+            { "name": "dark", "min": -1, "max": 126, "rgb": [0, 0, 0], "grey": "shadow" }
+          ]
+        },
+        {
+          "name": "leaf",
+          "bands": [
+            { "name": "green", "min": 145, "max": 158, "rgb": [0, 255, 0], "diffTint": [0, 1, 0] },
+            { "name": "yellow", "min": 128, "max": 145, "rgb": [255, 255, 0], "diffTint": [0, 1, 0] },
+            { "name": "borderYellow", "min": 125, "max": 128, "rgb": [255, 255, 0] },
+            { "name": "dark", "min": -1, "max": 126, "rgb": [0, 0, 0], "grey": "shadow" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cr0p-soft-gradient",
+      "name": "Soft Gradient Revival",
+      "version": 1,
+      "builtin": true,
+      "description": "The archived HSL gradient scale (docs/archive/new_color_scale.md): smooth per-band ramps on raw luminance, transparent shadows, no border bands. RGB endpoints are the documented HSL pairs converted to sRGB.",
+      "preprocess": { "diffScale": 0, "lightDarkMode": "raw" },
+      "layers": [
+        {
+          "name": "warm",
+          "bands": [
+            { "name": "gold", "min": 229, "max": 255, "rgb": [219, 212, 189], "rgbTo": [255, 255, 255] },
+            { "name": "orange", "min": 209, "max": 229, "rgb": [255, 43, 0], "rgbTo": [255, 196, 77] },
+            { "name": "red", "min": 190, "max": 209, "rgb": [204, 0, 0], "rgbTo": [255, 64, 26] }
+          ]
+        },
+        {
+          "name": "cool",
+          "bands": [
+            { "name": "violet", "min": 177, "max": 190, "rgb": [51, 0, 204], "rgbTo": [217, 26, 255] },
+            { "name": "blue", "min": 158, "max": 177, "rgb": [0, 65, 194], "rgbTo": [64, 0, 255] }
+          ]
+        },
+        {
+          "name": "leaf",
+          "bands": [
+            { "name": "green", "min": 145, "max": 158, "rgb": [97, 194, 0], "rgbTo": [0, 255, 42] },
+            { "name": "yellow", "min": 125, "max": 145, "rgb": [204, 170, 0], "rgbTo": [133, 255, 10] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "diagnostic-grey",
+      "name": "Diagnostic Grey",
+      "version": 1,
+      "builtin": true,
+      "description": "Monochrome step wedge — one flat grey per band so band boundaries are visible as hard edges. Useful for checking threshold placement and rotation alignment.",
+      "preprocess": { "diffScale": 0, "lightDarkMode": "classic" },
+      "layers": [
+        {
+          "name": "warm",
+          "bands": [
+            { "name": "greyHighlight", "min": 229, "max": 255, "rgb": [255, 255, 255] },
+            { "name": "orange", "min": 209, "max": 229, "rgb": [216, 216, 216] },
+            { "name": "red", "min": 193, "max": 209, "rgb": [178, 178, 178] },
+            { "name": "borderRed", "min": 190, "max": 193, "rgb": [140, 140, 140] }
+          ]
+        },
+        {
+          "name": "cool",
+          "bands": [
+            { "name": "violet", "min": 177, "max": 190, "rgb": [216, 216, 216] },
+            { "name": "blue", "min": 161, "max": 177, "rgb": [178, 178, 178] },
+            { "name": "borderBlue", "min": 158, "max": 161, "rgb": [140, 140, 140] }
+          ]
+        },
+        {
+          "name": "leaf",
+          "bands": [
+            { "name": "green", "min": 145, "max": 158, "rgb": [216, 216, 216] },
+            { "name": "yellow", "min": 128, "max": 145, "rgb": [178, 178, 178] },
+            { "name": "borderYellow", "min": 125, "max": 128, "rgb": [140, 140, 140] }
+          ]
+        }
+      ]
+    }
+  ]
+}

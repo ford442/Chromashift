@@ -2,9 +2,14 @@ import { createInitialState } from './defaults';
 import type { ChromashiftSettingsInput } from './chromashiftReducer';
 import type { ChromashiftState } from './types';
 import type { CompareViewState } from '../engine/compareViews';
+import {
+  CLASSIC_PROFILE_ID,
+  isClassicProfile,
+  parseColorProfile,
+} from '../engine/color/colorProfile';
 
-export const SETTINGS_SCHEMA_VERSION = 2 as const;
-export const SUPPORTED_SETTINGS_VERSIONS = [1, 2] as const;
+export const SETTINGS_SCHEMA_VERSION = 3 as const;
+export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3] as const;
 
 export interface ChromashiftSettingsDocument {
   version: typeof SETTINGS_SCHEMA_VERSION;
@@ -37,8 +42,31 @@ function defaultCompareView(): CompareViewState {
   return cloneCompareView(createInitialState().ui.compareView);
 }
 
-/** Normalize a v1 or v2 raw document to the current v2 shape. */
-export function migrateV1ToV2(doc: RawSettingsDocument): ChromashiftSettingsDocument {
+/**
+ * v3 added named colour profiles. Older documents predate them, so they migrate
+ * to the classic profile — the look they were saved with. An embedded profile
+ * table is re-validated here so a corrupt document can never reach the renderer.
+ */
+function migrateColorProfile(
+  layers: ChromashiftSettingsInput['layers'],
+): ChromashiftSettingsInput['layers'] {
+  const colorProfileId = typeof layers?.colorProfileId === 'string' && layers.colorProfileId
+    ? layers.colorProfileId
+    : CLASSIC_PROFILE_ID;
+  const embedded = layers?.colorProfile
+    ? parseColorProfile(layers.colorProfile).profile
+    : null;
+
+  return {
+    ...layers,
+    colorProfileId,
+    // Only keep an embedded table that actually describes the selected profile.
+    colorProfile: embedded && embedded.id === colorProfileId ? embedded : null,
+  };
+}
+
+/** Normalize a v1/v2/v3 raw document to the current v3 shape. */
+export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDocument {
   const { settings } = doc;
   const output = settings.output ? { ...settings.output } : undefined;
 
@@ -68,6 +96,7 @@ export function migrateV1ToV2(doc: RawSettingsDocument): ChromashiftSettingsDocu
     version: SETTINGS_SCHEMA_VERSION,
     settings: {
       ...settings,
+      layers: migrateColorProfile(settings.layers),
       output,
       reactive,
       viewport: {
@@ -86,8 +115,21 @@ export function migrateV1ToV2(doc: RawSettingsDocument): ChromashiftSettingsDocu
   };
 }
 
-export function serializeSettings(state: ChromashiftState): ChromashiftSettingsDocument {
+export interface SerializeSettingsOptions {
+  /**
+   * Embed the full colour-profile table for user profiles. On by default so an
+   * exported file / stored preset is self-contained; `?preset=` URLs turn it off
+   * and carry the profile id alone to stay short (see docs/COLOR_PROFILES.md).
+   */
+  embedColorProfile?: boolean;
+}
+
+export function serializeSettings(
+  state: ChromashiftState,
+  options: SerializeSettingsOptions = {},
+): ChromashiftSettingsDocument {
   const { layers, tracers, output, engine, ui, reactive } = state;
+  const embedColorProfile = options.embedColorProfile !== false;
   const {
     tracerInspect,
     tracerPreviewFrozen: _tracerPreviewFrozen,
@@ -102,7 +144,12 @@ export function serializeSettings(state: ChromashiftState): ChromashiftSettingsD
   return {
     version: SETTINGS_SCHEMA_VERSION,
     settings: {
-      layers: { ...layers },
+      layers: {
+        ...layers,
+        colorProfile: embedColorProfile && !isClassicProfile(layers.colorProfileId)
+          ? layers.colorProfile
+          : null,
+      },
       tracers: { ...tracers },
       output: {
         ...outputPreset,
@@ -154,7 +201,7 @@ export function deserializeSettings(
     ) {
       return null;
     }
-    return migrateV1ToV2(parsed);
+    return migrateToLatest(parsed);
   } catch {
     return null;
   }
@@ -163,3 +210,6 @@ export function deserializeSettings(
 export function settingsToJson(state: ChromashiftState, pretty = true): string {
   return JSON.stringify(serializeSettings(state), null, pretty ? 2 : undefined);
 }
+
+/** @deprecated Renamed to {@link migrateToLatest} when schema v3 landed. */
+export const migrateV1ToV2 = migrateToLatest;

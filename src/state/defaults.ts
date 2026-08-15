@@ -1,6 +1,7 @@
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { defaultCompareSlot } from '../engine/compareViews';
 import { getRendererPreference } from '../engine/rendererMode';
+import { CLASSIC_PROFILE_ID } from '../engine/color/colorProfile';
 import { EMPTY_GPU_RENDER_TIMING } from '../engine/types/RendererContracts';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { ChromashiftState, LayerTriple } from './types';
@@ -66,6 +67,8 @@ export function createInitialState(): ChromashiftState {
       colorMode: 1,
       sobelEnabled: false,
       softCropEnabled: false,
+      colorProfileId: CLASSIC_PROFILE_ID,
+      colorProfile: null,
     },
     tracers: {
       aboveIntensity: 0.85,

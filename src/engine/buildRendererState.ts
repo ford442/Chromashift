@@ -1,4 +1,6 @@
 import { MAIN_VIEW_MODES } from './viewModes';
+import { getColorProfileLut, isClassicProfile } from './color/colorProfile';
+import { resolveColorProfile } from './color/colorProfileLibrary';
 import type { ChromashiftState } from '../state/types';
 import type { RendererState } from './types/RendererState';
 
@@ -11,6 +13,11 @@ export function buildRendererState(
   const { layers, tracers, output, engine } = state;
   const isViewingTracer = output.mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER;
   const inspect = output.tracerInspect;
+
+  // Hybrid profile strategy: Classic keeps the branchy shaders (zero risk to the
+  // default look); every other profile is baked into a LUT the shaders sample.
+  const { profile } = resolveColorProfile(layers.colorProfileId, layers.colorProfile);
+  const useProfileLut = !isClassicProfile(profile);
 
   return {
     layers: [
@@ -29,6 +36,9 @@ export function buildRendererState(
     tracerBelowDuration: tracers.belowDuration * (60 / engine.fps),
     tracerMode: tracers.mode,
     colorMode: layers.colorMode,
+    colorProfileLut: useProfileLut ? getColorProfileLut(profile, engine.avgLuminance) : null,
+    colorProfileMode: useProfileLut ? 1 : 0,
+    colorProfileLightDark: profile.preprocess.lightDarkMode === 'classic' ? 1 : 0,
     sobelEnabled: layers.sobelEnabled,
     softCropEnabled: layers.softCropEnabled,
     layerBlendMode: tracers.layerBlendMode,
