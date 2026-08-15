@@ -34,7 +34,7 @@ export function useImagePlayback({
   } = refs;
 
   useEffect(() => {
-    if (!engine.gpuReady || media.imageList.length === 0) return;
+    if (!engine.gpuReady || media.imageList.length === 0 || media.liveSource.active) return;
     const activeImage = media.imageList[media.currentIndex];
     if (!activeImage) return;
     const url = activeImage.url;
@@ -90,6 +90,7 @@ export function useImagePlayback({
     media.imageList,
     media.currentIndex,
     media.reference?.url,
+    media.liveSource.active,
     actions,
     textureManagerRef,
     rendererRef,
@@ -103,15 +104,21 @@ export function useImagePlayback({
   ]);
 
   useEffect(() => {
-    if (!ui.isAutoPlayActive || engine.paused || ui.exportingVideo || media.imageList.length === 0) return;
+    if (
+      !ui.isAutoPlayActive || engine.paused || ui.exportingVideo
+      || media.imageList.length === 0 || media.liveSource.active
+    ) return;
     const interval = setInterval(() => {
       selectSourceIndex(Math.floor(Math.random() * media.imageList.length));
     }, ui.imageChangeInterval * 1000);
     return () => clearInterval(interval);
-  }, [ui.isAutoPlayActive, engine.paused, ui.exportingVideo, ui.imageChangeInterval, media.imageList.length, selectSourceIndex]);
+  }, [
+    ui.isAutoPlayActive, engine.paused, ui.exportingVideo, ui.imageChangeInterval,
+    media.imageList.length, media.liveSource.active, selectSourceIndex,
+  ]);
 
   useEffect(() => {
-    if (!engine.gpuReady) return;
+    if (!engine.gpuReady || media.liveSource.active) return;
 
     const index = refs.currentImageIndexRef.current;
     const list = refs.imageListRef.current;
@@ -136,6 +143,7 @@ export function useImagePlayback({
     refs,
     engine.gpuReady,
     engine.avgLuminance,
+    media.liveSource.active,
     textureManagerRef,
     clearClassificationMask,
     generateClassificationMaskTexture,

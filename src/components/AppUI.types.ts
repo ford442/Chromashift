@@ -10,7 +10,7 @@ import type { ExportPassMode, GpuRenderTiming } from '../engine/types/RendererCo
 import type { VideoCodecSupport } from '../engine/videoExport/videoCodecs';
 import type { BuiltinPreset } from '../state/presetGallery';
 import type { StoredPreset } from '../state/presetLibrary';
-import type { LayerTriple, VideoExportSettings } from '../state/types';
+import type { LayerTriple, LiveSourceState, VideoExportSettings } from '../state/types';
 import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
 import type { AudioLevelSnapshot, MidiBinding, MidiParamId } from '../engine/reactive/types';
 import type {
@@ -33,6 +33,10 @@ export interface AppUiHandlerBundle {
   handleLoadReferenceFile: (file: File) => void;
   handleDropFiles: (files: File[]) => Promise<void>;
   handleClearLocalLibrary: () => Promise<void>;
+  handleStartCamera: () => Promise<void>;
+  handleStartScreenShare: () => Promise<void>;
+  handleLoadVideoFile: (file: File) => Promise<void>;
+  handleStopLiveSource: () => void;
   swapSourceAndReference: () => void;
   handleFreezeInspect: () => void;
   handleUpscaleSource: () => Promise<void>;
@@ -134,12 +138,17 @@ export interface AppUIChromeProps {
   kioskUiHidden: boolean;
   shortcutsOverlayVisible: boolean;
   kioskFullscreen: boolean;
+  liveSource: LiveSourceState;
   selectSourceIndex: (index: number) => void;
   setIsPaused: (paused: boolean) => void;
   toggleImageStrip: () => void;
   setMainViewMode: (mode: MainViewMode) => void;
   setReferenceImage: (img: ImageEntry | null) => void;
   handleClearLocalLibrary: () => Promise<void>;
+  handleStartCamera: () => Promise<void>;
+  handleStartScreenShare: () => Promise<void>;
+  handleLoadVideoFile: (file: File) => Promise<void>;
+  handleStopLiveSource: () => void;
   setAvgLuminance: (value: number) => void;
   setShortcutsOverlayVisible: (visible: boolean) => void;
   toggleKioskFullscreen: () => Promise<void>;

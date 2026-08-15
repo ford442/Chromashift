@@ -101,6 +101,15 @@ export interface ChromashiftTextureManager {
   fetchImageList(endpoint: string, signal?: AbortSignal): Promise<ImageEntry[]>;
   loadTexture(url: string): Promise<ChromashiftTextureHandle>;
   uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): ChromashiftTextureHandle;
+  /**
+   * Upload the current frame of a playing/streaming `HTMLVideoElement` into a
+   * texture reused across calls under `cacheKey`, recreating it only when the
+   * frame resolution changes. Returns `null` when the video has no decoded
+   * frame yet (`videoWidth`/`videoHeight` are 0).
+   */
+  updateVideoTexture(cacheKey: string, source: HTMLVideoElement): ChromashiftTextureHandle | null;
+  /** Immediately destroy a texture created by `updateVideoTexture` (or `uploadPixels`) under `cacheKey`. */
+  releaseVideoTexture(cacheKey: string): void;
   destroy(): void;
   /** Evict cached textures outside keep set: blobs immediately; others via LRU byte budget + entry cap. */
   evictExcept(keepUrls: Iterable<string>): void;

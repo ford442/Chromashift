@@ -37,6 +37,15 @@ export const DEFAULT_VIDEO_EXPORT_SETTINGS = {
   quality: 'high' as const,
 };
 
+export const DEFAULT_LIVE_SOURCE: import('./types').LiveSourceState = {
+  active: false,
+  kind: null,
+  label: null,
+  width: 0,
+  height: 0,
+  error: null,
+};
+
 export function createInitialState(): ChromashiftState {
   return {
     media: {
@@ -46,6 +55,7 @@ export function createInitialState(): ChromashiftState {
       previous: null,
       aspect: 1,
       specificError: null,
+      liveSource: { ...DEFAULT_LIVE_SOURCE },
     },
     layers: {
       angles: [...DEFAULT_ANGLES],

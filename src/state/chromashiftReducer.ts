@@ -22,6 +22,7 @@ import type { MidiBinding, ReactiveSettings } from '../engine/reactive/types';
 export type ChromashiftAction =
   | { type: 'reset/renderDefaults' }
   | { type: 'media/patch'; patch: Partial<MediaSlice> }
+  | { type: 'media/patchLiveSource'; patch: Partial<import('./types').LiveSourceState> }
   | { type: 'media/selectIndex'; index: number; previous?: ImageEntry | null }
   | { type: 'layers/patch'; patch: Partial<LayersSlice> }
   | { type: 'layers/setTriple'; field: 'angles' | 'extensions' | 'opacities'; layer: 0 | 1 | 2; value: number }
@@ -79,6 +80,15 @@ export function chromashiftReducer(
 
     case 'media/patch':
       return { ...state, media: { ...state.media, ...action.patch } };
+
+    case 'media/patchLiveSource':
+      return {
+        ...state,
+        media: {
+          ...state.media,
+          liveSource: { ...state.media.liveSource, ...action.patch },
+        },
+      };
 
     case 'media/selectIndex':
       return {

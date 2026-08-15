@@ -17,6 +17,7 @@ import { useQuadStationaryRefresh } from './hooks/useQuadStationaryRefresh';
 import { useCompareSwipeInteraction } from './hooks/useCompareSwipeInteraction';
 import { useChromashiftRefs, useChromashiftStore } from './hooks/useChromashiftStore';
 import { useImagePlayback } from './hooks/useImagePlayback';
+import { useLiveSource } from './hooks/useLiveSource';
 import {
   useAppKeyboardShortcuts,
   useMediaHandlers,
@@ -77,6 +78,7 @@ export default function App() {
   useCompareSwipeInteraction(refs, store);
 
   useImagePlayback({ refs, store, clearClassificationMask, generateClassificationMaskTexture });
+  const liveSource = useLiveSource(refs, store);
   useStationaryPreviews(refs, store);
   useQuadStationaryRefresh(refs, store);
   useAnimationLoop(refs, store);
@@ -123,6 +125,7 @@ export default function App() {
     handleExportTracer,
     ...videoExport,
     ...presets,
+    ...liveSource,
   }, kiosk, webxr);
 
   return <AppUI {...uiProps} />;
