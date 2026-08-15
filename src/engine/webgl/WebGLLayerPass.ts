@@ -10,6 +10,7 @@ import {
 } from './programUtils';
 import { createTarget, destroyTarget, type RenderTarget } from './resources';
 import { WebGLDebugPasses } from './WebGLDebugPasses';
+import { WebGLProfileLut } from './WebGLProfileLut';
 import type { RendererState } from '../types/RendererState';
 import { layerRotationUniforms } from '../math/rotation';
 
@@ -17,6 +18,7 @@ export class WebGLLayerPass {
   private readonly gl: WebGL2RenderingContext;
   private readonly program: ProgramInfo;
   private readonly debugPasses: WebGLDebugPasses;
+  private readonly profileLut: WebGLProfileLut;
   private layerTargets: RenderTarget[] = [];
   private width = 0;
   private height = 0;
@@ -25,6 +27,7 @@ export class WebGLLayerPass {
     this.gl = gl;
     this.debugPasses = debugPasses;
     this.program = createProgram(gl, ROTATION_VERTEX_SOURCE, LAYER_FRAGMENT_SOURCE);
+    this.profileLut = new WebGLProfileLut(gl);
   }
 
   get targets(): readonly RenderTarget[] {
@@ -48,6 +51,10 @@ export class WebGLLayerPass {
     canvasAspect: number,
   ): void {
     const gl = this.gl;
+    // Non-classic colour profiles render from the baked LUT (docs/COLOR_PROFILES.md).
+    this.profileLut.update(state.colorProfileLut);
+    const profileMode = state.colorProfileLut && state.colorProfileMode ? 1 : 0;
+
     for (let layerIndex = 0; layerIndex < 3; layerIndex += 1) {
       const target = this.layerTargets[layerIndex];
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
@@ -74,6 +81,10 @@ export class WebGLLayerPass {
       uniform1f(gl, this.program, 'u_colorMode', state.colorMode ?? 1);
       uniform1f(gl, this.program, 'u_sobelEnabled', state.sobelEnabled ? 1 : 0);
       uniform1f(gl, this.program, 'u_softCropEnabled', state.softCropEnabled ? 1 : 0);
+      uniform1f(gl, this.program, 'u_profileMode', profileMode);
+      uniform1f(gl, this.program, 'u_profileLightDark', state.colorProfileLightDark ?? 1);
+      bindTexture(gl, this.program, 'u_profileLut', 1, this.profileLut.texture);
+      gl.activeTexture(gl.TEXTURE0);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
   }
@@ -83,6 +94,7 @@ export class WebGLLayerPass {
       destroyTarget(this.gl, target);
     }
     this.layerTargets = [];
+    this.profileLut.destroy();
     destroyProgram(this.gl, this.program);
   }
 }

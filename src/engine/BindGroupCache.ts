@@ -2,6 +2,7 @@ export interface LayerBindGroupCacheEntry {
   bindGroup: GPUBindGroup | null;
   texture: GPUTexture | null;
   maskTexture: GPUTexture | null;
+  profileLutTexture: GPUTexture | null;
 }
 
 export interface TexturePairBindGroupCacheEntry {
@@ -33,6 +34,7 @@ export function createLayerBindGroupCache(count: number): LayerBindGroupCacheEnt
     bindGroup: null,
     texture: null,
     maskTexture: null,
+    profileLutTexture: null,
   }));
 }
 
@@ -52,6 +54,7 @@ export function invalidateLayerBindGroupCache(entries: LayerBindGroupCacheEntry[
     entry.bindGroup = null;
     entry.texture = null;
     entry.maskTexture = null;
+    entry.profileLutTexture = null;
   }
 }
 
@@ -90,11 +93,13 @@ export function getOrCreateLayerBindGroup(
   sampler: GPUSampler,
   rotationBuffer: GPUBuffer,
   fragUniformBuffer: GPUBuffer,
+  profileLutTexture: GPUTexture,
 ): GPUBindGroup {
   if (
     entry.bindGroup &&
     entry.texture === texture &&
-    entry.maskTexture === maskTexture
+    entry.maskTexture === maskTexture &&
+    entry.profileLutTexture === profileLutTexture
   ) {
     return entry.bindGroup;
   }
@@ -107,11 +112,13 @@ export function getOrCreateLayerBindGroup(
       { binding: 2, resource: texture.createView() },
       { binding: 3, resource: { buffer: fragUniformBuffer } },
       { binding: 4, resource: maskTexture.createView() },
+      { binding: 5, resource: profileLutTexture.createView() },
     ],
   });
   entry.bindGroup = bindGroup;
   entry.texture = texture;
   entry.maskTexture = maskTexture;
+  entry.profileLutTexture = profileLutTexture;
   return bindGroup;
 }
 

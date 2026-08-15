@@ -1,3 +1,4 @@
+import type { ColorProfileControls } from '../../hooks/useColorProfiles';
 import type { ExportPanelProps } from './ExportPanel';
 import type { PresetsPanelProps } from './PresetsPanel';
 import type { CollisionStats } from '../../engine/types/RendererState';
@@ -76,6 +77,7 @@ export interface LayerPanelProps {
   onColorModeChange: (value: number) => void;
   onSobelEnabledToggle: (value: boolean) => void;
   onSoftCropEnabledToggle: (value: boolean) => void;
+  colorProfiles: ColorProfileControls;
 }
 
 export interface TracerPanelProps {

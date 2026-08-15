@@ -22,6 +22,7 @@ import { EMPTY_GPU_RENDER_TIMING } from './types/RendererContracts';
 import type { CollisionStats, RendererState } from './types/RendererState';
 import type { ChromashiftTextureHandle } from './types/TextureHandle';
 import { layerRotationUniforms } from './math/rotation';
+import { ProfileLutTexture } from './color/ProfileLutTexture';
 
 /**
  * WebGPURenderer — thin orchestrator over the 5-pass GPU pipeline.
@@ -64,6 +65,7 @@ export class WebGPURenderer {
   private currentTexture : GPUTexture | null = null;
   private classificationMaskTexture: GPUTexture | null = null;
   private fallbackMaskTexture: GPUTexture;
+  private readonly profileLut: ProfileLutTexture;
 
   private layerTextures : GPUTexture[] = [];
   private msaaTexture   : GPUTexture | null = null;
@@ -118,6 +120,8 @@ export class WebGPURenderer {
       { bytesPerRow: 1, rowsPerImage: 1 },
       [1, 1, 1],
     );
+
+    this.profileLut = new ProfileLutTexture(device);
 
     const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
     for (const src of fragSources) {
@@ -288,6 +292,10 @@ export class WebGPURenderer {
     const maskTexture = this.classificationMaskTexture ?? this.fallbackMaskTexture;
     const colorMode = state.colorMode ?? 1.0;
     const useMask = this.classificationMaskTexture && colorMode === 0 ? 1 : 0;
+    // Non-classic colour profiles render from the baked LUT (docs/COLOR_PROFILES.md).
+    this.profileLut.update(state.colorProfileLut);
+    const profileMode = state.colorProfileLut && state.colorProfileMode ? 1 : 0;
+    const profileLightDark = state.colorProfileLightDark ?? 1;
     const sobelEnabled = state.sobelEnabled ? 1 : 0;
     const softCropEnabled = state.softCropEnabled ? 1 : 0;
     const aspect = canvasTex.width / canvasTex.height;
@@ -302,7 +310,7 @@ export class WebGPURenderer {
 
       lp.fragData.set([
         state.avgLuminance, layerOpacities[i], colorMode, useMask,
-        sobelEnabled, softCropEnabled, 0, 0,
+        sobelEnabled, softCropEnabled, profileMode, profileLightDark,
       ]);
       this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 32);
 
@@ -315,6 +323,7 @@ export class WebGPURenderer {
         this.sampler,
         lp.rotationBuffer,
         lp.fragUniformBuffer,
+        this.profileLut.texture,
       );
 
       const usesMSAA = this.sampleCount > 1 && this.msaaTexture !== null;
@@ -616,5 +625,6 @@ export class WebGPURenderer {
     this.stationaryPreview.destroy();
     this.gpuProfiler?.destroy();
     this.fallbackMaskTexture.destroy();
+    this.profileLut.destroy();
   }
 }

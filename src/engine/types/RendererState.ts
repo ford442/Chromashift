@@ -18,6 +18,16 @@ export interface RendererState {
   tracerThreshold?     : number;
   tracerMode?          : number;
   colorMode?           : number;
+  /**
+   * Baked colour-profile LUT (256×3 RGBA8, see `buildColorProfileLut`). Present
+   * only when a non-classic profile is active; renderers upload it when the
+   * array identity changes. `null`/absent keeps the classic branchy path.
+   */
+  colorProfileLut?     : Uint8Array | null;
+  /** 1 = sample the LUT instead of the classic band branches. */
+  colorProfileMode?    : number;
+  /** 1 = lift luminance by the classic lightDark term before LUT lookup. */
+  colorProfileLightDark?: number;
   sobelEnabled?        : boolean;
   softCropEnabled?     : boolean;
   layerBlendMode?      : number;

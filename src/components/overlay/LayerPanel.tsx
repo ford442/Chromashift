@@ -1,4 +1,6 @@
+import { useRef } from 'react';
 import { RotaryKnob } from '../RotaryKnob';
+import { CLASSIC_PROFILE_ID } from '../../engine/color/colorProfile';
 import { LAYER_COLORS, LAYER_LABELS } from './constants';
 import type { LayerIndex, LayerPanelProps } from './types';
 
@@ -23,7 +25,13 @@ export function LayerPanel({
   onColorModeChange,
   onSobelEnabledToggle,
   onSoftCropEnabledToggle,
+  colorProfiles,
 }: LayerPanelProps) {
+  const profileFileInputRef = useRef<HTMLInputElement>(null);
+  const isCustomProfileActive = colorProfiles.userProfiles.some(
+    (profile) => profile.id === colorProfiles.activeProfileId,
+  );
+
   return (
     <div className="space-y-3">
       <div className="space-y-3">
@@ -136,6 +144,79 @@ export function LayerPanel({
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="space-y-1">
+          <span className="text-xs text-amber-400/80 font-mono">Colour profile:</span>
+          <select
+            value={colorProfiles.activeProfileId}
+            onChange={(e) => colorProfiles.onSelectProfile(e.target.value)}
+            className="w-full text-[10px] px-1 py-1 rounded bg-zinc-800 border border-amber-500/30 text-amber-100"
+            title="Named colour profile — Classic keeps the original cr0p look; others re-map every band."
+          >
+            <optgroup label="Built-in">
+              {colorProfiles.builtinProfiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>{profile.name}</option>
+              ))}
+            </optgroup>
+            {colorProfiles.userProfiles.length > 0 && (
+              <optgroup label="Custom">
+                {colorProfiles.userProfiles.map((profile) => (
+                  <option key={profile.id} value={profile.id}>{profile.name}</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => profileFileInputRef.current?.click()}
+              className="flex-1 text-[10px] px-1 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700"
+              title="Import a colour profile JSON file into your local library"
+            >
+              ⬆ Import
+            </button>
+            <button
+              type="button"
+              onClick={colorProfiles.onExportActiveProfile}
+              className="flex-1 text-[10px] px-1 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700"
+              title="Download the active profile as JSON"
+            >
+              ⬇ Export
+            </button>
+            {isCustomProfileActive && (
+              <button
+                type="button"
+                onClick={() => colorProfiles.onDeleteProfile(colorProfiles.activeProfileId)}
+                className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-red-500/40 hover:bg-red-900/40 text-red-200"
+                title="Remove this profile from your local library"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <input
+            ref={profileFileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void colorProfiles.onImportProfileFile(file);
+              e.target.value = '';
+            }}
+          />
+          {colorProfiles.activeProfileId !== CLASSIC_PROFILE_ID && (
+            <p className="text-[10px] text-amber-400/50 font-mono leading-snug">
+              Profile active — Spectrum modes are bypassed while it is selected.
+            </p>
+          )}
+          {colorProfiles.profileError && (
+            <p className="text-[10px] text-red-300 font-mono leading-snug">{colorProfiles.profileError}</p>
+          )}
+          {!colorProfiles.profileError && colorProfiles.profileStatus && (
+            <p className="text-[10px] text-emerald-300/70 font-mono leading-snug">{colorProfiles.profileStatus}</p>
+          )}
         </div>
 
         <div className="space-y-1">

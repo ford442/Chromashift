@@ -70,6 +70,7 @@ export function buildControlProps(
     handleCopyPresetUrl: handlers.handleCopyPresetUrl,
     handleExportPresetFile: handlers.handleExportPresetFile,
     handleImportPresetFile: handlers.handleImportPresetFile,
+    colorProfiles: handlers.colorProfiles,
     compareLayout: ui.compareView.layout,
     compareSyncPlay: ui.compareView.syncPlay,
     compareDualAvailable: engine.backend === 'webgpu' && !ui.kioskEnabled,

@@ -1,5 +1,9 @@
 # Previous Color Scale (Gradient-Based)
 
+> **Archived.** These equations now ship as the built-in `cr0p-soft-gradient` colour
+> profile — see [../COLOR_PROFILES.md](../COLOR_PROFILES.md). This file is kept as the
+> derivation record for the HSL endpoints baked into `shared/colorProfiles.json`.
+
 This document records the gradient-based color calculations that were used in Chromashift **before** the color equation fix that restored the original cr0p.1ink.us fixed-color logic.
 
 ## Overview

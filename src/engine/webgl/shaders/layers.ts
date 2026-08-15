@@ -13,6 +13,9 @@ uniform float u_layerOpacity;
 uniform float u_colorMode;
 uniform float u_sobelEnabled;
 uniform float u_softCropEnabled;
+uniform sampler2D u_profileLut;
+uniform float u_profileMode;
+uniform float u_profileLightDark;
 
 in vec2 v_uv;
 in vec2 v_baseUv;
@@ -41,6 +44,20 @@ float boostedLuminance(vec2 uv, float baseLum) {
 
 ${GLSL_BAND_COLOR_HELPERS}
 
+/**
+ * Named colour profile lookup (docs/COLOR_PROFILES.md) — column = preprocessed
+ * luminance bucket, row = layer index. ceil() matches the CPU band rule
+ * (value > min && value <= max) exactly for integer band bounds.
+ */
+vec4 profileColor(float lum) {
+  float lift = u_profileLightDark > 0.5
+    ? (128.0 + abs(u_avgLuminance - 128.0) * 0.5) * 0.5
+    : 0.0;
+  float value = clamp(lum + lift, 0.0, 255.0);
+  int col = int(clamp(ceil(value), 0.0, 255.0));
+  return texelFetch(u_profileLut, ivec2(col, u_layerIndex), 0);
+}
+
 void main() {
   if (v_uv.x < 0.0 || v_uv.x > 1.0 || v_uv.y < 0.0 || v_uv.y > 1.0) {
     outColor = vec4(0.0);
@@ -49,6 +66,12 @@ void main() {
   vec4 sampleColor = texture(u_source, v_uv);
   float rawLum = dot(sampleColor.rgb, vec3(0.2126, 0.7152, 0.0722)) * 255.0;
   float lum = boostedLuminance(v_uv, rawLum);
+
+  if (u_profileMode > 0.5) {
+    vec4 profile = profileColor(lum);
+    outColor = vec4(profile.rgb, profile.a * u_layerOpacity);
+    return;
+  }
 
   vec4 result = vec4(0.0);
   if (u_colorMode == 1.0) {

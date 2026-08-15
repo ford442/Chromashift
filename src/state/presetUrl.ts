@@ -34,7 +34,10 @@ export function fromBase64Url(encoded: string): string {
 
 /** Encode the current render settings as a compact ?preset= parameter value. */
 export function encodeSettingsParam(state: ChromashiftState): string {
-  return toBase64Url(JSON.stringify(serializeSettings(state)));
+  // Share URLs carry the colour-profile id only — the full band table would
+  // bloat the query string. Recipients resolve built-ins directly and user
+  // profiles from their own library; unknown ids fall back to Classic.
+  return toBase64Url(JSON.stringify(serializeSettings(state, { embedColorProfile: false })));
 }
 
 /** Decode a ?preset= parameter value. Returns null when malformed or wrong version. */

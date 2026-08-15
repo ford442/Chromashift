@@ -155,6 +155,7 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     builtinPresets: p.builtinPresets,
     savedPresets: p.savedPresets,
     presetStatus: p.presetStatus,
+    colorProfiles: p.colorProfiles,
     presetError: p.presetError,
     onSavePreset: p.handleSavePreset,
     onLoadPreset: p.handleLoadPreset,

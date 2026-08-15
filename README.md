@@ -233,7 +233,7 @@ Open strategic backlog: **[#115](https://github.com/ford442/Chromashift/issues/1
 
 | Status | Highlights |
 |--------|------------|
-| **Shipped** | Dual A/B compare, renderer orchestration, settings schema v2, stationary preview strip, kiosk, reactive/MIDI, GPU perf HUD, local library — see [ROADMAP.md](docs/ROADMAP.md) |
+| **Shipped** | Named colour profiles ([COLOR_PROFILES.md](docs/COLOR_PROFILES.md)), dual A/B compare, renderer orchestration, settings schema v3, stationary preview strip, kiosk, reactive/MIDI, GPU perf HUD, local library — see [ROADMAP.md](docs/ROADMAP.md) |
 | **Next** | Typed texture contracts ([#115](https://github.com/ford442/Chromashift/issues/115)); compare swipe ([#116](https://github.com/ford442/Chromashift/issues/116)) + quad ([#117](https://github.com/ford442/Chromashift/issues/117)) — [COMPARE_VIEWS.md](docs/COMPARE_VIEWS.md) |
 | **Research** | WebXR Phase 1 navigation ([#124](https://github.com/ford442/Chromashift/issues/124)); WebGPU-XR deferred — [WebXR.md](docs/WebXR.md) |
 
