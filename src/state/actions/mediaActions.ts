@@ -1,4 +1,5 @@
 import type { ImageEntry } from '../../engine/TextureManager';
+import type { LiveSourceState } from '../types';
 import type { ChromashiftDispatch } from './types';
 
 export function createMediaActions(dispatch: ChromashiftDispatch) {
@@ -15,5 +16,7 @@ export function createMediaActions(dispatch: ChromashiftDispatch) {
       dispatch({ type: 'media/patch', patch: { aspect } }),
     setSpecificImageError: (specificError: string | null) =>
       dispatch({ type: 'media/patch', patch: { specificError } }),
+    setLiveSource: (patch: Partial<LiveSourceState>) =>
+      dispatch({ type: 'media/patchLiveSource', patch }),
   };
 }

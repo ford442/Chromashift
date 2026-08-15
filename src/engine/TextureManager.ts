@@ -8,9 +8,11 @@
  */
 
 import type { ChromashiftTextureManager } from './RendererTypes';
+import { shouldRecreateVideoTexture, videoFrameSizeKey } from './liveSourceTexture';
 import { publishTextureCacheBreadcrumbs } from './textureCacheBreadcrumbs';
 import {
   estimateRgba8MipChainBytes,
+  estimateRgba8SingleLevelBytes,
   TextureCacheTracker,
 } from './textureCachePolicy';
 import { createWebGpuTextureHandle, type ChromashiftTextureHandle } from './types/TextureHandle';
@@ -28,6 +30,8 @@ export class TextureManager implements ChromashiftTextureManager {
   private device: GPUDevice;
   private textures: Map<string, GPUTexture> = new Map();
   private cacheTracker = new TextureCacheTracker();
+  /** Frame size (`"WxH"`) of the texture currently cached under each live-source key. */
+  private videoTextureSizes = new Map<string, string>();
 
   // Mipmap generation resources (lazy-initialised)
   private mipmapPipeline: GPURenderPipeline | null = null;
@@ -129,6 +133,44 @@ export class TextureManager implements ChromashiftTextureManager {
     if (texture) texture.destroy();
     this.textures.delete(key);
     this.cacheTracker.remove(key);
+    this.videoTextureSizes.delete(key);
+  }
+
+  /**
+   * Upload the current frame of `source` (camera/screen/video-file) into a
+   * texture reused under `cacheKey`, recreated only when the frame
+   * resolution changes. No mip chain is generated — the frame is replaced
+   * every call, so trilinear filtering would be wasted GPU time.
+   */
+  updateVideoTexture(cacheKey: string, source: HTMLVideoElement): ChromashiftTextureHandle | null {
+    const width = source.videoWidth;
+    const height = source.videoHeight;
+    if (width === 0 || height === 0) return null;
+
+    let texture = this.textures.get(cacheKey);
+    if (!texture || shouldRecreateVideoTexture(this.videoTextureSizes.get(cacheKey), width, height)) {
+      if (texture) texture.destroy();
+      texture = this.device.createTexture({
+        size: [width, height, 1],
+        format: 'rgba8unorm-srgb',
+        // RENDER_ATTACHMENT is required by copyExternalImageToTexture even
+        // though we never render into this texture ourselves.
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      this.textures.set(cacheKey, texture);
+      this.videoTextureSizes.set(cacheKey, videoFrameSizeKey(width, height));
+      this.cacheTracker.touch(cacheKey, estimateRgba8SingleLevelBytes(width, height));
+      publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
+    }
+
+    this.device.queue.copyExternalImageToTexture({ source }, { texture }, [width, height]);
+    return createWebGpuTextureHandle(texture);
+  }
+
+  /** See `ChromashiftTextureManager.releaseVideoTexture`. */
+  releaseVideoTexture(cacheKey: string): void {
+    this.destroyKey(cacheKey);
+    publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
   }
 
   /**

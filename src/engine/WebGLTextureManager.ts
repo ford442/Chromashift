@@ -1,7 +1,9 @@
 import type { ImageEntry } from './TextureManager';
 import type { ChromashiftTextureManager } from './RendererTypes';
+import { shouldRecreateVideoTexture, videoFrameSizeKey } from './liveSourceTexture';
 import { publishTextureCacheBreadcrumbs } from './textureCacheBreadcrumbs';
 import {
+  estimateRgba8SingleLevelBytes,
   estimateWebGlTextureBytes,
   TextureCacheTracker,
 } from './textureCachePolicy';
@@ -17,6 +19,8 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
   private gl: WebGL2RenderingContext;
   private textures = new Map<string, WebGlTextureHandle>();
   private cacheTracker = new TextureCacheTracker();
+  /** Frame size (`"WxH"`) of the texture currently cached under each live-source key. */
+  private videoTextureSizes = new Map<string, string>();
 
   constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
@@ -101,6 +105,44 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
     if (entry) this.gl.deleteTexture(entry.texture);
     this.textures.delete(key);
     this.cacheTracker.remove(key);
+    this.videoTextureSizes.delete(key);
+  }
+
+  /** See `TextureManager.updateVideoTexture` — same reuse/recreate policy, no mipmaps. */
+  updateVideoTexture(cacheKey: string, source: HTMLVideoElement): ChromashiftTextureHandle | null {
+    const width = source.videoWidth;
+    const height = source.videoHeight;
+    if (width === 0 || height === 0) return null;
+
+    const gl = this.gl;
+    let entry = this.textures.get(cacheKey);
+    if (!entry || shouldRecreateVideoTexture(this.videoTextureSizes.get(cacheKey), width, height)) {
+      if (entry) gl.deleteTexture(entry.texture);
+      const texture = gl.createTexture();
+      if (!texture) throw new Error('Failed to create WebGL texture.');
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      entry = createWebGlTextureHandle(texture, width, height, cacheKey);
+      this.textures.set(cacheKey, entry);
+      this.videoTextureSizes.set(cacheKey, videoFrameSizeKey(width, height));
+      this.cacheTracker.touch(cacheKey, estimateRgba8SingleLevelBytes(width, height));
+      publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
+    }
+
+    gl.bindTexture(gl.TEXTURE_2D, entry.texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    return entry;
+  }
+
+  /** See `ChromashiftTextureManager.releaseVideoTexture`. */
+  releaseVideoTexture(cacheKey: string): void {
+    this.destroyKey(cacheKey);
+    publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
   }
 
   private createTextureFromSource(source: HTMLImageElement): WebGLTexture {

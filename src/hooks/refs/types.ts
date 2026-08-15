@@ -37,6 +37,7 @@ export interface MediaRefs {
   engineModeRef: MutableRefObject<EngineKind>;
   renderStateRef: MutableRefObject<ChromashiftState>;
   sourceTextureRef: MutableRefObject<ChromashiftTextureHandle | null>;
+  liveSourceManagerRef: MutableRefObject<import('../../engine/LiveSource').LiveSourceManager | null>;
 }
 
 export interface CompareRefs {

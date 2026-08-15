@@ -1,4 +1,6 @@
+import { useRef } from 'react';
 import type { ImageEntry } from '../engine/TextureManager';
+import type { LiveSourceState } from '../state/types';
 
 interface Props {
   images: ImageEntry[];
@@ -9,6 +11,18 @@ interface Props {
   onSelectSource: (index: number) => void;
   onSelectReference: (index: number) => void;
   onClearLibrary: () => void;
+  liveSource: LiveSourceState;
+  onStartCamera: () => void;
+  onStartScreenShare: () => void;
+  onLoadVideoFile: (file: File) => void;
+  onStopLiveSource: () => void;
+}
+
+function liveSourceLabel(kind: LiveSourceState['kind']): string {
+  if (kind === 'camera') return 'Camera';
+  if (kind === 'screen') return 'Screen Share';
+  if (kind === 'video-file') return 'Video File';
+  return 'Live';
 }
 
 function getImageLabel(image: ImageEntry, index: number): string {
@@ -31,19 +45,79 @@ export function ImageStrip({
   onSelectSource,
   onSelectReference,
   onClearLibrary,
+  liveSource,
+  onStartCamera,
+  onStartScreenShare,
+  onLoadVideoFile,
+  onStopLiveSource,
 }: Props) {
   const localCount = images.filter((image) => image.localId).length;
+  const videoFileInputRef = useRef<HTMLInputElement | null>(null);
 
   return (
     <div className="absolute inset-x-0 bottom-0 z-40 pointer-events-none">
-      <div className="flex justify-center mb-2 pointer-events-auto">
+      <div className="flex justify-center items-center gap-2 mb-2 pointer-events-auto">
         <button
           onClick={onToggleOpen}
           className="px-3 py-1 rounded-full bg-black/65 backdrop-blur-md border border-amber-500/30 text-amber-200 text-xs font-mono hover:bg-black/80 transition-colors"
         >
           {isOpen ? 'Hide Browser' : 'Browse Images'}
         </button>
+
+        {liveSource.active ? (
+          <button
+            onClick={onStopLiveSource}
+            className="px-3 py-1 rounded-full bg-red-900/70 backdrop-blur-md border border-red-500/40 text-red-200 text-xs font-mono hover:bg-red-800/80 transition-colors"
+            title={`${liveSourceLabel(liveSource.kind)}${liveSource.width ? ` — ${liveSource.width}×${liveSource.height}` : ''}`}
+          >
+            ⏹ Stop {liveSourceLabel(liveSource.kind)}
+          </button>
+        ) : (
+          <>
+            <button
+              onClick={onStartCamera}
+              className="px-3 py-1 rounded-full bg-black/65 backdrop-blur-md border border-emerald-500/30 text-emerald-200 text-xs font-mono hover:bg-black/80 transition-colors"
+              title="Drive the composite from a live webcam feed"
+            >
+              📷 Camera
+            </button>
+            <button
+              onClick={onStartScreenShare}
+              className="px-3 py-1 rounded-full bg-black/65 backdrop-blur-md border border-emerald-500/30 text-emerald-200 text-xs font-mono hover:bg-black/80 transition-colors"
+              title="Drive the composite from a shared screen/window"
+            >
+              🖥️ Screen
+            </button>
+            <button
+              onClick={() => videoFileInputRef.current?.click()}
+              className="px-3 py-1 rounded-full bg-black/65 backdrop-blur-md border border-emerald-500/30 text-emerald-200 text-xs font-mono hover:bg-black/80 transition-colors"
+              title="Loop a local video file as the composite source"
+            >
+              🎬 Video File
+            </button>
+            <input
+              ref={videoFileInputRef}
+              type="file"
+              accept="video/*"
+              data-testid="live-source-video-file-input"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onLoadVideoFile(file);
+                e.target.value = '';
+              }}
+            />
+          </>
+        )}
       </div>
+
+      {liveSource.error && (
+        <div className="flex justify-center mb-2 pointer-events-auto">
+          <div className="px-3 py-1 rounded-full bg-red-900/80 backdrop-blur-md border border-red-500/40 text-red-200 text-[11px] font-mono">
+            {liveSource.error}
+          </div>
+        </div>
+      )}
 
       {isOpen && (
         <div className="mx-4 mb-4 pointer-events-auto rounded-2xl border border-amber-500/20 bg-black/65 backdrop-blur-xl shadow-[0_0_50px_rgba(0,0,0,0.55)]">

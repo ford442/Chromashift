@@ -32,6 +32,7 @@ Recent closures (**#80–#113**) added the features and architecture below. All 
 | Modular WebGL renderer | [#102](https://github.com/ford442/Chromashift/issues/102) | ✅ Shipped | `src/engine/webgl/*Pass.ts` |
 | Stationary preview strip | — | ✅ Shipped | [PREVIEW_VIEWS.md](PREVIEW_VIEWS.md), `useStationaryPreviews.ts` |
 | WebGPU bootstrap hardening | [#112](https://github.com/ford442/Chromashift/issues/112) / [#113](https://github.com/ford442/Chromashift/issues/113) | ✅ Shipped | Context resize + broader GPU/browser compatibility |
+| Live source (camera / screen / video file) | — | ✅ Shipped | [LIVE_SOURCE.md](LIVE_SOURCE.md), `LiveSource.ts`, `useLiveSource.ts` — reused per-frame texture upload, not yet in preset schema |
 
 ## Next up — prioritized backlog (#115–#124)
 

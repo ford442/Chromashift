@@ -57,12 +57,17 @@ export function AppUI(props: AppUIProps) {
     kioskUiHidden,
     shortcutsOverlayVisible,
     kioskFullscreen,
+    liveSource,
     selectSourceIndex,
     setIsPaused,
     toggleImageStrip,
     setMainViewMode,
     setReferenceImage,
     handleClearLocalLibrary,
+    handleStartCamera,
+    handleStartScreenShare,
+    handleLoadVideoFile,
+    handleStopLiveSource,
     setAvgLuminance,
     setShortcutsOverlayVisible,
     toggleKioskFullscreen,
@@ -192,12 +197,17 @@ export function AppUI(props: AppUIProps) {
         kioskUiHidden={kioskUiHidden}
         shortcutsOverlayVisible={shortcutsOverlayVisible}
         kioskFullscreen={kioskFullscreen}
+        liveSource={liveSource}
         selectSourceIndex={selectSourceIndex}
         setIsPaused={setIsPaused}
         toggleImageStrip={toggleImageStrip}
         setMainViewMode={setMainViewMode}
         setReferenceImage={setReferenceImage}
         handleClearLocalLibrary={handleClearLocalLibrary}
+        handleStartCamera={handleStartCamera}
+        handleStartScreenShare={handleStartScreenShare}
+        handleLoadVideoFile={handleLoadVideoFile}
+        handleStopLiveSource={handleStopLiveSource}
         setAvgLuminance={setAvgLuminance}
         setShortcutsOverlayVisible={setShortcutsOverlayVisible}
         toggleKioskFullscreen={toggleKioskFullscreen}

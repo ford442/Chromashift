@@ -27,12 +27,17 @@ export function ChromeShell({
   kioskUiHidden,
   shortcutsOverlayVisible,
   kioskFullscreen,
+  liveSource,
   selectSourceIndex,
   setIsPaused,
   toggleImageStrip,
   setMainViewMode,
   setReferenceImage,
   handleClearLocalLibrary,
+  handleStartCamera,
+  handleStartScreenShare,
+  handleLoadVideoFile,
+  handleStopLiveSource,
   setAvgLuminance,
   setShortcutsOverlayVisible,
   toggleKioskFullscreen,
@@ -86,6 +91,7 @@ export function ChromeShell({
           isOpen={isImageStripOpen}
           onToggleOpen={toggleImageStrip}
           onSelectSource={(index) => {
+            if (liveSource.active) handleStopLiveSource();
             selectSourceIndex(index);
             setMainViewMode(MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
           }}
@@ -93,6 +99,11 @@ export function ChromeShell({
             setReferenceImage(imageList[index] ?? null);
           }}
           onClearLibrary={handleClearLocalLibrary}
+          liveSource={liveSource}
+          onStartCamera={() => { void handleStartCamera(); }}
+          onStartScreenShare={() => { void handleStartScreenShare(); }}
+          onLoadVideoFile={(file) => { void handleLoadVideoFile(file); }}
+          onStopLiveSource={handleStopLiveSource}
         />
       )}
 

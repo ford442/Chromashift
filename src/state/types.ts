@@ -22,6 +22,24 @@ export interface TracerInspectState {
   showLayers: boolean;
 }
 
+export type LiveSourceKind = 'camera' | 'screen' | 'video-file';
+
+/**
+ * Runtime-only state for a webcam / screen-share / looping video-file source
+ * driving the main composite in place of a still image. Never serialized into
+ * presets (see `ChromashiftSettingsInput` in `chromashiftReducer.ts`) — the
+ * underlying `MediaStream`/`HTMLVideoElement` can't round-trip through JSON,
+ * so a shared preset URL never auto-requests camera/screen access.
+ */
+export interface LiveSourceState {
+  active: boolean;
+  kind: LiveSourceKind | null;
+  label: string | null;
+  width: number;
+  height: number;
+  error: string | null;
+}
+
 export interface MediaSlice {
   imageList: ImageEntry[];
   currentIndex: number;
@@ -29,6 +47,7 @@ export interface MediaSlice {
   previous: ImageEntry | null;
   aspect: number;
   specificError: string | null;
+  liveSource: LiveSourceState;
 }
 
 export interface LayersSlice {

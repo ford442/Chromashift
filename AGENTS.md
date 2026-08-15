@@ -172,6 +172,20 @@ Dropping image files (or whole folders) anywhere on `#chromashift-container` per
 
 Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureManager` need no special-casing to decode them (no CORS, unlike some remote hosts). `evictExcept(keepUrls)` runs after each texture swap in `useImagePlayback` (and `handleLoadSpecificImage`): local `blob:` textures outside the keep set are destroyed immediately so switching away frees GPU memory and switching back re-decodes from the resident IndexedDB blob on demand. Remote `http(s)` and other cached keys follow LRU eviction against an estimated mip-chain byte budget (256 MB default) and a hard entry cap (12 default); the keep set is the current source URL plus the reference image URL. Compare layouts share one decoded texture per URL via the orchestrator's single texture manager. Breadcrumbs: `window.textureCacheSize` and `window.textureCacheBytes`.
 
+### Live Source (camera / screen share / video file)
+
+A webcam feed, shared screen, or looping local video file can drive the main composite in
+place of a still image — same rotating layers, tracers, and audio-reactive/MIDI modulation.
+`LiveSourceManager` (`src/engine/LiveSource.ts`) owns one `HTMLVideoElement` fed by a
+`MediaStream` or file; `TextureManager`/`WebGLTextureManager.updateVideoTexture()` re-upload
+the current frame into a texture reused across calls (recreated only on resolution change, no
+mip chain) so memory stays stable over long sessions. `useLiveSource` (`src/hooks/useLiveSource.ts`)
+runs its own `requestAnimationFrame` loop (mirroring `useReactiveInput`'s pattern) for per-frame
+upload and once-a-second luminance resampling, and publishes `window.liveSourceActive` /
+`window.liveSourceKind` / `window.liveSourceFps` breadcrumbs. `media.liveSource` is
+runtime-only state — never serialized into presets, so a shared preset URL never silently
+requests camera/screen access. See [LIVE_SOURCE.md](docs/LIVE_SOURCE.md).
+
 ### Upscaler (lazy-loaded)
 
 `Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web is fetched on initial page load — only after the user actually invokes an upscale. `npm run build` runs `check:dist`, which asserts `dist/` contains no `ort-wasm*.wasm` and that `dist/assets/index-*.js` has no `tfjs`/`ort-wasm` references.
