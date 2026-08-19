@@ -37,9 +37,8 @@ Recent closures (**#126–#133**) added the architecture below. All are **shippe
 | Modular WebGL renderer | [#102](https://github.com/ford442/Chromashift/issues/102) | ✅ Shipped | `src/engine/webgl/*Pass.ts` |
 | Stationary preview strip | — | ✅ Shipped | [PREVIEW_VIEWS.md](PREVIEW_VIEWS.md), `useStationaryPreviews.ts` |
 | WebGPU bootstrap hardening | [#112](https://github.com/ford442/Chromashift/issues/112) / [#113](https://github.com/ford442/Chromashift/issues/113) | ✅ Shipped | Context resize + broader GPU/browser compatibility |
-| Named colour profiles | — | ✅ Shipped | [COLOR_PROFILES.md](COLOR_PROFILES.md), `src/engine/color/` — built-in + custom profiles, LUT path, preset schema v3 |
+| Named colour profiles | [#130](https://github.com/ford442/Chromashift/issues/130) | ✅ Shipped | [COLOR_PROFILES.md](COLOR_PROFILES.md), LUT path, preset schema v3 |
 | Live source (camera / screen / video file) | [#127](https://github.com/ford442/Chromashift/issues/127) | ✅ Shipped | [LIVE_SOURCE.md](LIVE_SOURCE.md), `LiveSource.ts` — not serialized into presets |
-| Named colour profiles | [#130](https://github.com/ford442/Chromashift/issues/130) | ✅ Shipped | [COLOR_PROFILES.md](COLOR_PROFILES.md), schema v3 |
 | gpu-chores facade | [#132](https://github.com/ford442/Chromashift/issues/132) | ✅ Shipped | `src/engine/compute/chores/` — WebGPU → WASM → TS |
 | WebGPU hard-fail (no silent WebGL) | [#133](https://github.com/ford442/Chromashift/issues/133) | ✅ Shipped | `WEBGL_BACKEND_ENABLED = false`; [webgl-fallback.md](webgl-fallback.md) |
 
