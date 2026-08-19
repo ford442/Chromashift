@@ -6,14 +6,19 @@ links here instead of duplicating issue tables.
 
 For live status, always check the [GitHub issue tracker](https://github.com/ford442/Chromashift/issues).
 
-## Shipped (foundation through #113)
+## Shipped (foundation through #133)
 
 Closed issues **#16–#84** delivered the core engine: C++/WASM hybrid, WebGPU hardening,
-WebGL2 fallback, reducer-backed state, shader modularisation with TS/WGSL/C++ parity
-tests, CI, GPU compute analysis, shareable presets, and offline video export.
+WebGL2 fallback (now gated — see below), reducer-backed state, shader modularisation
+with TS/WGSL/C++ parity tests, CI, GPU compute analysis, shareable presets, and
+offline video export.
 
-Recent closures (**#80–#113**) added the features and architecture below. All are
-**shipped** in `main` unless noted.
+**#115–#124** (2026-07 strategic backlog) all shipped: typed texture handles, compare
+swipe/quad, texture LRU, soft device-loss recovery, store slice split, compare E2E,
+GLSL band codegen, WebCodecs export, WebXR Phase-1 navigation spike.
+
+Recent closures (**#126–#133**) added the architecture below. All are **shipped** in
+`main` unless noted.
 
 | Area | Issue | Status | Where to look |
 |------|-------|--------|---------------|
@@ -32,33 +37,30 @@ Recent closures (**#80–#113**) added the features and architecture below. All 
 | Modular WebGL renderer | [#102](https://github.com/ford442/Chromashift/issues/102) | ✅ Shipped | `src/engine/webgl/*Pass.ts` |
 | Stationary preview strip | — | ✅ Shipped | [PREVIEW_VIEWS.md](PREVIEW_VIEWS.md), `useStationaryPreviews.ts` |
 | WebGPU bootstrap hardening | [#112](https://github.com/ford442/Chromashift/issues/112) / [#113](https://github.com/ford442/Chromashift/issues/113) | ✅ Shipped | Context resize + broader GPU/browser compatibility |
-| Named colour profiles | — | ✅ Shipped | [COLOR_PROFILES.md](COLOR_PROFILES.md), `src/engine/color/` — built-in + custom profiles, LUT path, preset schema v3 |
-| Live source (camera / screen / video file) | — | ✅ Shipped | [LIVE_SOURCE.md](LIVE_SOURCE.md), `LiveSource.ts`, `useLiveSource.ts` — reused per-frame texture upload, not yet in preset schema |
+| Named colour profiles | [#130](https://github.com/ford442/Chromashift/issues/130) | ✅ Shipped | [COLOR_PROFILES.md](COLOR_PROFILES.md), LUT path, preset schema v3 |
+| Live source (camera / screen / video file) | [#127](https://github.com/ford442/Chromashift/issues/127) | ✅ Shipped | [LIVE_SOURCE.md](LIVE_SOURCE.md), `LiveSource.ts` — not serialized into presets |
+| gpu-chores facade | [#132](https://github.com/ford442/Chromashift/issues/132) | ✅ Shipped | `src/engine/compute/chores/` — WebGPU → WASM → TS |
+| WebGPU hard-fail (no silent WebGL) | [#133](https://github.com/ford442/Chromashift/issues/133) | ✅ Shipped | `WEBGL_BACKEND_ENABLED = false`; [webgl-fallback.md](webgl-fallback.md) |
 
-## Next up — prioritized backlog (#115–#124)
+## Next up — prioritized backlog (#141–#145)
 
-Strategic audit backlog (2026-07). Order is priority; earlier items compound into later ones.
+Strategic audit (2026-08). **Build these before another still-image effect.** Compare, presets v3, live source, and gpu-chores already shipped; the gaps are policy/docs drift, unused GPU features, artist workflow, installation capture, and hot-path WASM.
 
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
-| P0 | Typed renderer texture handles | [#115](https://github.com/ford442/Chromashift/issues/115) | Foundation | M | Replace `unknown` texture contracts before more multi-view work |
-| P0 | Compare Phase 2 — swipe split | [#116](https://github.com/ford442/Chromashift/issues/116) | Feature | M | Draggable A/B divider; `swipePosition` already in schema v2 |
-| P1 | Compare Phase 3 — quad grid | [#117](https://github.com/ford442/Chromashift/issues/117) | Feature | L | `QUAD_VIEW_CELLS`; stationary refs + live composite |
-| P1 | Remote GPU texture LRU / budget | [#118](https://github.com/ford442/Chromashift/issues/118) | Performance | M | Remote `http(s)` textures currently cached forever |
-| P1 | Soft GPU device-loss recovery | [#119](https://github.com/ford442/Chromashift/issues/119) | Foundation | L | Re-bootstrap without full page reload (kiosk resilience) |
-| P1 | Decompose store refs/actions | [#120](https://github.com/ford442/Chromashift/issues/120) | Refactor | L | Split `useChromashiftStore` / `ChromashiftRefs` god-bundle |
-| P1 | E2E dual compare + preset layout | [#121](https://github.com/ford442/Chromashift/issues/121) | DX / Test | M | Beyond bootstrap smoke |
-| P1 | GLSL band threshold codegen | [#122](https://github.com/ford442/Chromashift/issues/122) | Foundation | M | Match WGSL `BAND_WGSL` for WebGL reference path |
-| P2 | WebCodecs offline export | [#123](https://github.com/ford442/Chromashift/issues/123) | Feature | L | Prefer `VideoEncoder` when available; MediaRecorder fallback |
-| P2 | WebXR Phase 1 navigation | [#124](https://github.com/ford442/Chromashift/issues/124) | Feature / Research | L | Controller → prev/next/pause; WebGPU-XR still deferred |
+| P0 | Explicit WebGL diagnostic backend | [#141](https://github.com/ford442/Chromashift/issues/141) | Foundation | L | Never silent fallback; unlocks XR + Playwright chromium |
+| P0 | Consume or drop optional GPU features | [#142](https://github.com/ford442/Chromashift/issues/142) | Foundation | L | `float32-filterable` / `rg11b10ufloat` requested but unused; docs vs 8K retry order |
+| P1 | Colour profile designer + live LUT | [#143](https://github.com/ford442/Chromashift/issues/143) | Feature | L | JSON import is the current ceiling of the profile system |
+| P1 | Kiosk camera attract + live export | [#144](https://github.com/ford442/Chromashift/issues/144) | Feature | L | Consent splash; never `getUserMedia` from `?preset=` |
+| P1 | Compute persistence; no per-frame WASM | [#145](https://github.com/ford442/Chromashift/issues/145) | Architecture | L–XL | `durationToDecayWith` on the hot path is the wrong lane |
 
-**Foundation vs features:** the core pipeline, presets, dual compare, orchestrator, and schema v2 are solid enough to ship features. Land #115 (and ideally #120 / #122) alongside compare Phase 2–3 so multi-view stays type-safe and maintainable.
+**Foundation vs features:** do **#141** before treating WebXR as usable (presenter requires WebGL). Do **#142** before HDR/wide-gamut looks. **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145** should land the small WASM-hot-path cut even if compute persistence slips.
 
 ## Research
 
 | Target | Issue | Status | Notes |
 |--------|-------|--------|-------|
-| **WebXR / immersive** | [#85](https://github.com/ford442/Chromashift/issues/85) plan; [#124](https://github.com/ford442/Chromashift/issues/124) Phase 1 | 🔬 Phase-0 shipped; Phase 1 open | WebGL `XRWebGLLayer` at half res — [WebXR.md](WebXR.md); kiosk + XR mutually exclusive |
+| **WebXR / immersive** | [#85](https://github.com/ford442/Chromashift/issues/85); [#124](https://github.com/ford442/Chromashift/issues/124) | 🔬 Phase 0–1 in tree; **blocked in this phase** by [#141](https://github.com/ford442/Chromashift/issues/141) | Presenter is WebGL-only; `WEBGL_BACKEND_ENABLED` is false. WebGPU-XR still deferred |
 | C++ engine depth | [#86](https://github.com/ford442/Chromashift/issues/86) | 🔬 Research | Offline composite parity with WebGPU remains optional research |
 | WebGPU-XR swapchain | — | 🔬 Deferred | Blocked on browser interop; see WebXR.md Phase 2 |
 

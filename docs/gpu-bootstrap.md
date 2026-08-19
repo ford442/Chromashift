@@ -53,7 +53,7 @@ orchestrator.destroy();   // tears down all slots + device
 
 ## Limits and features
 
-- **Limits**: `deriveRequiredLimits()` requests the larger of the current canvas backing-store size and Chromashift's 8K target (`8192`), capped by the adapter.
+- **Limits**: `bootstrapWebGpu` first derives **canvas-sized** `requiredLimits` (`requestHeadroom: false`). `requestWebGpuDeviceAttempts` then tries: (1) default `requestDevice` with optional features, (2) those canvas limits, (3) 8K headroom (`8192`, capped by the adapter). See [#142](https://github.com/ford442/Chromashift/issues/142) — this retry order should stay documented if the 8K-first wording returns.
 - **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) down to what the adapter supports, and `requestWebGpuDevice()` passes that list as `requiredFeatures` on every `requestDevice` attempt (minimal → canvas limits → 8K headroom), so a granted feature survives limit fallback. None are required for core rendering: if a feature-bearing request fails outright (rare driver quirk), bootstrap retries the same limit tiers with no optional features rather than failing. `device.features` after bootstrap reflects what was actually granted (see `WebGpuCapabilityReport.grantedOptionalFeatures` / `timestampQueryAvailable`).
 - **Pipeline errors**: `withErrorScope('validation', …)` wraps WebGPU renderer construction so shader/pipeline failures surface with a label.
 

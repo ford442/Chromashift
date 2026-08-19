@@ -11,7 +11,7 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 - **Independent layer rotation** — each layer has its own rotation angle and rate, driven by a `mat3x3` rotation matrix uploaded as a vertex-shader uniform.
 - **Hybrid TS/C++ WASM engine** — luminance and classification-mask computation run in an optional SIMD128 C++ WASM module, with a pure-TypeScript fallback exposing the identical API (see [Hybrid Engine](#hybrid-engine-typescript--c-wasm) below).
 - **GPU compute analysis** — optional WebGPU compute shaders accelerate luminance histogram + band classification for large (4K–8K) images.
-- **WebGL2 fallback renderer** — opt in with `?renderer=webgl`, the Renderer panel control, or `localStorage.chromashift.renderer = "webgl"` for Playwright-friendly output and GLSL shader debugging.
+- **WebGL2 diagnostic renderer** — implemented in `src/engine/webgl/`, but **user selection is disabled this phase** (`WEBGL_BACKEND_ENABLED`). Failed WebGPU boots hard-fail; restoring an *explicit* (never silent) WebGL path is [#141](https://github.com/ford442/Chromashift/issues/141). See [docs/webgl-fallback.md](docs/webgl-fallback.md).
 - **Local image library** — drag-and-drop images or whole folders onto the canvas to persist them in IndexedDB (thumbnails + originals), with no server upload; survives reloads and shows LOCAL/REMOTE badges in the image strip.
 - **AI upscalers** — Real-ESRGAN/Real-CUGAN (TF.js) and waifu2x swin_unet (onnxruntime-web), both lazy-loaded as Web Workers so neither ships in the initial bundle.
 - **Shareable presets** — render settings serialize to a versioned JSON document, shareable via `?preset=` URL, named local presets, or file export/import.
@@ -46,7 +46,7 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 | GPU | Discrete GPU recommended for 4K+ canvases; integrated GPUs work for HD |
 | Texture headroom | Chromashift requests up to **8192 px** `maxTextureDimension2D` when the adapter allows it |
 | Chrome flags | On older builds, enable WebGPU via `chrome://flags/#enable-unsafe-webgpu` |
-| Fallback | `?renderer=webgl` for WebGL2 when WebGPU is unavailable or after device loss |
+| Fallback | Disabled this phase — failed WebGPU boots show a blocking probe screen ([webgl-fallback.md](docs/webgl-fallback.md), [#141](https://github.com/ford442/Chromashift/issues/141)) |
 
 GPU bootstrap (`src/engine/gpuBootstrap.ts`) logs adapter info at startup, derives conservative `requiredLimits`, handles `device.lost`, and surfaces uncaptured errors. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) for the WebGPU/WebGL options matrix.
 
@@ -57,15 +57,14 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173).
 
-Renderer selection:
+Renderer selection (this phase):
 
 ```bash
-http://localhost:5173/?renderer=webgpu  # primary WebGPU renderer
-http://localhost:5173/?renderer=webgl   # WebGL2 fallback/reference renderer
-http://localhost:5173/?webgl            # shorthand for WebGL2
+http://localhost:5173/?renderer=webgpu  # the only supported boot path
+# ?renderer=webgl is ignored until WEBGL_BACKEND_ENABLED is restored (#141)
 ```
 
-The NUNIF panel has a Renderer control that persists the choice in localStorage and reloads with the matching URL parameter. Runtime breadcrumbs are also exposed for automation: `window.rendererType`, `window.usingWebGPU`, `window.usingWebGL`, and `window.rendererFallbackReason`.
+Runtime breadcrumbs: `window.rendererType`, `window.usingWebGPU`, `window.usingWebGL`, `window.webgpuProbe`, `window.rendererFallbackReason`.
 
 ## Build
 
@@ -219,8 +218,8 @@ See [docs/webgl-fallback.md](docs/webgl-fallback.md) for fallback scope, debug h
 
 | Capability | Role | Fallback if unavailable |
 |---|---|---|
-| **WebGPU** | Primary renderer | WebGL2 (`?renderer=webgl`), automatic on init failure or device loss |
-| **WebGL2** | Debug/reference renderer, screenshots | N/A — this is the fallback tier |
+| **WebGPU** | Primary renderer | Blocking error screen (probe stage + adapter). No automatic WebGL switch |
+| **WebGL2** | Diagnostic / XR / Playwright — **gated off** | Code remains; selection restored in [#141](https://github.com/ford442/Chromashift/issues/141) |
 | **WASM SIMD128** | Accelerated CPU luminance/classification | TypeScript engine (identical API), used automatically if the WASM binary isn't built |
 | **ORT (onnxruntime-web)** | Optional waifu2x upscaling, lazy-loaded | TF.js Real-ESRGAN/Real-CUGAN covers the other upscale path |
 
@@ -229,12 +228,13 @@ See [AGENTS.md](AGENTS.md#browser-requirements) for the full matrix with version
 ## Roadmap
 
 **[docs/ROADMAP.md](docs/ROADMAP.md)** is the maintained roadmap (shipped vs. planned).
-Open strategic backlog: **[#115](https://github.com/ford442/Chromashift/issues/115)–[#124](https://github.com/ford442/Chromashift/issues/124)**.
+Open strategic backlog: **[#141](https://github.com/ford442/Chromashift/issues/141)–[#145](https://github.com/ford442/Chromashift/issues/145)** (#115–#133 are closed).
 
 | Status | Highlights |
 |--------|------------|
-| **Shipped** | Named colour profiles ([COLOR_PROFILES.md](docs/COLOR_PROFILES.md)), dual A/B compare, renderer orchestration, settings schema v3, stationary preview strip, kiosk, reactive/MIDI, GPU perf HUD, local library — see [ROADMAP.md](docs/ROADMAP.md) |
-| **Next** | Typed texture contracts ([#115](https://github.com/ford442/Chromashift/issues/115)); compare swipe ([#116](https://github.com/ford442/Chromashift/issues/116)) + quad ([#117](https://github.com/ford442/Chromashift/issues/117)) — [COMPARE_VIEWS.md](docs/COMPARE_VIEWS.md) |
-| **Research** | WebXR Phase 1 navigation ([#124](https://github.com/ford442/Chromashift/issues/124)); WebGPU-XR deferred — [WebXR.md](docs/WebXR.md) |
+| **Shipped** | Colour profiles + schema v3, live source, gpu-chores, compare dual/swipe/quad, WebGPU hard-fail, WebCodecs export — see [ROADMAP.md](docs/ROADMAP.md) |
+| **Next** | Explicit WebGL diagnostic backend ([#141](https://github.com/ford442/Chromashift/issues/141)); optional GPU features / HDR ([#142](https://github.com/ford442/Chromashift/issues/142)); profile designer ([#143](https://github.com/ford442/Chromashift/issues/143)) |
+| **Then** | Kiosk camera + live capture ([#144](https://github.com/ford442/Chromashift/issues/144)); compute persistence / no per-frame WASM ([#145](https://github.com/ford442/Chromashift/issues/145)) |
+| **Research** | WebGPU-XR swapchain — [WebXR.md](docs/WebXR.md); blocked on [#141](https://github.com/ford442/Chromashift/issues/141) while WebGL selection is off |
 
 Full per-issue detail and file pointers: **[docs/ROADMAP.md](docs/ROADMAP.md)**.
