@@ -2,35 +2,38 @@ import { expect, test } from '@playwright/test';
 
 /**
  * Default (WebGPU) boot must never silently start WebGL.
- * On machines without WebGPU this asserts the blocking overlay + breadcrumbs.
- * If WebGPU happens to work, usingWebGL must still be false.
  */
 test.describe('WebGPU hard-fail policy', () => {
-  test('does not start WebGL on a failed or successful WebGPU default boot', async ({ page }) => {
+  test('does not start WebGL when the WebGPU probe fails', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'gpu', { configurable: true, get: () => undefined });
+    });
+
     await page.goto('/?renderer=webgpu');
 
-    await page.waitForFunction(
-      () => window.usingWebGPU === true
-        || (window.usingWebGL === false && window.rendererType === null),
-      undefined,
-      { timeout: 30_000 },
-    );
+    await expect(page.getByText('WebGPU is required and failed to initialize.')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByRole('button', { name: 'Open WebGL diagnostic session' })).toBeVisible();
 
     const crumbs = await page.evaluate(() => ({
-      rendererType: window.rendererType,
-      usingWebGPU: window.usingWebGPU,
-      usingWebGL: window.usingWebGL,
+      rendererType: window.rendererType ?? null,
+      usingWebGPU: window.usingWebGPU === true,
+      usingWebGL: window.usingWebGL === true,
+      probeStage: window.webgpuProbe?.stage ?? null,
     }));
 
     expect(crumbs.usingWebGL).toBe(false);
-
-    if (crumbs.usingWebGPU) {
-      expect(crumbs.rendererType).toBe('webgpu');
-      return;
-    }
-
+    expect(crumbs.usingWebGPU).toBe(false);
     expect(crumbs.rendererType).toBeNull();
-    await expect(page.getByText('WebGPU is required and failed to initialize.')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Open WebGL diagnostic session' })).toBeVisible();
+    expect(crumbs.probeStage).toBe('navigator-gpu');
+  });
+
+  test('successful or in-flight WebGPU boot still never sets usingWebGL', async ({ page }) => {
+    await page.goto('/?renderer=webgpu');
+    await page.waitForFunction(() => window.webgpuProbe != null, undefined, { timeout: 15_000 });
+
+    const usingWebGL = await page.evaluate(() => window.usingWebGL === true);
+    expect(usingWebGL).toBe(false);
   });
 });
