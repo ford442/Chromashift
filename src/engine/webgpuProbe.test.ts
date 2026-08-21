@@ -150,14 +150,14 @@ describe('probeWebGPU', () => {
 describe('probe breadcrumbs', () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it('publishes window.webgpuProbe and usingWebGPU', async () => {
+  it('publishes window.webgpuProbe without claiming usingWebGPU', async () => {
     const win = installGlobals({
       gpu: { requestAdapter: vi.fn(async () => mockAdapter()) },
     });
     const result = await probeWebGPU();
     publishWebGpuProbe(result);
 
-    expect(win.usingWebGPU).toBe(true);
+    expect(win.usingWebGPU).toBeUndefined();
     expect((win.webgpuProbe as { stage: string }).stage).toBe('ok');
   });
 
@@ -174,7 +174,9 @@ describe('probe breadcrumbs', () => {
     expect(failed.stage).toBe('device');
     // Adapter detail survives, which is what makes Chrome-vs-Edge legible.
     expect(failed.adapter?.device).toBe('iris-xe');
-    expect(win.usingWebGPU).toBe(false);
+    expect((win.webgpuProbe as { ok: boolean; stage: string }).ok).toBe(false);
+    expect((win.webgpuProbe as { stage: string }).stage).toBe('device');
+    expect(win.usingWebGPU).toBeUndefined();
   });
 
   it('recordProbeSuccess promotes the probe once the device is live', async () => {
@@ -183,10 +185,12 @@ describe('probe breadcrumbs', () => {
     });
     const probe = await probeWebGPU();
     recordProbeStageFailure(probe, 'device', 'transient');
-    expect(win.usingWebGPU).toBe(false);
+    expect((win.webgpuProbe as { ok: boolean }).ok).toBe(false);
 
     recordProbeSuccess(probe);
-    expect(win.usingWebGPU).toBe(true);
+    expect((win.webgpuProbe as { ok: boolean; stage: string }).ok).toBe(true);
+    expect((win.webgpuProbe as { stage: string }).stage).toBe('ok');
+    expect(win.usingWebGPU).toBeUndefined();
   });
 
   it('builds a blocking message naming stage, browser, and adapter', async () => {

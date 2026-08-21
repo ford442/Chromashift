@@ -6,7 +6,13 @@ export async function waitForWebGL(page: Page, timeout = 30_000): Promise<void> 
 
 export async function waitForWebGPU(page: Page, timeout = 45_000): Promise<void> {
   try {
-    await page.waitForFunction(() => window.usingWebGPU === true, undefined, { timeout });
+    // Probe success sets webgpuProbe.ok before requestDevice. Wait for the
+    // renderer breadcrumb, which is published only after device + swapchain.
+    await page.waitForFunction(
+      () => window.rendererType === 'webgpu' && window.usingWebGPU === true,
+      undefined,
+      { timeout },
+    );
   } catch (error) {
     const diagnostics = await page.evaluate(() => ({
       rendererType: window.rendererType,

@@ -57,7 +57,7 @@ orchestrator.destroy();   // tears down all slots + device
 - **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) to what the adapter supports. That list is only `timestamp-query` (Perf HUD) and `rg11b10ufloat-renderable` (HDR internal targets via `selectInternalColorFormat`). `requestWebGpuDevice()` passes it as `requiredFeatures` on every attempt so a granted feature survives limit fallback. None are required for core rendering. `float32-filterable` is **not** requested — the graph never samples 32-bit float textures. `device.features` after bootstrap is the source of truth (`WebGpuCapabilityReport`).
 - **Internal colour format**: `selectInternalColorFormat(device)` returns `rg11b10ufloat` when `rg11b10ufloat-renderable` is granted, otherwise `rgba8unorm`. Additive tracers clip in the 8-bit fallback. Layer/persistence/compositor pipelines use this format; diagnostic stamp textures stay `rgba8unorm`.
 - **Display colour space**: `buildWebGpuCanvasConfiguration` defaults to `colorSpace: 'srgb'`. The Viewport **Display P3** control sets `display-p3` on every canvas via `RendererOrchestrator.setCanvasColorSpace`. Colour-profile LUTs remain sRGB (documented in [COLOR_PROFILES.md](COLOR_PROFILES.md)).
-- **Pipeline errors**: `withErrorScope('validation', …)` wraps WebGPU renderer construction so shader/pipeline failures surface with a label.
+- **Probe vs renderer breadcrumbs**: `publishWebGpuProbe` writes `window.webgpuProbe` only. `window.usingWebGPU` / `window.rendererType` are set by `publishRendererBreadcrumbs` after device + swapchain exist. A successful adapter probe must not make `waitForWebGPU` return early.
 
 ## Renderer orchestration
 
