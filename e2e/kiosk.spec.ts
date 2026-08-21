@@ -1,9 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { waitForWebGL } from './helpers/renderer';
-import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
 
 test.describe('Kiosk mode', () => {
-  skipWhileWebGlDisabled();
   test('?kiosk=1 hides NUNIF chrome and shows the bottom remote', async ({ page }) => {
     await page.goto('/?kiosk=1&renderer=webgl');
     await waitForWebGL(page);

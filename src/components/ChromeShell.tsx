@@ -2,6 +2,7 @@ import { ImageStrip } from './ImageStrip';
 import { KioskRemote } from './KioskRemote';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
+import { openWebGlDiagnosticSession, readRequestedBackend } from '../engine/rendererMode';
 import type { ChromeShellProps } from './AppUI.types';
 
 export function ChromeShell({
@@ -152,14 +153,14 @@ export function ChromeShell({
             <p className="text-amber-200/70 text-xs mt-3">
               {gpuError.kind === 'device-lost'
                 ? 'The GPU process may have restarted. Try Retry GPU, or reload the page.'
-                : 'WebGPU is required for this build. Update or switch to a browser with working '
-                  + 'WebGPU, or check chrome://gpu (edge://gpu) for a blocked or fallback adapter.'}
+                : 'WebGPU is required for the default session. Update or switch to a browser with working '
+                  + 'WebGPU, or check chrome://gpu (edge://gpu) for a blocked adapter.'}
             </p>
             <p className="text-slate-400/70 text-[11px] mt-2 font-mono">
-              WebGL2 fallback is disabled for this development phase.
+              Automatic WebGL fallback is off. Open a new diagnostic session if you need WebGL2 / XR / screenshots.
             </p>
-            {gpuError.recoverable && (
-              <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+              {gpuError.recoverable && (
                 <button
                   type="button"
                   className="px-3 py-1.5 rounded bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 text-xs font-mono hover:bg-emerald-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -168,15 +169,24 @@ export function ChromeShell({
                 >
                   {isGpuRetrying ? 'Retrying…' : 'Retry GPU'}
                 </button>
+              )}
+              {readRequestedBackend() !== 'webgl' && (
                 <button
                   type="button"
-                  className="px-3 py-1.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-100 text-xs font-mono hover:bg-amber-500/30"
-                  onClick={() => window.location.reload()}
+                  className="px-3 py-1.5 rounded bg-cyan-500/20 border border-cyan-400/40 text-cyan-100 text-xs font-mono hover:bg-cyan-500/30"
+                  onClick={() => openWebGlDiagnosticSession()}
                 >
-                  Reload page
+                  Open WebGL diagnostic session
                 </button>
-              </div>
-            )}
+              )}
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded bg-amber-500/20 border border-amber-400/40 text-amber-100 text-xs font-mono hover:bg-amber-500/30"
+                onClick={() => window.location.reload()}
+              >
+                Reload page
+              </button>
+            </div>
           </div>
         </div>
       )}

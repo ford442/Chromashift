@@ -31,7 +31,7 @@ orchestrator.destroy();   // tears down all slots + device
 | Concern | Behaviour |
 |---|---|
 | WebGPU bootstrap | First canvas creates `WebGpuSession` (device + primary context); extra slots call `configureWebGpuCanvas` on their own contexts |
-| WebGL fallback | Single slot only (primary canvas); compare/multi-view is WebGPU-only |
+| WebGL diagnostic | Single slot only (primary canvas); compare/multi-view is WebGPU-only. Started only when `backend: 'webgl'` / `getRendererPreference()` is webgl — never after a WebGPU catch. |
 | `device.lost` | Orchestrator destroys all active slots; shared `onRuntimeError` surfaces the recoverable overlay |
 | In-app retry | **Retry GPU** on the error overlay re-runs `RendererOrchestrator.bootstrap` without navigation; reducer state and current image index are preserved |
 | Resize | `resizeAll()` reconfigures the session context and every secondary slot context |
@@ -65,9 +65,10 @@ Multi-canvas layouts (compare dual/quad, kiosk monitors, future WebXR layers) sh
 
 ```
 RendererOrchestrator.bootstrap(primaryCanvas)
-├── WebGpuSession (device + primary context)  OR  WebGL2 context
-├── shared TextureManager + GpuImageAnalysis (WebGPU only)
+├── preferred backend webgpu → WebGpuSession (device + primary context)
 │      └── gpu-chores WebGPU lane — adopts this device, never requests one
+├── preferred backend webgl → WebGL2 context (no adapter/device request)
+│      └── no GpuImageAnalysis / no webgpu chore lane
 └── slot "primary" → ChromashiftRenderer on primary canvas
 
 orchestrator.createSlot('compare-b', canvasB)   // extra WebGPU contexts, same device
@@ -78,7 +79,7 @@ orchestrator.destroy()                          // tears down all slots + device
 
 | Concern | Owner |
 |---|---|
-| Bootstrap / WebGL fallback | `RendererOrchestrator.bootstrap()` |
+| Bootstrap / explicit WebGL | `RendererOrchestrator.bootstrap()` — WebGL only when preference is webgl |
 | Primary slot | `PRIMARY_SLOT_ID` (`'primary'`) — created during bootstrap |
 | Compare slot B | `COMPARE_SLOT_B_ID` (`'compare-b'`) via `useCompareSlotRenderer` |
 | Ref wiring from React | `useAppWebGPUInit` → `orchestratorRef` + legacy `rendererRef` / `deviceRef` |
@@ -137,12 +138,9 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 |---|---|
 | **Retry GPU** (in-app) | Re-runs `RendererOrchestrator.bootstrap`; preserves reducer settings, compare layout, kiosk flags, and current image index. `useImagePlayback` reloads the active texture when `gpuReady` becomes true again. Compare slots reattach via `useCompareSlotRenderer` / `useCompareQuadSlots`. |
 | **Reload page** | Full navigation |
+| **Open WebGL diagnostic session** | `openWebGlDiagnosticSession()` → persist preference and `location.assign(?renderer=webgl)`. New page load. Never an in-place silent switch. |
 
-> **Switch to WebGL2** was removed: WebGL2 fallback is disabled for this
-> development phase, so a failed WebGPU boot hard-fails instead of offering an
-> escape hatch. See [webgl-fallback.md](webgl-fallback.md).
-
-After a successful retry, automation breadcrumbs (`window.usingWebGPU`, `window.usingWebGL`, `window.rendererType`) are updated via `publishRendererBreadcrumbs`. On a **hard-failed** boot `publishRendererBootFailure` pins `usingWebGPU` and `usingWebGL` false and `rendererType` null, so a failure can never be misread as a successful fallback.
+A failed WebGPU boot still hard-fails. `publishRendererBootFailure` pins `usingWebGPU` and `usingWebGL` false and `rendererType` null. After a successful retry or an explicit WebGL navigation, `publishRendererBreadcrumbs` updates those globals. See [webgl-fallback.md](webgl-fallback.md).
 
 After canvas resize or DPR changes, `RendererOrchestrator.resizeAll()` reconfigures the primary session context and every additional slot context (replacing a direct `WebGpuSession.reconfigure()` call from React hooks).
 
@@ -155,10 +153,11 @@ After canvas resize or DPR changes, `RendererOrchestrator.resizeAll()` reconfigu
 | RAM | 8K intermediate textures need adapters with `maxTextureDimension2D ≥ 8192` |
 | Flags | If WebGPU is missing: `chrome://flags/#enable-unsafe-webgpu` (older builds) |
 
-WebGPU is **required** for this development phase — there is no WebGL2 fallback
-to catch an unsupported browser. A missing adapter or a failed `requestDevice`
-produces a blocking error screen naming the probe stage, browser, and adapter.
-See [webgl-fallback.md](webgl-fallback.md).
+WebGPU is **required** for the default session — there is no automatic WebGL2
+fallback to catch an unsupported browser. A missing adapter or a failed
+`requestDevice` produces a blocking error screen naming the probe stage,
+browser, and adapter. Operators can then open an explicit WebGL diagnostic
+session (`?renderer=webgl`). See [webgl-fallback.md](webgl-fallback.md).
 
 ## Testing
 

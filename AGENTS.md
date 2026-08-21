@@ -21,7 +21,7 @@ For what's already shipped vs. planned next, see [docs/ROADMAP.md](docs/ROADMAP.
 | Bundler | Vite | ^7.0.0 |
 | UI | React + TypeScript | 19, ~5.9 |
 | Styling | Tailwind CSS v4 | ^4.2.1 |
-| GPU API | WebGPU + WGSL, WebGL2 + GLSL ES 3.00 fallback | — |
+| GPU API | WebGPU + WGSL; WebGL2 + GLSL ES 3.00 as explicit diagnostic / XR / screenshot backend | — |
 
 ## Common Commands
 
@@ -31,7 +31,7 @@ npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
 npm test          # Vitest unit tests (src/**/*.test.ts)
 npm run test:e2e  # Playwright E2E (all projects; install browsers first)
-npm run test:e2e:webgl   # WebGL smoke, preset URL, kiosk, viewport transforms
+npm run test:e2e:webgl   # Playwright chromium: explicit WebGL diagnostic backend
 npm run test:e2e:webgpu  # WebGPU smoke + compare layouts (chromium-webgpu project)
 npm run test:cpp  # C++ host tests (g++, no Emscripten)
 npm run preview   # Preview the production build locally
@@ -99,7 +99,7 @@ src/
     ├── RendererTypes.ts / types/RendererContracts.ts  # Shared renderer/texture contracts
     ├── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
     ├── WebGLRenderer.ts      # Re-export shim → webgl/WebGLRenderer.ts
-    ├── webgl/                # WebGL2 fallback (mirrors WebGPU pass layout)
+    ├── webgl/                # WebGL2 diagnostic renderer (mirrors WebGPU pass layout)
     │   ├── WebGLRenderer.ts, WebGLLayerPass.ts, WebGLPersistencePass.ts,
     │   │   WebGLCompositorPass.ts, WebGLDebugPasses.ts, WebGLReadback.ts
     │   ├── resources.ts, programUtils.ts
@@ -130,31 +130,43 @@ src/
 
 **Store layout:** `useChromashiftStore` is a thin composer — refs live in `hooks/refs/` (Dom, Gpu, Media, Compare, Reactive sub-bundles), dispatch wrappers in `state/actions/` (one module per reducer slice), and ref-dependent callbacks in `hooks/store/`. New compare or reactive setters belong in `state/actions/compareActions.ts` or `state/actions/reactiveActions.ts`, not inline in the store hook. `useAppUiProps` composes segment builders from `hooks/appUiProps/` that align with the `AppUI.types` prop segments.
 
-### Renderer Selection / WebGL2 Fallback
+### Renderer Selection / WebGL2 Diagnostic Backend
 
-> **WebGPU is required for this development phase — WebGL2 fallback is DISABLED.**
-> A failed adapter/device init **hard-fails** with a blocking error screen; the
-> WebGL renderer does not start and `window.usingWebGL` stays false. Automatic
-> `WebGPU → WebGL` fallback hid Chrome-vs-Edge device bugs behind what looked
-> like visual-parity differences. Restoring it is a later issue wave — see
+> **Automatic `WebGPU → WebGL` fallback is off.** A failed adapter/device init
+> **hard-fails** with a blocking probe screen; `window.usingWebGL` stays false
+> on that path. WebGL2 starts only when the user (or E2E) asks for it —
+> `?renderer=webgl`, `?webgl`, the NUNIF **Renderer** control, or a stored
+> `chromashift.renderer = webgl` preference. Explicit WebGL bootstrap does
+> **not** request a WebGPU adapter/device first. See
 > **[docs/webgl-fallback.md](docs/webgl-fallback.md)**.
 
-`WEBGL_BACKEND_ENABLED` in `src/engine/rendererMode.ts` is the single switch. While it is `false`, `?renderer=webgl`, `?webgl`, the NUNIF **Renderer** control, and a stored `localStorage.chromashift.renderer = webgl` are all ignored — none of them can rescue a failed WebGPU boot.
+`WEBGL_BACKEND_ENABLED` in `src/engine/rendererMode.ts` is the selection kill
+switch (`true` = explicit WebGL allowed). It does not enable automatic fallback.
+`RendererOrchestrator.bootstrap()` never catches a WebGPU failure to retry on
+WebGL.
 
 ```bash
 npm run dev
-# The only supported path this phase
-http://localhost:5173/?renderer=webgpu
+http://localhost:5173/?renderer=webgpu   # default
+http://localhost:5173/?renderer=webgl    # diagnostic / XR / Playwright
 ```
 
-**Boot probe**: `probeWebGPU()` (`src/engine/webgpuProbe.ts`) pre-flights secure context → `navigator.gpu` → `requestAdapter`, publishing `window.webgpuProbe` `{ ok, browser, stage, reason, adapter, features, limits }`. It deliberately stops before `requestDevice()` so the real bootstrap owns the only device request — and so a failed probe leaves nothing for gpu-chores to adopt.
+**Boot probe**: `probeWebGPU()` (`src/engine/webgpuProbe.ts`) pre-flights the
+WebGPU path only: secure context → `navigator.gpu` → `requestAdapter`, publishing
+`window.webgpuProbe` `{ ok, browser, stage, reason, adapter, features, limits }`.
+It stops before `requestDevice()`. The GPU error overlay may offer **Open WebGL
+diagnostic session**, which navigates to `?renderer=webgl` rather than switching
+in place.
 
-The NUNIF panel exposes a **Renderer** control that persists `chromashift.renderer` in localStorage and reloads with the selected `?renderer=` parameter. Runtime breadcrumbs are intentionally global for automation: `window.rendererType`, `window.usingWebGPU`, `window.usingWebGL`, and `window.rendererFallbackReason`.
+The NUNIF panel exposes a **Renderer** control that persists `chromashift.renderer`
+in localStorage and reloads with the selected `?renderer=` parameter. Tooltip:
+diagnostic / XR, not fallback. Runtime breadcrumbs: `window.rendererType`,
+`window.usingWebGPU`, `window.usingWebGL`, and `window.rendererFallbackReason`.
 
 WebGL mode consumes the same `RendererState` as WebGPU: image selection, layer angles, flips, average luminance, colour mode, Sobel/soft band toggles, layer opacity, blend modes, output mode, diagnostics, and tracer settings. It is an approximate reference renderer, not a replacement for the full WGSL path. Keep WebGPU as the source of truth for production behaviour.
 
 WebGL-only debug helpers are in the Renderer panel:
-- `Composite parity` — normal fallback compositing.
+- `Composite parity` — normal diagnostic compositing.
 - `Luminance mask` — grayscale BT.709 luminance after shared rotation.
 - `Rotation UV grid` — transformed UVs and a grid to debug layer rotation/flips.
 - `Layer mask isolation` — shows active per-layer mask output before final compositing.
@@ -200,7 +212,7 @@ Render settings serialize to a versioned JSON document (`src/state/serializeSett
 
 ### Compare / multi-view
 
-Dual 2-up, swipe split, and quad analytical grid are shipped on WebGPU (see [docs/COMPARE_VIEWS.md](docs/COMPARE_VIEWS.md)). Shared types/helpers: `src/engine/compareViews.ts` (`CompareLayoutMode`, `QUAD_VIEW_CELLS`, `effectiveLayerScaleForMultiView`, `multiViewPerformanceNote`). WebGL fallback supports single-view only.
+Dual 2-up, swipe split, and quad analytical grid are shipped on WebGPU (see [docs/COMPARE_VIEWS.md](docs/COMPARE_VIEWS.md)). Shared types/helpers: `src/engine/compareViews.ts` (`CompareLayoutMode`, `QUAD_VIEW_CELLS`, `effectiveLayerScaleForMultiView`, `multiViewPerformanceNote`). The WebGL diagnostic backend supports single-view only.
 
 ### Local Image Library (drag-and-drop)
 
@@ -315,7 +327,7 @@ Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, C
 
 Timestamps resolve to a ping-pong buffer after submit; results appear one frame later. The Diagnostics panel **Perf HUD** toggle (`output.performanceHudEnabled`) gates all query writes and resolves — when off, there is zero timestamp cost. The HUD shows CPU ms, per-pass GPU ms, an approximate bandwidth model, a 120-frame sparkline, budget warnings (`1000 / fps` ms), and optional auto-degrade (disable MSAA, tracer scale ×0.75, live preview readback off).
 
-WebGL2 fallback reports CPU timing only (`GPU timing N/A` in the HUD). See `docs/webgl-fallback.md`.
+WebGL2 reports CPU timing only (`GPU timing N/A` in the HUD). See `docs/webgl-fallback.md`.
 
 ### Colour Bands (WGSL Fragment Shaders)
 
@@ -393,7 +405,7 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | Tier | Command | Scope |
 |------|---------|-------|
 | **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
-| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
+| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band/decay parity with `chromashift_engine.cpp`; no Emscripten required |
 
 ### CI job matrix
@@ -409,8 +421,8 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 
 WebGPU E2E runs in the `chromium-webgpu` Playwright project with
 `--enable-unsafe-webgpu` (see `playwright.config.ts`). For local WebGPU validation,
-use Chrome with `?renderer=webgpu`. The WebGL project remains the reliable fallback
-when WebGPU is unavailable in a headless environment.
+use Chrome with `?renderer=webgpu`. The WebGL project is the named diagnostic
+lane (`?renderer=webgl`) when WebGPU is unavailable in a headless environment.
 
 ## Deployment Process
 
@@ -436,17 +448,16 @@ python deploy.py --no-clean   # skip remote wipe
 
 ## Browser Requirements
 
-Chromashift layers four independent capability checks; each degrades gracefully to the
-next without blocking the app from loading:
+Chromashift layers four independent capability checks:
 
-| Capability | Role | Requirement | Fallback if unavailable |
+| Capability | Role | Requirement | If unavailable |
 |---|---|---|---|
-| **WebGPU** | Primary renderer (5-pass pipeline, GPU compute analysis) | Chrome 113+ / Edge 113+ / Chrome Canary | Falls back to WebGL2 automatically on init failure or `device.lost`; force with `?renderer=webgl` |
-| **WebGL2** | Debug/reference renderer, Playwright screenshots, shader-porting | Any browser with WebGL2 (Firefox, Safari included) | N/A — this *is* the fallback |
+| **WebGPU** | Primary renderer (5-pass pipeline, GPU compute analysis) | Chrome 113+ / Edge 113+ / Chrome Canary | Blocking probe screen; optional **new** `?renderer=webgl` diagnostic session |
+| **WebGL2** | Diagnostic / XR / Playwright screenshots, shader-porting | Any browser with WebGL2 (Firefox, Safari included) | XR and WebGL E2E cannot run |
 | **WASM SIMD128** | Accelerated CPU luminance/classification (`cpp/chromashift_engine.cpp`) | Chrome/Edge/Firefox with WASM SIMD; requires `npm run build:wasm` (Emscripten) | Silently uses the TypeScript engine (`WasmEngine.ts`) — same public API either way |
 | **ORT (onnxruntime-web)** | Optional waifu2x upscaling (`nunif.worker.ts`) | Any WebGPU/WebGL2 browser; loaded lazily only when "Upscale" is clicked | Real-ESRGAN/Real-CUGAN via TF.js (`upscaler.worker.ts`) covers the other upscale path |
 
-Firefox and Safari do not yet have stable WebGPU support — use `?renderer=webgl` there.
+Firefox and Safari do not yet have stable WebGPU support — use `?renderer=webgl` there for diagnostics, not as a silent production fallback.
 
 See `docs/gpu-bootstrap.md` (WebGPU/WebGL matrix), `docs/wasm-engine.md` (SIMD build/browser
 support), and the Upscaler section above (ORT vs TF.js) for the full detail behind this table.
@@ -457,15 +468,14 @@ Frontend-only project — no backend/database/services to run. Standard commands
 "Common Commands" above (`npm run dev`, `npm run build`, `npm run lint`, `npm test`).
 
 - **No WebGPU in the cloud VM.** The headless Chrome available here does not expose
-  WebGPU, so `http://localhost:5173/` now shows the **blocking** "WebGPU is required and
+  WebGPU, so `http://localhost:5173/` shows the **blocking** "WebGPU is required and
   failed to initialize" screen with the probe stage and adapter detail. This is expected —
-  WebGPU behaviour cannot be validated here, and the WebGL2 escape hatch is disabled for
-  this phase (see `docs/webgl-fallback.md`). Read `window.webgpuProbe` in the console to
-  confirm the failure stage.
-  Playwright's `chromium` (WebGL) project self-skips while the backend is disabled, so
-  `npx playwright test --project=chromium` reports those specs as pending rather than
-  failing. The `chromium-webgpu` project (`--enable-unsafe-webgpu`) may still fail in
-  this VM.
+  WebGPU behaviour cannot be validated here. Automatic WebGL fallback stays off (see
+  `docs/webgl-fallback.md`). Use `http://localhost:5173/?renderer=webgl` for a diagnostic
+  session. Read `window.webgpuProbe` in the console to confirm the failure stage.
+  Playwright's `chromium` project is first-class (`npm run test:e2e:webgl`) and must
+  **not** skip. The `chromium-webgpu` project (`--enable-unsafe-webgpu`) may still fail
+  in this VM.
 - **Playwright browsers must be installed once per fresh VM** before `npm run test:e2e`:
   `npx playwright install --with-deps chromium`. This is intentionally not in the update
   script (heavy, network-dependent). The `opacity-test.spec.ts` spec is skipped by default.

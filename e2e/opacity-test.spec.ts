@@ -2,7 +2,6 @@ import { test } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Page } from '@playwright/test';
-import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
 
 // Helper to wait
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -25,7 +24,6 @@ const recordScreenshots = Boolean(process.env.RECORD_SCREENSHOTS);
 (recordScreenshots ? test.describe : test.describe.skip)(
   'Chromashift Opacity Tests',
   () => {
-    skipWhileWebGlDisabled();
   test('capture screenshots with varying opacity settings', async ({ page }) => {
     test.setTimeout(120_000);
     // Create screenshots directory (project-relative)

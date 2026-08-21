@@ -3,7 +3,7 @@ import { computeAverageLuminanceWith } from '../engine/WasmEngine';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/RendererTypes';
 import type { ChromashiftTextureHandle } from '../engine/types/TextureHandle';
-import { publishRendererBootFailure, publishRendererBreadcrumbs } from '../engine/rendererMode';
+import { getRendererPreference, publishRendererBootFailure, publishRendererBreadcrumbs } from '../engine/rendererMode';
 import {
   probeFailureMessage,
   probeWebGPU,
@@ -178,7 +178,7 @@ export function useAppWebGPUInit({
     activeOrchestratorRef.current = null;
   }, []);
 
-  /** Returns true when a WebGPU renderer is live; false on a hard-failed boot. */
+  /** Returns true when a renderer is live; false on a hard-failed boot. */
   const bootstrapGpu = useCallback(async (
     cancelToken: CancelToken,
     signal: AbortSignal,
@@ -186,21 +186,23 @@ export function useAppWebGPUInit({
     const canvas = mainCanvasRef.current;
     if (!canvas) return false;
 
-    // WebGPU is required for this phase. Pre-flight before touching the
-    // orchestrator so an unsupported browser produces a blocking screen with
-    // adapter/browser detail rather than a silent WebGL slide.
-    const probe = await probeWebGPU();
-    publishWebGpuProbe(probe);
-    if (isCancelled(cancelToken, signal)) return false;
-
-    if (!probe.ok) {
-      const { message, detail } = probeFailureMessage(probe);
-      console.error(`[Chromashift:GPU] ${message} ${detail}`, probe);
-      publishRendererBootFailure(detail);
-      // Not recoverable by retry: the browser/device cannot run this app.
-      setGpuError({ kind: 'bootstrap', message, detail, recoverable: false });
-      return false;
-    }
+    const preferredBackend = getRendererPreference();
+    const onRuntimeError = (error: GpuRuntimeError) => {
+      if (isCancelled(cancelToken, signal)) return;
+      if (error.kind !== 'device-lost') return;
+      clearOrchestratorRefs(
+        orchestratorRef,
+        deviceRef,
+        webGpuSessionRef,
+        gpuImageAnalysisRef,
+        rendererRef,
+        textureManagerRef,
+        sourceTextureRef,
+      );
+      activeOrchestratorRef.current = null;
+      setGpuReady(false);
+      setGpuError(error);
+    };
 
     let orchestrator: RendererOrchestrator | null = null;
 
@@ -220,6 +222,66 @@ export function useAppWebGPUInit({
       return true;
     };
 
+    const finishBoot = (bootstrapped: { orchestrator: RendererOrchestrator }): boolean => {
+      if (bailIfCancelled()) return false;
+      syncOrchestratorRefs(
+        bootstrapped.orchestrator,
+        bootstrappedPrimaryRenderer(bootstrapped.orchestrator),
+        orchestratorRef,
+        deviceRef,
+        webGpuSessionRef,
+        gpuImageAnalysisRef,
+        rendererRef,
+        textureManagerRef,
+      );
+      setRendererBackend(bootstrapped.orchestrator.getBackend());
+      const fallbackReason = bootstrapped.orchestrator.getFallbackReason();
+      setRendererFallbackReason(fallbackReason);
+      publishRendererBreadcrumbs(bootstrapped.orchestrator.getBackend(), fallbackReason);
+      return true;
+    };
+
+    // Explicit diagnostic / XR / screenshot session: never request a WebGPU
+    // adapter or device, so gpu-chores cannot adopt a leftover GPUDevice.
+    if (preferredBackend === 'webgl') {
+      try {
+        if (!isCancelled(cancelToken, signal)) {
+          setGpuError(null);
+        }
+        const bootstrapped = await RendererOrchestrator.bootstrap({
+          primaryCanvas: canvas,
+          antialias: antialiasEnabled,
+          backend: 'webgl',
+          onRuntimeError,
+        });
+        orchestrator = bootstrapped.orchestrator;
+        activeOrchestratorRef.current = orchestrator;
+        return finishBoot(bootstrapped);
+      } catch (webglError) {
+        if (isAbortError(webglError) || bailIfCancelled()) return false;
+        const detail = webglError instanceof Error ? webglError.message : String(webglError);
+        publishRendererBootFailure(detail);
+        throw webglError;
+      }
+    }
+
+    // Default path: WebGPU is required. Pre-flight before touching the
+    // orchestrator so an unsupported browser produces a blocking screen with
+    // adapter/browser detail rather than a silent WebGL slide.
+    const probe = await probeWebGPU();
+    publishWebGpuProbe(probe);
+    if (isCancelled(cancelToken, signal)) return false;
+
+    if (!probe.ok) {
+      const { message, detail } = probeFailureMessage(probe);
+      console.error(`[Chromashift:GPU] ${message} ${detail}`, probe);
+      publishRendererBootFailure(detail);
+      // Not recoverable by retry: the browser/device cannot run this app.
+      // The overlay may offer a *new* WebGL diagnostic navigation.
+      setGpuError({ kind: 'bootstrap', message, detail, recoverable: false });
+      return false;
+    }
+
     try {
       if (!isCancelled(cancelToken, signal)) {
         setGpuError(null);
@@ -228,31 +290,22 @@ export function useAppWebGPUInit({
       const bootstrapped = await RendererOrchestrator.bootstrap({
         primaryCanvas: canvas,
         antialias: antialiasEnabled,
-        onRuntimeError: (error) => {
-          if (isCancelled(cancelToken, signal)) return;
-          if (error.kind !== 'device-lost') return;
-          clearOrchestratorRefs(
-            orchestratorRef,
-            deviceRef,
-            webGpuSessionRef,
-            gpuImageAnalysisRef,
-            rendererRef,
-            textureManagerRef,
-            sourceTextureRef,
-          );
-          activeOrchestratorRef.current = null;
-          setGpuReady(false);
-          setGpuError(error);
-        },
+        backend: 'webgpu',
+        onRuntimeError,
       });
 
       orchestrator = bootstrapped.orchestrator;
       activeOrchestratorRef.current = orchestrator;
+      const ok = finishBoot(bootstrapped);
+      if (ok) {
+        recordProbeSuccess(probe);
+      }
+      return ok;
     } catch (primaryError) {
       if (isAbortError(primaryError) || bailIfCancelled()) return false;
       // The adapter was fine but device/context/pipeline creation failed —
       // exactly the Chrome-vs-Edge case. Record which stage died, then
-      // hard-fail. No WebGL renderer is started.
+      // hard-fail. No WebGL renderer is started in this session.
       const reason = primaryError instanceof Error
         ? primaryError.message
         : String(primaryError);
@@ -424,8 +477,8 @@ export function useAppWebGPUInit({
     cancelToken: CancelToken,
     signal: AbortSignal,
   ): Promise<void> => {
-    // A hard-failed boot must not report gpuReady: there is no renderer, and
-    // no WebGL fallback is coming.
+    // A hard-failed WebGPU boot must not report gpuReady: there is no renderer,
+    // and WebGL is never started in-place.
     const booted = await bootstrapGpu(cancelToken, signal);
     if (!booted || isCancelled(cancelToken, signal)) return;
     await loadInitialCorpus(cancelToken, signal);

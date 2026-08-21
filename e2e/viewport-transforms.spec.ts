@@ -8,10 +8,8 @@ import {
   VIEWPORT_QUARTER_ZOOM_PRESET,
 } from './helpers/presetParam';
 import { waitForWebGL } from './helpers/renderer';
-import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
 
 test.describe('Viewport transforms', () => {
-  skipWhileWebGlDisabled();
   test.beforeEach(async ({ page }) => {
     await setE2eViewport(page);
     await stubMinimalCorpus(page);

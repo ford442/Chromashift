@@ -8,16 +8,18 @@ until orchestration matures.
 
 - Feature-detect `navigator.xr` / `immersive-vr` on load
 - Breadcrumbs: `window.xrAvailable`, `window.xrImmersive`, `window.xrImmersiveReason`
-- **Enter immersive VR** in NUNIF → Renderer & Engine (WebGL backend only)
+- **Enter immersive VR** in NUNIF → Renderer & Engine (**explicit WebGL backend only**)
 - Renders the colour-separated composite into `XRWebGLLayer` at **half resolution** per eye
-  via a dedicated xr-compatible WebGL2 context (`src/engine/xr/WebXrPresenter.ts`)
+  via a dedicated xr-compatible WebGL2 context (`src/engine/xr/WebXrPresenter.ts`).
+  That context is created with `getWebGL2ContextAttributes({ xrCompatible: true })` and
+  does **not** share a WebGPU device.
 
 ### Requirements
 
 | Requirement | Notes |
 |-------------|--------|
 | Browser | Chrome / Edge with WebXR + VR headset or emulator |
-| Renderer | **WebGL** (`?renderer=webgl`) — WebGPU-XR interop is Phase 2 |
+| Renderer | **WebGL** (`?renderer=webgl`) — never auto-fallback from a failed WebGPU session; WebGPU-XR interop is Phase 2 |
 | Kiosk | Must be off — `?kiosk=1` blocks XR entry |
 | Input | Browser / headset default exit gesture ends the session |
 

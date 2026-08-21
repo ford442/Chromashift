@@ -3,10 +3,8 @@ import { setE2eViewport } from './helpers/mockCorpus';
 import { primeOverlaySections } from './helpers/overlaySections';
 import { encodePresetParam, SAMPLE_PRESET_DOCUMENT } from './helpers/presetParam';
 import { waitForWebGL } from './helpers/renderer';
-import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
 
 test.describe('Preset URL hydration', () => {
-  skipWhileWebGlDisabled();
   test.beforeEach(async ({ page }) => {
     await setE2eViewport(page);
   });

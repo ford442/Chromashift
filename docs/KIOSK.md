@@ -54,9 +54,9 @@ Press **Esc** again after restoring panels to use NUNIF normally. Remove `?kiosk
 | **Display** | 1080p minimum; 4K works with `performanceAutoDegrade` in Diagnostics if needed |
 | **Input** | USB IR remote (keyboard arrow emulation) or touch screen |
 | **Network** | Host `images.json` and corpus on fast LAN or local static server for offline installs |
-| **Fallback** | `?renderer=webgl` if WebGPU init fails — visual parity is approximate |
+| **Diagnostic GL** | `?renderer=webgl` for screenshots / XR — not an automatic WebGPU rescue |
 
-Avoid Firefox/Safari for production installs until stable WebGPU is available; use `?renderer=webgl` only as emergency fallback.
+Avoid Firefox/Safari for production installs until stable WebGPU is available. Do not treat `?renderer=webgl` as a silent kiosk fallback.
 
 ## GPU recovery
 
@@ -65,7 +65,7 @@ If the GPU device is lost (driver reset, browser GPU process restart), a fullscr
 | Step | Action |
 |------|--------|
 | 1 | Tap **Retry GPU** on the overlay — re-initializes WebGPU without reloading the page; attract mode and autoplay continue |
-| 2 | If retry fails, tap **Switch to WebGL2** or **Reload page** |
+| 2 | If retry fails, tap **Open WebGL diagnostic session** (new `?renderer=webgl` navigation) or **Reload page** |
 
 After a successful retry, confirm `window.usingWebGPU === true` in DevTools. The current image and preset settings should be unchanged.
 
