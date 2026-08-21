@@ -3,16 +3,17 @@ import type { RendererBackend } from './RendererTypes';
 const STORAGE_KEY = 'chromashift.renderer';
 
 /**
- * WebGL2 selection is disabled for this development phase: WebGPU is
- * required, and a failed WebGPU boot must hard-fail rather than slide to a
- * different renderer. `?renderer=webgl`, `?webgl`, the NUNIF Renderer
- * control, and a stored `chromashift.renderer = webgl` are all ignored while
- * this is false — they must never rescue a failed WebGPU boot.
+ * Explicit WebGL2 selection (URL, Renderer panel, stored preference).
  *
- * Flipping this back on is the later fallback wave; see
- * `docs/webgl-fallback.md`.
+ * This is **not** automatic `WebGPU → WebGL` fallback. A failed WebGPU boot
+ * still hard-fails with the probe overlay; `window.usingWebGL` stays false
+ * until a *new* navigation starts an explicit WebGL diagnostic session.
+ *
+ * Set to `false` to ignore `?renderer=webgl` again (kill switch).
+ *
+ * See `docs/webgl-fallback.md`.
  */
-export const WEBGL_BACKEND_ENABLED = false;
+export const WEBGL_BACKEND_ENABLED = true;
 
 /**
  * True when the user asked for WebGL but the request was ignored, so the UI
@@ -58,7 +59,7 @@ export function getRendererPreference(): RendererBackend {
 
   if (requested === 'webgl' && !WEBGL_BACKEND_ENABLED) {
     console.warn(
-      '[Chromashift:GPU] WebGL2 backend is disabled for this development phase; '
+      '[Chromashift:GPU] WebGL2 diagnostic backend is disabled; '
       + 'ignoring the request and requiring WebGPU. A WebGPU failure will hard-fail '
       + 'rather than fall back. See docs/webgl-fallback.md.',
     );
@@ -103,12 +104,10 @@ export function publishRendererBootFailure(reason: string): void {
 }
 
 export function switchRendererPreference(backend: RendererBackend): void {
-  // Defence in depth: even if a caller reaches this with 'webgl', refuse to
-  // persist it. A stored preference must never rescue a failed WebGPU boot.
   if (backend === 'webgl' && !WEBGL_BACKEND_ENABLED) {
     console.warn(
-      '[Chromashift:GPU] Ignoring WebGL2 renderer switch — the backend is disabled '
-      + 'for this development phase. See docs/webgl-fallback.md.',
+      '[Chromashift:GPU] Ignoring WebGL2 renderer switch — the diagnostic backend is disabled. '
+      + 'See docs/webgl-fallback.md.',
     );
     return;
   }
@@ -116,5 +115,12 @@ export function switchRendererPreference(backend: RendererBackend): void {
   setStoredRendererPreference(backend);
   const url = new URL(window.location.href);
   url.searchParams.set('renderer', backend);
+  url.searchParams.delete('webgl');
+  url.searchParams.delete('webgpu');
   window.location.assign(url.toString());
+}
+
+/** Navigate into an explicit WebGL diagnostic / XR / screenshot session. */
+export function openWebGlDiagnosticSession(): void {
+  switchRendererPreference('webgl');
 }

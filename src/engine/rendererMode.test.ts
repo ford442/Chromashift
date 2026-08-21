@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  WEBGL_BACKEND_ENABLED,
   getRendererPreference,
   getStoredRendererPreference,
   isWebGlRequestIgnored,
+  openWebGlDiagnosticSession,
   publishRendererBootFailure,
   publishRendererBreadcrumbs,
   readRequestedBackend,
@@ -21,7 +23,11 @@ function installBrowserGlobals(search = '') {
       removeItem: (key: string) => { storage.delete(key); },
       clear: () => { storage.clear(); },
     },
-    location: { search, href: `http://localhost:5173/${search}` },
+    location: {
+      search,
+      href: `http://localhost:5173/${search}`,
+      assign: vi.fn(),
+    },
     rendererType: undefined as string | undefined,
     usingWebGPU: undefined as boolean | undefined,
     usingWebGL: undefined as boolean | undefined,
@@ -39,12 +45,12 @@ describe('getRendererPreference', () => {
     vi.unstubAllGlobals();
   });
 
-  it('ignores explicit ?renderer=webgl while the WebGL backend is disabled', () => {
+  it('honours explicit ?renderer=webgl as a diagnostic session', () => {
+    expect(WEBGL_BACKEND_ENABLED).toBe(true);
     installBrowserGlobals('?renderer=webgl');
-    expect(getRendererPreference()).toBe('webgpu');
-    // The request is still readable, so the UI can say it was ignored.
+    expect(getRendererPreference()).toBe('webgl');
     expect(readRequestedBackend()).toBe('webgl');
-    expect(isWebGlRequestIgnored()).toBe(true);
+    expect(isWebGlRequestIgnored()).toBe(false);
   });
 
   it('prefers explicit ?renderer=webgpu', () => {
@@ -53,23 +59,48 @@ describe('getRendererPreference', () => {
     expect(isWebGlRequestIgnored()).toBe(false);
   });
 
-  it('ignores the bare ?webgl flag', () => {
+  it('honours the bare ?webgl flag', () => {
     installBrowserGlobals('?webgl');
-    expect(getRendererPreference()).toBe('webgpu');
+    expect(getRendererPreference()).toBe('webgl');
     expect(readRequestedBackend()).toBe('webgl');
   });
 
-  it('a stored webgl preference cannot rescue a failed WebGPU boot', () => {
+  it('defaults to webgpu with no query or stored preference', () => {
     installBrowserGlobals('');
     expect(getRendererPreference()).toBe('webgpu');
+  });
 
-    // switchRendererPreference refuses to persist it in the first place...
-    switchRendererPreference('webgl');
-    expect(getStoredRendererPreference()).toBeNull();
+  it('honours a stored webgl preference without treating it as fallback', () => {
+    installBrowserGlobals('');
+    setStoredRendererPreference('webgl');
+    expect(getRendererPreference()).toBe('webgl');
+  });
 
-    // ...and even a pre-existing stored value is ignored.
+  it('lets an explicit webgpu query override a stored webgl preference', () => {
+    installBrowserGlobals('?renderer=webgpu');
     setStoredRendererPreference('webgl');
     expect(getRendererPreference()).toBe('webgpu');
+  });
+});
+
+describe('switchRendererPreference', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('persists webgl and navigates to ?renderer=webgl', () => {
+    const win = installBrowserGlobals('');
+    switchRendererPreference('webgl');
+    expect(getStoredRendererPreference()).toBe('webgl');
+    expect(win.location.assign).toHaveBeenCalledWith(
+      expect.stringContaining('renderer=webgl'),
+    );
+  });
+
+  it('openWebGlDiagnosticSession is a named navigation, not an in-place switch', () => {
+    const win = installBrowserGlobals('?renderer=webgpu');
+    openWebGlDiagnosticSession();
+    expect(String((win.location.assign as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])).toContain('renderer=webgl');
   });
 });
 

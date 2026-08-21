@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { waitForWebGL } from './helpers/renderer';
-import { skipWhileWebGlDisabled } from './helpers/rendererPhase';
+import { primeOverlaySections } from './helpers/overlaySections';
 
 const screenshotsDir = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -12,7 +12,6 @@ const screenshotsDir = path.join(
 );
 
 test.describe('Chromashift smoke', () => {
-  skipWhileWebGlDisabled();
   test('boots with WebGL renderer and publishes breadcrumbs', async ({ page }) => {
     await page.goto('/?renderer=webgl');
 
@@ -35,5 +34,16 @@ test.describe('Chromashift smoke', () => {
       path: path.join(screenshotsDir, 'webgl-smoke.png'),
       fullPage: true,
     });
+  });
+
+  test('Renderer panel WebGL control explains diagnostic / XR, not fallback', async ({ page }) => {
+    await primeOverlaySections(page, { renderer: true });
+    await page.goto('/?renderer=webgl');
+    await waitForWebGL(page);
+
+    const webglButton = page.getByRole('button', { name: 'WEBGL', exact: true });
+    await expect(webglButton).toBeEnabled();
+    await expect(webglButton).toHaveAttribute('title', /diagnostic \/ XR/i);
+    await expect(webglButton).toHaveAttribute('title', /not an automatic fallback/i);
   });
 });

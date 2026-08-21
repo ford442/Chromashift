@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ford442/chromashift/actions/workflows/ci.yml/badge.svg)](https://github.com/ford442/chromashift/actions/workflows/ci.yml)
 
-A WebGPU-based visual engine that performs real-time RGB colour separation and independent layer rotation — replacing a legacy Canvas 2D / Emscripten slideshow. A toggleable WebGL2 fallback is available for visual debugging, automated screenshots, and shader-porting reference work.
+A WebGPU-based visual engine that performs real-time RGB colour separation and independent layer rotation — replacing a legacy Canvas 2D / Emscripten slideshow. WebGL2 is available as an **explicit** diagnostic / XR / screenshot backend (`?renderer=webgl`); it is not an automatic fallback when WebGPU fails.
 
 ## Features
 
@@ -11,7 +11,7 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 - **Independent layer rotation** — each layer has its own rotation angle and rate, driven by a `mat3x3` rotation matrix uploaded as a vertex-shader uniform.
 - **Hybrid TS/C++ WASM engine** — luminance and classification-mask computation run in an optional SIMD128 C++ WASM module, with a pure-TypeScript fallback exposing the identical API (see [Hybrid Engine](#hybrid-engine-typescript--c-wasm) below).
 - **GPU compute analysis** — optional WebGPU compute shaders accelerate luminance histogram + band classification for large (4K–8K) images.
-- **WebGL2 diagnostic renderer** — implemented in `src/engine/webgl/`, but **user selection is disabled this phase** (`WEBGL_BACKEND_ENABLED`). Failed WebGPU boots hard-fail; restoring an *explicit* (never silent) WebGL path is [#141](https://github.com/ford442/Chromashift/issues/141). See [docs/webgl-fallback.md](docs/webgl-fallback.md).
+- **WebGL2 diagnostic renderer** — `src/engine/webgl/`, selected with `?renderer=webgl` / the Renderer panel. Failed WebGPU boots still hard-fail (`window.usingWebGL === false`); the overlay may open a *new* diagnostic session. See [docs/webgl-fallback.md](docs/webgl-fallback.md).
 - **Local image library** — drag-and-drop images or whole folders onto the canvas to persist them in IndexedDB (thumbnails + originals), with no server upload; survives reloads and shows LOCAL/REMOTE badges in the image strip.
 - **AI upscalers** — Real-ESRGAN/Real-CUGAN (TF.js) and waifu2x swin_unet (onnxruntime-web), both lazy-loaded as Web Workers so neither ships in the initial bundle.
 - **Shareable presets** — render settings serialize to a versioned JSON document, shareable via `?preset=` URL, named local presets, or file export/import.
@@ -30,12 +30,12 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 | Bundler | [Vite](https://vite.dev/) |
 | UI framework | [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) |
 | Styling | [Tailwind CSS v4](https://tailwindcss.com/) |
-| GPU | [WebGPU](https://gpuweb.github.io/gpuweb/) (WGSL shaders), WebGL2 fallback (GLSL ES 3.00) |
+| GPU | [WebGPU](https://gpuweb.github.io/gpuweb/) (WGSL shaders), WebGL2 diagnostic backend (GLSL ES 3.00) |
 
 ## Requirements
 
 - A browser with WebGPU support: **Chrome 113+**, **Edge 113+**, or Chrome Canary.
-- For fallback/debug mode: any browser with WebGL2 support.
+- For diagnostic / XR / screenshot sessions: any browser with WebGL2 (`?renderer=webgl`).
 - Node.js **18+** (`engines.node` in `package.json`; CI uses Node 22)
 
 ### Recommended GPU / browser setup
@@ -46,7 +46,7 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 | GPU | Discrete GPU recommended for 4K+ canvases; integrated GPUs work for HD |
 | Texture headroom | Chromashift requests up to **8192 px** `maxTextureDimension2D` when the adapter allows it |
 | Chrome flags | On older builds, enable WebGPU via `chrome://flags/#enable-unsafe-webgpu` |
-| Fallback | Disabled this phase — failed WebGPU boots show a blocking probe screen ([webgl-fallback.md](docs/webgl-fallback.md), [#141](https://github.com/ford442/Chromashift/issues/141)) |
+| Fallback | **Off.** Failed WebGPU boots show a blocking probe screen. Explicit WebGL: `?renderer=webgl` ([webgl-fallback.md](docs/webgl-fallback.md)) |
 
 GPU bootstrap (`src/engine/gpuBootstrap.ts`) logs adapter info at startup, derives conservative `requiredLimits`, handles `device.lost`, and surfaces uncaptured errors. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) for the WebGPU/WebGL options matrix.
 
@@ -57,11 +57,11 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173).
 
-Renderer selection (this phase):
+Renderer selection:
 
 ```bash
-http://localhost:5173/?renderer=webgpu  # the only supported boot path
-# ?renderer=webgl is ignored until WEBGL_BACKEND_ENABLED is restored (#141)
+http://localhost:5173/?renderer=webgpu  # default production path
+http://localhost:5173/?renderer=webgl   # diagnostic / XR / Playwright
 ```
 
 Runtime breadcrumbs: `window.rendererType`, `window.usingWebGPU`, `window.usingWebGL`, `window.webgpuProbe`, `window.rendererFallbackReason`.
@@ -127,7 +127,8 @@ E2E coverage (`e2e/`):
 
 | Spec | Project | What it checks |
 |------|---------|----------------|
-| `smoke.spec.ts` | chromium | WebGL bootstrap, `window.usingWebGL`, canvas visible |
+| `smoke.spec.ts` | chromium | WebGL bootstrap, `window.usingWebGL`, canvas visible, Renderer panel tooltip |
+| `webgpu-hard-fail.spec.ts` | chromium | Failed WebGPU boot does not set `usingWebGL`; overlay offers diagnostic session |
 | `preset-url.spec.ts` | chromium | `?preset=` hydrates layer opacity / tracer intensity; invalid preset error |
 | `kiosk.spec.ts` | chromium | `?kiosk=1` hides NUNIF chrome, shows kiosk remote |
 | `viewport-transforms.spec.ts` | chromium | Quarter-zoom / half-overlay toggles + preset hydrate |
@@ -193,7 +194,7 @@ src/
   engine/
     WebGPURenderer.ts, WebGPUPipelines.ts, PersistencePass.ts,
     CompositorPass.ts, TracerInspectPass.ts   # 5-pass GPU pipeline (layers → persistence → compositor)
-    webgl/              # WebGL2 fallback (pass modules + GLSL shaders; WebGLRenderer.ts re-export)
+    webgl/              # WebGL2 diagnostic renderer (pass modules + GLSL shaders; WebGLRenderer.ts re-export)
     rendererMode.ts     # URL/localStorage/backend breadcrumb selection
     TextureManager.ts, WebGLTextureManager.ts  # JSON/blob fetch + GPU/WebGL texture upload
     LocalLibrary.ts, fileDrop.ts               # IndexedDB local image library (drag-and-drop)
@@ -212,7 +213,7 @@ src/
 Full per-file detail lives in [AGENTS.md](AGENTS.md#architecture) — keep it as the source of truth
 when this summary and the actual `src/` tree diverge again.
 
-See [docs/webgl-fallback.md](docs/webgl-fallback.md) for fallback scope, debug helpers, and WebGL-to-WebGPU shader porting notes.
+See [docs/webgl-fallback.md](docs/webgl-fallback.md) for the explicit-WebGL policy, debug helpers, and WebGL-to-WebGPU shader porting notes.
 
 ## Browser Matrix
 
