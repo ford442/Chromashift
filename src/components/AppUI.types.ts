@@ -283,6 +283,8 @@ export interface AppUIControlProps {
   setSquareCanvas: (enabled: boolean) => void;
   antialiasEnabled: boolean;
   setAntialiasEnabled: (enabled: boolean) => void;
+  displayColorSpace: import('../engine/gpuOptions').DisplayColorSpace;
+  setDisplayColorSpace: (space: import('../engine/gpuOptions').DisplayColorSpace) => void;
   handleReset: () => void;
   imageChangeInterval: number;
   setImageChangeInterval: (seconds: number) => void;

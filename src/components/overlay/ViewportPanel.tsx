@@ -3,12 +3,14 @@ import type { ViewportPanelProps } from './types';
 export function ViewportPanel({
   squareCanvas,
   antialiasEnabled,
+  displayColorSpace,
   viewportQuarterZoom,
   viewportHalfOverlay,
   isViewingTracer,
   mainViewMode,
   onSquareCanvasToggle,
   onAntialiasToggle,
+  onDisplayColorSpaceChange,
   onViewportQuarterZoomToggle,
   onViewportHalfOverlayToggle,
   compareLayout,
@@ -149,6 +151,19 @@ export function ViewportPanel({
         }`}
       >
         ◆ MSAA 4x
+      </button>
+
+      <button
+        type="button"
+        onClick={() => onDisplayColorSpaceChange(displayColorSpace === 'display-p3' ? 'srgb' : 'display-p3')}
+        className={`w-full text-xs px-2 py-0.5 rounded transition-all ${
+          displayColorSpace === 'display-p3'
+            ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+            : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
+        }`}
+        title="WebGPU canvas colorSpace. Colour-profile LUTs stay sRGB; this only changes presentation."
+      >
+        {displayColorSpace === 'display-p3' ? '◐ Display P3' : '◐ sRGB canvas'}
       </button>
     </div>
   );

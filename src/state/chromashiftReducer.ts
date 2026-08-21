@@ -1,4 +1,5 @@
 import type { ImageEntry } from '../engine/TextureManager';
+import { parseDisplayColorSpace } from '../engine/gpuOptions';
 import {
   DEFAULT_ANGLES,
   DEFAULT_EXTENSIONS,
@@ -58,7 +59,7 @@ export interface ChromashiftSettingsInput {
   ui?: Pick<UiSlice, 'isAutoPlayActive' | 'imageChangeInterval' | 'referenceBlendMode' | 'overlayImageSource' | 'referenceOpacity' | 'upscaleModel'>;
   reactive?: Partial<ReactiveSettings>;
   compare?: CompareViewState;
-  viewport?: { quarterZoom?: boolean; halfOverlay?: boolean };
+  viewport?: { quarterZoom?: boolean; halfOverlay?: boolean; colorSpace?: import('../engine/gpuOptions').DisplayColorSpace };
   kiosk?: Pick<UiSlice, 'kioskEnabled' | 'kioskUiHidden' | 'kioskAttractMode'>;
 }
 
@@ -323,6 +324,9 @@ export function applySettingsToState(
         ...next.output,
         viewportQuarterZoom: settings.viewport.quarterZoom ?? next.output.viewportQuarterZoom,
         viewportHalfOverlay: settings.viewport.halfOverlay ?? next.output.viewportHalfOverlay,
+        displayColorSpace: settings.viewport.colorSpace
+          ? parseDisplayColorSpace(settings.viewport.colorSpace)
+          : next.output.displayColorSpace,
       },
     };
   }

@@ -8,7 +8,7 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "settings": {
     "layers": { "colorProfileId": "cr0p-classic", "colorProfile": null, "…": "…" },
     "tracers": { "…": "…" },
@@ -22,7 +22,7 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
       "audioSensitivity": 1,
       "midiBindings": []
     },
-    "viewport": { "quarterZoom": false, "halfOverlay": false },
+    "viewport": { "quarterZoom": false, "halfOverlay": false, "colorSpace": "srgb" },
     "compare": {
       "layout": "single",
       "syncPlay": true,
@@ -39,7 +39,7 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 }
 ```
 
-`SETTINGS_SCHEMA_VERSION` is **3**. Runtime-only state (GPU handles, media corpus, export progress, mic/MIDI runtime errors, GPU timing sparklines) is never serialized.
+`SETTINGS_SCHEMA_VERSION` is **4**. Runtime-only state (GPU handles, media corpus, export progress, mic/MIDI runtime errors, GPU timing sparklines) is never serialized.
 
 ### v3 field groups
 
@@ -48,7 +48,7 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 | `layers` / `tracers` / `output` / `engine` / `ui` | Core render + playback settings (same as v1) |
 | `output.performanceHudEnabled` / `performanceAutoDegrade` | Diagnostics perf HUD toggles |
 | `reactive` | Master toggles (`enabled`, `audioEnabled`, `midiEnabled`) plus sensitivity and MIDI bindings |
-| `viewport` | Quarter-zoom and half-overlay display transforms (hoisted from `output` in v2) |
+| `viewport` | Quarter-zoom, half-overlay, and canvas `colorSpace` (`srgb` / `display-p3`, v4) |
 | `compare` | Multi-view layout, sync play, swipe position, and slot A/B `ChromashiftSettingsInput` bags |
 | `kiosk` | Installation-mode flags (`kioskEnabled`, `kioskUiHidden`, `kioskAttractMode`) |
 | `layers.colorProfileId` | Active named colour profile (v3) — see [COLOR_PROFILES.md](COLOR_PROFILES.md) |
@@ -56,8 +56,9 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 
 ## Migration from v1 / v2
 
-- **Reading:** `deserializeSettings()` accepts `version: 1`, `2`, and `3` documents and normalizes them to v3 (`migrateToLatest`). Older URLs and saved files continue to work.
-- **Writing:** All new exports (share URL, JSON file, localStorage save) emit `version: 3`.
+- **Reading:** `deserializeSettings()` accepts `version: 1`–`4` documents and normalizes them to v4 (`migrateToLatest`). Older URLs and saved files continue to work.
+- **Writing:** All new exports (share URL, JSON file, localStorage save) emit `version: 4`.
+- **v3 → v4 canvas colour space:** missing `viewport.colorSpace` defaults to `srgb`. Display P3 is opt-in.
 - **v2 → v3 colour profiles:** documents that predate profiles migrate to `cr0p-classic`, the look they were saved with. An embedded profile table is re-validated on read and dropped when invalid or when its `id` doesn't match `colorProfileId`. Share URLs omit the table and carry the id alone to stay short.
 - **v1 → v2 defaults:** Missing reactive toggles default to `false`. Missing `viewport` is hoisted from legacy `output.viewportQuarterZoom` / `viewportHalfOverlay` when present. Missing `compare` and `kiosk` default to the app's initial single-view / non-kiosk state.
 - **Kiosk precedence:** When both a preset and `?kiosk=1` are present, the URL installation bootstrap wins (hides chrome, forces autoplay, etc.).

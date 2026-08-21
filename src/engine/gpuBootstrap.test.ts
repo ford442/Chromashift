@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildWebGpuCanvasConfiguration,
   buildWebGpuCapabilityReport,
   deriveRequiredLimits,
   listAvailableOptionalFeatures,
@@ -7,7 +8,7 @@ import {
   toBootstrapRuntimeError,
   deviceLostRuntimeError,
 } from './gpuBootstrap';
-import { getWebGL2ContextAttributes, CHROMASHIFT_TARGET_MAX_TEXTURE } from './gpuOptions';
+import { getWebGL2ContextAttributes, CHROMASHIFT_OPTIONAL_FEATURES, CHROMASHIFT_TARGET_MAX_TEXTURE } from './gpuOptions';
 
 function mockAdapterLimits(overrides: Partial<GPUAdapter['limits']> = {}): GPUAdapter['limits'] {
   return {
@@ -88,10 +89,17 @@ describe('listAvailableOptionalFeatures', () => {
   });
 
   it('lists multiple optional features when the adapter supports them', () => {
-    const adapter = mockAdapter(['timestamp-query', 'float32-filterable']);
+    const adapter = mockAdapter(['timestamp-query', 'rg11b10ufloat-renderable']);
     expect(listAvailableOptionalFeatures(adapter)).toEqual([
       'timestamp-query',
-      'float32-filterable',
+      'rg11b10ufloat-renderable',
+    ]);
+  });
+
+  it('only requests features that have a live consumer', () => {
+    expect([...CHROMASHIFT_OPTIONAL_FEATURES]).toEqual([
+      'timestamp-query',
+      'rg11b10ufloat-renderable',
     ]);
   });
 });
@@ -130,6 +138,9 @@ describe('requestWebGpuDevice', () => {
     await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
 
     expect(calls).toHaveLength(3);
+    expect(calls[0]?.requiredLimits).toBeUndefined();
+    expect(calls[1]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
+    expect(calls[2]?.requiredLimits?.maxTextureDimension2D).toBe(CHROMASHIFT_TARGET_MAX_TEXTURE);
     for (const call of calls) {
       expect(call.requiredFeatures).toEqual(['timestamp-query']);
     }
@@ -175,20 +186,70 @@ describe('requestWebGpuDevice', () => {
 
 describe('buildWebGpuCapabilityReport', () => {
   it('reports granted and missing optional features', () => {
-    const adapter = mockAdapter(['timestamp-query', 'float32-filterable']);
+    const adapter = mockAdapter(['timestamp-query', 'rg11b10ufloat-renderable']);
     const device = {
-      features: new Set(['float32-filterable']),
+      features: new Set(['rg11b10ufloat-renderable']),
     } as unknown as GPUDevice;
 
     const report = buildWebGpuCapabilityReport(adapter, device, [
       'timestamp-query',
-      'float32-filterable',
+      'rg11b10ufloat-renderable',
     ]);
 
-    expect(report.adapterOptionalFeatures).toEqual(['timestamp-query', 'float32-filterable']);
-    expect(report.grantedOptionalFeatures).toEqual(['float32-filterable']);
+    expect(report.adapterOptionalFeatures).toEqual(['timestamp-query', 'rg11b10ufloat-renderable']);
+    expect(report.grantedOptionalFeatures).toEqual(['rg11b10ufloat-renderable']);
     expect(report.missingRequestedFeatures).toEqual(['timestamp-query']);
     expect(report.timestampQueryAvailable).toBe(false);
+  });
+
+  it('reports no missing features when the device granted every requested optional feature', () => {
+    const requested = ['timestamp-query', 'rg11b10ufloat-renderable'] as const;
+    const adapter = mockAdapter([...requested]);
+    const device = { features: new Set(requested) } as unknown as GPUDevice;
+    const report = buildWebGpuCapabilityReport(adapter, device, requested);
+    expect(report.missingRequestedFeatures).toEqual([]);
+    expect(report.grantedOptionalFeatures).toEqual([...requested]);
+    expect(report.timestampQueryAvailable).toBe(true);
+  });
+
+  it('reports no missing features for CHROMASHIFT_OPTIONAL_FEATURES when the device grants them all', () => {
+    const requested = [...CHROMASHIFT_OPTIONAL_FEATURES];
+    const adapter = mockAdapter(requested);
+    const device = { features: new Set(requested) } as unknown as GPUDevice;
+    const report = buildWebGpuCapabilityReport(adapter, device, requested);
+    expect(report.missingRequestedFeatures).toEqual([]);
+    expect(report.requestedOptionalFeatures).toEqual(requested);
+  });
+});
+
+describe('buildWebGpuCanvasConfiguration', () => {
+  const device = {} as GPUDevice;
+
+  beforeEach(() => {
+    vi.stubGlobal('GPUTextureUsage', {
+      RENDER_ATTACHMENT: 0x10,
+      COPY_SRC: 0x01,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('defaults to opaque sRGB without tone mapping unless requested', () => {
+    const config = buildWebGpuCanvasConfiguration(device, 'bgra8unorm');
+    expect(config.colorSpace).toBe('srgb');
+    expect(config.alphaMode).toBe('opaque');
+    expect(config.toneMapping).toBeUndefined();
+  });
+
+  it('passes display-p3 through on the configuration object', () => {
+    const config = buildWebGpuCanvasConfiguration(device, 'bgra8unorm', {
+      colorSpace: 'display-p3',
+      toneMappingMode: 'standard',
+    });
+    expect(config.colorSpace).toBe('display-p3');
+    expect(config.toneMapping).toEqual({ mode: 'standard' });
   });
 });
 

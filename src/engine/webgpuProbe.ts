@@ -114,15 +114,16 @@ function emptyResult(stage: WebGpuProbeStage, reason: string | null): WebGpuProb
   };
 }
 
-/** Publish `window.webgpuProbe` + `window.usingWebGPU` for automation. */
+/**
+ * Publish `window.webgpuProbe` only. Do not touch `window.usingWebGPU` —
+ * that breadcrumb means device + swapchain are live (`publishRendererBreadcrumbs`).
+ * The probe stops before `requestDevice()`, so `result.ok` must not satisfy
+ * `waitForWebGPU`.
+ */
 export function publishWebGpuProbe(result: WebGpuProbeResult): void {
   if (typeof window === 'undefined') return;
-  const w = window as Window & {
-    webgpuProbe?: WebGpuProbeResult;
-    usingWebGPU?: boolean;
-  };
+  const w = window as Window & { webgpuProbe?: WebGpuProbeResult };
   w.webgpuProbe = result;
-  w.usingWebGPU = result.ok;
 }
 
 /**

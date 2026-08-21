@@ -204,7 +204,7 @@ indices only. Band bounds for `cr0p-classic` must stay in sync with `shared/band
 
 ### Presets & Shareable URLs
 
-Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 3`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. Schema v3 adds `layers.colorProfileId` (+ an embedded table in file exports only — share URLs carry the id alone); v1/v2 documents migrate to the classic profile. See `docs/PRESETS.md`.
+Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 4`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. Schema v3 adds `layers.colorProfileId` (+ an embedded table in file exports only — share URLs carry the id alone); v4 adds `viewport.colorSpace` (`srgb` / `display-p3`). v1/v2 documents migrate to the classic profile and sRGB canvas. See `docs/PRESETS.md`.
 
 ### Kiosk / gallery installation
 
@@ -316,7 +316,7 @@ MSAA pipelines must match the render-pass attachment `sampleCount`. A 4× pipeli
 
 ### GPU Performance Instrumentation (WebGPU only)
 
-Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, Chromashift requests every adapter-supported entry in `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`), including `timestamp-query` when present. Breadcrumbs: `window.gpuTimestampAvailable`, `window.gpuTimestampReason`.
+Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, Chromashift requests every adapter-supported entry in `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`): `timestamp-query` and `rg11b10ufloat-renderable`. Missing features skip the corresponding path (CPU-only HUD, rgba8 internal targets). Breadcrumbs: `window.gpuTimestampAvailable`, `window.gpuTimestampReason`.
 
 `GpuTimestampProfiler` (`src/engine/GpuTimestampProfiler.ts`) wraps the live render path in `WebGPURenderer`:
 

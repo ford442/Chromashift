@@ -29,10 +29,10 @@ test.describe('Compare quad layout', () => {
     await expect(page.getByTestId('quad-cell-composite')).toBeVisible();
 
     const layerButton = page.getByTestId('quad-layer-cycle');
+    await expect(layerButton).toHaveText('Layer 0');
+    await domClick(layerButton);
     await expect(layerButton).toHaveText('Layer 1');
     await domClick(layerButton);
     await expect(layerButton).toHaveText('Layer 2');
-    await domClick(layerButton);
-    await expect(layerButton).toHaveText('Layer 0');
   });
 });

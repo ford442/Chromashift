@@ -9,7 +9,8 @@ wedge — without forking a shader per palette.
 - Selector: **NUNIF → Layers → Colour profile**
 - Data: `shared/colorProfiles.json` (built-ins), localStorage `chromashift.colorProfiles` (yours)
 - Code: `src/engine/color/colorProfile.ts`, `colorProfileLibrary.ts`, `ProfileLutTexture.ts`
-- State: `layers.colorProfileId` + `layers.colorProfile` (preset schema v3)
+- State: `layers.colorProfileId` + `layers.colorProfile` (preset schema v3+)
+- Working space: LUTs are **sRGB**. The Viewport Display P3 control only changes WebGPU canvas `colorSpace`, not the baked table.
 
 ## Built-in profiles
 

@@ -58,6 +58,7 @@ export interface WebGpuSession {
   /** True when `timestamp-query` was requested and granted on the device. */
   timestampQueryAvailable: boolean;
   reconfigure: () => void;
+  setCanvasOptions: (options: WebGpuCanvasOptions) => void;
   detach: () => void;
 }
 
@@ -395,11 +396,15 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
   }
 
   const format = navigator.gpu.getPreferredCanvasFormat();
-  const canvasOptions = options.canvasOptions;
+  let canvasOptions: WebGpuCanvasOptions = { ...options.canvasOptions };
   configureWebGpuCanvas(context, device, format, canvasOptions);
 
   const reconfigure = () => {
     configureWebGpuCanvas(context, device, format, canvasOptions);
+  };
+
+  const setCanvasOptions = (next: WebGpuCanvasOptions) => {
+    canvasOptions = { ...canvasOptions, ...next };
   };
 
   const detach = attachDeviceDiagnostics(device, {
@@ -421,6 +426,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
     capabilities,
     timestampQueryAvailable,
     reconfigure,
+    setCanvasOptions,
     detach,
   };
 }

@@ -166,12 +166,14 @@ export interface UpscalePanelProps {
 export interface ViewportPanelProps {
   squareCanvas: boolean;
   antialiasEnabled: boolean;
+  displayColorSpace: import('../../engine/gpuOptions').DisplayColorSpace;
   viewportQuarterZoom: boolean;
   viewportHalfOverlay: boolean;
   isViewingTracer: boolean;
   mainViewMode: number;
   onSquareCanvasToggle: (value: boolean) => void;
   onAntialiasToggle: (value: boolean) => void;
+  onDisplayColorSpaceChange: (space: import('../../engine/gpuOptions').DisplayColorSpace) => void;
   onViewportQuarterZoomToggle: (value: boolean) => void;
   onViewportHalfOverlayToggle: (value: boolean) => void;
   compareLayout: import('../../engine/compareViews').CompareLayoutMode;

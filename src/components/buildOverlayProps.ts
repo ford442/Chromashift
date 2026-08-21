@@ -95,6 +95,7 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     onVideoExportQualityChange: p.onVideoExportQualityChange,
     squareCanvas: p.squareCanvas,
     antialiasEnabled: p.antialiasEnabled,
+    displayColorSpace: p.displayColorSpace,
     viewportQuarterZoom: p.viewportQuarterZoom,
     viewportHalfOverlay: p.viewportHalfOverlay,
     onAngleChange: p.handleAngleChange,
@@ -142,6 +143,9 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     onAntialiasToggle: (enabled) => {
       p.setAntialiasEnabled(enabled);
       p.rendererRef.current?.setAntialiasing(enabled);
+    },
+    onDisplayColorSpaceChange: (space) => {
+      p.setDisplayColorSpace(space);
     },
     onViewportQuarterZoomToggle: (enabled) => {
       p.setViewportQuarterZoom(enabled);

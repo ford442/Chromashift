@@ -92,6 +92,7 @@ export function createInitialState(): ChromashiftState {
       viewportHalfOverlay: false,
       squareCanvas: true,
       antialiasEnabled: false,
+      displayColorSpace: 'srgb',
       tracerInspect: {
         zoom: 1,
         pan: { x: 0, y: 0 },

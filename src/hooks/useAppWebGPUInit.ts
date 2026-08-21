@@ -18,6 +18,7 @@ import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchest
 export interface UseAppWebGPUInitProps {
   mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
   antialiasEnabled: boolean;
+  displayColorSpace: import('../engine/gpuOptions').DisplayColorSpace;
   setGpuError: (err: GpuRuntimeError | null) => void;
   orchestratorRef: MutableRefObject<RendererOrchestrator | null>;
   deviceRef: MutableRefObject<GPUDevice | null>;
@@ -143,6 +144,7 @@ function loadPreviewImage(url: string, signal: AbortSignal): Promise<HTMLImageEl
 export function useAppWebGPUInit({
   mainCanvasRef,
   antialiasEnabled,
+  displayColorSpace,
   setGpuError,
   orchestratorRef,
   deviceRef,
@@ -313,6 +315,27 @@ export function useAppWebGPUInit({
       publishRendererBootFailure(detail);
       throw primaryError;
     }
+
+    if (bailIfCancelled()) return false;
+
+    syncOrchestratorRefs(
+      orchestrator,
+      bootstrappedPrimaryRenderer(orchestrator),
+      orchestratorRef,
+      deviceRef,
+      webGpuSessionRef,
+      gpuImageAnalysisRef,
+      rendererRef,
+      textureManagerRef,
+    );
+    setRendererBackend(orchestrator.getBackend());
+    const fallbackReason = orchestrator.getFallbackReason();
+    setRendererFallbackReason(fallbackReason);
+    publishRendererBreadcrumbs(orchestrator.getBackend(), fallbackReason);
+    orchestrator.setCanvasColorSpace(displayColorSpace);
+    // Device + swapchain are live; promote the probe to a full success.
+    recordProbeSuccess(probe);
+    return true;
   }, [
     antialiasEnabled,
     orchestratorRef,
@@ -327,6 +350,7 @@ export function useAppWebGPUInit({
     setGpuError,
     mainCanvasRef,
     sourceTextureRef,
+    displayColorSpace,
   ]);
 
   const loadInitialCorpus = useCallback(async (
@@ -548,6 +572,10 @@ export function useAppWebGPUInit({
     webGpuSessionRef,
     sourceTextureRef,
   ]);
+
+  useEffect(() => {
+    orchestratorRef.current?.setCanvasColorSpace(displayColorSpace);
+  }, [displayColorSpace, orchestratorRef]);
 
   return { retryGpuBootstrap, isGpuRetrying };
 }

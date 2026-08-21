@@ -11,6 +11,7 @@ import {
   fromBase64Url,
   toBase64Url,
 } from './presetUrl';
+import { SETTINGS_SCHEMA_VERSION } from './serializeSettings';
 
 function mutatedState() {
   let state = createInitialState();
@@ -64,7 +65,7 @@ describe('preset URL round-trip', () => {
 
   it('encodes a versioned document', () => {
     const doc = decodeSettingsParam(encodeSettingsParam(mutatedState()));
-    expect(doc?.version).toBe(3);
+    expect(doc?.version).toBe(SETTINGS_SCHEMA_VERSION);
   });
 
   it('round-trips v2 compare, reactive, and viewport fields through URL', () => {

@@ -12,6 +12,8 @@ import type { CompareViewState } from '../engine/compareViews';
 import type { ColorProfile } from '../engine/color/colorProfile';
 export type { ReactiveSlice } from '../engine/reactive/types';
 
+export type DisplayColorSpace = import('../engine/gpuOptions').DisplayColorSpace;
+
 export type LayerTriple<T> = [T, T, T];
 
 export interface TracerInspectState {
@@ -100,6 +102,8 @@ export interface OutputSlice {
   viewportHalfOverlay: boolean;
   squareCanvas: boolean;
   antialiasEnabled: boolean;
+  /** Canvas presentation colour space (WebGPU `GPUCanvasConfiguration.colorSpace`). LUTs stay sRGB. */
+  displayColorSpace: DisplayColorSpace;
   tracerInspect: TracerInspectState;
   tracerPreviewFrozen: boolean;
   livePreviewEnabled: boolean;

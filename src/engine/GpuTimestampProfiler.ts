@@ -21,14 +21,16 @@ export interface BandwidthEstimateInput {
   tracerScale: number;
   sampleCount: number;
   readbackActive: boolean;
+  /** Bytes per texel of internal layer/tracer targets (4 for rgba8 / rg11b10, 8 for rgba16float). */
+  internalBytesPerPixel?: number;
 }
 
-/** Rough read/write traffic model for rgba16float internal targets (8 B/px). */
+/** Rough read/write traffic model for internal colour targets. */
 export function estimatePassBandwidthMBps(
   dims: BandwidthEstimateInput,
   timings: GpuPassTimings,
 ): number {
-  const bytesPerPixel = 8;
+  const bytesPerPixel = dims.internalBytesPerPixel ?? 4;
   const lw = Math.max(1, Math.round(dims.canvasW * dims.layerScale));
   const lh = Math.max(1, Math.round(dims.canvasH * dims.layerScale));
   const tw = Math.max(1, Math.round(dims.canvasW * dims.tracerScale));
