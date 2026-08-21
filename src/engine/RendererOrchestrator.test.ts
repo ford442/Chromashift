@@ -80,6 +80,7 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
     },
     timestampQueryAvailable: false,
     reconfigure: vi.fn(),
+    setCanvasOptions: vi.fn(),
     detach: vi.fn(),
   };
 }

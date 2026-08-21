@@ -46,15 +46,17 @@ orchestrator.destroy();   // tears down all slots + device
 | Alpha | `alphaMode: 'opaque'` on canvas configure | `alpha: false` |
 | Antialias | Layer-pass MSAA (`sampleCount` 1 or 4) | `antialias` from `RendererCanvasOptions` |
 | Preserve buffer | `usage` includes `COPY_SRC` on swapchain | `preserveDrawingBuffer: true` |
-| Colour space | `colorSpace: 'srgb'` | Browser default sRGB framebuffer |
-| Tone mapping | `toneMapping.mode: 'standard'` when set | N/A |
+| Colour space | `colorSpace: 'srgb'` default; optional `display-p3` from Viewport control / `viewport.colorSpace` | Browser default sRGB framebuffer |
+| Tone mapping | `toneMapping.mode: 'standard'` when set; catch-and-retry without | N/A |
 | Power | `powerPreference: 'high-performance'` | N/A |
-| Texture headroom | `requiredLimits.maxTextureDimension2D` derived from canvas + 8K target | `gl.MAX_TEXTURE_SIZE` |
+| Texture headroom | Retry ladder (below); first device request has **no** `requiredLimits` | `gl.MAX_TEXTURE_SIZE` |
 
 ## Limits and features
 
-- **Limits**: `bootstrapWebGpu` first derives **canvas-sized** `requiredLimits` (`requestHeadroom: false`). `requestWebGpuDeviceAttempts` then tries: (1) default `requestDevice` with optional features, (2) those canvas limits, (3) 8K headroom (`8192`, capped by the adapter). See [#142](https://github.com/ford442/Chromashift/issues/142) — this retry order should stay documented if the 8K-first wording returns.
-- **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) down to what the adapter supports, and `requestWebGpuDevice()` passes that list as `requiredFeatures` on every `requestDevice` attempt (minimal → canvas limits → 8K headroom), so a granted feature survives limit fallback. None are required for core rendering: if a feature-bearing request fails outright (rare driver quirk), bootstrap retries the same limit tiers with no optional features rather than failing. `device.features` after bootstrap reflects what was actually granted (see `WebGpuCapabilityReport.grantedOptionalFeatures` / `timestampQueryAvailable`).
+- **Limits**: `requestWebGpuDeviceAttempts` tries, in order: (1) default `requestDevice` with optional features and **no** `requiredLimits`, (2) canvas-sized `requiredLimits` from `deriveRequiredLimits(..., { requestHeadroom: false })`, (3) 8K headroom (`8192`, capped by the adapter) via `requestHeadroom: true`. `bootstrapWebGpu` logs the canvas-sized limits; 8K is **not** the first request. If every feature-bearing attempt fails, the same three tiers retry with no optional features.
+- **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) to what the adapter supports. That list is only `timestamp-query` (Perf HUD) and `rg11b10ufloat-renderable` (HDR internal targets via `selectInternalColorFormat`). `requestWebGpuDevice()` passes it as `requiredFeatures` on every attempt so a granted feature survives limit fallback. None are required for core rendering. `float32-filterable` is **not** requested — the graph never samples 32-bit float textures. `device.features` after bootstrap is the source of truth (`WebGpuCapabilityReport`).
+- **Internal colour format**: `selectInternalColorFormat(device)` returns `rg11b10ufloat` when `rg11b10ufloat-renderable` is granted, otherwise `rgba8unorm`. Additive tracers clip in the 8-bit fallback. Layer/persistence/compositor pipelines use this format; diagnostic stamp textures stay `rgba8unorm`.
+- **Display colour space**: `buildWebGpuCanvasConfiguration` defaults to `colorSpace: 'srgb'`. The Viewport **Display P3** control sets `display-p3` on every canvas via `RendererOrchestrator.setCanvasColorSpace`. Colour-profile LUTs remain sRGB (documented in [COLOR_PROFILES.md](COLOR_PROFILES.md)).
 - **Pipeline errors**: `withErrorScope('validation', …)` wraps WebGPU renderer construction so shader/pipeline failures surface with a label.
 
 ## Renderer orchestration

@@ -40,21 +40,21 @@ Recent closures (**#126–#133**) added the architecture below. All are **shippe
 | Named colour profiles | [#130](https://github.com/ford442/Chromashift/issues/130) | ✅ Shipped | [COLOR_PROFILES.md](COLOR_PROFILES.md), LUT path, preset schema v3 |
 | Live source (camera / screen / video file) | [#127](https://github.com/ford442/Chromashift/issues/127) | ✅ Shipped | [LIVE_SOURCE.md](LIVE_SOURCE.md), `LiveSource.ts` — not serialized into presets |
 | gpu-chores facade | [#132](https://github.com/ford442/Chromashift/issues/132) | ✅ Shipped | `src/engine/compute/chores/` — WebGPU → WASM → TS |
+| Optional GPU features consumed | [#142](https://github.com/ford442/Chromashift/issues/142) | ✅ Shipped | `timestamp-query` + `rg11b10ufloat-renderable`; `float32-filterable` dropped; [gpu-bootstrap.md](gpu-bootstrap.md) |
 | WebGPU hard-fail (no silent WebGL) | [#133](https://github.com/ford442/Chromashift/issues/133) | ✅ Shipped | `WEBGL_BACKEND_ENABLED = false`; [webgl-fallback.md](webgl-fallback.md) |
 
 ## Next up — prioritized backlog (#141–#145)
 
-Strategic audit (2026-08). **Build these before another still-image effect.** Compare, presets v3, live source, and gpu-chores already shipped; the gaps are policy/docs drift, unused GPU features, artist workflow, installation capture, and hot-path WASM.
+Strategic audit (2026-08). **Build these before another still-image effect.** Compare, presets v3, live source, gpu-chores, and optional GPU feature consumption already shipped; remaining gaps are WebGL diagnostic policy, artist workflow, installation capture, and hot-path WASM.
 
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
 | P0 | Explicit WebGL diagnostic backend | [#141](https://github.com/ford442/Chromashift/issues/141) | Foundation | L | Never silent fallback; unlocks XR + Playwright chromium |
-| P0 | Consume or drop optional GPU features | [#142](https://github.com/ford442/Chromashift/issues/142) | Foundation | L | `float32-filterable` / `rg11b10ufloat` requested but unused; docs vs 8K retry order |
 | P1 | Colour profile designer + live LUT | [#143](https://github.com/ford442/Chromashift/issues/143) | Feature | L | JSON import is the current ceiling of the profile system |
 | P1 | Kiosk camera attract + live export | [#144](https://github.com/ford442/Chromashift/issues/144) | Feature | L | Consent splash; never `getUserMedia` from `?preset=` |
 | P1 | Compute persistence; no per-frame WASM | [#145](https://github.com/ford442/Chromashift/issues/145) | Architecture | L–XL | `durationToDecayWith` on the hot path is the wrong lane |
 
-**Foundation vs features:** do **#141** before treating WebXR as usable (presenter requires WebGL). Do **#142** before HDR/wide-gamut looks. **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145** should land the small WASM-hot-path cut even if compute persistence slips.
+**Foundation vs features:** do **#141** before treating WebXR as usable (presenter requires WebGL). **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145** should land the small WASM-hot-path cut even if compute persistence slips.
 
 ## Research
 

@@ -1,3 +1,4 @@
+import { parseDisplayColorSpace } from '../engine/gpuOptions';
 import { createInitialState } from './defaults';
 import type { ChromashiftSettingsInput } from './chromashiftReducer';
 import type { ChromashiftState } from './types';
@@ -8,8 +9,8 @@ import {
   parseColorProfile,
 } from '../engine/color/colorProfile';
 
-export const SETTINGS_SCHEMA_VERSION = 3 as const;
-export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3] as const;
+export const SETTINGS_SCHEMA_VERSION = 4 as const;
+export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4] as const;
 
 export interface ChromashiftSettingsDocument {
   version: typeof SETTINGS_SCHEMA_VERSION;
@@ -65,7 +66,7 @@ function migrateColorProfile(
   };
 }
 
-/** Normalize a v1/v2/v3 raw document to the current v3 shape. */
+/** Normalize a v1–v4 raw document to the current schema. */
 export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDocument {
   const { settings } = doc;
   const output = settings.output ? { ...settings.output } : undefined;
@@ -77,9 +78,15 @@ export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDo
     ?? output?.viewportHalfOverlay
     ?? false;
 
+  const viewportColorSpace = parseDisplayColorSpace(
+    settings.viewport?.colorSpace
+      ?? (output as { displayColorSpace?: unknown } | undefined)?.displayColorSpace,
+  );
+
   if (output) {
     delete output.viewportQuarterZoom;
     delete output.viewportHalfOverlay;
+    delete (output as { displayColorSpace?: unknown }).displayColorSpace;
   }
 
   const reactive = settings.reactive
@@ -102,6 +109,7 @@ export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDo
       viewport: {
         quarterZoom: viewportQuarterZoom,
         halfOverlay: viewportHalfOverlay,
+        colorSpace: viewportColorSpace,
       },
       compare: settings.compare
         ? cloneCompareView(settings.compare)
@@ -136,6 +144,7 @@ export function serializeSettings(
     livePreviewEnabled: _livePreviewEnabled,
     viewportQuarterZoom,
     viewportHalfOverlay,
+    displayColorSpace,
     ...outputPreset
   } = output;
   void _tracerPreviewFrozen;
@@ -179,6 +188,7 @@ export function serializeSettings(
       viewport: {
         quarterZoom: viewportQuarterZoom,
         halfOverlay: viewportHalfOverlay,
+        colorSpace: displayColorSpace,
       },
       compare: cloneCompareView(ui.compareView),
       kiosk: {

@@ -139,6 +139,8 @@ export function buildControlProps(
     setSquareCanvas: actions.setSquareCanvas,
     antialiasEnabled: output.antialiasEnabled,
     setAntialiasEnabled: actions.setAntialiasEnabled,
+    displayColorSpace: output.displayColorSpace,
+    setDisplayColorSpace: actions.setDisplayColorSpace,
     handleReset: handlers.handleReset,
     imageChangeInterval: ui.imageChangeInterval,
     setImageChangeInterval: actions.setImageChangeInterval,

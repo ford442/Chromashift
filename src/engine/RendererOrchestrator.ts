@@ -11,6 +11,7 @@ import {
   createWebGL2Context,
   withErrorScope,
   type GpuRuntimeError,
+  type WebGpuCanvasOptions,
   type WebGpuSession,
 } from './gpuBootstrap';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './RendererTypes';
@@ -113,6 +114,7 @@ export class RendererOrchestrator {
   private readonly deps: RendererOrchestratorDeps;
   private destroyed = false;
   private resizePending = false;
+  private canvasOptions: WebGpuCanvasOptions = {};
 
   private constructor(
     backend: RendererBackend,
@@ -238,6 +240,16 @@ export class RendererOrchestrator {
     return this.gpuImageAnalysis;
   }
 
+  /**
+   * Presentation color space for every WebGPU canvas. Triggers a pending
+   * reconfigure (same path as resize) so configure() does not race getCurrentTexture.
+   */
+  setCanvasColorSpace(colorSpace: PredefinedColorSpace): void {
+    this.canvasOptions = { ...this.canvasOptions, colorSpace };
+    this.session?.setCanvasOptions(this.canvasOptions);
+    this.resizeAll();
+  }
+
   getSlot(id: string): RendererSlot | undefined {
     return this.slots.get(id);
   }
@@ -322,7 +334,7 @@ export class RendererOrchestrator {
     for (const slot of this.slots.values()) {
       const ctx = slot.webgpuContext;
       if (ctx && ctx !== this.session.context) {
-        this.deps.configureWebGpuCanvas(ctx, this.session.device, this.session.format);
+        this.deps.configureWebGpuCanvas(ctx, this.session.device, this.session.format, this.canvasOptions);
       }
     }
   }
@@ -353,6 +365,7 @@ export class RendererOrchestrator {
     this.session = await this.deps.bootstrapWebGpu({
       canvas: primaryCanvas,
       antialias: this.antialias,
+      canvasOptions: this.canvasOptions,
       onRuntimeError: (error) => {
         if (error.kind === 'device-lost' && !this.destroyed) {
           this.destroy();
@@ -404,7 +417,7 @@ export class RendererOrchestrator {
     }
     if (canvas.width === 0) canvas.width = 1;
     if (canvas.height === 0) canvas.height = 1;
-    this.deps.configureWebGpuCanvas(ctx, this.session.device, this.session.format);
+    this.deps.configureWebGpuCanvas(ctx, this.session.device, this.session.format, this.canvasOptions);
     return ctx;
   }
 

@@ -23,6 +23,7 @@ import type { CollisionStats, RendererState } from './types/RendererState';
 import type { ChromashiftTextureHandle } from './types/TextureHandle';
 import { layerRotationUniforms } from './math/rotation';
 import { ProfileLutTexture } from './color/ProfileLutTexture';
+import { internalColorFormatBytesPerPixel, selectInternalColorFormat } from './gpuOptions';
 
 /**
  * WebGPURenderer — thin orchestrator over the 5-pass GPU pipeline.
@@ -38,7 +39,7 @@ export class WebGPURenderer {
 
   private device         : GPUDevice;
   private context        : GPUCanvasContext;
-  private internalFormat : GPUTextureFormat = 'rgba16float';
+  private internalFormat : GPUTextureFormat;
   public pipelines: WebGPUPipelines;
   public sampler        : GPUSampler;
   private sampleCount    : number = 4;
@@ -73,6 +74,7 @@ export class WebGPURenderer {
   constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = false) {
     this.device  = device;
     this.context = context;
+    this.internalFormat = selectInternalColorFormat(device);
     this.sampleCount = enableMSAA ? 4 : 1;
     this.pipelines = new WebGPUPipelines(device, format, this.internalFormat);
 
@@ -346,6 +348,7 @@ export class WebGPURenderer {
         tracerScale: this.tracerScale,
         sampleCount: this.sampleCount,
         readbackActive: state.livePreviewEnabled !== false,
+        internalBytesPerPixel: internalColorFormatBytesPerPixel(this.internalFormat),
       });
     }
 

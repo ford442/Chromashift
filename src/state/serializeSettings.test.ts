@@ -24,10 +24,10 @@ describe('serializeSettings', () => {
     expect(doc?.settings.layers?.angles).toEqual([10, 20, 30]);
   });
 
-  it('always emits schema version 3', () => {
+  it('always emits schema version 4', () => {
     const doc = serializeSettings(createInitialState());
     expect(doc.version).toBe(SETTINGS_SCHEMA_VERSION);
-    expect(doc.version).toBe(3);
+    expect(doc.version).toBe(4);
   });
 
   it('round-trips v2 field groups', () => {
@@ -61,7 +61,7 @@ describe('serializeSettings', () => {
     });
 
     const doc = deserializeSettings(settingsToJson(state));
-    expect(doc?.version).toBe(3);
+    expect(doc?.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(doc?.settings.reactive?.enabled).toBe(true);
     expect(doc?.settings.reactive?.audioEnabled).toBe(true);
     expect(doc?.settings.reactive?.midiEnabled).toBe(true);
@@ -114,7 +114,7 @@ describe('serializeSettings', () => {
     expect(restored.ui.compareView.quadLayerIndex).toBe(1);
   });
 
-  it('migrates v1 documents to normalized v3', () => {
+  it('migrates v1 documents to the current schema', () => {
     const v1 = {
       version: 1,
       settings: {
@@ -124,7 +124,7 @@ describe('serializeSettings', () => {
       },
     };
     const migrated = migrateToLatest(v1);
-    expect(migrated.version).toBe(3);
+    expect(migrated.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(migrated.settings.layers?.opacity).toBe(0.66);
     expect(migrated.settings.output?.stampBoost).toBe(2);
     expect(migrated.settings.output?.viewportQuarterZoom).toBeUndefined();
@@ -135,7 +135,7 @@ describe('serializeSettings', () => {
     expect(migrated.settings.kiosk?.kioskEnabled).toBe(false);
 
     const doc = deserializeSettings(JSON.stringify(v1));
-    expect(doc?.version).toBe(3);
+    expect(doc?.version).toBe(SETTINGS_SCHEMA_VERSION);
     // v1/v2 documents predate profiles — they migrate to the classic look.
     expect(doc?.settings.layers?.colorProfileId).toBe('cr0p-classic');
     expect(doc?.settings.layers?.colorProfile).toBeNull();
@@ -157,7 +157,7 @@ describe('serializeSettings', () => {
     };
     const param = toBase64Url(JSON.stringify(v1));
     const doc = deserializeSettings(fromBase64Url(param));
-    expect(doc?.version).toBe(3);
+    expect(doc?.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(doc?.settings.layers?.angles).toEqual([12, 34, 56]);
   });
 
@@ -217,5 +217,33 @@ describe('serializeSettings', () => {
       expect(doc?.settings.layers?.colorProfileId).toBe('someone-else');
       expect(doc?.settings.layers?.colorProfile).toBeNull();
     });
+  });
+});
+
+describe('schema v4 display colour space', () => {
+  it('round-trips display-p3 canvas colour space as viewport.colorSpace', () => {
+    let state = createInitialState();
+    state = chromashiftReducer(state, {
+      type: 'output/patch',
+      patch: { displayColorSpace: 'display-p3' },
+    });
+    const doc = serializeSettings(state);
+    expect(doc.version).toBe(4);
+    expect(doc.settings.viewport?.colorSpace).toBe('display-p3');
+    expect((doc.settings.output as { displayColorSpace?: unknown } | undefined)?.displayColorSpace).toBeUndefined();
+
+    const restored = applySettingsToState(createInitialState(), doc.settings);
+    expect(restored.output.displayColorSpace).toBe('display-p3');
+  });
+
+  it('migrates v3 documents to sRGB canvas colour space', () => {
+    const v3 = {
+      version: 3,
+      settings: { layers: { opacity: 0.4 }, viewport: { quarterZoom: true } },
+    };
+    const doc = deserializeSettings(JSON.stringify(v3));
+    expect(doc?.version).toBe(4);
+    expect(doc?.settings.viewport?.colorSpace).toBe('srgb');
+    expect(doc?.settings.viewport?.quarterZoom).toBe(true);
   });
 });

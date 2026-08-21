@@ -48,6 +48,7 @@ export default function App() {
   const { retryGpuBootstrap, isGpuRetrying } = useAppWebGPUInit({
     mainCanvasRef: refs.mainCanvasRef,
     antialiasEnabled: output.antialiasEnabled,
+    displayColorSpace: output.displayColorSpace,
     setGpuError: actions.setGpuError,
     orchestratorRef: refs.orchestratorRef,
     deviceRef: refs.deviceRef,
