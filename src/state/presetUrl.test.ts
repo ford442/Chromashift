@@ -11,6 +11,7 @@ import {
   fromBase64Url,
   toBase64Url,
 } from './presetUrl';
+import { SETTINGS_SCHEMA_VERSION } from './serializeSettings';
 
 function mutatedState() {
   let state = createInitialState();
