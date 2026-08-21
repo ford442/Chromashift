@@ -206,9 +206,26 @@ describe('RendererOrchestrator', () => {
     expect(deps.createWebGLRenderer).not.toHaveBeenCalled();
   });
 
+  it('starts WebGL from getRendererPreference without touching WebGPU', async () => {
+    const canvas = mockCanvas('main');
+    const deps = createMockDeps({
+      getRendererPreference: vi.fn(() => 'webgl' as const),
+    });
+
+    const { orchestrator, backend } = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: canvas, antialias: true },
+      deps,
+    );
+
+    expect(backend).toBe('webgl');
+    expect(orchestrator.getBackend()).toBe('webgl');
+    expect(deps.bootstrapWebGpu).not.toHaveBeenCalled();
+    expect(deps.createGpuImageAnalysis).not.toHaveBeenCalled();
+    expect(deps.createWebGLRenderer).toHaveBeenCalledOnce();
+  });
+
   it('still honours an explicitly requested WebGL backend', async () => {
-    // Only automatic fallback is removed; the WebGL path itself remains for
-    // tests and the later fallback wave.
+    // Explicit diagnostic backend — never reached via automatic recovery.
     const canvas = mockCanvas('main');
     const deps = createMockDeps();
 

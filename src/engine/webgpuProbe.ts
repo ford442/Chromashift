@@ -7,14 +7,15 @@
  * visual-parity bug instead of the device/init bug it actually is.
  *
  * This module is the single pre-flight check `useAppWebGPUInit` runs before
- * touching `RendererOrchestrator`. It deliberately stops **before**
- * `requestDevice()`: the real bootstrap owns the one and only device request,
- * so a successful probe followed by a real boot performs exactly one
- * `requestDevice()`. Device- and context-stage outcomes are folded back into
- * the same published breadcrumb by `recordProbeStageFailure` /
- * `recordProbeSuccess`.
+ * touching `RendererOrchestrator` on the **default WebGPU** boot path. Explicit
+ * `?renderer=webgl` sessions skip the probe entirely so no adapter/device is
+ * requested. The probe stops **before** `requestDevice()`: the real bootstrap
+ * owns the one and only device request, so a successful probe followed by a
+ * real boot performs exactly one `requestDevice()`. Device- and context-stage
+ * outcomes are folded back into the same published breadcrumb by
+ * `recordProbeStageFailure` / `recordProbeSuccess`.
  *
- * WebGL2 fallback is deferred to a later issue wave — see
+ * Automatic `WebGPU → WebGL` fallback is never used — see
  * `docs/webgl-fallback.md`.
  */
 

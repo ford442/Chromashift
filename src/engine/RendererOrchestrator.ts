@@ -164,17 +164,14 @@ export class RendererOrchestrator {
     const primarySlotId = objectStyle && primaryCanvasOrOptions.primarySlotId
       ? primaryCanvasOrOptions.primarySlotId
       : PRIMARY_SLOT_ID;
-    // Always null while automatic WebGL fallback is disabled; retained so the
-    // bootstrap result shape survives into the later fallback wave.
+    // Never populated by automatic recovery — WebGL is opt-in only.
     const fallbackReason: string | null = null;
     const actualBackend = preferredBackend;
 
-    // WebGPU is required for this development phase: a failed WebGPU boot
-    // hard-fails rather than silently starting the WebGL2 renderer, because
-    // that slide disguised device/init bugs as visual-parity bugs. The
-    // WebGL branch below is reachable only when a caller passes
-    // `backend: 'webgl'` explicitly (tests, and the later fallback wave) —
-    // never as automatic recovery. See docs/webgl-fallback.md.
+    // WebGL2 is a named diagnostic / XR / screenshot backend. A failed
+    // WebGPU boot must not slide here: that hid Chrome-vs-Edge device bugs
+    // as visual-parity bugs. The WebGL branch is reachable only when
+    // preference or `backend: 'webgl'` is explicit. See docs/webgl-fallback.md.
     if (preferredBackend === 'webgl') {
       orchestrator.bootstrapWebGL(primaryCanvas);
       orchestrator.createSlot(primarySlotId, primaryCanvas);

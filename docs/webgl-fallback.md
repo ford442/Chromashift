@@ -1,78 +1,53 @@
-# WebGL2 Fallback Renderer
+# WebGL2 Diagnostic Renderer
 
 > [!IMPORTANT]
-> **WebGL2 fallback is DISABLED for this development phase.** WebGPU is
-> required. If adapter or device init fails, Chromashift **hard-fails** with a
-> blocking error screen — it does not start the WebGL renderer.
->
-> Restoring the fallback is a later issue wave. Until then the code below is
-> documentation of a deferred path, not current behaviour.
+> WebGL2 is a **named diagnostic / XR / screenshot backend**. It is **never**
+> an automatic rescue for a failed WebGPU boot. Default sessions require
+> WebGPU; adapter/device failure still **hard-fails** with the probe overlay.
 
-## Why it is disabled
+Issue [#133](https://github.com/ford442/Chromashift/issues/133) removed silent
+`WebGPU → WebGL` fallback so Chrome-vs-Edge device bugs could not hide behind
+WebGL. Issue [#141](https://github.com/ford442/Chromashift/issues/141) restores
+**explicit** WebGL selection without bringing that slide back.
 
-Automatic `WebGPU → WebGL` fallback **hid** Chrome-vs-Edge WebGPU
-disagreements. A machine where Edge failed to get a device would quietly render
-through WebGL2 instead, so the bug presented as "the two browsers look
-different" — a visual-parity problem — when it was really a device/init
-problem. Failing loudly, with the adapter and browser named, turns that back
-into a one-line diagnosis.
+## Policy
 
-## Current behaviour (fallback disabled)
+| Path | Behaviour |
+|------|-----------|
+| Default / `?renderer=webgpu` | Probe + WebGPU bootstrap. Failure blocks with probe stage/adapter. `window.usingWebGL === false`. |
+| Explicit `?renderer=webgl` / `?webgl` / Renderer panel / stored preference | Start WebGL2 **without** requesting a WebGPU adapter or device. gpu-chores has no WebGPU lane. |
+| Failed WebGPU overlay | **Open WebGL diagnostic session** navigates to `?renderer=webgl` (new load). Not an in-place switch. |
 
-`WEBGL_BACKEND_ENABLED` in `src/engine/rendererMode.ts` is the single switch.
-While it is `false`:
-
-- `?renderer=webgl`, `?webgl`, and a stored `localStorage.chromashift.renderer = webgl`
-  are **ignored** — `getRendererPreference()` returns `webgpu` and logs a warning.
-  None of them can rescue a failed WebGPU boot.
-- `switchRendererPreference('webgl')` refuses to persist, and the NUNIF
-  **Renderer** panel's WebGL button is disabled with an explanatory tooltip.
-- `RendererOrchestrator.bootstrap()` no longer catches a WebGPU failure to
-  retry on WebGL. It tears down the partial boot and rethrows, so **no device
-  survives** for gpu-chores to adopt.
-- The GPU error overlay no longer offers "Switch to WebGL2".
-- Playwright specs that drive `?renderer=webgl` self-skip via
-  `skipWhileWebGlDisabled()` (`e2e/helpers/rendererPhase.ts`) and report as
-  pending. Run them with `CHROMASHIFT_E2E_WEBGL=1` against a build with the
-  flag flipped on.
-
-Explicitly passing `backend: 'webgl'` to `RendererOrchestrator.bootstrap()`
-still works — the WebGL renderer itself is untouched. Only *automatic*
-fallback and *user* selection are gated.
+`WEBGL_BACKEND_ENABLED` in `src/engine/rendererMode.ts` is the kill switch for
+*selection*. While `true`, URL/panel/storage can start WebGL. While `false`,
+those requests are ignored and WebGPU is required. Automatic fallback is
+**never** implemented in `RendererOrchestrator.bootstrap()`: a WebGPU catch
+tears down the partial boot and rethrows.
 
 ## Boot probe
 
-`probeWebGPU()` (`src/engine/webgpuProbe.ts`) is the single pre-flight check
-`useAppWebGPUInit` runs before touching the orchestrator. It stops
-**before** `requestDevice()` — the real bootstrap owns the one and only device
-request — so a successful probe followed by a real boot performs exactly one
-`requestDevice()`, and a *failed* probe means gpu-chores never sees a device at
-all.
+`probeWebGPU()` (`src/engine/webgpuProbe.ts`) runs only on the WebGPU path,
+before the orchestrator. It stops **before** `requestDevice()`. Explicit WebGL
+sessions skip the probe so nothing is left for gpu-chores to adopt.
 
-Stages, in order: `secure-context` → `navigator-gpu` → `adapter` → `device` →
-`context` → `ok`. Device- and context-stage outcomes are folded back into the
-same published result, so `window.webgpuProbe` always describes how far boot
-actually got.
+Stages: `secure-context` → `navigator-gpu` → `adapter` → `device` → `context` → `ok`.
 
-On any failure the app shows a **blocking** error screen (not a toast) naming
-the stage, reason, browser, and adapter.
+On WebGPU failure the app shows a **blocking** error screen naming the stage,
+reason, browser, and adapter.
 
 ## Breadcrumbs
 
 ```js
-window.webgpuProbe        // { ok, browser, stage, reason, adapter, features, limits }
+window.webgpuProbe        // { ok, browser, stage, reason, adapter, features, limits } (WebGPU path)
 window.usingWebGPU        // true only when device + swapchain are live
-window.usingWebGL         // pinned false while fallback is disabled
-window.rendererType       // null on a hard-failed boot
-window.rendererFallbackReason  // the hard-fail detail string
+window.usingWebGL         // true only after a successful explicit WebGL bootstrap
+window.rendererType       // 'webgpu' | 'webgl' | null on a hard-failed boot
+window.rendererFallbackReason  // hard-fail detail, or null
 ```
 
-`window.usingWebGL` never becomes true on a failure path, so automation can
-treat it as a fallback-happened signal without ambiguity.
+`window.usingWebGL` never becomes true on a WebGPU failure path.
 
-## Selecting A Renderer (deferred)
-
-Once the fallback wave re-enables `WEBGL_BACKEND_ENABLED`, these apply again:
+## Selecting a renderer
 
 ```text
 ?renderer=webgpu
@@ -81,7 +56,13 @@ Once the fallback wave re-enables `WEBGL_BACKEND_ENABLED`, these apply again:
 ?webgl
 ```
 
-The NUNIF panel also exposes a **Renderer** control. It persists the selected backend in `localStorage.chromashift.renderer` and reloads with the matching `?renderer=` parameter.
+The NUNIF **Renderer** control persists `localStorage.chromashift.renderer` and
+reloads with `?renderer=`. Tooltip: diagnostic / XR, not fallback.
+
+WebXR **Enter** is available only on this explicit WebGL backend. The presenter
+creates its **own** `xrCompatible` WebGL2 context via
+`getWebGL2ContextAttributes({ xrCompatible: true })` and does not share a
+WebGPU device. See [WebXR.md](WebXR.md).
 
 ## Shared State Contract
 
@@ -112,7 +93,7 @@ These modes are intended for fast browser-visible checks. The WebGPU renderer ig
 
 ## GPU Performance HUD (WebGPU only)
 
-Per-pass GPU frame timing (`layers`, `persistence`, `compositor`, `readback`) is available on the WebGPU path when the adapter grants `timestamp-query`. Enable **Perf HUD** in the Diagnostics panel. The WebGL2 fallback keeps CPU-only timing and shows **GPU timing N/A**.
+Per-pass GPU frame timing (`layers`, `persistence`, `compositor`, `readback`) is available on the WebGPU path when the adapter grants `timestamp-query`. Enable **Perf HUD** in the Diagnostics panel. The WebGL2 diagnostic backend keeps CPU-only timing and shows **GPU timing N/A**.
 
 Automation breadcrumbs (WebGPU bootstrap):
 
@@ -135,7 +116,7 @@ Use this workflow for shader-based image effects:
 
 Important differences:
 
-- WebGPU textures use `rgba8unorm-srgb` source uploads; the WebGL fallback uses standard WebGL texture uploads and is visually approximate.
+- WebGPU textures use `rgba8unorm-srgb` source uploads; the WebGL path uses standard WebGL texture uploads and is visually approximate.
 - WebGPU keeps the full dual-ping-pong tracer and diagnostic texture path; WebGL implements a simpler FBO-based tracer suitable for reference/debug work.
 - WebGPU remains the source of truth for deployment-quality output.
 - The dual (2-up) compare view (docs/COMPARE_VIEWS.md Phase 1) is WebGPU-only: it requires a second renderer sharing one `GPUDevice`, which the WebGL path does not support. The Dual toggle is disabled on the WebGL backend.
