@@ -41,27 +41,52 @@ Recent closures (**#126–#133**) added the architecture below. All are **shippe
 | Live source (camera / screen / video file) | [#127](https://github.com/ford442/Chromashift/issues/127) | ✅ Shipped | [LIVE_SOURCE.md](LIVE_SOURCE.md), `LiveSource.ts` — not serialized into presets |
 | gpu-chores facade | [#132](https://github.com/ford442/Chromashift/issues/132) | ✅ Shipped | `src/engine/compute/chores/` — WebGPU → WASM → TS |
 | Optional GPU features consumed | [#142](https://github.com/ford442/Chromashift/issues/142) | ✅ Shipped | `timestamp-query` + `rg11b10ufloat-renderable`; `float32-filterable` dropped; [gpu-bootstrap.md](gpu-bootstrap.md) |
-| WebGPU hard-fail (no silent WebGL) | [#133](https://github.com/ford442/Chromashift/issues/133) | ✅ Shipped | `WEBGL_BACKEND_ENABLED = false`; [webgl-fallback.md](webgl-fallback.md) |
-| WebGPU hard-fail (no silent WebGL) | [#133](https://github.com/ford442/Chromashift/issues/133) | ✅ Shipped | Probe overlay; `usingWebGL` false on failure |
+| WebGPU hard-fail (no silent WebGL) | [#133](https://github.com/ford442/Chromashift/issues/133) | ✅ Shipped | `WEBGL_BACKEND_ENABLED = false`; probe overlay, `usingWebGL` false on failure; [webgl-fallback.md](webgl-fallback.md) |
 | Explicit WebGL diagnostic backend | [#141](https://github.com/ford442/Chromashift/issues/141) | ✅ Shipped | `?renderer=webgl` / panel; never automatic fallback; [webgl-fallback.md](webgl-fallback.md) |
 
-## Next up — prioritized backlog (#142–#145)
+## Next up — prioritized backlog (#143–#145)
 
-Strategic audit (2026-08). **Build these before another still-image effect.** Compare, presets v3, live source, gpu-chores, and optional GPU feature consumption already shipped; remaining gaps are WebGL diagnostic policy, artist workflow, installation capture, and hot-path WASM.
-
-| Pri | Target | Issue | Type | Complexity | Notes |
-|-----|--------|-------|------|------------|-------|
-| P0 | Explicit WebGL diagnostic backend | [#141](https://github.com/ford442/Chromashift/issues/141) | Foundation | L | Never silent fallback; unlocks XR + Playwright chromium |
-Strategic audit (2026-08). **Build these before another still-image effect.** Compare, presets v3, live source, gpu-chores, and explicit WebGL already shipped; the gaps are unused GPU features, artist workflow, installation capture, and hot-path WASM.
+Strategic audit (2026-08). **Build these before another still-image effect.** Compare, presets v3, live source, gpu-chores, optional GPU features, and explicit WebGL already shipped; the gaps are artist workflow, installation capture, and hot-path WASM.
 
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
-| P0 | Consume or drop optional GPU features | [#142](https://github.com/ford442/Chromashift/issues/142) | Foundation | L | `float32-filterable` / `rg11b10ufloat` requested but unused; docs vs 8K retry order |
 | P1 | Colour profile designer + live LUT | [#143](https://github.com/ford442/Chromashift/issues/143) | Feature | L | JSON import is the current ceiling of the profile system |
 | P1 | Kiosk camera attract + live export | [#144](https://github.com/ford442/Chromashift/issues/144) | Feature | L | Consent splash; never `getUserMedia` from `?preset=` |
 | P1 | Compute persistence; no per-frame WASM | [#145](https://github.com/ford442/Chromashift/issues/145) | Architecture | L–XL | `durationToDecayWith` on the hot path is the wrong lane |
 
-**Foundation vs features:** do **#141** before treating WebXR as usable (presenter requires WebGL). **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145** should land the small WASM-hot-path cut even if compute persistence slips.
+**Foundation vs features:** **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145** should land the small WASM-hot-path cut even if compute persistence slips.
+
+## Strategic audit (2026-08, #149–#155)
+
+Second audit after the WebGL-policy and optional-GPU-feature work closed. The
+engine internals are in good shape — preallocated uniform buffers, a bind-group
+cache, typed texture handles, real parity tests. The weak seams are all at the
+**boundaries**: React ↔ engine, main thread ↔ workers, and the places where "3
+layers" is a literal rather than a parameter. **Do the foundation rows before the
+feature rows** — every feature below adds panels, per-frame state, and passes to
+layers that do not currently scale.
+
+### Foundation
+
+| Pri | Target | Issue | Type | Complexity | Notes |
+|-----|--------|-------|------|------------|-------|
+| P0 | Stop whole-tree re-renders | [#149](https://github.com/ford442/Chromashift/issues/149) | Foundation | M–L | Zero `React.memo` in the tree; the render loop dispatches at 5 Hz, re-reconciling 3137 thumbnails |
+| P0 | Analysis off the main thread | [#150](https://github.com/ford442/Chromashift/issues/150) | Foundation | M | `getImageDataAtNaturalSize` is a 268 MB synchronous alloc at 8K, on the CPU lanes that exist *because* the GPU lane is unavailable |
+| P1 | Virtualize + index the image browser | [#151](https://github.com/ford442/Chromashift/issues/151) | Foundation | M | 3137 unvirtualized entries, 360 kB manifest parsed at boot, no search |
+| P1 | Real WASM SIMD, one ABI, perf gate | [#152](https://github.com/ford442/Chromashift/issues/152) | Foundation | L | `-msimd128` with zero intrinsics; C exports *and* embind for the same 15 functions |
+
+### Features
+
+| Pri | Target | Issue | Type | Complexity | Notes |
+|-----|--------|-------|------|------------|-------|
+| P1 | Automation timeline (schema v5) | [#153](https://github.com/ford442/Chromashift/issues/153) | Feature | L | Presets are poses, not performances; unblocks authored exports and kiosk attract. Depends on #149 |
+| P2 | Pass-graph IR + compiler | [#154](https://github.com/ford442/Chromashift/issues/154) | Architecture | XL | "3 layers" is welded across WGSL, GLSL, TS and C++; default graph must be pixel-identical |
+| P2 | Motion-aware tracers | [#155](https://github.com/ford442/Chromashift/issues/155) | Feature | L | Persistence is spatial-only — live source's most interesting signal is discarded. Composes with #154 and #145 |
+
+**Reading the split:** #149 and #150 are the two that make everything else cheaper,
+and neither changes a pixel. #153 is the highest-value *product* addition — it is
+what makes video export and kiosk mode worth using. #154 is the one that removes
+the ceiling, and it is deliberately gated (`?graph=1`) so it can ship dark.
 
 ## Research
 
