@@ -49,12 +49,12 @@ orchestrator.destroy();   // tears down all slots + device
 | Colour space | `colorSpace: 'srgb'` default; optional `display-p3` from Viewport control / `viewport.colorSpace` | Browser default sRGB framebuffer |
 | Tone mapping | `toneMapping.mode: 'standard'` when set; catch-and-retry without | N/A |
 | Power | `powerPreference: 'high-performance'` | N/A |
-| Texture headroom | Retry ladder (below); first device request has **no** `requiredLimits` | `gl.MAX_TEXTURE_SIZE` |
+| Texture headroom | Canvas-capped `requiredLimits` on the single `requestDevice` (no 8K retry) | `gl.MAX_TEXTURE_SIZE` |
 
 ## Limits and features
 
-- **Limits**: `requestWebGpuDeviceAttempts` tries, in order: (1) default `requestDevice` with optional features and **no** `requiredLimits`, (2) canvas-sized `requiredLimits` from `deriveRequiredLimits(..., { requestHeadroom: false })`, (3) 8K headroom (`8192`, capped by the adapter) via `requestHeadroom: true`. `bootstrapWebGpu` logs the canvas-sized limits; 8K is **not** the first request. If every feature-bearing attempt fails, the same three tiers retry with no optional features.
-- **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) to what the adapter supports. That list is only `timestamp-query` (Perf HUD) and `rg11b10ufloat-renderable` (HDR internal targets via `selectInternalColorFormat`). `requestWebGpuDevice()` passes it as `requiredFeatures` on every attempt so a granted feature survives limit fallback. None are required for core rendering. `float32-filterable` is **not** requested — the graph never samples 32-bit float textures. `device.features` after bootstrap is the source of truth (`WebGpuCapabilityReport`).
+- **Limits**: `requestWebGpuDevice` makes **one** `requestDevice` with canvas-sized `requiredLimits` from `deriveRequiredLimits(..., { requestHeadroom: false })` (longest canvas edge, 256 MiB `maxBufferSize`, 64 MiB storage, 64 KiB uniform). Spec-default devices (8K `maxTextureDimension2D`) and 8K-headroom retries are not used — they worsen D3D12 command-queue OOM. Queue-create / `E_OUTOFMEMORY` failures are never retried. Console **info** is one `[Chromashift:GPU] requestDevice` line per attempt (`attempt` index + `strategy: 'canvas-limits'`); the optional no-features retry is **debug**; failures are **error** once so D3D12 OOM is not buried.
+- **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) to what the adapter supports. That list is only `timestamp-query` (Perf HUD) and `rg11b10ufloat-renderable` (HDR internal targets via `selectInternalColorFormat`). The first `requestDevice` passes them as `requiredFeatures`. If that fails for a **non-OOM** reason, **one** retry uses the same canvas limits with no optional features. None are required for core rendering. `float32-filterable` is **not** requested — the graph never samples 32-bit float textures. `device.features` after bootstrap is the source of truth (`WebGpuCapabilityReport`).
 - **Internal colour format**: `selectInternalColorFormat(device)` returns `rg11b10ufloat` when `rg11b10ufloat-renderable` is granted, otherwise `rgba8unorm`. Additive tracers clip in the 8-bit fallback. Layer/persistence/compositor pipelines use this format; diagnostic stamp textures stay `rgba8unorm`.
 - **Display colour space**: `buildWebGpuCanvasConfiguration` defaults to `colorSpace: 'srgb'`. The Viewport **Display P3** control sets `display-p3` on every canvas via `RendererOrchestrator.setCanvasColorSpace`. Colour-profile LUTs remain sRGB (documented in [COLOR_PROFILES.md](COLOR_PROFILES.md)).
 - **Probe vs renderer breadcrumbs**: `publishWebGpuProbe` writes `window.webgpuProbe` only. `window.usingWebGPU` / `window.rendererType` are set by `publishRendererBreadcrumbs` after device + swapchain exist. A successful adapter probe must not make `waitForWebGPU` return early.
@@ -130,7 +130,7 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 |---|---|---|
 | `device.lost` (non-destroyed) | `deviceLostRuntimeError` | Recoverable overlay: **Retry GPU** or reload |
 | `device.onuncapturederror` | Logged + `uncapturedRuntimeError` | Console + non-recoverable notice |
-| Bootstrap failure | `toBootstrapRuntimeError` | Recoverable overlay |
+| Bootstrap failure | `toBootstrapRuntimeError` | Blocking overlay; **not** recoverable (no Retry GPU). Queue OOM names command-queue exhaustion. **Open WebGL diagnostic session** remains. |
 
 ### Recovery actions
 

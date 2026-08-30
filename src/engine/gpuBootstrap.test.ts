@@ -3,6 +3,7 @@ import {
   buildWebGpuCanvasConfiguration,
   buildWebGpuCapabilityReport,
   deriveRequiredLimits,
+  isFatalGpuDeviceRequestError,
   listAvailableOptionalFeatures,
   requestWebGpuDevice,
   toBootstrapRuntimeError,
@@ -105,7 +106,29 @@ describe('listAvailableOptionalFeatures', () => {
 });
 
 describe('requestWebGpuDevice', () => {
-  it('requests supported optional features on the first device attempt', async () => {
+  let infoSpy: ReturnType<typeof vi.spyOn>;
+  let debugSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    infoSpy.mockRestore();
+    debugSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  function requestDeviceLogMeta(spy: ReturnType<typeof vi.spyOn>) {
+    return spy.mock.calls
+      .filter((args) => args[0] === '[Chromashift:GPU] requestDevice')
+      .map((args) => args[1] as { attempt: number; strategy: string; requiredFeatures: GPUFeatureName[] });
+  }
+
+  it('requests canvas-capped limits and supported optional features on the first attempt', async () => {
     const calls: GPUDeviceDescriptor[] = [];
     const device = { features: new Set(['timestamp-query']) } as unknown as GPUDevice;
     const adapter = {
@@ -119,34 +142,40 @@ describe('requestWebGpuDevice', () => {
 
     await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
 
+    expect(calls).toHaveLength(1);
     expect(calls[0]?.requiredFeatures).toEqual(['timestamp-query']);
+    expect(calls[0]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
+    expect(calls[0]?.requiredLimits?.maxBufferSize).toBe(256 * 1024 * 1024);
+    expect(requestDeviceLogMeta(infoSpy)).toEqual([
+      expect.objectContaining({ attempt: 1, strategy: 'canvas-limits', requiredFeatures: ['timestamp-query'] }),
+    ]);
+    expect(debugSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it('requests the same features across every limit fallback tier', async () => {
+  it('does not retry after a queue-create OOM', async () => {
     const calls: GPUDeviceDescriptor[] = [];
-    const device = { features: new Set(['timestamp-query']) } as unknown as GPUDevice;
     const adapter = {
       features: new Set(['timestamp-query']),
       limits: mockAdapterLimits(),
       requestDevice: async (descriptor?: GPUDeviceDescriptor) => {
         calls.push(descriptor ?? {});
-        if (calls.length < 3) throw new Error('simulated failure');
-        return device;
+        throw new Error("Failed to execute 'requestDevice': D3D12 create command queue failed with E_OUTOFMEMORY (0x8007000E)");
       },
     } as unknown as GPUAdapter;
 
-    await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
-
-    expect(calls).toHaveLength(3);
-    expect(calls[0]?.requiredLimits).toBeUndefined();
-    expect(calls[1]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
-    expect(calls[2]?.requiredLimits?.maxTextureDimension2D).toBe(CHROMASHIFT_TARGET_MAX_TEXTURE);
-    for (const call of calls) {
-      expect(call.requiredFeatures).toEqual(['timestamp-query']);
-    }
+    await expect(requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query'])).rejects.toThrow(
+      /E_OUTOFMEMORY/,
+    );
+    expect(calls).toHaveLength(1);
+    expect(requestDeviceLogMeta(infoSpy)).toHaveLength(1);
+    expect(debugSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls[0]?.[0]).toBe('[Chromashift:GPU] requestDevice failed');
+    expect(String(errorSpy.mock.calls[0]?.[2])).toMatch(/E_OUTOFMEMORY/);
   });
 
-  it('degrades gracefully by retrying without optional features when every feature-bearing attempt fails', async () => {
+  it('retries once without optional features when the first request fails for a non-OOM reason', async () => {
     const calls: GPUDeviceDescriptor[] = [];
     const device = { features: new Set() } as unknown as GPUDevice;
     const adapter = {
@@ -164,9 +193,18 @@ describe('requestWebGpuDevice', () => {
     const result = await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
 
     expect(result).toBe(device);
-    expect(calls.length).toBeGreaterThan(3);
-    expect(calls.slice(0, 3).every((c) => Array.from(c.requiredFeatures ?? []).length > 0)).toBe(true);
-    expect(Array.from(calls[calls.length - 1]?.requiredFeatures ?? [])).toEqual([]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.requiredFeatures).toEqual(['timestamp-query']);
+    expect(calls[0]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
+    expect(Array.from(calls[1]?.requiredFeatures ?? [])).toEqual([]);
+    expect(calls[1]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
+    expect(requestDeviceLogMeta(infoSpy)).toEqual([
+      expect.objectContaining({ attempt: 1, strategy: 'canvas-limits' }),
+    ]);
+    expect(requestDeviceLogMeta(debugSpy)).toEqual([
+      expect.objectContaining({ attempt: 2, strategy: 'canvas-limits', requiredFeatures: [] }),
+    ]);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
   });
 
   it('propagates the error when the device request fails with no optional features requested', async () => {
@@ -181,6 +219,8 @@ describe('requestWebGpuDevice', () => {
     await expect(requestWebGpuDevice(adapter, 1920, 1080, undefined, [])).rejects.toThrow(
       'no adapter available',
     );
+    expect(debugSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -277,10 +317,25 @@ describe('getWebGL2ContextAttributes', () => {
 });
 
 describe('runtime error helpers', () => {
-  it('marks bootstrap failures as recoverable', () => {
+  it('marks queue-create OOM as a non-recoverable bootstrap failure', () => {
+    const err = toBootstrapRuntimeError(
+      new Error("Failed to execute 'requestDevice' on 'GPUAdapter': D3D12 create command queue failed with E_OUTOFMEMORY (0x8007000E)"),
+    );
+    expect(err.kind).toBe('bootstrap');
+    expect(err.recoverable).toBe(false);
+    expect(err.message).toContain('out of memory');
+    expect(err.detail).toContain('E_OUTOFMEMORY');
+  });
+
+  it('marks other bootstrap failures as non-recoverable', () => {
     const err = toBootstrapRuntimeError(new Error('No adapter'));
     expect(err.kind).toBe('bootstrap');
-    expect(err.recoverable).toBe(true);
+    expect(err.recoverable).toBe(false);
+  });
+
+  it('detects D3D12 queue OOM text', () => {
+    expect(isFatalGpuDeviceRequestError(new Error('create command queue failed with E_OUTOFMEMORY'))).toBe(true);
+    expect(isFatalGpuDeviceRequestError(new Error('no adapter available'))).toBe(false);
   });
 
   it('formats device loss with detail', () => {

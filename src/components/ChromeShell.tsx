@@ -3,6 +3,7 @@ import { KioskRemote } from './KioskRemote';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { openWebGlDiagnosticSession, readRequestedBackend } from '../engine/rendererMode';
+import { isFatalGpuDeviceRequestError } from '../engine/gpuBootstrap';
 import type { ChromeShellProps } from './AppUI.types';
 
 export function ChromeShell({
@@ -153,8 +154,10 @@ export function ChromeShell({
             <p className="text-amber-200/70 text-xs mt-3">
               {gpuError.kind === 'device-lost'
                 ? 'The GPU process may have restarted. Try Retry GPU, or reload the page.'
-                : 'WebGPU is required for the default session. Update or switch to a browser with working '
-                  + 'WebGPU, or check chrome://gpu (edge://gpu) for a blocked adapter.'}
+                : isFatalGpuDeviceRequestError(gpuError.detail ?? gpuError.message)
+                  ? 'The GPU could not create a command queue (out of memory). Do not retry WebGPU on this session — open a WebGL diagnostic session, close other GPU apps, or reload later.'
+                  : 'WebGPU is required for the default session. Update or switch to a browser with working '
+                    + 'WebGPU, or check chrome://gpu (edge://gpu) for a blocked adapter.'}
             </p>
             <p className="text-slate-400/70 text-[11px] mt-2 font-mono">
               Automatic WebGL fallback is off. Open a new diagnostic session if you need WebGL2 / XR / screenshots.

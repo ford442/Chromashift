@@ -114,40 +114,10 @@ export async function requestWebGpuAdapter(
   return navigator.gpu!.requestAdapter();
 }
 
-async function requestWebGpuDeviceAttempts(
-  adapter: GPUAdapter,
-  canvasPixelWidth: number,
-  canvasPixelHeight: number,
-  targetMaxTexture: number | undefined,
-  requiredFeatures: GPUFeatureName[],
-): Promise<GPUDevice> {
-  const canvasLimits = deriveRequiredLimits(
-    adapter.limits,
-    canvasPixelWidth,
-    canvasPixelHeight,
-    { targetMaxTexture, requestHeadroom: false },
-  );
-  const withFeatures = requiredFeatures.length > 0 ? { requiredFeatures } : {};
-
-  try {
-    return await adapter.requestDevice(withFeatures);
-  } catch (minimalError) {
-    console.warn('[Chromashift:GPU] Default device request failed, retrying with canvas limits', minimalError);
-  }
-
-  try {
-    return await adapter.requestDevice({ ...withFeatures, requiredLimits: canvasLimits });
-  } catch (limitedError) {
-    console.warn('[Chromashift:GPU] Limited device request failed, retrying with 8K headroom', limitedError);
-  }
-
-  const headroomLimits = deriveRequiredLimits(
-    adapter.limits,
-    canvasPixelWidth,
-    canvasPixelHeight,
-    { targetMaxTexture, requestHeadroom: true },
-  );
-  return adapter.requestDevice({ ...withFeatures, requiredLimits: headroomLimits });
+/** D3D12 queue create OOM and similar — further requestDevice attempts make it worse. */
+export function isFatalGpuDeviceRequestError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /E_OUTOFMEMORY|0x8007000E|create command queue|out of memory/i.test(message);
 }
 
 export async function requestWebGpuDevice(
@@ -157,23 +127,41 @@ export async function requestWebGpuDevice(
   targetMaxTexture?: number,
   requiredFeatures: readonly GPUFeatureName[] = [],
 ): Promise<GPUDevice> {
+  const requiredLimits = deriveRequiredLimits(
+    adapter.limits,
+    canvasPixelWidth,
+    canvasPixelHeight,
+    { targetMaxTexture, requestHeadroom: false },
+  );
   const requestedFeatures = [...requiredFeatures];
+  const descriptor: GPUDeviceDescriptor = {
+    requiredLimits,
+    ...(requestedFeatures.length > 0 ? { requiredFeatures: requestedFeatures } : {}),
+  };
+  const strategy = 'canvas-limits' as const;
 
+  const logPayload = (attempt: number, features: readonly GPUFeatureName[]) => ({
+    attempt,
+    strategy,
+    requiredLimits,
+    requiredFeatures: [...features],
+  });
+
+  console.info('[Chromashift:GPU] requestDevice', logPayload(1, requestedFeatures));
   try {
-    return await requestWebGpuDeviceAttempts(
-      adapter,
-      canvasPixelWidth,
-      canvasPixelHeight,
-      targetMaxTexture,
-      requestedFeatures,
-    );
-  } catch (featuresError) {
-    if (requestedFeatures.length === 0) throw featuresError;
-    console.warn(
-      '[Chromashift:GPU] Device request with optional features failed on every limit tier, retrying with no optional features',
-      featuresError,
-    );
-    return requestWebGpuDeviceAttempts(adapter, canvasPixelWidth, canvasPixelHeight, targetMaxTexture, []);
+    return await adapter.requestDevice(descriptor);
+  } catch (firstError) {
+    console.error('[Chromashift:GPU] requestDevice failed', logPayload(1, requestedFeatures), firstError);
+    if (isFatalGpuDeviceRequestError(firstError) || requestedFeatures.length === 0) {
+      throw firstError;
+    }
+    console.debug('[Chromashift:GPU] requestDevice', logPayload(2, []));
+    try {
+      return await adapter.requestDevice({ requiredLimits });
+    } catch (retryError) {
+      console.error('[Chromashift:GPU] requestDevice failed', logPayload(2, []), retryError);
+      throw retryError;
+    }
   }
 }
 
@@ -328,10 +316,18 @@ export function createScopedGpuError(label: string, gpuError: GPUError): Error {
 
 export function toBootstrapRuntimeError(error: unknown): GpuRuntimeError {
   const message = error instanceof Error ? error.message : String(error);
+  if (isFatalGpuDeviceRequestError(error)) {
+    return {
+      kind: 'bootstrap',
+      message: 'WebGPU device request failed (GPU queue out of memory).',
+      detail: message,
+      recoverable: false,
+    };
+  }
   return {
     kind: 'bootstrap',
     message,
-    recoverable: true,
+    recoverable: false,
   };
 }
 
