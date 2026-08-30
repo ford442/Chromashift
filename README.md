@@ -229,13 +229,14 @@ See [AGENTS.md](AGENTS.md#browser-requirements) for the full matrix with version
 ## Roadmap
 
 **[docs/ROADMAP.md](docs/ROADMAP.md)** is the maintained roadmap (shipped vs. planned).
-Open strategic backlog: **[#141](https://github.com/ford442/Chromashift/issues/141)–[#145](https://github.com/ford442/Chromashift/issues/145)** (#115–#133 are closed).
+Open strategic backlog: **[#143](https://github.com/ford442/Chromashift/issues/143)–[#145](https://github.com/ford442/Chromashift/issues/145)** and **[#149](https://github.com/ford442/Chromashift/issues/149)–[#155](https://github.com/ford442/Chromashift/issues/155)** (#115–#142 are closed).
 
 | Status | Highlights |
 |--------|------------|
-| **Shipped** | Colour profiles + schema v3, live source, gpu-chores, compare dual/swipe/quad, WebGPU hard-fail, WebCodecs export — see [ROADMAP.md](docs/ROADMAP.md) |
-| **Next** | Explicit WebGL diagnostic backend ([#141](https://github.com/ford442/Chromashift/issues/141)); optional GPU features / HDR ([#142](https://github.com/ford442/Chromashift/issues/142)); profile designer ([#143](https://github.com/ford442/Chromashift/issues/143)) |
-| **Then** | Kiosk camera + live capture ([#144](https://github.com/ford442/Chromashift/issues/144)); compute persistence / no per-frame WASM ([#145](https://github.com/ford442/Chromashift/issues/145)) |
-| **Research** | WebGPU-XR swapchain — [WebXR.md](docs/WebXR.md); blocked on [#141](https://github.com/ford442/Chromashift/issues/141) while WebGL selection is off |
+| **Shipped** | Colour profiles + schema v3/v4, live source, gpu-chores, compare dual/swipe/quad, WebGPU hard-fail, explicit WebGL diagnostic backend, optional GPU features, WebCodecs export — see [ROADMAP.md](docs/ROADMAP.md) |
+| **Foundation first** | Stop whole-tree re-renders ([#149](https://github.com/ford442/Chromashift/issues/149)); analysis off the main thread ([#150](https://github.com/ford442/Chromashift/issues/150)); virtualized image browser ([#151](https://github.com/ford442/Chromashift/issues/151)); real WASM SIMD ([#152](https://github.com/ford442/Chromashift/issues/152)) |
+| **Next** | Profile designer ([#143](https://github.com/ford442/Chromashift/issues/143)); automation timeline ([#153](https://github.com/ford442/Chromashift/issues/153)); kiosk camera + live capture ([#144](https://github.com/ford442/Chromashift/issues/144)) |
+| **Then** | Compute persistence / no per-frame WASM ([#145](https://github.com/ford442/Chromashift/issues/145)); pass-graph IR ([#154](https://github.com/ford442/Chromashift/issues/154)); motion-aware tracers ([#155](https://github.com/ford442/Chromashift/issues/155)) |
+| **Research** | WebGPU-XR swapchain — [WebXR.md](docs/WebXR.md); WebGL presenter path is unblocked via `?renderer=webgl` |
 
 Full per-issue detail and file pointers: **[docs/ROADMAP.md](docs/ROADMAP.md)**.

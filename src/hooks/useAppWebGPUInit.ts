@@ -238,6 +238,10 @@ export function useAppWebGPUInit({
       const fallbackReason = bootstrapped.orchestrator.getFallbackReason();
       setRendererFallbackReason(fallbackReason);
       publishRendererBreadcrumbs(bootstrapped.orchestrator.getBackend(), fallbackReason);
+      // Apply the requested canvas colour space now: the standing effect below
+      // only re-runs when `displayColorSpace` changes, so a preset URL that
+      // selects display-p3 before boot would otherwise never reach the canvas.
+      bootstrapped.orchestrator.setCanvasColorSpace(displayColorSpace);
       return true;
     };
 
@@ -315,27 +319,6 @@ export function useAppWebGPUInit({
       publishRendererBootFailure(detail);
       throw primaryError;
     }
-
-    if (bailIfCancelled()) return false;
-
-    syncOrchestratorRefs(
-      orchestrator,
-      bootstrappedPrimaryRenderer(orchestrator),
-      orchestratorRef,
-      deviceRef,
-      webGpuSessionRef,
-      gpuImageAnalysisRef,
-      rendererRef,
-      textureManagerRef,
-    );
-    setRendererBackend(orchestrator.getBackend());
-    const fallbackReason = orchestrator.getFallbackReason();
-    setRendererFallbackReason(fallbackReason);
-    publishRendererBreadcrumbs(orchestrator.getBackend(), fallbackReason);
-    orchestrator.setCanvasColorSpace(displayColorSpace);
-    // Device + swapchain are live; promote the probe to a full success.
-    recordProbeSuccess(probe);
-    return true;
   }, [
     antialiasEnabled,
     orchestratorRef,
