@@ -64,10 +64,74 @@ export interface WebGpuSession {
 
 type SupportedLimits = GPUAdapter['limits'];
 
+/** Floor for canvas-derived `requiredLimits` so a collapsed 150px layout cannot reshape a device. */
+export const MIN_DEVICE_TEXTURE_DIMENSION = 256;
+
+/** Hard cap on `requestDevice` strategies per acquire. Never reset from rAF / resize / React. */
+export const MAX_DEVICE_REQUEST_STRATEGIES = 3;
+
+export type GpuDeviceRequestStrategy =
+  | 'default-limits'
+  | 'canvas-limits'
+  | 'no-optional-features';
+
 export interface DeriveRequiredLimitsOptions {
   targetMaxTexture?: number;
   /** When true, request up to 8K texture headroom; when false, only canvas size (safer for requestDevice). */
   requestHeadroom?: boolean;
+}
+
+/**
+ * Page-lifetime GPU lease. `requestAdapter` runs once; `requestDevice` runs at
+ * most three strategies, then either the live device is reused or `gpuFatal`
+ * blocks every later call until reload. React effect re-runs, ResizeObserver,
+ * and canvas-size glitches must not start another acquire (#157 / #158).
+ */
+interface GpuDeviceGate {
+  adapter: GPUAdapter | null;
+  adapterPromise: Promise<GPUAdapter | null> | null;
+  device: GPUDevice | null;
+  devicePromise: Promise<GPUDevice> | null;
+  requestAttempt: number;
+  fatal: GpuRuntimeError | null;
+  adapterReadyLogged: boolean;
+  requestDeviceInfoLogged: boolean;
+}
+
+function emptyGpuDeviceGate(): GpuDeviceGate {
+  return {
+    adapter: null,
+    adapterPromise: null,
+    device: null,
+    devicePromise: null,
+    requestAttempt: 0,
+    fatal: null,
+    adapterReadyLogged: false,
+    requestDeviceInfoLogged: false,
+  };
+}
+
+let gpuDeviceGate: GpuDeviceGate = emptyGpuDeviceGate();
+
+export function getGpuFatalError(): GpuRuntimeError | null {
+  return gpuDeviceGate.fatal;
+}
+
+function markGpuFatal(error: GpuRuntimeError): void {
+  gpuDeviceGate.fatal ??= error;
+}
+
+/** Drop a lost/abandoned device so Retry GPU can acquire a new one. Does not clear `gpuFatal`. */
+export function releasePageGpuDevice(): void {
+  gpuDeviceGate.device = null;
+  gpuDeviceGate.devicePromise = null;
+  gpuDeviceGate.requestAttempt = 0;
+  gpuDeviceGate.requestDeviceInfoLogged = false;
+}
+
+/** Test-only: restore the page gate so Vitest cases do not share a live device. */
+export function resetGpuDeviceGateForTests(): void {
+  gpuDeviceGate = emptyGpuDeviceGate();
 }
 
 export function deriveRequiredLimits(
@@ -82,7 +146,7 @@ export function deriveRequiredLimits(
   const targetMaxTexture = options.targetMaxTexture ?? CHROMASHIFT_TARGET_MAX_TEXTURE;
   const requestHeadroom = options.requestHeadroom ?? false;
 
-  const longestEdge = Math.max(1, canvasPixelWidth, canvasPixelHeight);
+  const longestEdge = Math.max(MIN_DEVICE_TEXTURE_DIMENSION, canvasPixelWidth, canvasPixelHeight);
   const desiredMax = requestHeadroom
     ? Math.max(longestEdge, Math.min(targetMaxTexture, adapterLimits.maxTextureDimension2D))
     : longestEdge;
@@ -102,22 +166,136 @@ export function deriveRequiredLimits(
 export async function requestWebGpuAdapter(
   powerPreference: GPUPowerPreference = 'high-performance',
 ): Promise<GPUAdapter | null> {
-  const attempts: GPUPowerPreference[] = powerPreference === 'high-performance'
-    ? ['high-performance', 'low-power']
-    : [powerPreference, 'high-performance'];
+  if (gpuDeviceGate.adapter) return gpuDeviceGate.adapter;
+  if (gpuDeviceGate.adapterPromise) return gpuDeviceGate.adapterPromise;
 
-  for (const preference of attempts) {
-    const adapter = await navigator.gpu!.requestAdapter({ powerPreference: preference });
-    if (adapter) return adapter;
-  }
+  gpuDeviceGate.adapterPromise = (async () => {
+    const attempts: GPUPowerPreference[] = powerPreference === 'high-performance'
+      ? ['high-performance', 'low-power']
+      : [powerPreference, 'high-performance'];
 
-  return navigator.gpu!.requestAdapter();
+    for (const preference of attempts) {
+      const adapter = await navigator.gpu!.requestAdapter({ powerPreference: preference });
+      if (adapter) {
+        gpuDeviceGate.adapter = adapter;
+        return adapter;
+      }
+    }
+
+    const fallback = await navigator.gpu!.requestAdapter();
+    if (fallback) gpuDeviceGate.adapter = fallback;
+    return fallback;
+  })();
+
+  return gpuDeviceGate.adapterPromise;
 }
 
 /** D3D12 queue create OOM and similar — further requestDevice attempts make it worse. */
 export function isFatalGpuDeviceRequestError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /E_OUTOFMEMORY|0x8007000E|create command queue|out of memory/i.test(message);
+}
+
+interface DeviceRequestStrategy {
+  name: GpuDeviceRequestStrategy;
+  requiredLimits: GPUDeviceDescriptor['requiredLimits'];
+  features: GPUFeatureName[];
+}
+
+function buildDeviceRequestStrategies(
+  adapter: GPUAdapter,
+  canvasPixelWidth: number,
+  canvasPixelHeight: number,
+  targetMaxTexture: number | undefined,
+  requestedFeatures: GPUFeatureName[],
+): DeviceRequestStrategy[] {
+  const canvasLimits = deriveRequiredLimits(
+    adapter.limits,
+    canvasPixelWidth,
+    canvasPixelHeight,
+    { targetMaxTexture, requestHeadroom: false },
+  );
+  const strategies: DeviceRequestStrategy[] = [
+    { name: 'default-limits', requiredLimits: undefined, features: requestedFeatures },
+    { name: 'canvas-limits', requiredLimits: canvasLimits, features: requestedFeatures },
+  ];
+  if (requestedFeatures.length > 0) {
+    strategies.push({
+      name: 'no-optional-features',
+      requiredLimits: canvasLimits,
+      features: [],
+    });
+  }
+  return strategies.slice(0, MAX_DEVICE_REQUEST_STRATEGIES);
+}
+
+function logDeviceRequest(
+  attempt: number,
+  strategy: GpuDeviceRequestStrategy,
+  requiredLimits: GPUDeviceDescriptor['requiredLimits'],
+  features: readonly GPUFeatureName[],
+): void {
+  const payload = {
+    attempt,
+    strategy,
+    requiredLimits,
+    requiredFeatures: [...features],
+  };
+  if (!gpuDeviceGate.requestDeviceInfoLogged) {
+    gpuDeviceGate.requestDeviceInfoLogged = true;
+    console.info('[Chromashift:GPU] requestDevice', payload);
+    return;
+  }
+  console.debug('[Chromashift:GPU] requestDevice', payload);
+}
+
+async function acquireWebGpuDevice(
+  adapter: GPUAdapter,
+  canvasPixelWidth: number,
+  canvasPixelHeight: number,
+  targetMaxTexture: number | undefined,
+  requiredFeatures: readonly GPUFeatureName[],
+): Promise<GPUDevice> {
+  const requestedFeatures = [...requiredFeatures];
+  const strategies = buildDeviceRequestStrategies(
+    adapter,
+    canvasPixelWidth,
+    canvasPixelHeight,
+    targetMaxTexture,
+    requestedFeatures,
+  );
+
+  let lastError: unknown;
+  for (const strategy of strategies) {
+    gpuDeviceGate.requestAttempt += 1;
+    const attempt = gpuDeviceGate.requestAttempt;
+    logDeviceRequest(attempt, strategy.name, strategy.requiredLimits, strategy.features);
+
+    const descriptor: GPUDeviceDescriptor = {
+      ...(strategy.requiredLimits ? { requiredLimits: strategy.requiredLimits } : {}),
+      ...(strategy.features.length > 0 ? { requiredFeatures: strategy.features } : {}),
+    };
+
+    try {
+      return await adapter.requestDevice(descriptor);
+    } catch (error) {
+      lastError = error;
+      console.error('[Chromashift:GPU] requestDevice failed', {
+        attempt,
+        strategy: strategy.name,
+        requiredLimits: strategy.requiredLimits,
+        requiredFeatures: [...strategy.features],
+      }, error);
+      if (isFatalGpuDeviceRequestError(error)) {
+        markGpuFatal(toBootstrapRuntimeError(error));
+        throw error;
+      }
+    }
+  }
+
+  const fatal = toBootstrapRuntimeError(lastError ?? new Error('WebGPU device request failed.'));
+  markGpuFatal(fatal);
+  throw lastError ?? new Error(fatal.message);
 }
 
 export async function requestWebGpuDevice(
@@ -127,40 +305,31 @@ export async function requestWebGpuDevice(
   targetMaxTexture?: number,
   requiredFeatures: readonly GPUFeatureName[] = [],
 ): Promise<GPUDevice> {
-  const requiredLimits = deriveRequiredLimits(
-    adapter.limits,
+  if (gpuDeviceGate.fatal) {
+    throw new Error(gpuDeviceGate.fatal.detail ?? gpuDeviceGate.fatal.message);
+  }
+  if (gpuDeviceGate.device) {
+    return gpuDeviceGate.device;
+  }
+  if (gpuDeviceGate.devicePromise) {
+    return gpuDeviceGate.devicePromise;
+  }
+
+  const pending = acquireWebGpuDevice(
+    adapter,
     canvasPixelWidth,
     canvasPixelHeight,
-    { targetMaxTexture, requestHeadroom: false },
+    targetMaxTexture,
+    requiredFeatures,
   );
-  const requestedFeatures = [...requiredFeatures];
-  const descriptor: GPUDeviceDescriptor = {
-    requiredLimits,
-    ...(requestedFeatures.length > 0 ? { requiredFeatures: requestedFeatures } : {}),
-  };
-  const strategy = 'canvas-limits' as const;
-
-  const logPayload = (attempt: number, features: readonly GPUFeatureName[]) => ({
-    attempt,
-    strategy,
-    requiredLimits,
-    requiredFeatures: [...features],
-  });
-
-  console.info('[Chromashift:GPU] requestDevice', logPayload(1, requestedFeatures));
+  gpuDeviceGate.devicePromise = pending;
   try {
-    return await adapter.requestDevice(descriptor);
-  } catch (firstError) {
-    console.error('[Chromashift:GPU] requestDevice failed', logPayload(1, requestedFeatures), firstError);
-    if (isFatalGpuDeviceRequestError(firstError) || requestedFeatures.length === 0) {
-      throw firstError;
-    }
-    console.debug('[Chromashift:GPU] requestDevice', logPayload(2, []));
-    try {
-      return await adapter.requestDevice({ requiredLimits });
-    } catch (retryError) {
-      console.error('[Chromashift:GPU] requestDevice failed', logPayload(2, []), retryError);
-      throw retryError;
+    const device = await pending;
+    gpuDeviceGate.device = device;
+    return device;
+  } finally {
+    if (gpuDeviceGate.devicePromise === pending) {
+      gpuDeviceGate.devicePromise = null;
     }
   }
 }
@@ -222,6 +391,8 @@ export function buildAdapterReport(
 }
 
 export function logAdapterReport(report: GpuAdapterReport, requiredLimits: GPUDeviceDescriptor['requiredLimits']): void {
+  if (gpuDeviceGate.adapterReadyLogged) return;
+  gpuDeviceGate.adapterReadyLogged = true;
   console.info('[Chromashift:GPU] Adapter ready', {
     ...report,
     requiredLimits,
@@ -353,6 +524,10 @@ export function uncapturedRuntimeError(error: GPUError): GpuRuntimeError {
 }
 
 export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<WebGpuSession> {
+  const fatal = getGpuFatalError();
+  if (fatal) {
+    throw new Error(fatal.detail ?? fatal.message);
+  }
   if (!navigator.gpu) {
     throw new Error('WebGPU is not supported in this browser.');
   }
@@ -387,7 +562,6 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
   const timestampQueryAvailable = capabilities.timestampQueryAvailable;
   const context = options.canvas.getContext('webgpu');
   if (!context) {
-    device.destroy();
     throw new Error('Failed to get WebGPU context from canvas.');
   }
 
@@ -405,6 +579,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
 
   const detach = attachDeviceDiagnostics(device, {
     onLost: (info) => {
+      releasePageGpuDevice();
       if (info.reason === 'destroyed') return;
       options.onRuntimeError?.(deviceLostRuntimeError(info));
     },

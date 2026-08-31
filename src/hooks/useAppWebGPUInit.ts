@@ -11,7 +11,13 @@ import {
   recordProbeStageFailure,
   recordProbeSuccess,
 } from '../engine/webgpuProbe';
-import { toBootstrapRuntimeError, type GpuRuntimeError, type WebGpuSession } from '../engine/gpuBootstrap';
+import {
+  getGpuFatalError,
+  releasePageGpuDevice,
+  toBootstrapRuntimeError,
+  type GpuRuntimeError,
+  type WebGpuSession,
+} from '../engine/gpuBootstrap';
 import { listLocalImages } from '../engine/LocalLibrary';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
 
@@ -171,6 +177,10 @@ export function useAppWebGPUInit({
 }: UseAppWebGPUInitProps): UseAppWebGPUInitResult {
   const activeOrchestratorRef = useRef<RendererOrchestrator | null>(null);
   const retryAbortRef = useRef<AbortController | null>(null);
+  const antialiasEnabledRef = useRef(antialiasEnabled);
+  const displayColorSpaceRef = useRef(displayColorSpace);
+  antialiasEnabledRef.current = antialiasEnabled;
+  displayColorSpaceRef.current = displayColorSpace;
   const [isGpuRetrying, setIsGpuRetrying] = useState(false);
 
   const destroyActiveOrchestrator = useCallback(() => {
@@ -183,6 +193,12 @@ export function useAppWebGPUInit({
     cancelToken: CancelToken,
     signal: AbortSignal,
   ): Promise<boolean> => {
+    const fatal = getGpuFatalError();
+    if (fatal) {
+      if (!isCancelled(cancelToken, signal)) setGpuError(fatal);
+      return false;
+    }
+
     const canvas = mainCanvasRef.current;
     if (!canvas) return false;
 
@@ -241,9 +257,13 @@ export function useAppWebGPUInit({
       // Apply the requested canvas colour space now: the standing effect below
       // only re-runs when `displayColorSpace` changes, so a preset URL that
       // selects display-p3 before boot would otherwise never reach the canvas.
-      bootstrapped.orchestrator.setCanvasColorSpace(displayColorSpace);
+      bootstrapped.orchestrator.setCanvasColorSpace(displayColorSpaceRef.current);
       return true;
     };
+
+    if (activeOrchestratorRef.current) {
+      return finishBoot({ orchestrator: activeOrchestratorRef.current });
+    }
 
     // Explicit diagnostic / XR / screenshot session: never request a WebGPU
     // adapter or device, so gpu-chores cannot adopt a leftover GPUDevice.
@@ -254,7 +274,7 @@ export function useAppWebGPUInit({
         }
         const bootstrapped = await RendererOrchestrator.bootstrap({
           primaryCanvas: canvas,
-          antialias: antialiasEnabled,
+          antialias: antialiasEnabledRef.current,
           backend: 'webgl',
           onRuntimeError,
         });
@@ -293,7 +313,7 @@ export function useAppWebGPUInit({
 
       const bootstrapped = await RendererOrchestrator.bootstrap({
         primaryCanvas: canvas,
-        antialias: antialiasEnabled,
+        antialias: antialiasEnabledRef.current,
         backend: 'webgpu',
         onRuntimeError,
       });
@@ -320,7 +340,6 @@ export function useAppWebGPUInit({
       throw primaryError;
     }
   }, [
-    antialiasEnabled,
     orchestratorRef,
     deviceRef,
     webGpuSessionRef,
@@ -333,7 +352,6 @@ export function useAppWebGPUInit({
     setGpuError,
     mainCanvasRef,
     sourceTextureRef,
-    displayColorSpace,
   ]);
 
   const loadInitialCorpus = useCallback(async (
@@ -470,11 +488,18 @@ export function useAppWebGPUInit({
   }, [bootstrapGpu, loadInitialCorpus, setGpuReady]);
 
   const retryGpuBootstrap = useCallback(async (): Promise<void> => {
+    const fatal = getGpuFatalError();
+    if (fatal) {
+      setGpuError(fatal);
+      return;
+    }
+
     retryAbortRef.current?.abort();
     const abortController = new AbortController();
     retryAbortRef.current = abortController;
     const cancelToken: CancelToken = { cancelled: false };
 
+    releasePageGpuDevice();
     destroyActiveOrchestrator();
     clearOrchestratorRefs(
       orchestratorRef,
@@ -513,15 +538,26 @@ export function useAppWebGPUInit({
     setGpuError,
   ]);
 
+  const initRef = useRef(init);
+  initRef.current = init;
+
   useEffect(() => {
+    const fatal = getGpuFatalError();
+    if (fatal) {
+      setGpuError(fatal);
+      return;
+    }
+
     const cancelToken: CancelToken = { cancelled: false };
     const abortController = new AbortController();
 
     setGpuReady(false);
 
-    init(cancelToken, abortController.signal).catch((e) => {
+    initRef.current(cancelToken, abortController.signal).catch((e) => {
       if (isCancelled(cancelToken, abortController.signal) || isAbortError(e)) return;
-      setGpuError(toBootstrapRuntimeError(e));
+      const err = toBootstrapRuntimeError(e);
+      const sticky = getGpuFatalError() ?? err;
+      setGpuError(sticky);
     });
 
     return () => {
@@ -542,19 +578,12 @@ export function useAppWebGPUInit({
 
       destroyActiveOrchestrator();
     };
-  }, [
-    init,
-    destroyActiveOrchestrator,
-    orchestratorRef,
-    deviceRef,
-    gpuImageAnalysisRef,
-    rendererRef,
-    setGpuError,
-    setGpuReady,
-    textureManagerRef,
-    webGpuSessionRef,
-    sourceTextureRef,
-  ]);
+    // Page-lifetime GPU boot (#157 / #158). `init` changes every render because
+    // `useChromashiftRefs()` returns a new object, which used to re-run this
+    // effect, reset requestDevice to attempt 1, and OOM D3D12 command queues.
+    // Resize / antialias / colour-space changes must reconfigure, not reboot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     orchestratorRef.current?.setCanvasColorSpace(displayColorSpace);

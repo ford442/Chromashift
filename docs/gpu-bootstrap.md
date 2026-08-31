@@ -33,8 +33,8 @@ orchestrator.destroy();   // tears down all slots + device
 | WebGPU bootstrap | First canvas creates `WebGpuSession` (device + primary context); extra slots call `configureWebGpuCanvas` on their own contexts |
 | WebGL diagnostic | Single slot only (primary canvas); compare/multi-view is WebGPU-only. Started only when `backend: 'webgl'` / `getRendererPreference()` is webgl — never after a WebGPU catch. |
 | `device.lost` | Orchestrator destroys all active slots; shared `onRuntimeError` surfaces the recoverable overlay |
-| In-app retry | **Retry GPU** on the error overlay re-runs `RendererOrchestrator.bootstrap` without navigation; reducer state and current image index are preserved |
-| Resize | `resizeAll()` reconfigures the session context and every secondary slot context |
+| In-app retry | **Retry GPU** (device-lost only) re-runs `RendererOrchestrator.bootstrap` without navigation. `E_OUTOFMEMORY` / exhausted strategies are **not** retryable — reload required. |
+| Resize | `resizeAll()` reconfigures the session context and every secondary slot context on the **existing** device. Canvas size must not `requestDevice`. |
 | Tests | `RendererOrchestrator.test.ts` mocks bootstrap/factories — no WebGPU adapter required in CI |
 
 `useAppWebGPUInit` bootstraps the orchestrator and wires refs (`orchestratorRef`, `rendererRef`, `textureManagerRef`, …). `useCompareSlotRenderer` calls `createSlot('compare-b')` / `destroySlot` when dual layout is active.
@@ -49,12 +49,13 @@ orchestrator.destroy();   // tears down all slots + device
 | Colour space | `colorSpace: 'srgb'` default; optional `display-p3` from Viewport control / `viewport.colorSpace` | Browser default sRGB framebuffer |
 | Tone mapping | `toneMapping.mode: 'standard'` when set; catch-and-retry without | N/A |
 | Power | `powerPreference: 'high-performance'` | N/A |
-| Texture headroom | Canvas-capped `requiredLimits` on the single `requestDevice` (no 8K retry) | `gl.MAX_TEXTURE_SIZE` |
+| Texture headroom | At most three `requestDevice` strategies, then the live device is reused | `gl.MAX_TEXTURE_SIZE` |
 
 ## Limits and features
 
-- **Limits**: `requestWebGpuDevice` makes **one** `requestDevice` with canvas-sized `requiredLimits` from `deriveRequiredLimits(..., { requestHeadroom: false })` (longest canvas edge, 256 MiB `maxBufferSize`, 64 MiB storage, 64 KiB uniform). Spec-default devices (8K `maxTextureDimension2D`) and 8K-headroom retries are not used — they worsen D3D12 command-queue OOM. Queue-create / `E_OUTOFMEMORY` failures are never retried. Console **info** is one `[Chromashift:GPU] requestDevice` line per attempt (`attempt` index + `strategy: 'canvas-limits'`); the optional no-features retry is **debug**; failures are **error** once so D3D12 OOM is not buried.
-- **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) to what the adapter supports. That list is only `timestamp-query` (Perf HUD) and `rg11b10ufloat-renderable` (HDR internal targets via `selectInternalColorFormat`). The first `requestDevice` passes them as `requiredFeatures`. If that fails for a **non-OOM** reason, **one** retry uses the same canvas limits with no optional features. None are required for core rendering. `float32-filterable` is **not** requested — the graph never samples 32-bit float textures. `device.features` after bootstrap is the source of truth (`WebGpuCapabilityReport`).
+- **Limits / device lease**: one `GPUAdapter` and at most one live `GPUDevice` per page. `requestWebGpuDevice` walks **at most three** strategies — `default-limits` (omit `requiredLimits`) → `canvas-limits` (longest canvas edge, floored at 256 so a 150px layout glitch cannot reshape the request) → `no-optional-features` — then **stops**. A live device is reused; canvas resize reconfigures the context / recreates textures on that device. Queue-create / `E_OUTOFMEMORY` sets `gpuFatal` and never calls `requestDevice` again until reload. React effect re-runs, rAF, and ResizeObserver must not reset `attempt` to 1 (#157 / #158).
+- **Logs**: one `[Chromashift:GPU] Adapter ready` and one `[Chromashift:GPU] requestDevice` at **info** per session (`attempt` index + strategy). Further strategies are **debug**. Failures are **error** so D3D12 OOM is not buried.
+- **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) to what the adapter supports. That list is only `timestamp-query` (Perf HUD) and `rg11b10ufloat-renderable` (HDR internal targets via `selectInternalColorFormat`). They are **optional**: a failed `requestDevice` retries with `requiredFeatures: []` before giving up. None are required for core rendering. `float32-filterable` is **not** requested — the graph never samples 32-bit float textures. `device.features` after bootstrap is the source of truth (`WebGpuCapabilityReport`).
 - **Internal colour format**: `selectInternalColorFormat(device)` returns `rg11b10ufloat` when `rg11b10ufloat-renderable` is granted, otherwise `rgba8unorm`. Additive tracers clip in the 8-bit fallback. Layer/persistence/compositor pipelines use this format; diagnostic stamp textures stay `rgba8unorm`.
 - **Display colour space**: `buildWebGpuCanvasConfiguration` defaults to `colorSpace: 'srgb'`. The Viewport **Display P3** control sets `display-p3` on every canvas via `RendererOrchestrator.setCanvasColorSpace`. Colour-profile LUTs remain sRGB (documented in [COLOR_PROFILES.md](COLOR_PROFILES.md)).
 - **Probe vs renderer breadcrumbs**: `publishWebGpuProbe` writes `window.webgpuProbe` only. `window.usingWebGPU` / `window.rendererType` are set by `publishRendererBreadcrumbs` after device + swapchain exist. A successful adapter probe must not make `waitForWebGPU` return early.
@@ -136,7 +137,7 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 
 | Action | Behaviour |
 |---|---|
-| **Retry GPU** (in-app) | Re-runs `RendererOrchestrator.bootstrap`; preserves reducer settings, compare layout, kiosk flags, and current image index. `useImagePlayback` reloads the active texture when `gpuReady` becomes true again. Compare slots reattach via `useCompareSlotRenderer` / `useCompareQuadSlots`. |
+| **Retry GPU** (in-app) | Device-lost only. Re-runs `RendererOrchestrator.bootstrap` on the page adapter; `gpuFatal` (OOM / exhausted strategies) refuses another `requestDevice` until reload. Preserves reducer settings and current image index. |
 | **Reload page** | Full navigation |
 | **Open WebGL diagnostic session** | `openWebGlDiagnosticSession()` → persist preference and `location.assign(?renderer=webgl)`. New page load. Never an in-place silent switch. |
 

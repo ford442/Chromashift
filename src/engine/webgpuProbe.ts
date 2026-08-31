@@ -9,9 +9,10 @@
  * This module is the single pre-flight check `useAppWebGPUInit` runs before
  * touching `RendererOrchestrator` on the **default WebGPU** boot path. Explicit
  * `?renderer=webgl` sessions skip the probe entirely so no adapter/device is
- * requested. The probe stops **before** `requestDevice()`: the real bootstrap
- * owns the one and only device request, so a successful probe followed by a
- * real boot performs exactly one `requestDevice()`. Device- and context-stage
+ * requested. The probe stops **before** `requestDevice()` and shares the
+ * page-lifetime adapter cache with bootstrap (`requestWebGpuAdapter`), so a
+ * successful probe followed by a real boot performs **one** `requestAdapter`
+ * and at most three `requestDevice` strategies. Device- and context-stage
  * outcomes are folded back into the same published breadcrumb by
  * `recordProbeStageFailure` / `recordProbeSuccess`.
  *
@@ -19,7 +20,7 @@
  * `docs/webgl-fallback.md`.
  */
 
-import { readAdapterInfo } from './gpuBootstrap';
+import { readAdapterInfo, requestWebGpuAdapter } from './gpuBootstrap';
 
 /** How far boot got before it stopped. */
 export type WebGpuProbeStage =
@@ -155,8 +156,7 @@ export async function probeWebGPU(): Promise<WebGpuProbeResult> {
 
   let adapter: GPUAdapter | null = null;
   try {
-    adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' })
-      ?? await navigator.gpu.requestAdapter();
+    adapter = await requestWebGpuAdapter('high-performance');
   } catch (error) {
     return emptyResult(
       'adapter',

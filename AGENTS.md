@@ -154,7 +154,13 @@ http://localhost:5173/?renderer=webgl    # diagnostic / XR / Playwright
 **Boot probe**: `probeWebGPU()` (`src/engine/webgpuProbe.ts`) pre-flights the
 WebGPU path only: secure context → `navigator.gpu` → `requestAdapter`, publishing
 `window.webgpuProbe` `{ ok, browser, stage, reason, adapter, features, limits }`.
-It stops before `requestDevice()`. The GPU error overlay may offer **Open WebGL
+It stops before `requestDevice()` and shares the page-lifetime adapter cache
+with bootstrap. One `GPUDevice` per page: `requestDevice` walks at most three
+strategies (`default-limits` → `canvas-limits` → `no-optional-features`), then
+stops. `E_OUTOFMEMORY` sets a fatal circuit breaker — no further
+`requestDevice` until reload. Resize reconfigures the existing device; it
+must not boot again. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) and
+issues #157 / #158. The GPU error overlay may offer **Open WebGL
 diagnostic session**, which navigates to `?renderer=webgl` rather than switching
 in place.
 

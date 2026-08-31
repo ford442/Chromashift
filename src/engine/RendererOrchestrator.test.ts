@@ -288,7 +288,9 @@ describe('RendererOrchestrator', () => {
     expect(gpuImageAnalysis.destroy).toHaveBeenCalledOnce();
     expect(textureManager.destroy).toHaveBeenCalledOnce();
     expect(session.detach).toHaveBeenCalledOnce();
-    expect(session.device.destroy).toHaveBeenCalledOnce();
+    // Page-leased GPUDevice survives orchestrator teardown so React cleanup
+    // cannot start another requestDevice (#157 / #158).
+    expect(session.device.destroy).not.toHaveBeenCalled();
   });
 
   it('tears down slots when device is lost', async () => {

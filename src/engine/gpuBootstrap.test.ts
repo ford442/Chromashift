@@ -3,9 +3,14 @@ import {
   buildWebGpuCanvasConfiguration,
   buildWebGpuCapabilityReport,
   deriveRequiredLimits,
+  getGpuFatalError,
   isFatalGpuDeviceRequestError,
   listAvailableOptionalFeatures,
+  logAdapterReport,
+  MIN_DEVICE_TEXTURE_DIMENSION,
+  releasePageGpuDevice,
   requestWebGpuDevice,
+  resetGpuDeviceGateForTests,
   toBootstrapRuntimeError,
   deviceLostRuntimeError,
 } from './gpuBootstrap';
@@ -70,6 +75,12 @@ describe('deriveRequiredLimits', () => {
     expect(required?.maxTextureDimension2D).toBe(1920);
   });
 
+  it('floors a collapsed canvas at MIN_DEVICE_TEXTURE_DIMENSION', () => {
+    const limits = mockAdapterLimits({ maxTextureDimension2D: 16384 });
+    const required = deriveRequiredLimits(limits, 150, 150);
+    expect(required?.maxTextureDimension2D).toBe(MIN_DEVICE_TEXTURE_DIMENSION);
+  });
+
   it('never exceeds adapter maxTextureDimension2D', () => {
     const limits = mockAdapterLimits({ maxTextureDimension2D: 4096 });
     const required = deriveRequiredLimits(limits, 7680, 4320, { requestHeadroom: true });
@@ -111,6 +122,7 @@ describe('requestWebGpuDevice', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    resetGpuDeviceGateForTests();
     infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -120,6 +132,7 @@ describe('requestWebGpuDevice', () => {
     infoSpy.mockRestore();
     debugSpy.mockRestore();
     errorSpy.mockRestore();
+    resetGpuDeviceGateForTests();
   });
 
   function requestDeviceLogMeta(spy: ReturnType<typeof vi.spyOn>) {
@@ -128,7 +141,7 @@ describe('requestWebGpuDevice', () => {
       .map((args) => args[1] as { attempt: number; strategy: string; requiredFeatures: GPUFeatureName[] });
   }
 
-  it('requests canvas-capped limits and supported optional features on the first attempt', async () => {
+  it('requests adapter-default limits and supported optional features on the first attempt', async () => {
     const calls: GPUDeviceDescriptor[] = [];
     const device = { features: new Set(['timestamp-query']) } as unknown as GPUDevice;
     const adapter = {
@@ -144,13 +157,32 @@ describe('requestWebGpuDevice', () => {
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.requiredFeatures).toEqual(['timestamp-query']);
-    expect(calls[0]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
-    expect(calls[0]?.requiredLimits?.maxBufferSize).toBe(256 * 1024 * 1024);
+    expect(calls[0]?.requiredLimits).toBeUndefined();
     expect(requestDeviceLogMeta(infoSpy)).toEqual([
-      expect.objectContaining({ attempt: 1, strategy: 'canvas-limits', requiredFeatures: ['timestamp-query'] }),
+      expect.objectContaining({ attempt: 1, strategy: 'default-limits', requiredFeatures: ['timestamp-query'] }),
     ]);
     expect(debugSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it('reuses the live device and does not call requestDevice again', async () => {
+    const requestDevice = vi.fn(async () => ({ features: new Set() }) as unknown as GPUDevice);
+    const adapter = {
+      features: new Set(),
+      limits: mockAdapterLimits(),
+      requestDevice,
+    } as unknown as GPUAdapter;
+
+    const first = await requestWebGpuDevice(adapter, 1068, 1068);
+    const second = await requestWebGpuDevice(adapter, 150, 150, undefined, ['timestamp-query']);
+
+    expect(second).toBe(first);
+    expect(requestDevice).toHaveBeenCalledOnce();
+    expect(requestDeviceLogMeta(infoSpy)).toHaveLength(1);
+
+    await Promise.all(Array.from({ length: 48 }, () => requestWebGpuDevice(adapter, 150, 150)));
+    expect(requestDevice).toHaveBeenCalledOnce();
+    expect(requestDeviceLogMeta(infoSpy)).toHaveLength(1);
   });
 
   it('does not retry after a queue-create OOM', async () => {
@@ -173,9 +205,15 @@ describe('requestWebGpuDevice', () => {
     expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(errorSpy.mock.calls[0]?.[0]).toBe('[Chromashift:GPU] requestDevice failed');
     expect(String(errorSpy.mock.calls[0]?.[2])).toMatch(/E_OUTOFMEMORY/);
+    expect(getGpuFatalError()?.recoverable).toBe(false);
+
+    await expect(requestWebGpuDevice(adapter, 150, 150, undefined, ['timestamp-query'])).rejects.toThrow(
+      /out of memory|E_OUTOFMEMORY/i,
+    );
+    expect(calls).toHaveLength(1);
   });
 
-  it('retries once without optional features when the first request fails for a non-OOM reason', async () => {
+  it('walks default-limits → canvas-limits → no optional features on non-OOM failure', async () => {
     const calls: GPUDeviceDescriptor[] = [];
     const device = { features: new Set() } as unknown as GPUDevice;
     const adapter = {
@@ -193,18 +231,21 @@ describe('requestWebGpuDevice', () => {
     const result = await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
 
     expect(result).toBe(device);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     expect(calls[0]?.requiredFeatures).toEqual(['timestamp-query']);
-    expect(calls[0]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
-    expect(Array.from(calls[1]?.requiredFeatures ?? [])).toEqual([]);
+    expect(calls[0]?.requiredLimits).toBeUndefined();
+    expect(calls[1]?.requiredFeatures).toEqual(['timestamp-query']);
     expect(calls[1]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
+    expect(Array.from(calls[2]?.requiredFeatures ?? [])).toEqual([]);
+    expect(calls[2]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
     expect(requestDeviceLogMeta(infoSpy)).toEqual([
-      expect.objectContaining({ attempt: 1, strategy: 'canvas-limits' }),
+      expect.objectContaining({ attempt: 1, strategy: 'default-limits' }),
     ]);
     expect(requestDeviceLogMeta(debugSpy)).toEqual([
-      expect.objectContaining({ attempt: 2, strategy: 'canvas-limits', requiredFeatures: [] }),
+      expect.objectContaining({ attempt: 2, strategy: 'canvas-limits', requiredFeatures: ['timestamp-query'] }),
+      expect.objectContaining({ attempt: 3, strategy: 'no-optional-features', requiredFeatures: [] }),
     ]);
-    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledTimes(2);
   });
 
   it('propagates the error when the device request fails with no optional features requested', async () => {
@@ -219,8 +260,81 @@ describe('requestWebGpuDevice', () => {
     await expect(requestWebGpuDevice(adapter, 1920, 1080, undefined, [])).rejects.toThrow(
       'no adapter available',
     );
-    expect(debugSpy).not.toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(debugSpy).toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(getGpuFatalError()?.recoverable).toBe(false);
+
+    await expect(requestWebGpuDevice(adapter, 1920, 1080, undefined, [])).rejects.toThrow(
+      'no adapter available',
+    );
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('joins an in-flight acquire instead of starting a second requestDevice', async () => {
+    let resolveDevice: ((device: GPUDevice) => void) | undefined;
+    const requestDevice = vi.fn(() => new Promise<GPUDevice>((resolve) => {
+      resolveDevice = resolve;
+    }));
+    const adapter = {
+      features: new Set(),
+      limits: mockAdapterLimits(),
+      requestDevice,
+    } as unknown as GPUAdapter;
+
+    const first = requestWebGpuDevice(adapter, 1068, 1068);
+    const second = requestWebGpuDevice(adapter, 150, 150);
+    const device = { features: new Set() } as unknown as GPUDevice;
+    resolveDevice?.(device);
+
+    expect(await first).toBe(device);
+    expect(await second).toBe(device);
+    expect(requestDevice).toHaveBeenCalledOnce();
+  });
+
+  it('allows a new acquire after releasePageGpuDevice (device-lost retry)', async () => {
+    const requestDevice = vi.fn(async () => ({ features: new Set() }) as unknown as GPUDevice);
+    const adapter = {
+      features: new Set(),
+      limits: mockAdapterLimits(),
+      requestDevice,
+    } as unknown as GPUAdapter;
+
+    await requestWebGpuDevice(adapter, 1920, 1080);
+    releasePageGpuDevice();
+    await requestWebGpuDevice(adapter, 1920, 1080);
+
+    expect(requestDevice).toHaveBeenCalledTimes(2);
+    expect(requestDeviceLogMeta(infoSpy)).toHaveLength(2);
+  });
+});
+
+describe('logAdapterReport', () => {
+  afterEach(() => {
+    resetGpuDeviceGateForTests();
+    vi.restoreAllMocks();
+  });
+
+  it('logs Adapter ready once per page', () => {
+    resetGpuDeviceGateForTests();
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const report = {
+      vendor: 'nvidia',
+      architecture: 'gcn',
+      device: 'pascal',
+      description: 'GTX 1080',
+      features: ['timestamp-query'],
+      limits: {
+        maxTextureDimension2D: 16384,
+        maxBufferSize: 2147483648,
+        maxColorAttachmentBytesPerSample: 128,
+      },
+    };
+
+    logAdapterReport(report, { maxTextureDimension2D: 1068 });
+    logAdapterReport(report, { maxTextureDimension2D: 150 });
+
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy.mock.calls[0]?.[0]).toBe('[Chromashift:GPU] Adapter ready');
   });
 });
 

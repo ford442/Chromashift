@@ -336,7 +336,11 @@ export class RendererOrchestrator {
     }
   }
 
-  /** Tear down all slots, shared textures, and the GPU session/device. */
+  /**
+   * Tear down all slots, shared textures, and canvas configuration.
+   * Does **not** destroy the page-leased `GPUDevice` — React effect cleanup
+   * and resize must not `requestDevice` again (#157 / #158).
+   */
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -348,7 +352,6 @@ export class RendererOrchestrator {
     this.gpuImageAnalysis?.destroy();
     this.textureManager?.destroy();
     this.session?.detach();
-    this.session?.device.destroy();
 
     this.gpuImageAnalysis = null;
     this.textureManager = null;
@@ -395,7 +398,6 @@ export class RendererOrchestrator {
     if (!session) return;
 
     session.detach();
-    session.device.destroy();
     session.context.unconfigure();
   }
 

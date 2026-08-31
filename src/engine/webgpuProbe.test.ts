@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resetGpuDeviceGateForTests } from './gpuBootstrap';
 import {
   detectBrowserBrand,
   probeFailureMessage,
@@ -47,7 +48,10 @@ function installGlobals(options: {
 }
 
 describe('detectBrowserBrand', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    resetGpuDeviceGateForTests();
+    vi.unstubAllGlobals();
+  });
 
   it('names Edge distinctly from Chromium via userAgentData', () => {
     installGlobals({
@@ -67,7 +71,10 @@ describe('detectBrowserBrand', () => {
 });
 
 describe('probeWebGPU', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    resetGpuDeviceGateForTests();
+    vi.unstubAllGlobals();
+  });
 
   it('fails on an insecure context before touching navigator.gpu', async () => {
     installGlobals({ secureContext: false, gpu: { requestAdapter: vi.fn() } });
@@ -148,7 +155,10 @@ describe('probeWebGPU', () => {
 });
 
 describe('probe breadcrumbs', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    resetGpuDeviceGateForTests();
+    vi.unstubAllGlobals();
+  });
 
   it('publishes window.webgpuProbe without claiming usingWebGPU', async () => {
     const win = installGlobals({
