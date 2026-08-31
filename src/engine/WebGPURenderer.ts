@@ -123,11 +123,9 @@ export class WebGPURenderer {
       format,
       this.compositorSampler,
     );
-    this.gpuProfiler = GpuTimestampProfiler.create(device);
-    publishGpuTimestampBreadcrumbs(
-      this.gpuProfiler !== null,
-      this.gpuProfiler ? undefined : 'timestamp-query not granted',
-    );
+    const timestamp = GpuTimestampProfiler.create(device);
+    this.gpuProfiler = timestamp.profiler;
+    publishGpuTimestampBreadcrumbs(this.gpuProfiler !== null, timestamp.reason);
   }
 
   getRenderTiming(): RenderTiming {

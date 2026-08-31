@@ -93,7 +93,7 @@ These modes are intended for fast browser-visible checks. The WebGPU renderer ig
 
 ## GPU Performance HUD (WebGPU only)
 
-Per-pass GPU frame timing (`layers`, `persistence`, `compositor`, `readback`) is available on the WebGPU path when the adapter grants `timestamp-query`. Enable **Perf HUD** in the Diagnostics panel. The WebGL2 diagnostic backend keeps CPU-only timing and shows **GPU timing N/A**.
+Per-pass GPU frame timing (`layers`, `persistence`, `compositor`, `readback`) is available on the WebGPU path when the adapter grants `timestamp-query` and the split resolve/readback buffers allocate successfully. Enable **Perf HUD** in the Diagnostics panel. A failed timestamp buffer (invalid usage mix, period 0, or `createBuffer` error) leaves the renderer running with CPU-only HUD timing (`performance.now()`). The WebGL2 diagnostic backend keeps CPU-only timing and shows **GPU timing N/A**.
 
 Automation breadcrumbs (WebGPU bootstrap):
 

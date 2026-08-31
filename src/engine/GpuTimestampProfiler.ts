@@ -13,6 +13,13 @@ export const GPU_TIMING_HISTORY_SIZE = 120;
 const QUERIES_PER_FRAME = GPU_TIMESTAMP_MARKERS;
 const BYTES_PER_QUERY = 8;
 const RESOLVE_SLOTS = 2;
+const SLOT_BYTES = QUERIES_PER_FRAME * BYTES_PER_QUERY;
+const TIMING_BUFFER_BYTES = SLOT_BYTES * RESOLVE_SLOTS;
+
+export interface GpuTimestampCreateResult {
+  profiler: GpuTimestampProfiler | null;
+  reason?: string;
+}
 
 export interface BandwidthEstimateInput {
   canvasW: number;
@@ -66,13 +73,29 @@ export function parseTimestampMarkers(
   };
 }
 
+function resolveTimestampPeriodNs(device: GPUDevice): number {
+  const queue = device.queue as GPUQueue & { getTimestampPeriod?: () => number };
+  const limits = device.limits as GPUSupportedLimits & { timestampPeriod?: number };
+  return typeof queue.getTimestampPeriod === 'function'
+    ? queue.getTimestampPeriod()
+    : (limits.timestampPeriod ?? 1);
+}
+
 /**
- * WebGPU timestamp-query profiler with a two-slot resolve buffer and 120-frame CPU history.
- * When disabled, callers must not invoke marker methods — zero GPU resolve cost.
+ * WebGPU timestamp-query profiler.
+ *
+ * Spec: `MAP_READ` may only be combined with `COPY_DST`. Resolve into a
+ * `QUERY_RESOLVE | COPY_SRC` buffer, then `copyBufferToBuffer` into a
+ * `MAP_READ | COPY_DST` readback. Two slots so the previous frame can map
+ * while the current frame resolves.
+ *
+ * Allocation or a zero timestamp period skips GPU timing (CPU `performance.now()`
+ * in the renderer stays the HUD fallback) — never fail renderer init.
  */
 export class GpuTimestampProfiler {
   private readonly querySet: GPUQuerySet;
   private readonly resolveBuffer: GPUBuffer;
+  private readonly readbackBuffer: GPUBuffer;
   private readonly timestampPeriodNs: number;
   private enabled = false;
   private writeSlot = 0;
@@ -84,25 +107,58 @@ export class GpuTimestampProfiler {
   private approxBandwidthMBps = 0;
   private bandwidthInput: BandwidthEstimateInput | null = null;
 
-  static create(device: GPUDevice): GpuTimestampProfiler | null {
-    if (!device.features.has('timestamp-query')) return null;
-    return new GpuTimestampProfiler(device);
+  static create(device: GPUDevice): GpuTimestampCreateResult {
+    if (!device.features.has('timestamp-query')) {
+      return { profiler: null, reason: 'timestamp-query not granted' };
+    }
+
+    const timestampPeriodNs = resolveTimestampPeriodNs(device);
+    if (!(timestampPeriodNs > 0)) {
+      return { profiler: null, reason: 'timestamp period is 0; using CPU timing' };
+    }
+
+    let querySet: GPUQuerySet | undefined;
+    let resolveBuffer: GPUBuffer | undefined;
+    let readbackBuffer: GPUBuffer | undefined;
+    try {
+      querySet = device.createQuerySet({
+        type: 'timestamp',
+        count: QUERIES_PER_FRAME,
+      });
+      // MAP_READ may only pair with COPY_DST — never QUERY_RESOLVE / COPY_SRC.
+      resolveBuffer = device.createBuffer({
+        size: TIMING_BUFFER_BYTES,
+        usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+      });
+      readbackBuffer = device.createBuffer({
+        size: TIMING_BUFFER_BYTES,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+      });
+      return {
+        profiler: new GpuTimestampProfiler(querySet, resolveBuffer, readbackBuffer, timestampPeriodNs),
+      };
+    } catch (error) {
+      querySet?.destroy();
+      resolveBuffer?.destroy();
+      readbackBuffer?.destroy();
+      console.warn(
+        '[GpuTimestampProfiler] timestamp-query buffers unavailable; using CPU timing',
+        error,
+      );
+      return { profiler: null, reason: 'timestamp-query buffers unavailable; using CPU timing' };
+    }
   }
 
-  private constructor(device: GPUDevice) {
-    const queue = device.queue as GPUQueue & { getTimestampPeriod?: () => number };
-    const limits = device.limits as GPUSupportedLimits & { timestampPeriod?: number };
-    this.timestampPeriodNs = typeof queue.getTimestampPeriod === 'function'
-      ? queue.getTimestampPeriod()
-      : (limits.timestampPeriod ?? 1);
-    this.querySet = device.createQuerySet({
-      type: 'timestamp',
-      count: QUERIES_PER_FRAME,
-    });
-    this.resolveBuffer = device.createBuffer({
-      size: QUERIES_PER_FRAME * BYTES_PER_QUERY * RESOLVE_SLOTS,
-      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.MAP_READ,
-    });
+  private constructor(
+    querySet: GPUQuerySet,
+    resolveBuffer: GPUBuffer,
+    readbackBuffer: GPUBuffer,
+    timestampPeriodNs: number,
+  ) {
+    this.querySet = querySet;
+    this.resolveBuffer = resolveBuffer;
+    this.readbackBuffer = readbackBuffer;
+    this.timestampPeriodNs = timestampPeriodNs;
   }
 
   setEnabled(enabled: boolean): void {
@@ -141,12 +197,20 @@ export class GpuTimestampProfiler {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 4);
     const slot = this.writeSlot;
+    const offset = slot * SLOT_BYTES;
     enc.resolveQuerySet(
       this.querySet,
       0,
       QUERIES_PER_FRAME,
       this.resolveBuffer,
-      slot * QUERIES_PER_FRAME * BYTES_PER_QUERY,
+      offset,
+    );
+    enc.copyBufferToBuffer(
+      this.resolveBuffer,
+      offset,
+      this.readbackBuffer,
+      offset,
+      SLOT_BYTES,
     );
     this.pendingSlot = slot;
     this.writeSlot = (this.writeSlot + 1) % RESOLVE_SLOTS;
@@ -157,15 +221,15 @@ export class GpuTimestampProfiler {
     const slot = this.pendingSlot;
     this.pendingSlot = null;
     this.mapPending = true;
-    const offset = slot * QUERIES_PER_FRAME * BYTES_PER_QUERY;
-    const byteLength = QUERIES_PER_FRAME * BYTES_PER_QUERY;
+    const offset = slot * SLOT_BYTES;
+    const byteLength = SLOT_BYTES;
 
-    void this.resolveBuffer.mapAsync(GPUMapMode.READ, offset, byteLength).then(() => {
+    void this.readbackBuffer.mapAsync(GPUMapMode.READ, offset, byteLength).then(() => {
       const stamps = new BigUint64Array(
-        this.resolveBuffer.getMappedRange(offset, byteLength),
+        this.readbackBuffer.getMappedRange(offset, byteLength),
       );
       const timings = parseTimestampMarkers(stamps, this.timestampPeriodNs);
-      this.resolveBuffer.unmap();
+      this.readbackBuffer.unmap();
       this.mapPending = false;
       this.lastTimings = timings;
       this.pushHistory(timings.totalGpuMs);
@@ -201,6 +265,7 @@ export class GpuTimestampProfiler {
   destroy(): void {
     this.querySet.destroy();
     this.resolveBuffer.destroy();
+    this.readbackBuffer.destroy();
   }
 }
 

@@ -331,7 +331,7 @@ Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, C
 3. **Compositor** — final blend or alternate main-view pass (tracer inspect, layer isolation, etc.).
 4. **Readback** — preview thumbnail + collision-stats blit/copy when queued.
 
-Timestamps resolve to a ping-pong buffer after submit; results appear one frame later. The Diagnostics panel **Perf HUD** toggle (`output.performanceHudEnabled`) gates all query writes and resolves — when off, there is zero timestamp cost. The HUD shows CPU ms, per-pass GPU ms, an approximate bandwidth model, a 120-frame sparkline, budget warnings (`1000 / fps` ms), and optional auto-degrade (disable MSAA, tracer scale ×0.75, live preview readback off).
+Timestamps resolve into a `QUERY_RESOLVE | COPY_SRC` buffer, then `copyBufferToBuffer` into a `MAP_READ | COPY_DST` readback (`MAP_READ` may only pair with `COPY_DST`). Results appear one frame later. If query/buffer allocation fails or the timestamp period is 0, GPU timing is skipped and the HUD uses CPU `performance.now()` — renderer init must not fail. The Diagnostics panel **Perf HUD** toggle (`output.performanceHudEnabled`) gates all query writes and resolves — when off, there is zero timestamp cost. The HUD shows CPU ms, per-pass GPU ms, an approximate bandwidth model, a 120-frame sparkline, budget warnings (`1000 / fps` ms), and optional auto-degrade (disable MSAA, tracer scale ×0.75, live preview readback off).
 
 WebGL2 reports CPU timing only (`GPU timing N/A` in the HUD). See `docs/webgl-fallback.md`.
 
