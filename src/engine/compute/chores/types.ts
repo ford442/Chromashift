@@ -156,7 +156,67 @@ export interface ChoreBackendImpl {
   /** Why `canRun` returned false, for the attempt log. */
   declineReason(job: ChoreJob): string;
   run(job: ChoreJob): Promise<ChoreOutput | null>;
+  /**
+   * More specific than `backend` for diagnostics only (`window.gpuChoreBackend`) —
+   * e.g. `wasm-worker` vs `wasm-inline`. Falls back to `backend` when absent.
+   * Never used for lane-selection logic; `ChoreResult.backend` stays the plain
+   * `ChoreBackend` enum so pinned-lane parity tests keep meaning what they say.
+   */
+  breadcrumbLabel?(): string;
   destroy?(): void;
+}
+
+/** Result of the CPU lanes' combined average-luminance + classification-mask work. */
+export interface CpuImageAnalysisResult {
+  avgLuminance: number;
+  mask: Uint8Array;
+  width: number;
+  height: number;
+  /**
+   * Which execution mode actually served this call — surfaced only for the
+   * `breadcrumbLabel()` diagnostic (e.g. `wasm-worker` vs `wasm-inline`).
+   * `worker` = ran off the main thread; `inline` = ran synchronously
+   * in-process (the Vitest/parity host, or a worker-host's fallback path).
+   */
+  mode: 'worker' | 'inline';
+}
+
+/**
+ * Host-supplied CPU implementation backing the `wasm` and `ts` lanes. Injected
+ * rather than imported so `chores/` stays free of Chromashift-specific
+ * dependencies — sibling apps supply their own equivalent.
+ *
+ * Async so a host can run the (expensive, main-thread-blocking on an 8K
+ * source) pixel readback and classification off the main thread — e.g. inside
+ * a Web Worker — without changing the lane contract: `ChoresRuntime.runJob`
+ * is already `async`.
+ */
+export interface CpuChoreHost {
+  /** True when the WASM module is loaded and callable. */
+  isWasmReady(): boolean;
+  /**
+   * Compute average luminance (unless `avgLumHint` is given) and the
+   * classification mask for `image` in one call, so a worker-backed host only
+   * needs one round trip (one bitmap transfer, one pixel readback) per image.
+   */
+  analyzeImage(
+    image: HTMLImageElement,
+    avgLumHint: number | undefined,
+    useWasm: boolean,
+  ): Promise<CpuImageAnalysisResult | null>;
+  /**
+   * Average luminance only, no mask — the WebGL-backend path (no GPU device
+   * to upload a mask to) and the last-resort fallback when every
+   * `image-analysis` lane has already failed both need only this. Reports
+   * `mode` for the same breadcrumb reason `analyzeImage` does: this path
+   * bypasses `ChoresRuntime.runJob` entirely (there is no GPU device to run a
+   * job against), so the caller — not `runtime.ts` — is the one that has to
+   * publish it.
+   */
+  computeAverageLuminance(
+    image: HTMLImageElement,
+    useWasm: boolean,
+  ): Promise<{ avgLuminance: number; mode: 'worker' | 'inline' }>;
 }
 
 /** The facade other apps call. */

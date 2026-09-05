@@ -69,7 +69,7 @@ export class ChoreRuntimeImpl implements ChoresRuntime {
       try {
         const value = await backend.run(job);
         if (value) {
-          publishChoreBreadcrumbs(name, null);
+          publishChoreBreadcrumbs(backend.breadcrumbLabel?.() ?? name, null);
           return { ok: true, backend: name, value };
         }
         attempts.push({ backend: name, outcome: 'failed', reason: 'Lane returned no result' });

@@ -3,7 +3,7 @@
  */
 
 import { canUseWasmFn, getPersistentBuf, getWasmModule } from '../loadEngine';
-import { getImageBytes, getImageDataAtNaturalSize } from '../imageBytes';
+import { getImageBytes, getImageDataAtNaturalSize, type PixelSource } from '../imageBytes';
 import { tsComputeAverageLuminance, tsComputeAverageLuminanceStrided } from '../fallbacks/luminance';
 
 /**
@@ -17,7 +17,7 @@ import { tsComputeAverageLuminance, tsComputeAverageLuminanceStrided } from '../
  * @returns        Average luminance in [0, 255].
  */
 export function computeAverageLuminanceWith(
-  image: HTMLImageElement,
+  image: PixelSource,
   useWasm: boolean,
 ): number {
   if (canUseWasmFn('computeAverageLuminance', useWasm)) {
@@ -81,11 +81,13 @@ export function computeAverageLuminanceStridedWith(
  * CPU/WASM fallback paths (WebGL, missing compute, or mask generation errors).
  */
 export function computeImageAverageLuminanceWith(
-  image: HTMLImageElement,
+  image: PixelSource,
   useWasm: boolean,
 ): number {
-  const width = Math.max(1, image.naturalWidth || image.width || 1);
-  const height = Math.max(1, image.naturalHeight || image.height || 1);
+  const naturalWidth = 'naturalWidth' in image ? image.naturalWidth : image.width;
+  const naturalHeight = 'naturalWidth' in image ? image.naturalHeight : image.height;
+  const width = Math.max(1, naturalWidth || image.width || 1);
+  const height = Math.max(1, naturalHeight || image.height || 1);
   const maxDim = Math.max(width, height);
 
   if (maxDim > 256) {

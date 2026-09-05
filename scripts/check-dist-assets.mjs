@@ -70,6 +70,11 @@ if (!indexChunks.some((chunk) => chunk === entryChunkPath)) {
   fail(`entry chunk ${entryMatch?.[1] ?? 'unknown'} not found under dist/assets/`);
 }
 
+const analysisWorkerChunks = allFiles.filter((f) => /[/\\]analysis\.worker-[^/\\]+\.js$/.test(f));
+if (analysisWorkerChunks.length === 0) {
+  fail('no dist/assets/analysis.worker-*.js chunk found — the gpu-chores CPU-lane worker must be its own lazy-loaded chunk');
+}
+
 for (const chunk of [entryChunkPath]) {
   const text = await readFile(chunk, 'utf8');
   if (/ort-wasm/i.test(text)) {
@@ -81,6 +86,9 @@ for (const chunk of [entryChunkPath]) {
   if (/\bmediabunny\b/i.test(text)) {
     fail(`${chunk} references mediabunny — export muxer must stay out of the main bundle`);
   }
+  if (/analysis\.worker:/.test(text)) {
+    fail(`${chunk} inlines the analysis worker's own code — it must load lazily as a separate chunk`);
+  }
 }
 
-console.log('check:dist — OK (no ort-wasm*.wasm in dist; main chunk clean)');
+console.log('check:dist — OK (no ort-wasm*.wasm in dist; main chunk clean; analysis worker is its own chunk)');

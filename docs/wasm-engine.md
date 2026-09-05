@@ -42,6 +42,43 @@ app replaces with its own CPU implementation. Failures are never silent:
 `runJob` returns `{ ok: false, reason, attempts }` naming why each lane
 declined. See [docs/gpu-bootstrap.md](gpu-bootstrap.md#gpu-chores-compute-device-adoption).
 
+**Lanes 2 and 3 run off the main thread.** Both the WASM and TypeScript
+lanes' work — `<canvas>.getImageData()` on the loaded image, then classifying
+every pixel — is driven through `CpuChoreHost.analyzeImage()`
+(`chores/types.ts`), which `useClassificationMask.ts` backs with
+`chores/analysisWorkerHost.ts` in production. That host lazily spawns
+`src/engine/compute/analysis.worker.ts`, a module worker holding its **own**
+loaded instance of the WASM engine (loaded via `loadWasmEngine()` same as the
+main thread — `loadEngine.ts` keeps its state module-scoped, so a separate
+realm gets a separate, independently-loaded module rather than sharing one),
+and calls the same `computeImageAverageLuminanceWith` /
+`classifyImageMaskWith` dispatchers against a transferred `ImageBitmap` +
+`OffscreenCanvas` instead of an `HTMLImageElement` + DOM `<canvas>` (the
+`PixelSource` union in `wasm/imageBytes.ts` covers both) — so the mask is
+byte-identical to the pre-worker, main-thread path. This matters most for an
+8K source (`8192×8192×4` ≈ 268 MB) on exactly the renderer configurations
+that route through these lanes (`?renderer=webgl`, Firefox/Safari,
+`?no_gpu_compute`, or a WebGPU compute decline): before this, that readback
+and classification ran synchronously on the thread driving
+`requestAnimationFrame`.
+
+The worker loads lazily — only on the first CPU-lane job, so a healthy
+WebGPU session never spawns it — and `check:dist` asserts it lands in its
+own `dist/assets/analysis.worker-*.js` chunk rather than the main bundle. If
+the worker can't be used (construction throws, `createImageBitmap` throws,
+or it reports an error), the host falls back permanently, for its own
+lifetime, to an in-process implementation (`createChromashiftCpuHost` in
+`chromashiftHost.ts`) — same thread, same math — so a job is never silently
+dropped. That in-process host is also what Vitest and the WASM/TS parity
+tests use directly, since Vitest's `node` test environment has neither a
+real `Worker` nor `OffscreenCanvas`.
+
+`window.gpuChoreBackend` reflects this distinction for diagnostics: it reads
+`wasm-worker` / `ts-worker` when the analysis worker served the job, or
+`wasm-inline` / `ts-inline` when it ran in-process — separate from
+`ChoreResult.backend` (`'webgpu' | 'wasm' | 'ts'`), which stays the plain
+lane-selection enum pinned-lane parity tests rely on.
+
 ---
 
 ## Call-site matrix
@@ -56,8 +93,8 @@ and the unit/C++ host tests — see "Test / benchmark only" above.
 | `isWasmReady` | `hooks/appUiProps/buildControlProps.ts` | UI state (Engine badge) |
 | `computeAverageLuminanceWith` | `hooks/useAppWebGPUInit.ts` | Load-time (image load) |
 | `computeAverageLuminanceStridedWith` | `engine/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
-| `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts`, `hooks/useClassificationMask.ts` | Load-time |
-| `classifyImageMaskWith` | `hooks/useClassificationMask.ts` | Load-time (mask generation) |
+| `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts` (both only on the mask-generation error path); also called by `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage`/`computeAverageLuminance` | Load-time |
+| `classifyImageMaskWith` | `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage` | Load-time (mask generation) |
 | `advanceAnglesBy` | `engine/videoExport/exportVideoFrameLoop.ts` | Video export |
 
 No `*With()` dispatcher is called from a per-frame render or animation-loop path

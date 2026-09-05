@@ -1,7 +1,7 @@
 import { useCallback, useRef } from 'react';
-import { createImageAnalysisRuntime } from '../engine/compute/chores';
+import { createImageAnalysisRuntime, publishChoreBreadcrumbs } from '../engine/compute/chores';
 import type { ChoresRuntime, CpuChoreHost, ImageAnalysisOutput } from '../engine/compute/chores';
-import { createChromashiftCpuHost } from '../engine/compute/chores/chromashiftHost';
+import { createWorkerChromashiftCpuHost } from '../engine/compute/chores/analysisWorkerHost';
 import type { ChromashiftTextureHandle } from '../engine/types/TextureHandle';
 import { webGpuTextureFromHandle } from '../engine/types/TextureHandle';
 import type { ChromashiftRefs } from './useChromashiftStore';
@@ -20,10 +20,14 @@ export function useClassificationMask(refs: ChromashiftRefs) {
   const maskOwnerRef = useRef<MaskOwner>(null);
 
   // The CPU lanes read engine mode at dispatch time, so this host is stable
-  // across renders even though the mode toggles.
+  // across renders even though the mode toggles. Backed by a lazily-spawned
+  // Web Worker (analysis.worker.ts) so the pixel readback + classification
+  // for an 8K source never blocks the frame loop — the worker is only
+  // spun up on the first CPU-lane job, so a healthy WebGPU session never
+  // pays for it.
   const cpuHostRef = useRef<CpuChoreHost | null>(null);
   const getCpuHost = useCallback((): CpuChoreHost => {
-    cpuHostRef.current ??= createChromashiftCpuHost(
+    cpuHostRef.current ??= createWorkerChromashiftCpuHost(
       () => engineModeRef.current === 'wasm',
     );
     return cpuHostRef.current;
@@ -109,6 +113,22 @@ export function useClassificationMask(refs: ChromashiftRefs) {
     return output.avgLuminance;
   }, [bindMaskTexture, uploadCpuMask]);
 
+  /**
+   * Average luminance only, via the CPU host directly — used when there is no
+   * WebGPU device to run a `ChoresRuntime` job against (WebGL backend) or
+   * once every `image-analysis` lane has already failed. This bypasses
+   * `runJob`, so `runtime.ts` never gets a chance to publish
+   * `window.gpuChoreBackend` for it — done here instead, so the breadcrumb
+   * stays honest for this path too.
+   */
+  const computeAverageLuminanceOnly = useCallback(async (image: HTMLImageElement): Promise<number> => {
+    const host = getCpuHost();
+    const useWasm = host.isWasmReady();
+    const { avgLuminance, mode } = await host.computeAverageLuminance(image, useWasm);
+    publishChoreBreadcrumbs(`${useWasm ? 'wasm' : 'ts'}-${mode}`, null);
+    return avgLuminance;
+  }, [getCpuHost]);
+
   const generateClassificationMaskFromTexture = useCallback(async (
     source: GPUTexture,
     width: number,
@@ -146,10 +166,7 @@ export function useClassificationMask(refs: ChromashiftRefs) {
     // Both the compute lane and the CPU mask upload need a WebGPU device.
     if (!device || renderer?.backend !== 'webgpu') {
       clearClassificationMask();
-      return getCpuHost().computeImageAverageLuminanceWith(
-        image,
-        getCpuHost().isWasmReady(),
-      );
+      return computeAverageLuminanceOnly(image);
     }
 
     // `auto` walks webgpu → wasm → ts, recording why each lane declined.
@@ -166,14 +183,14 @@ export function useClassificationMask(refs: ChromashiftRefs) {
 
     console.warn('Classification mask unavailable:', result.reason);
     clearClassificationMask();
-    return getCpuHost().computeImageAverageLuminanceWith(image, getCpuHost().isWasmReady());
+    return computeAverageLuminanceOnly(image);
   }, [
     deviceRef,
     rendererRef,
     getRuntime,
     bindResult,
     clearClassificationMask,
-    getCpuHost,
+    computeAverageLuminanceOnly,
   ]);
 
   return {
