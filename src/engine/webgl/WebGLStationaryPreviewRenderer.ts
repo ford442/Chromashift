@@ -1,5 +1,5 @@
 import { MAIN_VIEW_MODES } from '../viewModes';
-import { durationToDecayWith } from '../WasmEngine';
+import { durationToDecay } from '../math/decay';
 import type { RendererState } from '../types/RendererState';
 import type { WebGlTextureHandle } from '../types/TextureHandle';
 import {
@@ -100,9 +100,8 @@ export class WebGLStationaryPreviewRenderer {
     this.layerPass.render(this.sourceTexture!.texture, state, 0, 1);
     const readIndex = this.persistencePass.pingPong;
     const writeIndex = (1 - this.persistencePass.pingPong) as 0 | 1;
-    const useWasm = state.wasmEngine ?? false;
-    const aboveDecay = durationToDecayWith(state.tracerAboveDuration ?? 500, fps, useWasm);
-    const belowDecay = durationToDecayWith(state.tracerBelowDuration ?? 2000, fps, useWasm);
+    const aboveDecay = durationToDecay(state.tracerAboveDuration ?? 500, fps);
+    const belowDecay = durationToDecay(state.tracerBelowDuration ?? 2000, fps);
     this.persistencePass.render(
       this.persistencePass.tracerAbove[writeIndex]!,
       this.persistencePass.tracerAbove[readIndex]!,
