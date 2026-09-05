@@ -29,6 +29,12 @@ export interface SimpleTextureBindGroupCacheEntry {
   sampler: GPUSampler | null;
 }
 
+export interface TwoTextureBindGroupCacheEntry {
+  bindGroup: GPUBindGroup | null;
+  textureA: GPUTexture | null;
+  textureB: GPUTexture | null;
+}
+
 export function createLayerBindGroupCache(count: number): LayerBindGroupCacheEntry[] {
   return Array.from({ length: count }, () => ({
     bindGroup: null,
@@ -82,6 +88,18 @@ export function invalidateSimpleTextureCache(entry: SimpleTextureBindGroupCacheE
   entry.bindGroup = null;
   entry.texture = null;
   entry.sampler = null;
+}
+
+export function createTwoTextureCache(count: number): TwoTextureBindGroupCacheEntry[] {
+  return Array.from({ length: count }, () => ({ bindGroup: null, textureA: null, textureB: null }));
+}
+
+export function invalidateTwoTextureCache(entries: TwoTextureBindGroupCacheEntry[]): void {
+  for (const entry of entries) {
+    entry.bindGroup = null;
+    entry.textureA = null;
+    entry.textureB = null;
+  }
 }
 
 export function getOrCreateLayerBindGroup(
@@ -147,6 +165,25 @@ export function getOrCreateTexturePairBindGroup(
   entry.layer0 = layerTextures[0];
   entry.layer1 = layerTextures[1];
   entry.layer2 = layerTextures[2];
+  entry.textureA = textureA;
+  entry.textureB = textureB;
+  return bindGroup;
+}
+
+export function getOrCreateTwoTextureBindGroup(
+  device: GPUDevice,
+  entry: TwoTextureBindGroupCacheEntry,
+  layout: GPUBindGroupLayout,
+  textureA: GPUTexture,
+  textureB: GPUTexture,
+  entries: GPUBindGroupEntry[],
+): GPUBindGroup {
+  if (entry.bindGroup && entry.textureA === textureA && entry.textureB === textureB) {
+    return entry.bindGroup;
+  }
+
+  const bindGroup = device.createBindGroup({ layout, entries });
+  entry.bindGroup = bindGroup;
   entry.textureA = textureA;
   entry.textureB = textureB;
   return bindGroup;

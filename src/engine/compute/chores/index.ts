@@ -22,11 +22,14 @@ export type {
   ChoreFailure,
   ChoreJob,
   ChoreOp,
+  ChoreOutput,
   ChorePreference,
   ChoreResult,
   ChoreSuccess,
   ChoresRuntime,
+  CoincidenceJob,
   CpuImageAnalysisOutput,
+  GpuCoincidenceOutput,
   GpuImageAnalysisOutput,
   ImageAnalysisJob,
   ImageAnalysisOutput,
@@ -36,6 +39,7 @@ export { CHORE_BACKEND_ORDER } from './types';
 export type { CpuChoreHost } from './cpuBackend';
 export { CpuChoreBackend } from './cpuBackend';
 
+export type { CoincidenceEncodeParams } from './webgpuBackend';
 export { WebGpuChoreBackend, averageFromHistogram } from './webgpuBackend';
 
 export { ChoreRuntimeImpl, createChoresRuntime } from './runtime';
@@ -54,6 +58,7 @@ export {
 
 export {
   CLASSIFICATION_COMPUTE_SHADER,
+  COINCIDENCE_COMPUTE_SHADER,
   HISTOGRAM_COMPUTE_SHADER,
   WGSL_IMAGE_ANALYSIS_HELPERS,
 } from './kernels';

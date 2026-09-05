@@ -15,7 +15,7 @@ import type {
   ChoreBackend,
   ChoreBackendImpl,
   ChoreJob,
-  CpuImageAnalysisOutput,
+  ChoreOutput,
   ImageAnalysisJob,
 } from './types';
 
@@ -48,22 +48,25 @@ export class CpuChoreBackend implements ChoreBackendImpl {
   }
 
   canRun(job: ChoreJob): boolean {
+    if (job.op !== 'image-analysis') return false;
     if (!job.image) return false;
     if (this.useWasm && !this.host.isWasmReady()) return false;
     return true;
   }
 
   declineReason(job: ChoreJob): string {
+    if (job.op !== 'image-analysis') return 'CPU lanes do not support this op — GPU compute only';
     if (!job.image) return 'No CPU-decodable source image';
     if (this.useWasm && !this.host.isWasmReady()) return 'WASM module not ready';
     return 'Unavailable';
   }
 
-  async run(job: ImageAnalysisJob): Promise<CpuImageAnalysisOutput | null> {
+  async run(job: ChoreJob): Promise<ChoreOutput | null> {
     if (!this.canRun(job)) return null;
-    const image = job.image!;
+    const analysisJob = job as ImageAnalysisJob;
+    const image = analysisJob.image!;
 
-    const avgLuminance = job.avgLumHint
+    const avgLuminance = analysisJob.avgLumHint
       ?? this.host.computeImageAverageLuminanceWith(image, this.useWasm);
     const result = this.host.classifyImageMaskWith(image, avgLuminance, this.useWasm);
     if (!result) return null;
