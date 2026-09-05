@@ -18,8 +18,12 @@ import {
   type ChoreAttempt,
   type ChoreBackend,
   type ChoreBackendImpl,
+  type ChoreJob,
+  type ChoreOutput,
   type ChoreResult,
   type ChoresRuntime,
+  type CoincidenceJob,
+  type GpuCoincidenceOutput,
   type ImageAnalysisJob,
   type ImageAnalysisOutput,
 } from './types';
@@ -38,14 +42,16 @@ export class ChoreRuntimeImpl implements ChoresRuntime {
   }
 
   /** Lanes to try, in order, for a given preference. */
-  private candidates(prefer: ImageAnalysisJob['prefer']): readonly ChoreBackend[] {
+  private candidates(prefer: ChoreJob['prefer']): readonly ChoreBackend[] {
     if (!prefer || prefer === 'auto') return CHORE_BACKEND_ORDER;
     // A pinned lane never slides to another one: parity tests depend on
     // `prefer: 'ts'` actually meaning TS.
     return [prefer];
   }
 
-  async runJob(job: ImageAnalysisJob): Promise<ChoreResult<ImageAnalysisOutput>> {
+  runJob(job: ImageAnalysisJob): Promise<ChoreResult<ImageAnalysisOutput>>;
+  runJob(job: CoincidenceJob): Promise<ChoreResult<GpuCoincidenceOutput>>;
+  async runJob(job: ChoreJob): Promise<ChoreResult<ChoreOutput>> {
     const attempts: ChoreAttempt[] = [];
 
     for (const name of this.candidates(job.prefer)) {

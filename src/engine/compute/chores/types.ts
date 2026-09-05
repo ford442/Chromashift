@@ -29,7 +29,7 @@ export type ChorePreference = 'auto' | ChoreBackend;
 export const CHORE_BACKEND_ORDER: readonly ChoreBackend[] = ['webgpu', 'wasm', 'ts'];
 
 /** Operations the kit knows how to dispatch. */
-export type ChoreOp = 'image-analysis';
+export type ChoreOp = 'image-analysis' | 'coincidence';
 
 /**
  * Analyze an image: 256-bin BT.709 luminance histogram + per-pixel band mask.
@@ -55,7 +55,28 @@ export interface ImageAnalysisJob {
   prefer?: ChorePreference;
 }
 
-export type ChoreJob = ImageAnalysisJob;
+/**
+ * Detect tracer layer overlaps ("coincidence"): 2+ layers with visible
+ * colour at a pixel. GPU-only — there is no load-time analogue, so the
+ * `wasm`/`ts` lanes always decline this op rather than pretending to have a
+ * CPU implementation.
+ */
+export interface CoincidenceJob {
+  op: 'coincidence';
+  /** Three GPU-resident layer textures, all the same size. Required. */
+  layers?: readonly [GPUTexture, GPUTexture, GPUTexture] | null;
+  width: number;
+  height: number;
+  /** Minimum alpha to consider a layer "visible" at a pixel. */
+  colorThresh: number;
+  /** Brightness multiplier applied only to a fresh collision stamp. */
+  stampBoost: number;
+  /** 0 = combined colour, 1 = grey highlight. */
+  tracerMode: number;
+  prefer?: ChorePreference;
+}
+
+export type ChoreJob = ImageAnalysisJob | CoincidenceJob;
 
 /**
  * GPU lane output. The mask stays a `GPUTexture` — the CPU contract for this
@@ -84,6 +105,20 @@ export interface CpuImageAnalysisOutput {
 }
 
 export type ImageAnalysisOutput = GpuImageAnalysisOutput | CpuImageAnalysisOutput;
+
+/**
+ * Coincidence lane output. Both textures are owned and reused by the
+ * runtime; callers must not destroy them.
+ */
+export interface GpuCoincidenceOutput {
+  kind: 'gpu-coincidence';
+  /** rgba32float, write-only storage: rgb/a = this frame's collision stamp (zero when none was painted). */
+  stampTexture: GPUTexture;
+  /** rgba8unorm, write-only storage: same encoding as the legacy fragment-shader diagnostic output. */
+  diagTexture: GPUTexture;
+}
+
+export type ChoreOutput = ImageAnalysisOutput | GpuCoincidenceOutput;
 
 /** A lane ran the job. */
 export interface ChoreSuccess<T> {
@@ -120,13 +155,15 @@ export interface ChoreBackendImpl {
   canRun(job: ChoreJob): boolean;
   /** Why `canRun` returned false, for the attempt log. */
   declineReason(job: ChoreJob): string;
-  run(job: ChoreJob): Promise<ImageAnalysisOutput | null>;
+  run(job: ChoreJob): Promise<ChoreOutput | null>;
   destroy?(): void;
 }
 
 /** The facade other apps call. */
 export interface ChoresRuntime {
+  /** Overloaded so callers get back the output type their job's `op` implies. */
   runJob(job: ImageAnalysisJob): Promise<ChoreResult<ImageAnalysisOutput>>;
+  runJob(job: CoincidenceJob): Promise<ChoreResult<GpuCoincidenceOutput>>;
   /** Lanes currently registered and reporting themselves usable. */
   availableBackends(): readonly ChoreBackend[];
   destroy(): void;

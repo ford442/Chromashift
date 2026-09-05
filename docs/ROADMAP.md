@@ -52,9 +52,9 @@ Strategic audit (2026-08). **Build these before another still-image effect.** Co
 |-----|--------|-------|------|------------|-------|
 | P1 | Colour profile designer + live LUT | [#143](https://github.com/ford442/Chromashift/issues/143) | Feature | L | JSON import is the current ceiling of the profile system |
 | P1 | Kiosk camera attract + live export | [#144](https://github.com/ford442/Chromashift/issues/144) | Feature | L | Consent splash; never `getUserMedia` from `?preset=` |
-| P1 | Compute persistence (WASM hot-path cut ✅ shipped) | [#145](https://github.com/ford442/Chromashift/issues/145) | Architecture | L–XL | Per-frame `durationToDecayWith` removed from persistence/compositor — decay is a pure TS call now; the new `gpu-chores` compute-persistence op is still open |
+| P1 | Compute persistence | [#145](https://github.com/ford442/Chromashift/issues/145) | Architecture | L–XL | ✅ Shipped — WASM hot-path cut, plus a `gpu-chores` `op: 'coincidence'` compute pass replacing the fragment shader's duplicated 3-layer overlap math; fragment path remains the fallback (see [gpu-bootstrap.md](gpu-bootstrap.md#gpu-chores-compute-device-adoption)) |
 
-**Foundation vs features:** **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145**'s WASM-hot-path cut has landed; the compute-persistence pipeline remains open.
+**Foundation vs features:** **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145** has landed in full.
 
 ## Strategic audit (2026-08, #149–#155)
 

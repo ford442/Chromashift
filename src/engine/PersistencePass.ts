@@ -1,10 +1,15 @@
 import {
   createTexturePairCache,
+  createTwoTextureCache,
   getOrCreateTexturePairBindGroup,
+  getOrCreateTwoTextureBindGroup,
   invalidateTexturePairCache,
+  invalidateTwoTextureCache,
   type TexturePairBindGroupCacheEntry,
+  type TwoTextureBindGroupCacheEntry,
 } from './BindGroupCache';
 import type { WebGPUPipelines } from './WebGPUPipelines';
+import { WebGpuChoreBackend } from './compute/chores/webgpuBackend';
 import { durationToDecay } from './math/decay';
 
 export interface PersistenceEncodeParams {
@@ -38,6 +43,28 @@ export class PersistencePass {
   private readonly belowBindGroupCache: TexturePairBindGroupCacheEntry[];
   private readonly aboveBindGroupCache: TexturePairBindGroupCacheEntry[];
 
+  /**
+   * Compute-fed persistence path: a `coincidence` compute pass writes the
+   * overlap stamp once per frame (instead of the fragment shader recomputing
+   * the same 3-layer overlap math twice, once per above/below duration), and
+   * a lighter composite fragment pass just decays/selects against it.
+   * Feature-detected per frame; falls back to `encodeSingle()` below when the
+   * device lacks compute storage-texture support (see `docs/wasm-engine.md`).
+   */
+  private readonly coincidenceBackend: WebGpuChoreBackend;
+  private readonly compositePipeline: GPURenderPipeline;
+  private readonly compositeBGL: GPUBindGroupLayout;
+  private readonly belowCompositeUniformBuf: GPUBuffer;
+  private readonly aboveCompositeUniformBuf: GPUBuffer;
+  private readonly compositeUniformData = new ArrayBuffer(16);
+  private readonly compositeUniformF32 = new Float32Array(this.compositeUniformData);
+  private readonly compositeUniformU32 = new Uint32Array(this.compositeUniformData);
+  private readonly belowCompositeCache: TwoTextureBindGroupCacheEntry[];
+  private readonly aboveCompositeCache: TwoTextureBindGroupCacheEntry[];
+  private stampTexture: GPUTexture | null = null;
+  private tracerWidth = 0;
+  private tracerHeight = 0;
+
   constructor(
     device: GPUDevice,
     pipelines: WebGPUPipelines,
@@ -59,6 +86,20 @@ export class PersistencePass {
     });
     this.belowBindGroupCache = createTexturePairCache(2);
     this.aboveBindGroupCache = createTexturePairCache(2);
+
+    this.coincidenceBackend = new WebGpuChoreBackend(device);
+    this.compositeBGL = pipelines.persistCompositeBGL;
+    this.compositePipeline = pipelines.createPersistCompositePipeline();
+    this.belowCompositeUniformBuf = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.aboveCompositeUniformBuf = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.belowCompositeCache = createTwoTextureCache(2);
+    this.aboveCompositeCache = createTwoTextureCache(2);
   }
 
   ensureTextures(tracerW: number, tracerH: number): void {
@@ -74,7 +115,11 @@ export class PersistencePass {
     const createDiagnosticTex = () => this.device.createTexture({
       size: [tracerW, tracerH, 1],
       format: 'rgba8unorm',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+      // STORAGE_BINDING is only exercised by the compute path (below); the
+      // texture is otherwise identical to the fragment-fallback's diagnostic
+      // render target, so one pool of textures serves both paths.
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING
+        | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
     });
 
     this.aboveTextures[0] = createPersistTex();
@@ -83,6 +128,13 @@ export class PersistencePass {
     this.belowTextures[1] = createPersistTex();
     this.diagnosticTextures[0] = createDiagnosticTex();
     this.diagnosticTextures[1] = createDiagnosticTex();
+    this.stampTexture = this.device.createTexture({
+      size: [tracerW, tracerH, 1],
+      format: 'rgba32float',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.tracerWidth = tracerW;
+    this.tracerHeight = tracerH;
     this.pingPong = 0;
     this.invalidateCaches();
   }
@@ -90,6 +142,8 @@ export class PersistencePass {
   invalidateCaches(): void {
     invalidateTexturePairCache(this.belowBindGroupCache);
     invalidateTexturePairCache(this.aboveBindGroupCache);
+    invalidateTwoTextureCache(this.belowCompositeCache);
+    invalidateTwoTextureCache(this.aboveCompositeCache);
   }
 
   clear(): void {
@@ -117,6 +171,12 @@ export class PersistencePass {
     this.pingPong = 0;
   }
 
+  /** Compute storage-texture support, feature-detected once the device is known. */
+  private useComputePersistence(): boolean {
+    return this.coincidenceBackend.isSupported()
+      && this.coincidenceBackend.canAnalyze(this.tracerWidth, this.tracerHeight);
+  }
+
   encode(
     enc: GPUCommandEncoder,
     layerTextures: [GPUTexture, GPUTexture, GPUTexture],
@@ -127,16 +187,35 @@ export class PersistencePass {
     const readIdx: 0 | 1 = this.pingPong;
     const writeIdx: 0 | 1 = readIdx === 0 ? 1 : 0;
 
-    this.encodeSingle(
-      enc, layerTextures, readIdx, writeIdx,
-      params.belowDuration, this.belowUniformBuf, this.belowTextures, this.belowBindGroupCache,
-      params,
-    );
-    this.encodeSingle(
-      enc, layerTextures, readIdx, writeIdx,
-      params.aboveDuration, this.aboveUniformBuf, this.aboveTextures, this.aboveBindGroupCache,
-      params,
-    );
+    if (this.useComputePersistence()) {
+      this.coincidenceBackend.encodeCoincidenceInto(
+        enc, layerTextures, this.stampTexture!, this.diagnosticTextures[writeIdx]!,
+        this.tracerWidth, this.tracerHeight,
+        { colorThresh: params.colorThresh, stampBoost: params.stampBoost, tracerMode: params.tracerMode },
+        writeIdx,
+      );
+      this.encodeCompositeSingle(
+        enc, readIdx, writeIdx,
+        params.belowDuration, this.belowCompositeUniformBuf, this.belowTextures, this.belowCompositeCache,
+        params,
+      );
+      this.encodeCompositeSingle(
+        enc, readIdx, writeIdx,
+        params.aboveDuration, this.aboveCompositeUniformBuf, this.aboveTextures, this.aboveCompositeCache,
+        params,
+      );
+    } else {
+      this.encodeSingle(
+        enc, layerTextures, readIdx, writeIdx,
+        params.belowDuration, this.belowUniformBuf, this.belowTextures, this.belowBindGroupCache,
+        params,
+      );
+      this.encodeSingle(
+        enc, layerTextures, readIdx, writeIdx,
+        params.aboveDuration, this.aboveUniformBuf, this.aboveTextures, this.aboveBindGroupCache,
+        params,
+      );
+    }
 
     this.pingPong = writeIdx;
   }
@@ -166,6 +245,9 @@ export class PersistencePass {
     this.destroyTextures();
     this.aboveUniformBuf.destroy();
     this.belowUniformBuf.destroy();
+    this.belowCompositeUniformBuf.destroy();
+    this.aboveCompositeUniformBuf.destroy();
+    this.coincidenceBackend.destroy();
   }
 
   private destroyTextures(): void {
@@ -182,6 +264,57 @@ export class PersistencePass {
     this.belowTextures[1] = null;
     this.diagnosticTextures[0] = null;
     this.diagnosticTextures[1] = null;
+    this.stampTexture?.destroy();
+    this.stampTexture = null;
+    this.tracerWidth = 0;
+    this.tracerHeight = 0;
+  }
+
+  private encodeCompositeSingle(
+    enc: GPUCommandEncoder,
+    readIdx: 0 | 1,
+    writeIdx: 0 | 1,
+    duration: number,
+    uniformBuf: GPUBuffer,
+    textures: [GPUTexture | null, GPUTexture | null],
+    cache: TwoTextureBindGroupCacheEntry[],
+    params: PersistenceEncodeParams,
+  ): void {
+    const prevTexture = textures[readIdx]!;
+    const stampTexture = this.stampTexture!;
+    const decayFactor = durationToDecay(duration, params.fps);
+
+    this.compositeUniformF32[0] = decayFactor;
+    this.compositeUniformU32[1] = params.peakMode;
+    this.device.queue.writeBuffer(uniformBuf, 0, this.compositeUniformData);
+
+    const bg = getOrCreateTwoTextureBindGroup(
+      this.device,
+      cache[readIdx],
+      this.compositeBGL,
+      stampTexture,
+      prevTexture,
+      [
+        { binding: 0, resource: stampTexture.createView() },
+        { binding: 1, resource: prevTexture.createView() },
+        { binding: 2, resource: { buffer: uniformBuf } },
+      ],
+    );
+
+    const pass = enc.beginRenderPass({
+      colorAttachments: [
+        {
+          view: textures[writeIdx]!.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        },
+      ],
+    });
+    pass.setPipeline(this.compositePipeline);
+    pass.setBindGroup(0, bg);
+    pass.draw(6);
+    pass.end();
   }
 
   private encodeSingle(

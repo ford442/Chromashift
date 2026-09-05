@@ -2,6 +2,7 @@ import {
   vertexShaderSource,
   fullscreenVertexSource,
   persistenceFragmentSource,
+  persistenceCompositeFragmentSource,
   compositorFragmentSource,
   tracerViewFragmentSource,
   displayTextureFragmentSource,
@@ -26,6 +27,7 @@ export class WebGPUPipelines {
   public internalFormat: GPUTextureFormat;
 
   public persistBGL: GPUBindGroupLayout;
+  public persistCompositeBGL: GPUBindGroupLayout;
   public compositorBGL: GPUBindGroupLayout;
   public tracerViewBGL: GPUBindGroupLayout;
   public displayBGL: GPUBindGroupLayout;
@@ -40,6 +42,7 @@ export class WebGPUPipelines {
     this.internalFormat = internalFormat;
 
     this.persistBGL = this.createPersistBGL();
+    this.persistCompositeBGL = this.createPersistCompositeBGL();
     this.compositorBGL = this.createCompositorBGL();
     this.tracerViewBGL = this.createTracerViewBGL();
     this.displayBGL = this.createDisplayBGL();
@@ -59,6 +62,18 @@ export class WebGPUPipelines {
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+  }
+
+  /** Lighter compute-fed composite pass — no sampler, exact-resolution `textureLoad` reads. */
+  public createPersistCompositeBGL(): GPUBindGroupLayout {
+
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
   }
@@ -165,6 +180,24 @@ export class WebGPUPipelines {
         targets    : [
           { format: this.internalFormat },   // @location(0) persistence colour
           { format: 'rgba8unorm' },          // @location(1) diagnostic stamp info
+        ],
+      },
+      primitive  : { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  public createPersistCompositePipeline(): GPURenderPipeline {
+
+    const device = this.device;
+    return device.createRenderPipeline({
+      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistCompositeBGL] }),
+      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module     : device.createShaderModule({ code: persistenceCompositeFragmentSource }),
+        entryPoint : 'main',
+        targets    : [
+          { format: this.internalFormat },   // @location(0) persistence colour
         ],
       },
       primitive  : { topology: 'triangle-list' },
