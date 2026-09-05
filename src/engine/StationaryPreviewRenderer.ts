@@ -240,7 +240,6 @@ export class StationaryPreviewRenderer {
       belowDuration: state.tracerBelowDuration ?? 0,
       aboveDuration: state.tracerAboveDuration ?? 1000,
       paused: false,
-      useWasm: state.wasmEngine,
     });
   }
 

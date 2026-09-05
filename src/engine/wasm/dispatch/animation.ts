@@ -1,8 +1,8 @@
 /**
  * Frame-timing / tracer `*With()` dispatchers. See docs/wasm-engine.md for
- * the call-site matrix — `durationToDecayWith` is the one dispatcher that
- * runs on the per-frame render path; the rest are load-time, export-only,
- * or test/benchmark-only.
+ * the call-site matrix — all of these are load-time, export-only, or
+ * test/benchmark-only. None run on the per-frame render path; persistence
+ * calls `durationToDecay()` from `math/decay.ts` directly.
  */
 
 import { buildRotationMat3 } from '../../math/rotation';
@@ -10,11 +10,13 @@ import { canUseWasmFn, getWasmModule } from '../loadEngine';
 import { durationToDecay, tsAdvanceAngles, tsSimulateTracerDecay } from '../fallbacks/decay';
 
 /**
- * Compute the per-frame decay multiplier for the tracer persistence system.
+ * Compute the tracer persistence decay multiplier via the WASM/TS dispatcher.
  *
  * Solves `decay ^ (fps × durationMs / 1000) = 0.1` so that the tracer
  * reaches 10% of its original brightness after `durationMs` milliseconds.
- * Matches `durationToDecay()` in `math/decay.ts`.
+ * Matches `durationToDecay()` in `math/decay.ts`. Kept for WASM/TS parity
+ * testing and the benchmark page — the render hot path calls
+ * `durationToDecay()` directly and never routes through WASM.
  *
  * @param durationMs  Desired tracer lifetime in milliseconds.
  * @param fps         Current frame rate.

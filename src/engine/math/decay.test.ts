@@ -1,6 +1,17 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { durationToDecayWith } from '../WasmEngine';
 import { durationToDecay } from './decay';
+
+/** Per-frame render/persistence files must compute decay directly, never via a WASM dispatcher. */
+const HOT_PATH_FILES = [
+  '../PersistencePass.ts',
+  '../WebGPURenderer.ts',
+  '../StationaryPreviewRenderer.ts',
+  '../webgl/WebGLRenderer.ts',
+  '../webgl/WebGLStationaryPreviewRenderer.ts',
+];
 
 describe('durationToDecay', () => {
   it('matches pow(0.1, 1/frames) for typical tracer settings', () => {
@@ -58,5 +69,13 @@ describe('durationToDecayWith (TS fallback)', () => {
     const expected = Math.pow(0.1, 1 / frames);
 
     expect(durationToDecayWith(durationMs, fps, false)).toBeCloseTo(expected, 6);
+  });
+});
+
+describe('per-frame decay does not route through WASM', () => {
+  it.each(HOT_PATH_FILES)('%s never imports the WasmEngine decay dispatcher', (relPath) => {
+    const source = readFileSync(join(__dirname, relPath), 'utf-8');
+    expect(source).not.toMatch(/durationToDecayWith/);
+    expect(source).not.toMatch(/from ['"](\.\.\/)+WasmEngine['"]/);
   });
 });

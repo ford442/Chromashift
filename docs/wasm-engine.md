@@ -24,9 +24,8 @@ for real-time rendering.
 |---|---|---|
 | **In scope (load-time)** | `computeAverageLuminanceWith`, `computeAverageLuminanceStridedWith`, `classifyImageMaskWith`, histogram/band helpers | Average luminance and classification masks when GPU compute analysis (#82) is unavailable; strided luminance for large (4K–8K) and upscaled buffers |
 | **In scope (export / offline)** | `advanceAnglesBy` | Video-export angle stepping when Engine = C++ WASM |
-| **WASM-routed, lightweight** | `durationToDecayWith` | Per-frame tracer decay multiplier when Engine = C++ WASM — parity with C++/WGSL formula, not a performance win |
-| **Out of scope (GPU)** | Layer rotation, persistence/compositing | Handled by WGSL shaders in `WebGPURenderer` / `WebGLRenderer` |
-| **Test / benchmark only** | `simulateTracerDecayWith`, `buildRotationMat3With`, `computeLuminanceHistogramWith`, `computeColorBandCountsWith`, bulk classify helpers | `public/wasm-benchmark.html`, C++ host tests — not used in the live render loop |
+| **Out of scope (GPU)** | Layer rotation, persistence/compositing, tracer decay | Handled by WGSL/GLSL shaders in `WebGPURenderer` / `WebGLRenderer`; the per-frame decay multiplier is computed by the pure `durationToDecay()` in `math/decay.ts`, never dispatched through WASM |
+| **Test / benchmark only** | `durationToDecayWith`, `simulateTracerDecayWith`, `buildRotationMat3With`, `computeLuminanceHistogramWith`, `computeColorBandCountsWith`, bulk classify helpers | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
 
 **Selection order for image analysis** — encoded in the **`gpu-chores`** facade
 (`src/engine/compute/chores/`) as `CHORE_BACKEND_ORDER` and walked by
@@ -59,14 +58,15 @@ and the unit/C++ host tests — see "Test / benchmark only" above.
 | `computeAverageLuminanceStridedWith` | `engine/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
 | `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts`, `hooks/useClassificationMask.ts` | Load-time |
 | `classifyImageMaskWith` | `hooks/useClassificationMask.ts` | Load-time (mask generation) |
-| `durationToDecayWith` | `engine/PersistencePass.ts`, `engine/webgl/WebGLRenderer.ts`, `engine/webgl/WebGLStationaryPreviewRenderer.ts` | **Per-frame** — intentionally WASM-routed for formula parity only, not a performance win (see above) |
 | `advanceAnglesBy` | `engine/videoExport/exportVideoFrameLoop.ts` | Video export |
 
-No `*With()` dispatcher other than `durationToDecayWith` is called from a per-frame render
-or animation-loop path (`useAnimationLoop.ts`, `WebGPURenderer.ts` compositor passes). New
-per-frame call sites into `src/engine/wasm/` should be treated as a scope violation unless
-they are an intentional, documented WASM-routed exception like the one above — update this
-table when adding one.
+No `*With()` dispatcher is called from a per-frame render or animation-loop path
+(`useAnimationLoop.ts`, `PersistencePass.ts`, `WebGPURenderer.ts` / `WebGLRenderer.ts`
+compositor and persistence passes). Tracer decay used to be the one documented exception
+(`durationToDecayWith`, routed through WASM per frame for formula parity only); it now
+calls `durationToDecay()` from `math/decay.ts` directly (see [#145](https://github.com/ford442/Chromashift/issues/145)).
+Any new per-frame call site into `src/engine/wasm/` should be treated as a scope violation —
+update this table if one is ever intentionally added.
 
 ---
 

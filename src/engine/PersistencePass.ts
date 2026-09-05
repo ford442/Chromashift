@@ -5,7 +5,7 @@ import {
   type TexturePairBindGroupCacheEntry,
 } from './BindGroupCache';
 import type { WebGPUPipelines } from './WebGPUPipelines';
-import { durationToDecayWith } from './WasmEngine';
+import { durationToDecay } from './math/decay';
 
 export interface PersistenceEncodeParams {
   fps: number;
@@ -16,7 +16,6 @@ export interface PersistenceEncodeParams {
   belowDuration: number;
   aboveDuration: number;
   paused: boolean;
-  useWasm?: boolean;
 }
 
 export class PersistencePass {
@@ -197,7 +196,7 @@ export class PersistencePass {
     params: PersistenceEncodeParams,
   ): void {
     const prevTexture = textures[readIdx]!;
-    const decayFactor = durationToDecayWith(duration, params.fps, params.useWasm ?? false);
+    const decayFactor = durationToDecay(duration, params.fps);
 
     this.uniformF32[0] = decayFactor;
     this.uniformF32[1] = params.colorThresh;
