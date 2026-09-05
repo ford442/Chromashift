@@ -43,8 +43,14 @@ function gpuLane(overrides: Partial<ChoreBackendImpl> = {}): ChoreBackendImpl {
 function cpuHost(overrides: Partial<CpuChoreHost> = {}): CpuChoreHost {
   return {
     isWasmReady: () => true,
-    computeImageAverageLuminanceWith: () => 120,
-    classifyImageMaskWith: () => ({ mask: new Uint8Array(4), width: 2, height: 2 }),
+    analyzeImage: async (_image, avgLumHint) => ({
+      avgLuminance: avgLumHint ?? 120,
+      mask: new Uint8Array(4),
+      width: 2,
+      height: 2,
+      mode: 'inline',
+    }),
+    computeAverageLuminance: async () => ({ avgLuminance: 120, mode: 'inline' }),
     ...overrides,
   };
 }
@@ -61,7 +67,7 @@ describe('gpu-chores runtime', () => {
 
   it('prefers the webgpu lane when a GPU source is present', async () => {
     const host = cpuHost();
-    const classify = vi.spyOn(host, 'classifyImageMaskWith');
+    const classify = vi.spyOn(host, 'analyzeImage');
     const runtime = createChoresRuntime([
       gpuLane(),
       new CpuChoreBackend('wasm', host),
@@ -124,7 +130,7 @@ describe('gpu-chores runtime', () => {
     const runtime = createChoresRuntime([
       gpuLane(),
       new CpuChoreBackend('wasm', cpuHost({ isWasmReady: () => false })),
-      new CpuChoreBackend('ts', cpuHost({ classifyImageMaskWith: () => null })),
+      new CpuChoreBackend('ts', cpuHost({ analyzeImage: async () => null })),
     ]);
 
     const result = await runtime.runJob(job({ image: IMAGE }));
@@ -173,6 +179,42 @@ describe('gpu-chores runtime', () => {
     runtime.destroy();
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(runtime.availableBackends()).toEqual([]);
+  });
+
+  it("breadcrumbLabel distinguishes the worker-backed CPU lane from the in-process one", async () => {
+    const workerBackedHost = cpuHost({
+      analyzeImage: async (_image, avgLumHint) => ({
+        avgLuminance: avgLumHint ?? 120,
+        mask: new Uint8Array(4),
+        width: 2,
+        height: 2,
+        mode: 'worker',
+      }),
+    });
+    const backend = new CpuChoreBackend('wasm', workerBackedHost);
+    // Before any successful run, breadcrumbLabel falls back to the plain lane name.
+    expect(backend.breadcrumbLabel!()).toBe('wasm');
+
+    const runtime = createChoresRuntime([backend]);
+    await runtime.runJob(job({ image: IMAGE }));
+    expect(backend.breadcrumbLabel!()).toBe('wasm-worker');
+  });
+
+  it('publishes the wasm-worker/ts-inline breadcrumb label, not the plain backend name, to window.gpuChoreBackend', async () => {
+    const fakeWindow = {} as unknown as Window;
+    vi.stubGlobal('window', fakeWindow);
+    try {
+      const inlineHost = cpuHost({
+        analyzeImage: async () => ({
+          avgLuminance: 90, mask: new Uint8Array(4), width: 2, height: 2, mode: 'inline',
+        }),
+      });
+      const runtime = createChoresRuntime([new CpuChoreBackend('ts', inlineHost)]);
+      await runtime.runJob(job({ image: IMAGE }));
+      expect((fakeWindow as unknown as { gpuChoreBackend?: string }).gpuChoreBackend).toBe('ts-inline');
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

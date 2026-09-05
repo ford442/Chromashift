@@ -5,7 +5,7 @@
 
 import { classifyBandIndex, classifyPixelBands, computeAdjustedRgb } from '../../math/bandClassification';
 import { canUseWasmFn, getPersistentBuf, getWasmModule } from '../loadEngine';
-import { getImageBytes, getImageDataAtNaturalSize } from '../imageBytes';
+import { getImageBytes, getImageDataAtNaturalSize, type PixelSource } from '../imageBytes';
 
 /**
  * Classify a single pixel into a Chromashift colour band index (0–10).
@@ -67,15 +67,14 @@ export function classifyPixelsBulkWith(
 
   if (canUseWasmFn('classifyPixelsBulk', useWasm)) {
     const mod = getWasmModule()!;
-    const inPtr  = mod._malloc(data.length);
+    // Input buffer comes from the shared persistent pool (like the other
+    // dispatchers in this file); the output buffer is small/transient per
+    // call and stays a plain malloc/free.
+    const inPtr  = getPersistentBuf(data.length);
     const outPtr = mod._malloc(pixelCount * 4); // int32 per pixel
     mod.HEAPU8.set(data, inPtr);
     mod.classifyPixelsBulk(inPtr, data.length, Math.round(avgLum), outPtr);
-    const result = new Int32Array(pixelCount);
-    for (let i = 0; i < pixelCount; i++) {
-      result[i] = mod.HEAP32[(outPtr >> 2) + i];
-    }
-    mod._free(inPtr);
+    const result = mod.HEAP32.subarray(outPtr >> 2, (outPtr >> 2) + pixelCount).slice();
     mod._free(outPtr);
     return result;
   }
@@ -99,7 +98,7 @@ export function classifyPixelsBulkWith(
  * texture so layer shaders can sample precomputed classification results.
  */
 export function classifyImageMaskWith(
-  image: HTMLImageElement,
+  image: PixelSource,
   avgLum: number,
   useWasm: boolean,
 ): { mask: Uint8Array; width: number; height: number } | null {
@@ -155,7 +154,7 @@ export function classifyImageMaskWith(
  *                 of pixels whose BT.709 luminance rounds to `n`.
  */
 export function computeLuminanceHistogramWith(
-  image: HTMLImageElement,
+  image: PixelSource,
   useWasm: boolean,
 ): Uint32Array {
   const bytes = getImageBytes(image);
@@ -198,7 +197,7 @@ export function computeLuminanceHistogramWith(
  *                 band-to-index mapping.
  */
 export function computeColorBandCountsWith(
-  image: HTMLImageElement,
+  image: PixelSource,
   avgLum: number,
   useWasm: boolean,
 ): Uint32Array {

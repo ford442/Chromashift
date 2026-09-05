@@ -4,9 +4,9 @@
  * `computeAverageLuminanceStrided` in `cpp/chromashift_engine.cpp`.
  */
 
-import { getImageBytes } from '../imageBytes';
+import { getImageBytes, type PixelSource } from '../imageBytes';
 
-export function tsComputeAverageLuminance(image: HTMLImageElement): number {
+export function tsComputeAverageLuminance(image: PixelSource): number {
   const bytes = getImageBytes(image);
   if (!bytes) return 128;
   let sum = 0;

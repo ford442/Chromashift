@@ -28,7 +28,9 @@ export type {
   ChoreSuccess,
   ChoresRuntime,
   CoincidenceJob,
+  CpuChoreHost,
   CpuImageAnalysisOutput,
+  CpuImageAnalysisResult,
   GpuCoincidenceOutput,
   GpuImageAnalysisOutput,
   ImageAnalysisJob,
@@ -36,7 +38,6 @@ export type {
 } from './types';
 export { CHORE_BACKEND_ORDER } from './types';
 
-export type { CpuChoreHost } from './cpuBackend';
 export { CpuChoreBackend } from './cpuBackend';
 
 export type { CoincidenceEncodeParams } from './webgpuBackend';
