@@ -1,6 +1,7 @@
+import { memo } from 'react';
 import type { ViewportPanelProps } from './types';
 
-export function ViewportPanel({
+export const ViewportPanel = memo(function ViewportPanel({
   squareCanvas,
   antialiasEnabled,
   displayColorSpace,
@@ -167,4 +168,4 @@ export function ViewportPanel({
       </button>
     </div>
   );
-}
+});

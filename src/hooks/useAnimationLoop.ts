@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { GPU_TIMING_HISTORY_SIZE } from '../engine/GpuTimestampProfiler';
 import { buildRendererState } from '../engine/buildRendererState';
 import { advanceAngles, effectiveLayerScaleForMultiView, isQuadCompareLayout, isTwoSlotCompareLayout } from '../engine/compareViews';
+import { renderTelemetry } from '../engine/telemetryStore';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { isXrImmersiveActive } from '../engine/xr/xrSupport';
 import { applySettingsToState } from '../state/chromashiftReducer';
@@ -34,6 +35,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
   useEffect(() => {
     if (!state.output.performanceHudEnabled) {
       frameHistoryRef.current = [];
+      renderTelemetry.setFrameTimeHistory([]);
     }
   }, [state.output.performanceHudEnabled]);
 
@@ -63,7 +65,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
 
         if (now - lastAngleSyncRef.current > 200) {
           lastAngleSyncRef.current = now;
-          actions.setLayerAngles(angles);
+          renderTelemetry.setAngles(angles);
         }
 
         const renderOverrides: Partial<import('../engine/types/RendererState').RendererState> = mod
@@ -92,7 +94,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
         const xrImmersive = isXrImmersiveActive();
         if (!xrImmersive) {
           orchestratorRef.current?.reconfigureIfNeeded();
-          rendererRef.current?.render(buildRendererState(current, angles, renderOverrides));
+          rendererRef.current?.render(buildRendererState(current, angles, renderOverrides, 'main'));
         }
 
         if (!xrImmersive && twoSlotActive && rendererB) {
@@ -109,15 +111,15 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
             tracerScale: effectiveLayerScaleForMultiView(stateB.tracers.scale, compareLayout).scale,
             livePreviewEnabled: false,
             profilePerformance: false,
-          }));
+          }, 'compareB'));
         }
 
         if (now - lastRenderMetricSyncRef.current > 200) {
           lastRenderMetricSyncRef.current = now;
           const timing = rendererRef.current?.getRenderTiming();
           if (timing) {
-            actions.setRenderCpuTiming({ last: timing.lastCpuMs, avg: timing.averageCpuMs });
-            actions.setRenderGpuTiming(timing.gpu);
+            renderTelemetry.setRenderCpuTiming({ last: timing.lastCpuMs, avg: timing.averageCpuMs });
+            renderTelemetry.setRenderGpuTiming(timing.gpu);
 
             if (current.output.performanceHudEnabled) {
               const gpuTotal = timing.gpu.last?.totalGpuMs ?? 0;
@@ -126,11 +128,11 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
               if (frameHistoryRef.current.length > GPU_TIMING_HISTORY_SIZE) {
                 frameHistoryRef.current.shift();
               }
-              actions.setFrameTimeHistory([...frameHistoryRef.current]);
+              renderTelemetry.setFrameTimeHistory([...frameHistoryRef.current]);
 
               const budgetMs = 1000 / current.engine.fps;
               const overBudget = frameMs > budgetMs;
-              actions.setPerformanceBudgetExceeded(overBudget);
+              renderTelemetry.setPerformanceBudgetExceeded(overBudget);
 
               if (
                 overBudget

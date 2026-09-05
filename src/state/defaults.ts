@@ -2,7 +2,6 @@ import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { defaultCompareSlot } from '../engine/compareViews';
 import { getRendererPreference } from '../engine/rendererMode';
 import { CLASSIC_PROFILE_ID } from '../engine/color/colorProfile';
-import { EMPTY_GPU_RENDER_TIMING } from '../engine/types/RendererContracts';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { ChromashiftState, LayerTriple } from './types';
 
@@ -132,11 +131,6 @@ export function createInitialState(): ChromashiftState {
       upscaleBusy: false,
       upscaleProgress: 0,
       upscaleInfo: '',
-      renderCpuTiming: { last: 0, avg: 0 },
-      renderGpuTiming: { ...EMPTY_GPU_RENDER_TIMING },
-      frameTimeHistory: [],
-      performanceBudgetExceeded: false,
-      collisionStats: { ...DEFAULT_COLLISION_STATS },
       presetLoadError: null,
       kioskEnabled: false,
       kioskUiHidden: false,

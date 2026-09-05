@@ -4,7 +4,36 @@ import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { openWebGlDiagnosticSession, readRequestedBackend } from '../engine/rendererMode';
 import { isFatalGpuDeviceRequestError } from '../engine/gpuBootstrap';
+import { useCollisionStats, useRenderCpuTiming } from '../engine/telemetryStore';
 import type { ChromeShellProps } from './AppUI.types';
+
+/**
+ * Subscribes directly to the render-loop telemetry store so the 5x/sec CPU
+ * timing + 1x/sec collision-stats updates only re-render this small badge,
+ * not the rest of `ChromeShell` (see `engine/telemetryStore.ts`).
+ */
+function TelemetryBadge({ performanceHudEnabled }: { performanceHudEnabled: boolean }) {
+  const renderCpuTiming = useRenderCpuTiming();
+  const collisionStats = useCollisionStats();
+
+  return (
+    <>
+      <span className="text-[10px] font-mono text-emerald-300/80">
+        CPU {renderCpuTiming.last.toFixed(2)} / {renderCpuTiming.avg.toFixed(2)} ms
+      </span>
+      {!performanceHudEnabled && (
+        <span className="text-[10px] font-mono text-cyan-300/80">
+          2+ {collisionStats.twoOverlapPixels} | 3 {collisionStats.threeOverlapPixels}
+        </span>
+      )}
+      {!performanceHudEnabled && (
+        <span className="text-[10px] font-mono text-cyan-200/70">
+          Win {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]}
+        </span>
+      )}
+    </>
+  );
+}
 
 export function ChromeShell({
   showChrome,
@@ -12,11 +41,9 @@ export function ChromeShell({
   gpuError,
   onRetryGpu,
   isGpuRetrying,
-  collisionStats,
   avgLuminance,
   engineMode,
   wasmAvailable,
-  renderCpuTiming,
   performanceHudEnabled,
   imageList,
   currentImageIndex,
@@ -128,19 +155,7 @@ export function ChromeShell({
           }`}>
             {engineMode === 'wasm' && wasmAvailable ? '⚡ C++ WASM' : '🔷 TS'}
           </span>
-          <span className="text-[10px] font-mono text-emerald-300/80">
-            CPU {renderCpuTiming.last.toFixed(2)} / {renderCpuTiming.avg.toFixed(2)} ms
-          </span>
-          {!performanceHudEnabled && (
-            <span className="text-[10px] font-mono text-cyan-300/80">
-              2+ {collisionStats.twoOverlapPixels} | 3 {collisionStats.threeOverlapPixels}
-            </span>
-          )}
-          {!performanceHudEnabled && (
-            <span className="text-[10px] font-mono text-cyan-200/70">
-              Win {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]}
-            </span>
-          )}
+          <TelemetryBadge performanceHudEnabled={performanceHudEnabled} />
         </div>
       )}
 

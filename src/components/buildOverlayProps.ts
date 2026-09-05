@@ -8,7 +8,6 @@ import type { LayerIndex } from './overlay/types';
 
 export function buildOverlayProps(p: AppUIProps): OverlayProps {
   return {
-    layerAngles: p.layerAngles,
     layerExtensions: p.layerExtensions,
     frameRate: p.frameRate,
     layerOpacity: p.layerOpacity,
@@ -27,7 +26,6 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     diagnosticsOpacity: p.diagnosticsOpacity,
     stampBoost: p.stampBoost,
     peakCollisionsOnly: p.peakCollisionsOnly,
-    collisionStats: p.collisionStats,
     rendererBackend: p.rendererBackend,
     rendererFallbackReason: p.rendererFallbackReason,
     webglDebugMode: p.webglDebugMode,
@@ -123,10 +121,6 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     onPeakCollisionsOnlyChange: p.setPeakCollisionsOnly,
     performanceHudEnabled: p.performanceHudEnabled,
     performanceAutoDegrade: p.performanceAutoDegrade,
-    performanceBudgetExceeded: p.performanceBudgetExceeded,
-    renderCpuTiming: p.renderCpuTiming,
-    renderGpuTiming: p.renderGpuTiming,
-    frameTimeHistory: p.frameTimeHistory,
     onPerformanceHudToggle: p.setPerformanceHudEnabled,
     onPerformanceAutoDegradeToggle: p.setPerformanceAutoDegrade,
     onApplyPerformanceDegrade: () => {

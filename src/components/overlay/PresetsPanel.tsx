@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import type { BuiltinPreset } from '../../state/presetGallery';
 import type { StoredPreset } from '../../state/presetLibrary';
 
@@ -20,7 +20,7 @@ export interface PresetsPanelProps {
   onCompareWithSaved: (name: string) => void;
 }
 
-export function PresetsPanel({
+export const PresetsPanel = memo(function PresetsPanel({
   builtinPresets,
   savedPresets,
   presetStatus,
@@ -187,4 +187,4 @@ export function PresetsPanel({
       )}
     </div>
   );
-}
+});

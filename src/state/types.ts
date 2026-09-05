@@ -1,7 +1,5 @@
-import type { GpuRenderTiming } from '../engine/types/RendererContracts';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { RendererBackend } from '../engine/RendererTypes';
-import type { CollisionStats } from '../engine/types/RendererState';
 import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';
@@ -154,12 +152,6 @@ export interface UiSlice {
   upscaleBusy: boolean;
   upscaleProgress: number;
   upscaleInfo: string;
-  renderCpuTiming: { last: number; avg: number };
-  renderGpuTiming: GpuRenderTiming;
-  /** Sparkline samples (total ms = max(cpu last, gpu total) per frame). */
-  frameTimeHistory: number[];
-  performanceBudgetExceeded: boolean;
-  collisionStats: CollisionStats;
   /** Friendly message when a ?preset= URL parameter could not be applied. */
   presetLoadError: string | null;
   /** Set from `?kiosk=1` — gallery / installation mode. */

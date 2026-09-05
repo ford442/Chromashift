@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { getBlendModeInfo } from '../../engine/blendModes';
 import type { ReferenceBlendMode, OverlayImageSource, TracerPanelProps } from './types';
 
@@ -51,7 +52,7 @@ function BlendModeSelect({
   );
 }
 
-export function TracerPanel({
+export const TracerPanel = memo(function TracerPanel({
   tracerAboveIntensity,
   tracerBelowIntensity,
   tracerAboveDuration,
@@ -293,4 +294,4 @@ export function TracerPanel({
       </div>
     </div>
   );
-}
+});

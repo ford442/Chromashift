@@ -1,16 +1,101 @@
+import { memo } from 'react';
 import { PerformanceSparkline } from '../PerformanceSparkline';
+import {
+  useCollisionStats,
+  useFrameTimeHistory,
+  usePerformanceBudgetExceeded,
+  useRenderCpuTiming,
+  useRenderGpuTiming,
+} from '../../engine/telemetryStore';
+import type { RendererBackend } from '../../engine/RendererTypes';
 import type { DiagnosticsPanelProps } from './types';
 
 function formatPassMs(value: number | undefined): string {
   return value === undefined ? '—' : value.toFixed(2);
 }
 
-export function DiagnosticsPanel({
+/**
+ * Subscribes directly to the render-loop telemetry store (see
+ * `engine/telemetryStore.ts`) so the Perf HUD's 5x/sec CPU/GPU readouts and
+ * sparkline only re-render this block, not the rest of `DiagnosticsPanel` —
+ * let alone the whole panel tree the way a reducer dispatch would.
+ */
+function PerfHudTelemetry({ frameRate, rendererBackend }: { frameRate: number; rendererBackend: RendererBackend }) {
+  const renderCpuTiming = useRenderCpuTiming();
+  const renderGpuTiming = useRenderGpuTiming();
+  const frameTimeHistory = useFrameTimeHistory();
+  const performanceBudgetExceeded = usePerformanceBudgetExceeded();
+  const budgetMs = 1000 / frameRate;
+  const gpuPasses = renderGpuTiming.last;
+
+  return (
+    <>
+      <div className="text-[10px] font-mono text-emerald-200/85">
+        CPU {renderCpuTiming.last.toFixed(2)} / {renderCpuTiming.avg.toFixed(2)} ms
+        <span className="text-emerald-400/60"> · budget {budgetMs.toFixed(2)} ms</span>
+      </div>
+
+      {rendererBackend === 'webgpu' && renderGpuTiming.available ? (
+        <>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] font-mono text-emerald-100/90">
+            <span>Layers</span>
+            <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.layersMs)} ms</span>
+            <span>Persistence</span>
+            <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.persistenceMs)} ms</span>
+            <span>Compositor</span>
+            <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.compositorMs)} ms</span>
+            <span>Readback</span>
+            <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.readbackMs)} ms</span>
+            <span className="text-emerald-300">GPU total</span>
+            <span className="text-right tabular-nums text-emerald-300">{formatPassMs(gpuPasses?.totalGpuMs)} ms</span>
+          </div>
+          <div className="text-[10px] font-mono text-emerald-300/75">
+            ≈ {renderGpuTiming.approxBandwidthMBps.toFixed(1)} MB/s (model)
+          </div>
+        </>
+      ) : (
+        <div className="text-[10px] font-mono text-amber-300/80">
+          GPU timing N/A{rendererBackend !== 'webgpu' ? ' (WebGL fallback)' : ''}
+        </div>
+      )}
+
+      <PerformanceSparkline
+        values={frameTimeHistory}
+        budgetMs={budgetMs}
+      />
+
+      {performanceBudgetExceeded && (
+        <div className="text-[9px] font-mono leading-tight text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded px-1.5 py-1">
+          Frame time exceeds {budgetMs.toFixed(1)} ms budget ({frameRate} FPS).
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Subscribes to collision-stats telemetry (published ~1x/sec by the GPU
+ * readback poller) so it doesn't force a re-render of the rest of the panel.
+ */
+function CollisionStatsReadout() {
+  const collisionStats = useCollisionStats();
+  return (
+    <>
+      <div className="text-[10px] font-mono text-cyan-200/80">
+        2+: {collisionStats.twoOverlapPixels} px | 3: {collisionStats.threeOverlapPixels} px
+      </div>
+      <div className="text-[10px] font-mono text-cyan-200/65">
+        Wins R/V/G: {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]} | Hit {Math.round(collisionStats.averageCollision * 100)}%
+      </div>
+    </>
+  );
+}
+
+export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   diagnosticsMode,
   diagnosticsOpacity,
   stampBoost,
   peakCollisionsOnly,
-  collisionStats,
   isPaused,
   mainViewMode,
   exportingTracer,
@@ -21,11 +106,7 @@ export function DiagnosticsPanel({
   tracerInspectShowLayers,
   performanceHudEnabled,
   performanceAutoDegrade,
-  performanceBudgetExceeded,
   frameRate,
-  renderCpuTiming,
-  renderGpuTiming,
-  frameTimeHistory,
   rendererBackend,
   onDiagnosticsModeChange,
   onDiagnosticsOpacityChange,
@@ -43,9 +124,6 @@ export function DiagnosticsPanel({
   onTracerInspectShowLayersToggle,
   onResetInspectView,
 }: DiagnosticsPanelProps) {
-  const budgetMs = 1000 / frameRate;
-  const gpuPasses = renderGpuTiming.last;
-
   return (
     <div className="space-y-3">
       <div className="panel-3d space-y-2">
@@ -101,12 +179,7 @@ export function DiagnosticsPanel({
             className="flex-1 h-1 accent-cyan-400"
           />
         </div>
-        <div className="text-[10px] font-mono text-cyan-200/80">
-          2+: {collisionStats.twoOverlapPixels} px | 3: {collisionStats.threeOverlapPixels} px
-        </div>
-        <div className="text-[10px] font-mono text-cyan-200/65">
-          Wins R/V/G: {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]} | Hit {Math.round(collisionStats.averageCollision * 100)}%
-        </div>
+        <CollisionStatsReadout />
       </div>
 
       <div className="panel-3d space-y-2">
@@ -128,45 +201,7 @@ export function DiagnosticsPanel({
 
         {performanceHudEnabled && (
           <>
-            <div className="text-[10px] font-mono text-emerald-200/85">
-              CPU {renderCpuTiming.last.toFixed(2)} / {renderCpuTiming.avg.toFixed(2)} ms
-              <span className="text-emerald-400/60"> · budget {budgetMs.toFixed(2)} ms</span>
-            </div>
-
-            {rendererBackend === 'webgpu' && renderGpuTiming.available ? (
-              <>
-                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] font-mono text-emerald-100/90">
-                  <span>Layers</span>
-                  <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.layersMs)} ms</span>
-                  <span>Persistence</span>
-                  <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.persistenceMs)} ms</span>
-                  <span>Compositor</span>
-                  <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.compositorMs)} ms</span>
-                  <span>Readback</span>
-                  <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.readbackMs)} ms</span>
-                  <span className="text-emerald-300">GPU total</span>
-                  <span className="text-right tabular-nums text-emerald-300">{formatPassMs(gpuPasses?.totalGpuMs)} ms</span>
-                </div>
-                <div className="text-[10px] font-mono text-emerald-300/75">
-                  ≈ {renderGpuTiming.approxBandwidthMBps.toFixed(1)} MB/s (model)
-                </div>
-              </>
-            ) : (
-              <div className="text-[10px] font-mono text-amber-300/80">
-                GPU timing N/A{rendererBackend !== 'webgpu' ? ' (WebGL fallback)' : ''}
-              </div>
-            )}
-
-            <PerformanceSparkline
-              values={frameTimeHistory}
-              budgetMs={budgetMs}
-            />
-
-            {performanceBudgetExceeded && (
-              <div className="text-[9px] font-mono leading-tight text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded px-1.5 py-1">
-                Frame time exceeds {budgetMs.toFixed(1)} ms budget ({frameRate} FPS).
-              </div>
-            )}
+            <PerfHudTelemetry frameRate={frameRate} rendererBackend={rendererBackend} />
 
             <div className="grid grid-cols-2 gap-1">
               <button
@@ -307,4 +342,4 @@ export function DiagnosticsPanel({
       </div>
     </div>
   );
-}
+});

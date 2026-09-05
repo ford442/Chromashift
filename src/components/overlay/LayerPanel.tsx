@@ -1,11 +1,39 @@
-import { useRef } from 'react';
+import { memo, useRef } from 'react';
 import { RotaryKnob } from '../RotaryKnob';
 import { CLASSIC_PROFILE_ID } from '../../engine/color/colorProfile';
+import { useLiveLayerAngle } from '../../engine/telemetryStore';
 import { LAYER_COLORS, LAYER_LABELS } from './constants';
 import type { LayerIndex, LayerPanelProps } from './types';
 
-export function LayerPanel({
-  layerAngles,
+/**
+ * Subscribes directly to the live angle for one layer (see
+ * `engine/telemetryStore.ts`) instead of receiving it through `LayerPanel`'s
+ * props, so the ~5x/sec rotation update re-renders only this knob rather
+ * than the whole panel (or, before this store existed, the whole app).
+ */
+const LiveAngleKnob = memo(function LiveAngleKnob({
+  layer,
+  onAngleChange,
+}: {
+  layer: LayerIndex;
+  onAngleChange: (layer: LayerIndex, angle: number) => void;
+}) {
+  const angle = useLiveLayerAngle(layer);
+  return (
+    <RotaryKnob
+      value={angle}
+      min={0}
+      max={359}
+      step={1}
+      onChange={(next) => onAngleChange(layer, next)}
+      label="Angle"
+      unit="°"
+      size="small"
+    />
+  );
+});
+
+export const LayerPanel = memo(function LayerPanel({
   layerExtensions,
   frameRate,
   layerOpacity,
@@ -42,16 +70,7 @@ export function LayerPanel({
               {i === 0 && <span className="text-gray-500 ml-1 text-[10px]">(reverse)</span>}
             </div>
             <div className="knob-pair">
-              <RotaryKnob
-                value={layerAngles[i]}
-                min={0}
-                max={359}
-                step={1}
-                onChange={(angle) => onAngleChange(i, angle)}
-                label="Angle"
-                unit="°"
-                size="small"
-              />
+              <LiveAngleKnob layer={i} onAngleChange={onAngleChange} />
               <RotaryKnob
                 value={layerExtensions[i]}
                 min={0}
@@ -281,4 +300,4 @@ export function LayerPanel({
       </div>
     </div>
   );
-}
+});
