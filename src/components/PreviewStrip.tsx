@@ -1,6 +1,7 @@
+import { memo } from 'react';
 import type { PreviewStripProps } from './AppUI.types';
 
-export function PreviewStrip({
+export const PreviewStrip = memo(function PreviewStrip({
   previewOriginalRef,
   previewSeparatedRef,
   previewTracerRef,
@@ -68,4 +69,4 @@ export function PreviewStrip({
       </div>
     </>
   );
-}
+});

@@ -1,10 +1,11 @@
+import { memo } from 'react';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { isQuadCompareLayout, isTwoSlotCompareLayout, QUAD_VIEW_CELLS } from '../engine/compareViews';
 import type { MainViewportProps } from './AppUI.types';
 
 const QUAD_LAYER_LABELS = ['Layer 0', 'Layer 1', 'Layer 2'] as const;
 
-export function MainViewport({
+export const MainViewport = memo(function MainViewport({
   mainViewportRef,
   mainCanvasRef,
   canvasARef,
@@ -255,4 +256,4 @@ export function MainViewport({
       )}
     </div>
   );
-}
+});

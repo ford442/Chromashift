@@ -1,7 +1,6 @@
 import type { ColorProfileControls } from '../../hooks/useColorProfiles';
 import type { ExportPanelProps } from './ExportPanel';
 import type { PresetsPanelProps } from './PresetsPanel';
-import type { CollisionStats } from '../../engine/types/RendererState';
 import type { RendererBackend } from '../../engine/RendererTypes';
 
 export type ReferenceBlendMode = 'hidden' | 'overlay' | 'split' | 'checker' | 'difference' | 'edge';
@@ -57,7 +56,6 @@ export interface RendererPanelProps {
 }
 
 export interface LayerPanelProps {
-  layerAngles: [number, number, number];
   layerExtensions: [number, number, number];
   frameRate: number;
   layerOpacity: number;
@@ -119,7 +117,6 @@ export interface DiagnosticsPanelProps {
   diagnosticsOpacity: number;
   stampBoost: number;
   peakCollisionsOnly: boolean;
-  collisionStats: CollisionStats;
   isPaused: boolean;
   mainViewMode: number;
   exportingTracer: boolean;
@@ -130,11 +127,7 @@ export interface DiagnosticsPanelProps {
   tracerInspectShowLayers: boolean;
   performanceHudEnabled: boolean;
   performanceAutoDegrade: boolean;
-  performanceBudgetExceeded: boolean;
   frameRate: number;
-  renderCpuTiming: { last: number; avg: number };
-  renderGpuTiming: import('../../engine/types/RendererContracts').GpuRenderTiming;
-  frameTimeHistory: readonly number[];
   rendererBackend: RendererBackend;
   onDiagnosticsModeChange: (value: boolean) => void;
   onDiagnosticsOpacityChange: (value: number) => void;

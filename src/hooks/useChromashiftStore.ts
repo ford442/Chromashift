@@ -3,6 +3,7 @@ import { chromashiftReducer } from '../state/chromashiftReducer';
 import { createChromashiftActions } from '../state/actions';
 import type { ChromashiftDispatch } from '../state/actions';
 import { createInitialStateFromUrl } from '../state/presetUrl';
+import { renderTelemetry } from '../engine/telemetryStore';
 import type { ChromashiftRefs } from './refs/types';
 import { useChromashiftRefs } from './refs/useChromashiftRefs';
 import { applyClassificationMaskToRenderers, applySourceTexture } from './refs/textureRouting';
@@ -46,7 +47,13 @@ export function useChromashiftStore(refs: ChromashiftRefs) {
   }, [currentImageIndexRef, state.media.currentIndex]);
 
   useEffect(() => {
-    animAnglesRef.current = [...state.layers.angles];
+    // `state.layers.angles` only changes on a manual knob drag, a preset load, or
+    // reset (the render loop no longer dispatches into it — see telemetryStore.ts)
+    // — so push it to the ref the loop reads and the store the knob displays,
+    // rather than waiting for the loop's next periodic sync.
+    const angles = state.layers.angles;
+    animAnglesRef.current = [...angles];
+    renderTelemetry.setAngles([...angles]);
   }, [animAnglesRef, state.layers.angles]);
 
   const actions = useMemo(() => createChromashiftActions(dispatch), []);

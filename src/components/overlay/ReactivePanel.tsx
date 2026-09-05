@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { MIDI_PARAM_LABELS, type MidiParamId } from '../../engine/reactive/types';
 import type { ReactivePanelProps } from './types';
 
@@ -17,7 +18,7 @@ function LevelMeter({ label, value, color }: { label: string; value: number; col
   );
 }
 
-export function ReactivePanel({
+export const ReactivePanel = memo(function ReactivePanel({
   reactiveEnabled,
   audioEnabled,
   midiEnabled,
@@ -192,4 +193,4 @@ export function ReactivePanel({
       )}
     </div>
   );
-}
+});

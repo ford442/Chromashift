@@ -1,7 +1,7 @@
-import { useRef } from 'react';
+import { memo, useRef } from 'react';
 import type { PlayPanelProps } from './types';
 
-export function PlayPanel({
+export const PlayPanel = memo(function PlayPanel({
   imageChangeInterval,
   onImageChangeIntervalChange,
   isImageStripOpen,
@@ -116,4 +116,4 @@ export function PlayPanel({
       </div>
     </>
   );
-}
+});

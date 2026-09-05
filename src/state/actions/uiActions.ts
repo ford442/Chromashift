@@ -1,5 +1,3 @@
-import type { CollisionStats } from '../../engine/types/RendererState';
-import type { GpuRenderTiming } from '../../engine/types/RendererContracts';
 import type { OverlayImageSource, ReferenceBlendMode } from '../../components/overlay/types';
 import type { VideoExportSettings } from '../types';
 import type { ChromashiftDispatch } from './types';
@@ -36,17 +34,7 @@ export function createUiActions(dispatch: ChromashiftDispatch) {
       dispatch({ type: 'ui/patch', patch: { upscaleProgress } }),
     setUpscaleInfo: (upscaleInfo: string) =>
       dispatch({ type: 'ui/patch', patch: { upscaleInfo } }),
-    setRenderCpuTiming: (renderCpuTiming: { last: number; avg: number }) =>
-      dispatch({ type: 'ui/patch', patch: { renderCpuTiming } }),
-    setRenderGpuTiming: (renderGpuTiming: GpuRenderTiming) =>
-      dispatch({ type: 'ui/patch', patch: { renderGpuTiming } }),
-    setFrameTimeHistory: (frameTimeHistory: number[]) =>
-      dispatch({ type: 'ui/patch', patch: { frameTimeHistory } }),
-    setPerformanceBudgetExceeded: (performanceBudgetExceeded: boolean) =>
-      dispatch({ type: 'ui/patch', patch: { performanceBudgetExceeded } }),
     applyPerformanceDegrade: () => dispatch({ type: 'ui/applyPerformanceDegrade' }),
-    setCollisionStats: (collisionStats: CollisionStats) =>
-      dispatch({ type: 'ui/patch', patch: { collisionStats } }),
     setKioskUiHidden: (kioskUiHidden: boolean) =>
       dispatch({ type: 'ui/patch', patch: { kioskUiHidden } }),
     setKioskAttractMode: (kioskAttractMode: boolean) =>

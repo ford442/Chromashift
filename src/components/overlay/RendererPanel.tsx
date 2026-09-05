@@ -1,9 +1,10 @@
+import { memo } from 'react';
 import { WEBGL_BACKEND_ENABLED } from '../../engine/rendererMode';
 import type { RendererPanelProps } from './types';
 
 const WEBGL_TOOLTIP = 'Diagnostic / XR / screenshot backend — not an automatic fallback. Reloads with ?renderer=webgl and does not request a WebGPU device.';
 
-export function RendererPanel({
+export const RendererPanel = memo(function RendererPanel({
   rendererBackend,
   rendererFallbackReason,
   webglDebugMode,
@@ -182,4 +183,4 @@ export function RendererPanel({
       </div>
     </div>
   );
-}
+});

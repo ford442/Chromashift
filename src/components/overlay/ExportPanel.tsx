@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { ExportPassMode } from '../../engine/types/RendererContracts';
 import type { VideoCodecSupport } from '../../engine/videoExport/videoCodecs';
 import type { VideoExportContainer, VideoExportQuality, VideoExportSettings } from '../../state/types';
@@ -38,7 +39,7 @@ const QUALITY_LABELS: Record<VideoExportQuality, string> = {
   low: 'Low',
 };
 
-export function ExportPanel({
+export const ExportPanel = memo(function ExportPanel({
   exportingVideo,
   videoExportProgress,
   videoExportSettings,
@@ -239,4 +240,4 @@ export function ExportPanel({
       </div>
     </div>
   );
-}
+});

@@ -17,6 +17,7 @@ import { useQuadStationaryRefresh } from './hooks/useQuadStationaryRefresh';
 import { useCompareSwipeInteraction } from './hooks/useCompareSwipeInteraction';
 import { useChromashiftRefs, useChromashiftStore } from './hooks/useChromashiftStore';
 import { useImagePlayback } from './hooks/useImagePlayback';
+import { renderTelemetry } from './engine/telemetryStore';
 import { useLiveSource } from './hooks/useLiveSource';
 import {
   useAppKeyboardShortcuts,
@@ -43,7 +44,7 @@ export default function App() {
 
   useWasmEngineLoader(actions.setWasmAvailable);
   useCanvasResize(refs, output.squareCanvas, media.aspect, state.ui.compareView.layout);
-  useCollisionStatsPoll(refs, engine.gpuReady, actions.setCollisionStats);
+  useCollisionStatsPoll(refs, engine.gpuReady, renderTelemetry.setCollisionStats);
 
   const { retryGpuBootstrap, isGpuRetrying } = useAppWebGPUInit({
     mainCanvasRef: refs.mainCanvasRef,

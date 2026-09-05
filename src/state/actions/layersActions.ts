@@ -4,8 +4,6 @@ import type { ChromashiftDispatch } from './types';
 
 export function createLayersActions(dispatch: ChromashiftDispatch) {
   return {
-    setLayerAngles: (angles: LayerTriple<number>) =>
-      dispatch({ type: 'layers/patch', patch: { angles } }),
     setLayerExtensions: (extensions: LayerTriple<number>) =>
       dispatch({ type: 'layers/patch', patch: { extensions } }),
     setLayerOpacity: (opacity: number) =>

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { memo, useRef } from 'react';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { LiveSourceState } from '../state/types';
 
@@ -36,7 +36,7 @@ function getImageLabel(image: ImageEntry, index: number): string {
   }
 }
 
-export function ImageStrip({
+export const ImageStrip = memo(function ImageStrip({
   images,
   currentIndex,
   referenceUrl,
@@ -221,4 +221,4 @@ export function ImageStrip({
       )}
     </div>
   );
-}
+});

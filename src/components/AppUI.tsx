@@ -43,11 +43,9 @@ export function AppUI(props: AppUIProps) {
     gpuError,
     onRetryGpu,
     isGpuRetrying,
-    collisionStats,
     avgLuminance,
     engineMode,
     wasmAvailable,
-    renderCpuTiming,
     performanceHudEnabled,
     imageList,
     currentImageIndex,
@@ -181,11 +179,9 @@ export function AppUI(props: AppUIProps) {
         gpuError={gpuError}
         onRetryGpu={onRetryGpu}
         isGpuRetrying={isGpuRetrying}
-        collisionStats={collisionStats}
         avgLuminance={avgLuminance}
         engineMode={engineMode}
         wasmAvailable={wasmAvailable}
-        renderCpuTiming={renderCpuTiming}
         performanceHudEnabled={performanceHudEnabled}
         imageList={imageList}
         currentImageIndex={currentImageIndex}

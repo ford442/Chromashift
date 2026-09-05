@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { loadWasmEngine } from '../engine/WasmEngine';
 import type { ChromashiftRefs } from './useChromashiftStore';
-import type { ChromashiftState } from '../state/types';
+import type { CollisionStats } from '../engine/types/RendererState';
 import { isQuadCompareLayout, isTwoSlotCompareLayout } from '../engine/compareViews';
 
 export function useCanvasResize(
@@ -132,7 +132,7 @@ export function useWasmEngineLoader(
 export function useCollisionStatsPoll(
   refs: ChromashiftRefs,
   gpuReady: boolean,
-  setCollisionStats: (stats: ChromashiftState['ui']['collisionStats']) => void,
+  setCollisionStats: (stats: CollisionStats) => void,
 ): void {
   const { rendererRef } = refs;
 

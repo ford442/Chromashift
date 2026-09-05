@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { UpscalePanelProps } from './types';
 
 function composeSwinModel(style: string, scale: string, noise: string): string {
@@ -5,7 +6,7 @@ function composeSwinModel(style: string, scale: string, noise: string): string {
   return `swin_unet:${style}:${scale}:${n}`;
 }
 
-export function UpscalePanel({
+export const UpscalePanel = memo(function UpscalePanel({
   upscaleModel,
   upscaleBusy,
   upscaleProgress,
@@ -112,4 +113,4 @@ export function UpscalePanel({
       )}
     </div>
   );
-}
+});
