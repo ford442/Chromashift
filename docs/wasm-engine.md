@@ -71,7 +71,12 @@ lifetime, to an in-process implementation (`createChromashiftCpuHost` in
 `chromashiftHost.ts`) — same thread, same math — so a job is never silently
 dropped. That in-process host is also what Vitest and the WASM/TS parity
 tests use directly, since Vitest's `node` test environment has neither a
-real `Worker` nor `OffscreenCanvas`.
+real `Worker` nor `OffscreenCanvas`. Because of that gap, the byte-identity
+claim above is covered by a Playwright spec rather than a unit test:
+`e2e/analysis-worker-mask-parity.spec.ts` runs both real hosts in a browser
+against one source image and compares the two masks byte for byte (asserting
+`mode === 'worker'` first, so a silent fallback to the in-process lane fails
+the spec instead of passing it vacuously).
 
 `window.gpuChoreBackend` reflects this distinction for diagnostics: it reads
 `wasm-worker` / `ts-worker` when the analysis worker served the job, or
