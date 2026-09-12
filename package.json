@@ -25,7 +25,8 @@
     "codegen:decay": "node scripts/codegen-decay.mjs",
     "check:wasm": "make -C cpp check",
     "clean:wasm": "make -C cpp clean",
-    "test:cpp": "make -C cpp test"
+    "test:cpp": "make -C cpp test",
+    "bench:wasm": "node scripts/bench-wasm.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.12",

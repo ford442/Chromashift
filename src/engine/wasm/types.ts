@@ -6,40 +6,47 @@
 
 export type EngineKind = 'ts' | 'wasm';
 
-/** Subset of the Emscripten-generated module we use. */
+/**
+ * Subset of the Emscripten-generated module we use.
+ *
+ * The engine exports exactly one ABI: the flat C symbols listed in
+ * `EXPORTED_FUNCS` in cpp/Makefile, which Emscripten surfaces on the module as
+ * `_name`.  Pointer arguments are offsets into the WASM heap — write inputs
+ * through `HEAPU8` and read results back through the matching heap view.
+ */
 export interface ChromashiftWasmModule {
   /** Call the C++ computeAverageLuminance with a WASM heap pointer. */
-  computeAverageLuminance(ptr: number, length: number): number;
+  _computeAverageLuminance(ptr: number, length: number): number;
   /** Compute average luminance with spatial stride for large upscaled images. */
-  computeAverageLuminanceStrided(ptr: number, width: number, height: number, stride: number): number;
+  _computeAverageLuminanceStrided(ptr: number, width: number, height: number, stride: number): number;
   /** Call the C++ classifyPixel. */
-  classifyPixel(r: number, g: number, b: number, avgLum: number): number;
+  _classifyPixel(r: number, g: number, b: number, avgLum: number): number;
   /** Fill a 256-entry band LUT at outPtr for the given avgLum. */
-  buildBandLut(avgLum: number, outPtr: number): void;
+  _buildBandLut(avgLum: number, outPtr: number): void;
   /** Classify one pixel using a pre-built LUT. */
-  classifyPixelLut(r: number, g: number, b: number, avgLum: number, lutPtr: number): number;
+  _classifyPixelLut(r: number, g: number, b: number, avgLum: number, lutPtr: number): number;
   /** Classify every pixel in a RGBA buffer.  outPtr points to pixelCount int32 values. */
-  classifyPixelsBulk(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
+  _classifyPixelsBulk(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
   /** LUT-accelerated bulk classification. */
-  classifyPixelsBulkLut(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
+  _classifyPixelsBulkLut(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
   /** Build a compact uint8 classification mask (0–10 per pixel). */
-  computeClassificationMask(inPtr: number, width: number, height: number, avgLum: number, outPtr: number): void;
+  _computeClassificationMask(inPtr: number, width: number, height: number, avgLum: number, outPtr: number): void;
   /** LUT-accelerated classification mask. */
-  computeClassificationMaskLut(inPtr: number, width: number, height: number, avgLum: number, outPtr: number): void;
+  _computeClassificationMaskLut(inPtr: number, width: number, height: number, avgLum: number, outPtr: number): void;
   /** Fill a 256-entry uint32 histogram at outPtr. */
-  computeLuminanceHistogram(inPtr: number, byteLen: number, outPtr: number): void;
+  _computeLuminanceHistogram(inPtr: number, byteLen: number, outPtr: number): void;
   /** Fill an 11-entry uint32 colour-band count array at outPtr. */
-  computeColorBandCounts(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
+  _computeColorBandCounts(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
   /** Per-frame tracer decay multiplier. */
-  durationToDecay(durationMs: number, fps: number): number;
+  _durationToDecay(durationMs: number, fps: number): number;
   /** Advance 3 layer angles; result written to outPtr (3 float32 values). */
-  advanceLayerAngles(a0: number, a1: number, a2: number,
-                     s0: number, s1: number, s2: number,
-                     outPtr: number): void;
+  _advanceLayerAngles(a0: number, a1: number, a2: number,
+                      s0: number, s1: number, s2: number,
+                      outPtr: number): void;
   /** Apply decay in-place to a float RGBA buffer on the WASM heap. */
-  simulateTracerDecay(bufPtr: number, pixelCount: number, decayFactor: number): void;
+  _simulateTracerDecay(bufPtr: number, pixelCount: number, decayFactor: number): void;
   /** Write a column-major 3×3 rotation matrix (9 floats) to outPtr. */
-  buildRotationMat3(angleDeg: number, outPtr: number): void;
+  _buildRotationMat3(angleDeg: number, outPtr: number): void;
   /** Allocate bytes on the WASM heap; returns a pointer. */
   _malloc(size: number): number;
   /** Free a heap allocation. */
@@ -59,23 +66,23 @@ export type GlueModule = {
   default: (opts?: Record<string, unknown>) => Promise<ChromashiftWasmModule>;
 };
 
-/** Embind exports the TS bridge may call; checked individually for stale builds. */
+/** C exports the TS bridge may call; checked individually for stale builds. */
 export const WASM_API_FUNCTIONS = [
-  'computeAverageLuminance',
-  'computeAverageLuminanceStrided',
-  'classifyPixel',
-  'buildBandLut',
-  'classifyPixelLut',
-  'classifyPixelsBulk',
-  'classifyPixelsBulkLut',
-  'computeClassificationMask',
-  'computeClassificationMaskLut',
-  'computeLuminanceHistogram',
-  'computeColorBandCounts',
-  'buildRotationMat3',
-  'durationToDecay',
-  'advanceLayerAngles',
-  'simulateTracerDecay',
+  '_computeAverageLuminance',
+  '_computeAverageLuminanceStrided',
+  '_classifyPixel',
+  '_buildBandLut',
+  '_classifyPixelLut',
+  '_classifyPixelsBulk',
+  '_classifyPixelsBulkLut',
+  '_computeClassificationMask',
+  '_computeClassificationMaskLut',
+  '_computeLuminanceHistogram',
+  '_computeColorBandCounts',
+  '_buildRotationMat3',
+  '_durationToDecay',
+  '_advanceLayerAngles',
+  '_simulateTracerDecay',
 ] as const satisfies ReadonlyArray<keyof ChromashiftWasmModule>;
 
 export type WasmApiFunction = (typeof WASM_API_FUNCTIONS)[number];

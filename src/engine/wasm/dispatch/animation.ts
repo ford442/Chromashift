@@ -28,8 +28,8 @@ export function durationToDecayWith(
   fps: number,
   useWasm: boolean,
 ): number {
-  if (canUseWasmFn('durationToDecay', useWasm)) {
-    return getWasmModule()!.durationToDecay(durationMs, fps);
+  if (canUseWasmFn('_durationToDecay', useWasm)) {
+    return getWasmModule()!._durationToDecay(durationMs, fps);
   }
 
   return durationToDecay(durationMs, fps);
@@ -52,10 +52,10 @@ export function advanceAnglesBy(
   steps: [number, number, number],
   useWasm: boolean,
 ): [number, number, number] {
-  if (canUseWasmFn('advanceLayerAngles', useWasm)) {
+  if (canUseWasmFn('_advanceLayerAngles', useWasm)) {
     const mod = getWasmModule()!;
     const outPtr = mod._malloc(12); // 3 × float32
-    mod.advanceLayerAngles(
+    mod._advanceLayerAngles(
       angles[0], angles[1], angles[2],
       steps[0],  steps[1],  steps[2],
       outPtr,
@@ -80,10 +80,10 @@ export function buildRotationMat3With(
   angleDeg: number,
   useWasm: boolean,
 ): Float32Array {
-  if (canUseWasmFn('buildRotationMat3', useWasm)) {
+  if (canUseWasmFn('_buildRotationMat3', useWasm)) {
     const mod = getWasmModule()!;
     const outPtr = mod._malloc(9 * 4);
-    mod.buildRotationMat3(angleDeg, outPtr);
+    mod._buildRotationMat3(angleDeg, outPtr);
     const result = new Float32Array(9);
     result.set(mod.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + 9));
     mod._free(outPtr);
@@ -112,13 +112,13 @@ export function simulateTracerDecayWith(
 ): void {
   const pixelCount = Math.floor(buffer.length / 4);
 
-  if (canUseWasmFn('simulateTracerDecay', useWasm)) {
+  if (canUseWasmFn('_simulateTracerDecay', useWasm)) {
     const mod = getWasmModule()!;
     const byteCount = pixelCount * 4 * 4; // pixelCount × 4 channels × 4 bytes/float
     const ptr = mod._malloc(byteCount);
     // Copy buffer into WASM heap (HEAPF32 is indexed by float, not byte)
     mod.HEAPF32.set(buffer.subarray(0, pixelCount * 4), ptr >> 2);
-    mod.simulateTracerDecay(ptr, pixelCount, decayFactor);
+    mod._simulateTracerDecay(ptr, pixelCount, decayFactor);
     // Copy result back
     buffer.set(mod.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + pixelCount * 4));
     mod._free(ptr);

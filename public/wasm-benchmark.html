@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Chromashift WASM Band LUT Benchmark</title>
+  <title>Chromashift WASM SIMD128 Benchmark</title>
   <style>
     :root {
       color-scheme: dark;
@@ -35,34 +35,28 @@
   </style>
 </head>
 <body>
-  <h1>Chromashift WASM — Band LUT vs branchy (4K)</h1>
+  <h1>Chromashift WASM — SIMD128 kernel throughput (4K)</h1>
   <p>
-  Compares <code>computeClassificationMask</code> (branchy thresholds) against
-  <code>computeClassificationMaskLut</code> on a synthetic 3840×2160 RGBA buffer.
-  Acceptance target: LUT path ≥2× faster. Requires <code>npm run build:wasm</code>.
+  Runs the bulk pixel kernels of <code>cpp/chromashift_engine.cpp</code> over a
+  deterministic 3840×2160 RGBA golden image and checks each against its
+  throughput floor. Same image, same kernels and same floors as the CI perf
+  gate (<code>npm run bench:wasm -- --assert</code>) — both import
+  <code>wasm-benchmark-core.mjs</code>. Requires <code>npm run build:wasm</code>.
   </p>
   <button id="run" disabled>Run benchmark</button>
   <pre id="out">Loading WASM…</pre>
   <script type="module">
+    import { BYTE_LENGTH, HEIGHT, WIDTH, buildGoldenImage, runBenchmark }
+      from './wasm-benchmark-core.mjs';
+
     const out = document.getElementById('out');
     const runBtn = document.getElementById('run');
 
-    const WIDTH = 3840;
-    const HEIGHT = 2160;
-    const PIXELS = WIDTH * HEIGHT;
-    const BYTE_LEN = PIXELS * 4;
-    const AVG_LUM = 128;
-    const WARMUP = 2;
-    const ITERS = 8;
-
-    function log(line) {
-      out.textContent += line + '\n';
-    }
-
-    function bench(fn) {
-      const t0 = performance.now();
-      fn();
-      return performance.now() - t0;
+    function log(line, cls) {
+      const el = document.createElement('span');
+      if (cls) el.className = cls;
+      el.textContent = line + '\n';
+      out.appendChild(el);
     }
 
     async function main() {
@@ -75,75 +69,47 @@
         return;
       }
 
-      if (typeof Module.computeClassificationMaskLut !== 'function') {
-        out.textContent = 'Stale WASM build — rebuild with: npm run build:wasm';
+      if (typeof Module._computeClassificationMaskLut !== 'function') {
+        out.textContent = 'Stale WASM build — rebuild with: npm run build:wasm:force';
         return;
       }
 
-      const inPtr = Module._malloc(BYTE_LEN);
-      const outPtr = Module._malloc(PIXELS);
-      const heap = Module.HEAPU8;
-
-      // Deterministic gradient pattern (no DOM canvas decode overhead)
-      for (let i = 0; i < PIXELS; i += 1) {
-        const o = i * 4;
-        const v = (i * 17) & 255;
-        heap[o] = v;
-        heap[o + 1] = (v + 64) & 255;
-        heap[o + 2] = (v + 128) & 255;
-        heap[o + 3] = 255;
-      }
-
-      out.textContent = `WASM loaded. Image: ${WIDTH}×${HEIGHT} (${(BYTE_LEN / 1e6).toFixed(1)} MB RGBA)\n`;
-
+      out.textContent = `WASM loaded. Building golden image ${WIDTH}×${HEIGHT} `
+        + `(${(BYTE_LENGTH / 1e6).toFixed(1)} MB RGBA)…\n`;
+      const pixels = buildGoldenImage();
+      out.textContent += 'Ready.\n';
       runBtn.disabled = false;
+
       runBtn.onclick = () => {
         runBtn.disabled = true;
         out.textContent = '';
 
-        // Warmup
-        for (let i = 0; i < WARMUP; i += 1) {
-          Module.computeClassificationMask(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
-          Module.computeClassificationMaskLut(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
+        const { results, maskMismatches, avgLum } = runBenchmark(Module, { pixels });
+
+        let failed = false;
+        for (const [name, { ms, mpxps, floor, pass }] of Object.entries(results)) {
+          if (!pass) failed = true;
+          log(
+            `${name.padEnd(30)} ${ms.toFixed(1).padStart(7)} ms  `
+            + `${mpxps.toFixed(0).padStart(6)} Mpx/s  `
+            + (pass ? 'ok' : `BELOW FLOOR ${floor} Mpx/s`),
+            pass ? 'pass' : 'fail',
+          );
         }
 
-        let branchyMs = 0;
-        let lutMs = 0;
-        for (let i = 0; i < ITERS; i += 1) {
-          branchyMs += bench(() => {
-            Module.computeClassificationMask(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
-          });
-          lutMs += bench(() => {
-            Module.computeClassificationMaskLut(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
-          });
-        }
-
-        branchyMs /= ITERS;
-        lutMs /= ITERS;
-        const speedup = branchyMs / lutMs;
-        const pass = speedup >= 2.0;
-
-        log(`Branchy mask: ${branchyMs.toFixed(1)} ms / frame (avg of ${ITERS})`);
-        log(`LUT mask:     ${lutMs.toFixed(1)} ms / frame (avg of ${ITERS})`);
-        log(`Speedup:      ${speedup.toFixed(2)}×`);
         log('');
-        log(pass ? 'PASS — LUT ≥2× faster' : 'FAIL — LUT below 2× target', pass ? 'pass' : 'fail');
+        log(`avgLum ${avgLum.toFixed(6)}`);
+        log(
+          `mask vs maskLut: ${maskMismatches === 0 ? 'byte-identical' : maskMismatches + ' mismatches'}`,
+          maskMismatches === 0 ? 'pass' : 'fail',
+        );
+        if (maskMismatches !== 0) failed = true;
+        log('');
+        log(
+          failed ? 'FAIL — a kernel is below its floor' : 'PASS — every kernel above its floor',
+          failed ? 'fail' : 'pass',
+        );
 
-        // Identity check on a subsample
-        const maskA = new Uint8Array(PIXELS);
-        const maskB = new Uint8Array(PIXELS);
-        Module.computeClassificationMask(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
-        maskA.set(heap.subarray(outPtr, outPtr + PIXELS));
-        Module.computeClassificationMaskLut(inPtr, WIDTH, HEIGHT, AVG_LUM, outPtr);
-        maskB.set(heap.subarray(outPtr, outPtr + PIXELS));
-        let mismatches = 0;
-        for (let i = 0; i < PIXELS; i += 1) {
-          if (maskA[i] !== maskB[i]) mismatches += 1;
-        }
-        log(`Identity:     ${mismatches === 0 ? 'byte-identical masks' : mismatches + ' mismatches'}`);
-
-        Module._free(inPtr);
-        Module._free(outPtr);
         runBtn.disabled = false;
       };
     }

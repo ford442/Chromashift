@@ -83,6 +83,11 @@ function logStaleWasmExports(): void {
  * instruction.  This is the standard technique recommended by the
  * WebAssembly/feature-detection working group.
  *
+ * The engine is built with `-msimd128` and its pixel kernels contain real
+ * `v128` instructions, so a browser without SIMD128 cannot instantiate the
+ * module at all — `loadWasmEngine()` treats a failed probe as "unavailable"
+ * and every dispatcher falls back to its TypeScript implementation.
+ *
  * @returns `true` when the browser supports WASM SIMD128.
  */
 export function isWasmSimdSupported(): boolean {
@@ -125,6 +130,15 @@ export async function loadWasmEngine(): Promise<boolean> {
     });
   }
 
+  if (!isWasmSimdSupported()) {
+    // The binary is SIMD128-only — instantiating it here would just throw.
+    console.info(
+      '[WasmEngine] WebAssembly SIMD128 unsupported — using the TypeScript engine.',
+    );
+    loadState = 'unavailable';
+    return false;
+  }
+
   loadState = 'loading';
 
   try {
@@ -138,11 +152,7 @@ export async function loadWasmEngine(): Promise<boolean> {
     loadState = 'ready';
     logStaleWasmExports();
 
-    // Log SIMD availability so developers can confirm the accelerated path is active.
-    const simd = isWasmSimdSupported();
-    console.info(
-      `[WasmEngine] C++ WASM engine loaded. SIMD128: ${simd ? '✅ supported' : '⚠️ not supported (scalar fallback)'}`,
-    );
+    console.info('[WasmEngine] C++ WASM engine loaded (SIMD128 kernels active).');
   } catch {
     // WASM assets not yet built — this is expected in the default repo state.
     loadState = 'unavailable';

@@ -123,9 +123,9 @@ update this table if one is ever intentionally added.
 | `classifyPixel` | `classifyPixelWith` | Maps a single pixel's RGB + avgLum to a colour-band index (0–10) |
 | `buildBandLut` | `buildBandLut` (TS) / WASM heap | 256-entry band LUT from avgLuminance |
 | `classifyPixelsBulk` | `classifyPixelsBulkWith` | Batch version of `classifyPixel` — one WASM call for the whole image |
-| `classifyPixelsBulkLut` | — | LUT-accelerated bulk classification (≥2× on 4K; see benchmark) |
+| `classifyPixelsBulkLut` | — | Bulk classification via the band LUT (scalar) / the SIMD ladder |
 | `computeClassificationMask` | `classifyImageMaskWith` | Generates compact uint8 band mask (`width × height`) for GPU `r8uint` texture upload |
-| `computeClassificationMaskLut` | `classifyImageMaskWith` (preferred WASM path) | Byte-identical LUT mask, faster on large images |
+| `computeClassificationMaskLut` | `classifyImageMaskWith` (preferred WASM path) | Byte-identical mask via the LUT shortcut (scalar) / the SIMD ladder |
 | `computeLuminanceHistogram` | `computeLuminanceHistogramWith` | 256-bucket ITU-R BT.709 luminance histogram |
 | `computeColorBandCounts` | `computeColorBandCountsWith` | 11-bucket pixel count per Chromashift colour band |
 | `buildRotationMat3` | `buildRotationMat3With` | Column-major 3×3 rotation matrix (matches `rotation.ts`) |
@@ -213,15 +213,90 @@ Note `npm run codegen` runs both generators (`codegen:band` + `codegen:decay`);
 
 ---
 
-## Band LUT fast path
+## SIMD128 kernels, the band ladder, and the LUT
+
+### Branchless band ladder
+
+`classifyRgb()` no longer scans `BAND_THRESHOLDS` for the first match. The thresholds are
+strictly descending, so the number a value clears determines the band directly:
+
+```
+band = BAND_COUNT - (number of thresholds rgb exceeds)
+```
+
+Clearing none yields `BAND_COUNT`, which is exactly `DARK_BAND_INDEX`. Two `static_assert`s
+in `chromashift_engine.cpp` pin both properties, so a `shared/band.json` edit that breaks
+either fails the build instead of silently returning wrong bands. The result is constant
+time, branch-free, and — crucially — vectorisable as a chain of `wasm_f32x4_gt` compares.
+
+### SIMD128 kernels
+
+Every bulk kernel has a hand-written `wasm_simd128.h` path guarded by `__wasm_simd128__`:
+
+| Kernel | Vector strategy |
+|---|---|
+| `computeAverageLuminance` / `…Strided` (stride 1) | Widen RGBA bytes into a `[R,G,B,A]` u32 lane accumulator, drained into `double` every 2²⁰ pixels; weights applied once at the end |
+| `computeClassificationMask{,Lut}` | 16 pixels per iteration: 4× (luminance → ladder), narrowed to one 16-byte mask store |
+| `classifyPixelsBulk{,Lut}` | 4 pixels per iteration, i32 band indices stored directly |
+| `computeLuminanceHistogram` | Vectorised luminance + `trunc_sat`; the bucket increment is a scatter, so lanes are drained scalar |
+| `computeColorBandCounts` | Vectorised ladder, scalar tally |
+| `simulateTracerDecay` | Straight `f32x4` multiply |
+
+Output is bit-identical to the scalar path. The luminance step issues its three multiplies
+and two adds in the same order as the scalar code and f32 lanes round exactly like scalar
+f32, and the ladder is the same comparison set. The average-luminance kernels changed
+formulation — integer channel sums weighted once, instead of a running `double` sum — which
+removes accumulated rounding error rather than adding any, and returns the same `float`.
+
+The scalar bodies are still compiled and are what the host `g++` build runs, so
+`cpp/tests/test_engine.cpp` keeps checking them against a verbatim copy of the original
+linear scan.
+
+### Band LUT
 
 `buildBandLut(avgLum)` amortises the per-pixel threshold chain into a 256-entry table.
 `computeClassificationMaskLut` uses a hybrid lookup: when adjacent luminance buckets share
 the same band the LUT value is returned directly; at bucket boundaries the exact float `rgb`
 path runs so masks stay byte-identical to the branchy classifier.
 
-**Benchmark:** open `/wasm-benchmark.html` after `npm run build:wasm` — compares branchy vs
-LUT on a synthetic 3840×2160 buffer. Acceptance target: LUT ≥2× faster in Chrome.
+Because `classifyRgb()` is monotonically non-increasing, "both neighbouring buckets agree"
+implies every value between them agrees too — which is why the SIMD build can run the plain
+ladder for all lanes in the `…Lut` kernels and still produce identical bytes. The LUT walk
+remains the scalar path (and the host-test subject); with the ladder now constant time, the
+LUT's data-dependent shortcut no longer buys anything on the vector path.
+
+### Benchmark and the CI perf gate
+
+```bash
+npm run bench:wasm             # report throughput of every bulk kernel
+npm run bench:wasm -- --assert # enforce the floors (how CI runs it)
+```
+
+`scripts/bench-wasm.mjs` loads the committed artifacts in Node (passing `wasmBinary`, since
+`-s ENVIRONMENT=web,worker` leaves the glue with no Node file loader) and runs every bulk
+kernel over a deterministic 3840×2160 golden image. It fails when a kernel drops below its
+throughput floor, so losing the SIMD path fails the `wasm` job instead of silently
+un-accelerating the CPU fallback lane. The golden image, kernel list and floors live in
+`public/wasm-benchmark-core.mjs`, which `/wasm-benchmark.html` imports too — open that page
+after `npm run build:wasm` to run the identical benchmark in a browser.
+
+Measured on the PR that introduced these kernels (Node 22, 3840×2160, median of 7).
+"Before" is the previous build — scalar kernels with `-msimd128 -msse2` set and nothing but
+LLVM auto-vectorisation to show for it:
+
+| Kernel | Before | After (SIMD128) | Speedup | Floor |
+|---|---|---|---|---|
+| `computeAverageLuminance` | 614 Mpx/s | 1595 Mpx/s | 2.6× | 800 |
+| `computeClassificationMask` | 87 Mpx/s | 612 Mpx/s | 7.0× | 250 |
+| `computeClassificationMaskLut` | 141 Mpx/s | 606 Mpx/s | 4.3× | 250 |
+| `computeLuminanceHistogram` | 211 Mpx/s | 558 Mpx/s | 2.6× | 250 |
+| `computeColorBandCounts` | 84 Mpx/s | 393 Mpx/s | 4.7× | 150 |
+
+Rebuilding the *current* source without `-msimd128` — i.e. the scalar bodies these kernels
+still keep — gives 1298 / 146 / 147 / 212 / 115 Mpx/s, below every floor except
+`computeAverageLuminance`, which is memory-bound enough that its floor is only a
+gross-regression check. (Its scalar path is much faster than the old one because the
+integer-sum rewrite applies to both.)
 
 ---
 
@@ -270,7 +345,8 @@ next build is not a silent no-op. If you still see `Nothing to be done for 'all'
 with stale glue (common after a git checkout of committed WASM), run
 `make -C cpp rebuild` or `npm run build:wasm:force`.
 
-The release build also passes `-fno-exceptions -fno-rtti` for smaller glue (embind-compatible).
+The release build also passes `-fno-exceptions`, `-flto` and `--closure 1` for smaller
+output; debug builds skip the last two so stack traces and `ASSERTIONS` output stay readable.
 
 ### Build
 
@@ -285,7 +361,8 @@ The output lands in `public/` so Vite's dev server and production build both ser
 ```bash
 npm run check:wasm          # checks that emcc is on PATH
 make -C cpp verify-exports  # EXPORTED_FUNCTIONS matches chromashift_engine.h 1:1
-npm run test:cpp            # host-side g++ unit tests (band thresholds, durationToDecay)
+npm run test:cpp            # host-side g++ unit tests (band ladder, bulk kernels, durationToDecay)
+npm run bench:wasm -- --assert  # kernel throughput floors (the CI perf gate)
 ```
 
 ### Clean
@@ -296,82 +373,94 @@ npm run clean:wasm   # or: cd cpp && make clean
 
 ---
 
-## Export strategy: embind vs raw C symbols
+## Export strategy: one C ABI
 
-The WASM build uses **both** mechanisms:
+The module exports its functions **once**, through the flat C ABI:
+`EMSCRIPTEN_KEEPALIVE` in `chromashift_engine.h` plus the `EXPORTED_FUNCS` list in
+`cpp/Makefile`, which Emscripten surfaces on the module as `_name`. Pointer arguments are
+offsets into the WASM heap — the TS bridge writes inputs through `HEAPU8` and reads results
+back through the matching heap view:
 
-| Mechanism | Purpose |
-|---|---|
-| `EMSCRIPTEN_KEEPALIVE` + `-s EXPORTED_FUNCTIONS` | Underscored C ABI (`_classifyPixel`, …) for direct heap access and tooling |
-| `EMSCRIPTEN_BINDINGS` (`--bind`) | JS-friendly names on `Module` used by `WasmEngine.ts` (`classifyPixel`, …) |
+```ts
+const mod = getWasmModule()!;
+const inPtr = getPersistentBuf(data.length);
+mod.HEAPU8.set(data, inPtr);
+mod._computeClassificationMaskLut(inPtr, width, height, avgLum, outPtr);
+```
 
-**When to prefer each:**
+There used to be a second ABI: an `EMSCRIPTEN_BINDINGS(chromashift_engine)` block of
+`optional_override` lambdas whose bodies were nothing but `reinterpret_cast<T*>(uintptr_t)`
+— i.e. a re-implementation of the same C ABI through embind. It was removed, along with the
+`--bind`, `-fno-rtti` and `-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0` flags it needed.
 
-- **Embind (`--bind`)** — best when TypeScript calls functions by name with mixed scalar
-  and pointer arguments. `WasmEngine.ts` already uses embind exports; pointer-heavy batch
-  functions get thin lambda wrappers in `chromashift_engine.cpp`.
-- **Raw `EXPORTED_FUNCTIONS` only** — smaller glue and a clearer ABI when you are willing to
-  write thin TS wrappers around `_malloc` / `HEAPU8` / `_classifyPixel` yourself. Every
-  `EMSCRIPTEN_KEEPALIVE` symbol in `chromashift_engine.h` must appear in the Makefile list
-  (run `make -C cpp verify-exports` after adding functions).
-
-Chromashift keeps both paths in sync: the header is the source of truth, embind mirrors the
-same functions for the TS bridge, and `verify-exports` guards the underscored export list.
+`make -C cpp verify-exports` is the single source of truth for the export list: it fails if
+any `EMSCRIPTEN_KEEPALIVE` symbol in the header is missing from `EXPORTED_FUNCS`. It runs in
+both the `wasm` job of `ci.yml` and the `wasm-freshness` job of `wasm.yml`. Adding a function
+means touching three places — the header, `EXPORTED_FUNCS`, and `WASM_API_FUNCTIONS` in
+`src/engine/wasm/types.ts` (which `loadEngine.ts` checks at load time to warn about a stale
+build).
 
 ---
 
 ## Emscripten flag audit
 
-Findings from auditing `cpp/Makefile`'s `EMFLAGS_COMMON` against what `src/engine/wasm/`
-actually calls at runtime (tracking issue: WASM engine reorganisation).
+`cpp/Makefile`'s `EMFLAGS_COMMON` against what `src/engine/wasm/` actually calls at runtime.
 
 | Flag | Verdict | Reasoning |
 |---|---|---|
-| `--bind` (embind) | **Keep — required** | Every dispatcher in `wasm/dispatch/*.ts` and `wasm/loadEngine.ts` calls the module by its bare JS-friendly name (`mod.computeAverageLuminance(...)`, `mod.classifyPixel(...)`, `mod.durationToDecay(...)`, …). Those names exist **only** via the `EMSCRIPTEN_BINDINGS(chromashift_engine) { function(...) }` block in `chromashift_engine.cpp` — the `EXPORTED_FUNCTIONS` list only produces underscored raw symbols (`_computeAverageLuminance`, …). Dropping `--bind` would break every call site; it is not dead weight, it is the mechanism the whole TS bridge is built on. Revisit only if the bridge is rewritten to call `_`-prefixed exports directly with manual pointer/arg marshalling — a larger, separate change than this reorganisation. |
-| `-s EXPORTED_FUNCTIONS=[...]` | **Keep** | Still needed for `_malloc` / `_free` (called directly by every dispatcher for heap buffers) and for `verify-exports` to guard the underscored C ABI surface as a stable, embind-independent fallback contract. |
+| `--bind` (embind) | **Removed** | Every binding was a `reinterpret_cast` passthrough over the C ABI the module already exported. The TS bridge now calls `mod._name(...)` directly — see "Export strategy" above. Dropping it also dropped `-fno-rtti` and `-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0`, which existed only to make embind compile. |
+| `-msse2` | **Removed** | Nothing includes `<emmintrin.h>`; the SIMD kernels use `<wasm_simd128.h>` directly, which needs only `-msimd128`. |
+| `-s EXPORTED_FUNCTIONS=[...]` | **Keep — now the only ABI** | Produces `_malloc` / `_free` and every engine entry point. Guarded by `verify-exports`. |
+| `-msimd128` | **Keep — load-bearing** | Enables the hand-written `wasm_simd128.h` kernels (`__wasm_simd128__`). See "SIMD status" below. |
+| `-flto` (release) | **Added** | Whole-program optimisation across the single TU and libc; part of the drop from 47.2 kB to 33.4 kB of `.wasm`. |
+| `--closure 1` (release) | **Added** | The glue is a thin C-ABI shim, so Closure has nothing to break: 10.7 kB → 4.9 kB. Off in debug builds. Output is reproducible for a pinned emsdk version, which `wasm.yml`'s freshness check relies on. |
+| `-s ENVIRONMENT=web,worker` | **Added** | The engine only ever runs in a browser window or a Web Worker (the analysis worker included); this drops the Node/shell detection branches from the glue. Node callers such as `scripts/bench-wasm.mjs` pass `wasmBinary` instead of relying on a file loader. |
+| `-s FILESYSTEM=0` | **Added** | Nothing in the engine touches a file; this drops the FS glue entirely. |
 | `-s INITIAL_MEMORY=67108864` (64 MiB) | **Keep — documented, not dead** | 64 MiB = 8192 × 8192 bytes, i.e. exactly one full-resolution single-channel classification mask for an 8K-square image (`classifyImageMaskWith`'s `computeClassificationMask(Lut)` output buffer). Sizing the initial heap to cover that common load-time allocation without a growth event avoids the first-touch pause `ALLOW_MEMORY_GROWTH` growth otherwise causes on the largest images Chromashift documents supporting (4K–8K). Larger simultaneous allocations (input RGBA + mask output together can exceed 64 MiB for 8K) still rely on `ALLOW_MEMORY_GROWTH=1` to grow past this floor — 64 MiB is a "no growth stall for the common case" starting point, not a hard ceiling. |
 | `-s ALLOW_MEMORY_GROWTH=1` | **Keep** | Required so allocations above the 64 MiB floor (e.g. concurrent input + output buffers for `classifyPixelsBulkWith` / `classifyImageMaskWith` on 8K images) don't hard-fail. |
 | `-s MODULARIZE=1` + `-s EXPORT_ES6=1` | **Keep** | Correct for Vite — `loadEngine.ts` does a dynamic `import()` of `/chromashift_engine.js` and calls the default export as a factory (`await glue.default()`); a non-modularized build would attach a global instead. |
-| `-fno-exceptions -fno-rtti` | **Keep** | Smaller release glue; the C API surface here (`chromashift_engine.h`) does not throw or use RTTI, and embind itself is exception/RTTI-optional when compiled this way. |
-| `-msimd128 -msse2` | **Keep** | See "SIMD status" below — Emscripten falls back to scalar automatically on unsupported browsers, so there is no separate scalar build to maintain. |
+| `-fno-exceptions` | **Keep** | Smaller output; the C API surface in `chromashift_engine.h` does not throw. |
 
-**Net result:** no flags were removed. The audit's conclusion is that the current flag set is
-already minimal for what the TS bridge requires — `--bind` in particular looked like a
-candidate for removal in isolation, but is load-bearing given the current calling convention.
+**Net result:** artifact sizes dropped from 33.9 kB glue + 47.2 kB wasm to **4.9 kB glue +
+33.4 kB wasm**.
 
 ---
 
 ## SIMD status and browser support
 
-The WASM engine is compiled with `-msimd128 -msse2`, which enables the
-WebAssembly SIMD128 instruction set for pixel-processing loops.
+The WASM engine is compiled with `-msimd128` and its pixel kernels contain real `v128`
+instructions (`cpp/chromashift_engine.cpp`, guarded by `__wasm_simd128__`). SIMD128 is
+therefore a **hard requirement** of the binary, not an opportunistic optimisation.
 
 | Browser | SIMD128 support |
 |---|---|
 | Chrome 91+ / Edge 91+ | ✅ Full SIMD128 |
-| Chrome < 91 | ⚠️ Scalar (SIMD disabled) |
+| Chrome < 91 | ❌ WASM engine unavailable — TypeScript engine used |
 | Firefox 89+ | ✅ Full SIMD128 |
 | Safari 16.4+ | ✅ Full SIMD128 |
-| Safari < 16.4 | ⚠️ Scalar (SIMD disabled) |
+| Safari < 16.4 | ❌ WASM engine unavailable — TypeScript engine used |
 
-**Feature detection:** `WasmEngine.ts` exports `isWasmSimdSupported()`, which
-probes the browser at runtime using `WebAssembly.validate` on a minimal SIMD
-instruction.  When the WASM engine loads, a message is written to the browser
-console:
+**Feature detection:** `loadEngine.ts` exports `isWasmSimdSupported()`, which probes the
+browser using `WebAssembly.validate` on a minimal module containing a `v128.const`
+instruction. `loadWasmEngine()` calls it *before* fetching the module: on a browser without
+SIMD128 it skips the load entirely (instantiating a `v128` binary there would just throw)
+and leaves every dispatcher on its TypeScript implementation.
 
 ```
-[WasmEngine] C++ WASM engine loaded. SIMD128: ✅ supported
+[WasmEngine] C++ WASM engine loaded (SIMD128 kernels active).
 ```
 
 or, on older browsers:
 
 ```
-[WasmEngine] C++ WASM engine loaded. SIMD128: ⚠️ not supported (scalar fallback)
+[WasmEngine] WebAssembly SIMD128 unsupported — using the TypeScript engine.
 ```
 
-> **Note:** Even when the browser does not support SIMD128, the WASM binary still
-> runs — Emscripten automatically falls back to scalar code.  There is no need for
-> a separate scalar build.
+> **Note:** there is deliberately no separate scalar WASM build. The scalar kernel bodies are
+> still compiled — by the host `g++` test build, which has no `-msimd128` — so
+> `cpp/tests/test_engine.cpp` keeps proving the two paths agree; they are just not shipped as
+> a second browser artifact. Browsers without SIMD128 get the TypeScript engine, which has
+> the same public API.
 
 ---
 
@@ -447,7 +536,7 @@ src/engine/
 ├── WasmEngine.ts            Thin barrel — re-exports the public API, stable import path
 └── wasm/
     ├── types.ts             ChromashiftWasmModule interface, EngineKind, export-name list
-    ├── loadEngine.ts        Async loader, module-level state, persistent heap buffer, SIMD probe
+    ├── loadEngine.ts        Async loader (SIMD128 probe gate), module-level state, persistent heap buffer
     ├── imageBytes.ts         Shared canvas→RGBA byte helpers (used by dispatch + fallbacks)
     ├── fallbacks/
     │   ├── luminance.ts     Pure TS luminance fallbacks

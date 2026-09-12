@@ -34,6 +34,7 @@ npm run test:e2e  # Playwright E2E (all projects; install browsers first)
 npm run test:e2e:webgl   # Playwright chromium: explicit WebGL diagnostic backend
 npm run test:e2e:webgpu  # WebGPU smoke + compare layouts (chromium-webgpu project)
 npm run test:cpp  # C++ host tests (g++, no Emscripten)
+npm run bench:wasm # WASM kernel throughput (add -- --assert to enforce the CI floors)
 npm run preview   # Preview the production build locally
 ```
 
@@ -451,7 +452,8 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 |------|---------|-------|
 | **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
 | **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
-| **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band/decay parity with `chromashift_engine.cpp`; no Emscripten required |
+| **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band ladder vs the original linear scan, bulk-kernel/single-pixel parity, luminance and decay math against `chromashift_engine.cpp`'s scalar path; no Emscripten required |
+| **WASM perf gate** | `npm run bench:wasm -- --assert` | Runs every bulk kernel of the committed `public/chromashift_engine.wasm` over a deterministic 4K golden image and fails below the throughput floors in `public/wasm-benchmark-core.mjs` — catches a silent loss of the SIMD128 path. Same image and floors as `/wasm-benchmark.html` |
 
 ### CI job matrix
 
@@ -462,7 +464,7 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | `unit` | `npm test` (Vitest) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu`) |
-| `wasm` | `npm run test:cpp` + `npm run build:wasm` + artifact check |
+| `wasm` | `npm run test:cpp` + `make -C cpp verify-exports` + `npm run build:wasm` + artifact check + `npm run bench:wasm -- --assert` |
 
 WebGPU E2E runs in the `chromium-webgpu` Playwright project with
 `--enable-unsafe-webgpu` (see `playwright.config.ts`). For local WebGPU validation,
@@ -499,7 +501,7 @@ Chromashift layers four independent capability checks:
 |---|---|---|---|
 | **WebGPU** | Primary renderer (5-pass pipeline, GPU compute analysis) | Chrome 113+ / Edge 113+ / Chrome Canary | Blocking probe screen; optional **new** `?renderer=webgl` diagnostic session |
 | **WebGL2** | Diagnostic / XR / Playwright screenshots, shader-porting | Any browser with WebGL2 (Firefox, Safari included) | XR and WebGL E2E cannot run |
-| **WASM SIMD128** | Accelerated CPU luminance/classification (`cpp/chromashift_engine.cpp`) | Chrome/Edge/Firefox with WASM SIMD; requires `npm run build:wasm` (Emscripten) | Silently uses the TypeScript engine (`WasmEngine.ts`) — same public API either way |
+| **WASM SIMD128** | Accelerated CPU luminance/classification — hand-written `wasm_simd128.h` kernels in `cpp/chromashift_engine.cpp` (4 px per `v128_t`), 2.6–7× over the scalar build on 4K | Chrome/Edge 91+, Firefox 89+, Safari 16.4+; requires `npm run build:wasm` (Emscripten). SIMD128 is a hard requirement of the binary — `loadEngine.ts` probes for it before loading | Silently uses the TypeScript engine (`WasmEngine.ts`) — same public API either way |
 | **ORT (onnxruntime-web)** | Optional waifu2x upscaling (`nunif.worker.ts`) | Any WebGPU/WebGL2 browser; loaded lazily only when "Upscale" is clicked | Real-ESRGAN/Real-CUGAN via TF.js (`upscaler.worker.ts`) covers the other upscale path |
 
 Firefox and Safari do not yet have stable WebGPU support — use `?renderer=webgl` there for diagnostics, not as a silent production fallback.

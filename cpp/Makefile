@@ -44,23 +44,37 @@ EXPORTED_FUNCS := \
   _computeLuminanceHistogram,_computeColorBandCounts,\
   _buildRotationMat3,_durationToDecay,_advanceLayerAngles,_simulateTracerDecay
 
-# Shared Emscripten link flags (debug vs release differ only in -O / ASSERTIONS)
+# Shared Emscripten link flags (debug vs release differ only in -O / ASSERTIONS / -flto)
+#
+# The module exports one ABI: the flat C symbols in EXPORTED_FUNCS, called from
+# TypeScript as mod._name(ptr, ...).  There is deliberately no embind layer —
+# every binding it used to carry was a reinterpret_cast passthrough over the same
+# C ABI, and dropping it also drops the -fno-rtti / UNBOUND_TYPE_NAMES workarounds
+# it needed.  `make verify-exports` is the single source of truth for the list.
+#
+# -msimd128 enables the hand-written wasm_simd128.h kernels in the engine
+# (guarded by __wasm_simd128__).  No -msse2: nothing includes the x86 headers.
+# ENVIRONMENT=web,worker + FILESYSTEM=0 drop the Node/shell and filesystem glue —
+# the engine only ever runs in a browser window or a Web Worker.
+#
+# Release-only: -flto and --closure 1 (the glue is a thin C-ABI shim, so Closure
+# has nothing to break and halves it).  Both are off in debug builds so stack
+# traces and ASSERTIONS output stay readable.  Output is reproducible for a
+# pinned emsdk version, which the wasm-freshness workflow relies on.
 EMFLAGS_COMMON := \
   -msimd128 \
-  -msse2 \
   -fno-exceptions \
-  -fno-rtti \
-  -DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0 \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s EXPORT_NAME="ChromashiftEngine" \
   -s EXPORTED_FUNCTIONS='[$(EXPORTED_FUNCS)]' \
   -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32","HEAP32","HEAPF32"]' \
+  -s ENVIRONMENT=web,worker \
+  -s FILESYSTEM=0 \
   -s INITIAL_MEMORY=67108864 \
-  -s ALLOW_MEMORY_GROWTH=1 \
-  --bind
+  -s ALLOW_MEMORY_GROWTH=1
 
-EMFLAGS_RELEASE := -O3 $(EMFLAGS_COMMON)
+EMFLAGS_RELEASE := -O3 -flto --closure 1 $(EMFLAGS_COMMON)
 EMFLAGS_DEBUG   := -O0 -g -s ASSERTIONS=1 $(EMFLAGS_COMMON)
 
 # ─── Host-side unit tests (plain g++, no Emscripten) ─────────────────────────
