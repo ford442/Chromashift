@@ -118,6 +118,9 @@ src/
     │   ├── resources.ts, programUtils.ts
     │   └── shaders/          # GLSL sources — layers/persistence/compositor emitted from graph/templates/glsl.ts
     ├── WebGPURenderer.ts     # 5-pass GPU renderer orchestration (delegates to the below)
+    ├── motionModes.ts         # MotionMode enum + defaults for the temporal tracer term
+    ├── MotionFieldPass.ts     # WebGPU motion field (owns the chore kit's motion lane)
+    ├── liveMotionField.ts     # CPU-lane motion sampler for the WebGL diagnostic backend
     ├── WebGPUPipelines.ts, BindGroupCache.ts, PersistencePass.ts, CompositorPass.ts,
     │   TracerInspectPass.ts, GpuReadback.ts, GpuTimestampProfiler.ts  # pass/readback + WebGPU perf HUD
     ├── telemetryStore.ts     # useSyncExternalStore telemetry (angles, CPU/GPU timing, collision stats) — outside React state
@@ -330,6 +333,8 @@ Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K
 2. **Classification pass** — writes an `r8uint` band-index mask texture (thresholds in `wgslSnippets.ts`, matching `chromashift_engine.cpp` / `bandClassification.ts`).
 3. **Layer binding** — mask is fed into existing layer pipelines via `setClassificationMaskTexture()` when `colorMode === 0` (Original CR0P fixed).
 
+The facade dispatches three ops: `image-analysis` (above), `coincidence` (the tracer overlap stamp — GPU-only, the CPU lanes decline it outright), and `motion-field` (the temporal tracer term — see **Persistence / Tracer System** below, and `docs/LIVE_SOURCE.md`). `motion-field` is the one op with a real implementation on *both* lane families: the `webgpu` lane keeps the field a `GPUTexture`, and the `wasm`/`ts` lanes return a small `Float32Array` so the WebGL diagnostic backend and headless CI exercise the same maths (`chores/motionKernel.ts` is the portable reference the WGSL kernel mirrors).
+
 **Selection order** — encoded once in `CHORE_BACKEND_ORDER` and walked by `runJob({ op: 'image-analysis', prefer: 'auto' })`; `useClassificationMask.ts` calls the facade rather than branching itself:
 
 1. **WebGPU compute** — primary. Requires `renderer.backend === 'webgpu'` and a GPU-resident source texture.
@@ -341,6 +346,8 @@ Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K
 A pinned `prefer` (`'webgpu' | 'wasm' | 'ts'`) never slides to another lane — parity tests depend on that. Failures are never silent: `runJob` returns `{ ok: false, reason, attempts }` recording why every candidate declined or threw.
 
 **Device policy**: the WebGPU lane **adopts** the renderer-owned `GPUDevice` from `RendererOrchestrator`. It must never call `requestAdapter`/`requestDevice`. `useClassificationMask` registers the orchestrator's existing lane instance (`GpuImageAnalysis.backend`) rather than constructing a second one, so pipelines, staging buffers, and the reused mask texture stay shared — repeated image loads do not grow VRAM.
+
+**Breadcrumbs are per-op.** `window.gpuChoreBackend` / `window.gpuChoreReason` record the lane that served the last load-time analysis; `window.motionFieldBackend` / `window.motionFieldReason` do the same for `motion-field`, which runs on the render loop's cadence and would otherwise stamp over the analysis crumb dozens of times a second. `window.motionFieldEnergy` carries the field's mean magnitude — the only number that crosses back to the CPU on the WebGPU lane.
 
 **CPU contract**: 256-bin histogram readback only. The mask stays a `GPUTexture` on the GPU lane; never add a full-image readback. The CPU lanes return a `Uint8Array` that the caller uploads into an `r8uint` texture.
 
@@ -373,9 +380,10 @@ Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, C
 `GpuTimestampProfiler` (`src/engine/GpuTimestampProfiler.ts`) wraps the live render path in `WebGPURenderer`:
 
 1. **Layers** — three colour-band passes (MSAA resolve when enabled).
-2. **Persistence** — dual tracer ping-pong + diagnostic texture.
-3. **Compositor** — final blend or alternate main-view pass (tracer inspect, layer isolation, etc.).
-4. **Readback** — preview thumbnail + collision-stats blit/copy when queued.
+2. **Motion** — the quarter-resolution motion field, when `tracers.motionMode` is not `off`. The marker is written every frame regardless, so the row reads `0.00 ms` when the pass did not run rather than shifting every row below it.
+3. **Persistence** — dual tracer ping-pong + diagnostic texture.
+4. **Compositor** — final blend or alternate main-view pass (tracer inspect, layer isolation, etc.).
+5. **Readback** — preview thumbnail + collision-stats blit/copy when queued.
 
 Timestamps resolve into a `QUERY_RESOLVE | COPY_SRC` buffer, then `copyBufferToBuffer` into a `MAP_READ | COPY_DST` readback (`MAP_READ` may only pair with `COPY_DST`). Results appear one frame later. If query/buffer allocation fails or the timestamp period is 0, GPU timing is skipped and the HUD uses CPU `performance.now()` — renderer init must not fail. The Diagnostics panel **Perf HUD** toggle (`output.performanceHudEnabled`) gates all query writes and resolves — when off, there is zero timestamp cost. The HUD shows CPU ms, per-pass GPU ms, an approximate bandwidth model, a 120-frame sparkline, budget warnings (`1000 / fps` ms), and optional auto-degrade (disable MSAA, tracer scale ×0.75, live preview readback off).
 
@@ -426,6 +434,28 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
   `src/engine/math/decay.ts`.
 - **Modes**: `tracerMode` can be `0` (combined colours) or `1` (grey highlight).
 - **Blend modes**: Both the live layers and the tracers support independent blend modes — Alpha, Add, Subtract, Multiply, Screen.
+- **Temporal term (motion)**: everything above is purely *spatial and instantaneous* — the pass
+  samples three layer textures at one UV and knows nothing about what changed since the last
+  frame. `tracers.motionMode` adds that missing axis, driven by the `motion-field` chore:
+  - `off` (default) — no temporal term at all.
+  - `boost` — motion multiplies a fresh stamp by `1 + motionGain × magnitude`.
+  - `gate` — a stamp survives *only* where the frame changed, which isolates a live subject
+    from its background with no segmentation model.
+  - `direction` — flow angle drives hue. The frame-difference stage writes a zero flow vector,
+    so this reads as a magnitude tint until a block-matching / Lucas–Kanade stage fills it in.
+
+  In every non-`off` mode `motionDecayBias` also *slows* decay locally
+  (`decayMod × (1 − bias × magnitude)`), so a moving region holds its trail while a static one
+  fades normally — that difference is what reads as a comet tail rather than a global fade.
+  `motionThreshold` is the noise floor, applied when the field is produced, so sensor grain in a
+  dark webcam frame does not light up the whole field.
+
+  **`off` is the pre-motion pipeline, not an equivalent of it.** The motion term is emitted as a
+  *separate shader variant* (`emitCoincidenceDecayWgsl(n, { motion: true })`, and its GLSL twin);
+  with `off` the renderers bind the original program, the original bind-group layout, and no
+  motion texture at all, on both backends. `graph/__golden__/` pins the non-motion emission and
+  `shaders/motionPersistence.test.ts` pins the other half — that the variant is opt-in and
+  leaves the default emission byte-identical.
 
 ### State & Animation Loop (`App.tsx`)
 

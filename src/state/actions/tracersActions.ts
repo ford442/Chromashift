@@ -1,3 +1,4 @@
+import type { MotionMode } from '../../engine/motionModes';
 import type { ChromashiftDispatch } from './types';
 
 export function createTracersActions(dispatch: ChromashiftDispatch) {
@@ -18,5 +19,13 @@ export function createTracersActions(dispatch: ChromashiftDispatch) {
       dispatch({ type: 'tracers/patch', patch: { layerBlendMode } }),
     setTracerBlendMode: (tracerBlendMode: number) =>
       dispatch({ type: 'tracers/patch', patch: { tracerBlendMode } }),
+    setMotionMode: (motionMode: MotionMode) =>
+      dispatch({ type: 'tracers/patch', patch: { motionMode } }),
+    setMotionGain: (motionGain: number) =>
+      dispatch({ type: 'tracers/patch', patch: { motionGain } }),
+    setMotionDecayBias: (motionDecayBias: number) =>
+      dispatch({ type: 'tracers/patch', patch: { motionDecayBias } }),
+    setMotionThreshold: (motionThreshold: number) =>
+      dispatch({ type: 'tracers/patch', patch: { motionThreshold } }),
   };
 }

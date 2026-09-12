@@ -17,6 +17,18 @@ export interface RendererState {
   tracerBelowDuration? : number;
   tracerThreshold?     : number;
   tracerMode?          : number;
+  /**
+   * Temporal tracer term as a `MotionMode` index (see `engine/motionModes.ts`):
+   * 0 = off, 1 = boost, 2 = gate, 3 = direction. 0 keeps the renderers on the
+   * pre-motion shaders and pipelines. See `docs/LIVE_SOURCE.md`.
+   */
+  motionMode?          : number;
+  /** How strongly motion boosts a fresh stamp. */
+  motionGain?          : number;
+  /** How much motion slows local decay (0 = none, 1 = fully held). */
+  motionDecayBias?     : number;
+  /** Noise floor applied when the motion field is produced, in [0,1). */
+  motionThreshold?     : number;
   colorMode?           : number;
   /**
    * Baked colour-profile LUT (256×3 RGBA8, see `buildColorProfileLut`). Present

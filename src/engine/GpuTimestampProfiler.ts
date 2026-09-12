@@ -1,13 +1,15 @@
 /** Per-pass GPU timings derived from WebGPU timestamp queries (nanoseconds → ms). */
 export interface GpuPassTimings {
   layersMs: number;
+  /** Quarter-resolution motion field (`motion-field` chore); 0 when off. */
+  motionMs: number;
   persistenceMs: number;
   compositorMs: number;
   readbackMs: number;
   totalGpuMs: number;
 }
 
-export const GPU_TIMESTAMP_MARKERS = 5;
+export const GPU_TIMESTAMP_MARKERS = 6;
 export const GPU_TIMING_HISTORY_SIZE = 120;
 
 const QUERIES_PER_FRAME = GPU_TIMESTAMP_MARKERS;
@@ -30,6 +32,10 @@ export interface BandwidthEstimateInput {
   readbackActive: boolean;
   /** Bytes per texel of internal layer/tracer targets (4 for rgba8 / rg11b10, 8 for rgba16float). */
   internalBytesPerPixel?: number;
+  /** Motion field active this frame — adds a quarter-scale read/write pair. */
+  motionActive?: boolean;
+  /** Field resolution divisor (4 = quarter scale). */
+  motionDivisor?: number;
 }
 
 /** Rough read/write traffic model for internal colour targets. */
@@ -51,8 +57,15 @@ export function estimatePassBandwidthMBps(
   const persistBytes = layerPixels * bytesPerPixel * 3 + tracerPixels * bytesPerPixel * 4;
   const compositorBytes = canvasPixels * bytesPerPixel * 2 + layerPixels * bytesPerPixel * 3;
   const readbackBytes = dims.readbackActive ? 128 * 128 * 4 + 64 * 64 * 4 : 0;
+  // The motion pass reads the source once and writes a field plus a luminance
+  // history plane, both at 1/divisor^2 of the source area.
+  const motionDivisor = Math.max(1, dims.motionDivisor ?? 4);
+  const motionCells = canvasPixels / (motionDivisor * motionDivisor);
+  const motionBytes = dims.motionActive
+    ? canvasPixels * bytesPerPixel + motionCells * (8 + 4) * 2
+    : 0;
 
-  const totalBytes = layersBytes + persistBytes + compositorBytes + readbackBytes;
+  const totalBytes = layersBytes + persistBytes + compositorBytes + readbackBytes + motionBytes;
   const totalMs = Math.max(timings.totalGpuMs, 0.001);
   return (totalBytes / (1024 * 1024)) / (totalMs / 1000);
 }
@@ -66,10 +79,11 @@ export function parseTimestampMarkers(
 
   return {
     layersMs: toMs(stamps[0], stamps[1]),
-    persistenceMs: toMs(stamps[1], stamps[2]),
-    compositorMs: toMs(stamps[2], stamps[3]),
-    readbackMs: toMs(stamps[3], stamps[4]),
-    totalGpuMs: toMs(stamps[0], stamps[4]),
+    motionMs: toMs(stamps[1], stamps[2]),
+    persistenceMs: toMs(stamps[2], stamps[3]),
+    compositorMs: toMs(stamps[3], stamps[4]),
+    readbackMs: toMs(stamps[4], stamps[5]),
+    totalGpuMs: toMs(stamps[0], stamps[5]),
   };
 }
 
@@ -183,19 +197,29 @@ export class GpuTimestampProfiler {
     enc.writeTimestamp(this.querySet, 1);
   }
 
-  markPersistenceEnd(enc: GPUCommandEncoder): void {
+  /**
+   * End of the motion-field compute dispatch. Always written, even when the
+   * pass did not run, so the marker indices stay fixed and a `motionMs` of 0
+   * reads as "no motion work this frame" rather than shifting every later row.
+   */
+  markMotionEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 2);
   }
 
-  markCompositorEnd(enc: GPUCommandEncoder): void {
+  markPersistenceEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 3);
   }
 
-  finishFrame(enc: GPUCommandEncoder): void {
+  markCompositorEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 4);
+  }
+
+  finishFrame(enc: GPUCommandEncoder): void {
+    if (!this.enabled) return;
+    enc.writeTimestamp(this.querySet, 5);
     const slot = this.writeSlot;
     const offset = slot * SLOT_BYTES;
     enc.resolveQuerySet(

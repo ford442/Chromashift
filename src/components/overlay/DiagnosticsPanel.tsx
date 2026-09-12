@@ -41,6 +41,10 @@ function PerfHudTelemetry({ frameRate, rendererBackend }: { frameRate: number; r
           <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] font-mono text-emerald-100/90">
             <span>Layers</span>
             <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.layersMs)} ms</span>
+            <span>Motion</span>
+            <span className="text-right tabular-nums" data-testid="perf-hud-motion-ms">
+              {formatPassMs(gpuPasses?.motionMs)} ms
+            </span>
             <span>Persistence</span>
             <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.persistenceMs)} ms</span>
             <span>Compositor</span>

@@ -5,8 +5,21 @@ import type { ChromashiftTextureHandle } from './TextureHandle';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 
+/**
+ * Quarter-resolution motion field produced by the `motion-field` chore's CPU
+ * lanes. One magnitude per cell — at the default divisor a 1080p frame is a
+ * 480×270 array, which is the "small array" half of the chores CPU contract.
+ */
+export interface CpuMotionField {
+  field: Float32Array;
+  width: number;
+  height: number;
+}
+
 export interface GpuPassTimings {
   layersMs: number;
+  /** Quarter-resolution motion field (`motion-field` chore); 0 when off. */
+  motionMs: number;
   persistenceMs: number;
   compositorMs: number;
   readbackMs: number;
@@ -79,6 +92,12 @@ export interface ChromashiftRenderer {
   setClassificationMaskTexture(texture: GPUTexture | null): void;
   setAntialiasing(enabled: boolean): void;
   clearPersistence(): void;
+  /**
+   * Adopt a CPU-produced motion field. Implemented by the WebGL diagnostic
+   * backend, which has no compute lane; the WebGPU renderer runs the
+   * `motion-field` chore inside its own frame encoder and omits this.
+   */
+  setMotionField?(motion: CpuMotionField | null): void;
   render(state: RendererState, fps?: number): void;
   /** Stationary side previews at panel preset angles (Original/Separated/Tracer strip). */
   renderStationaryPreviews(

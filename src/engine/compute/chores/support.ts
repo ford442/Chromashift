@@ -155,3 +155,32 @@ export function publishChoreBreadcrumbs(backend: string | null, reason: string |
   w.gpuChoreBackend = backend;
   w.gpuChoreReason = reason;
 }
+
+/**
+ * Same convention as {@link publishChoreBreadcrumbs}, one pair of globals down
+ * for the `motion-field` op. Kept separate because motion runs on the render
+ * loop's cadence and would otherwise stamp over the load-time analysis
+ * breadcrumb dozens of times a second.
+ */
+export function publishMotionFieldBreadcrumbs(
+  backend: string | null,
+  reason: string | null,
+): void {
+  if (typeof window === 'undefined') return;
+  const w = window as Window & {
+    motionFieldBackend?: string | null;
+    motionFieldReason?: string | null;
+  };
+  w.motionFieldBackend = backend;
+  w.motionFieldReason = reason;
+}
+
+/**
+ * Mean magnitude of the last motion field, in [0,1] — the summary statistic
+ * automation asserts on ("a moving fixture is non-zero, a still one is zero").
+ * The field itself never crosses to the CPU on the WebGPU lane.
+ */
+export function publishMotionFieldEnergy(energy: number): void {
+  if (typeof window === 'undefined') return;
+  (window as Window & { motionFieldEnergy?: number }).motionFieldEnergy = energy;
+}

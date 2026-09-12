@@ -2,10 +2,24 @@ import { useCallback, useEffect, useRef } from 'react';
 import { computeVideoAverageLuminance, LiveSourceManager, type LiveSourceKind } from '../engine/LiveSource';
 import { publishLiveSourceBreadcrumbs } from '../engine/liveSourceBreadcrumbs';
 import { LIVE_SOURCE_CACHE_KEY } from '../engine/liveSourceTexture';
+import { createChromashiftCpuHost } from '../engine/compute/chores/chromashiftHost';
+import { publishMotionFieldBreadcrumbs, publishMotionFieldEnergy } from '../engine/compute/chores';
+import { LiveMotionSampler } from '../engine/liveMotionField';
 import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
 /** How often to resample average luminance from the live frame (ms). */
 const ANALYSIS_INTERVAL_MS = 1000;
+
+/**
+ * How often the WebGL backend resamples the motion field (ms).
+ *
+ * The field is a *tracer* input, not a display frame: a trail that holds for
+ * hundreds of milliseconds does not need a fresh difference 60 times a second,
+ * and the CPU lane's `getImageData` is the one part of this loop that is not
+ * free. WebGPU is unaffected — there the field is a compute dispatch inside
+ * the frame's own encoder, every frame.
+ */
+const MOTION_INTERVAL_MS = 66;
 
 export interface LiveSourceHandlers {
   handleStartCamera: () => Promise<void>;
@@ -106,6 +120,12 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
   const lastAnalysisRef = useRef(0);
   const frameCountRef = useRef(0);
   const lastFpsSyncRef = useRef(0);
+  // WebGL has no compute lane, so the motion field is sampled here from the
+  // video element and handed to the renderer. On WebGPU the renderer runs the
+  // `motion-field` chore's GPU lane inside its own frame encoder instead, and
+  // this sampler is never constructed.
+  const motionSamplerRef = useRef<LiveMotionSampler | null>(null);
+  const lastMotionAtRef = useRef(0);
   useEffect(() => {
     if (!liveSource.active) {
       publishLiveSourceBreadcrumbs(false, null, 0);
@@ -119,6 +139,38 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
     // Publish immediately so `window.liveSourceActive` flips the instant
     // activation happens, rather than waiting for the first 1s FPS window.
     publishLiveSourceBreadcrumbs(true, liveSourceManagerRef.current?.kind ?? null, 0);
+
+    /**
+     * Refresh the WebGL backend's motion field. A no-op with
+     * `motionMode: 'off'` — nothing is sampled, nothing is uploaded, and the
+     * persistence pass keeps running the pre-motion program.
+     */
+    const sampleMotion = (now: number, element: HTMLVideoElement) => {
+      const renderer = rendererRef.current;
+      if (!renderer?.setMotionField) return;
+
+      const { tracers } = renderStateRef.current;
+      if (tracers.motionMode === 'off') {
+        if (motionSamplerRef.current) {
+          motionSamplerRef.current.destroy();
+          motionSamplerRef.current = null;
+          renderer.setMotionField?.(null);
+          publishMotionFieldBreadcrumbs(null, 'motionMode is off');
+          publishMotionFieldEnergy(0);
+        }
+        return;
+      }
+
+      if (now - lastMotionAtRef.current < MOTION_INTERVAL_MS) return;
+      lastMotionAtRef.current = now;
+
+      motionSamplerRef.current ??= new LiveMotionSampler(
+        createChromashiftCpuHost(() => engineModeRef.current === 'wasm'),
+      );
+      void motionSamplerRef.current.sample(element, tracers.motionThreshold).then((output) => {
+        renderer.setMotionField?.(output);
+      });
+    };
 
     const tick = (now: number) => {
       const manager = liveSourceManagerRef.current;
@@ -140,6 +192,8 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
             const avgLum = computeVideoAverageLuminance(manager.element, engineModeRef.current === 'wasm');
             actions.setAvgLuminance(Math.round(avgLum));
           }
+
+          sampleMotion(now, manager.element);
         }
       }
 
@@ -154,8 +208,18 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
     };
 
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [liveSource.active, actions, liveSourceManagerRef, textureManagerRef, engineModeRef, renderStateRef]);
+    return () => {
+      cancelAnimationFrame(raf);
+      motionSamplerRef.current?.destroy();
+      motionSamplerRef.current = null;
+      lastMotionAtRef.current = 0;
+      publishMotionFieldBreadcrumbs(null, 'No live source');
+      publishMotionFieldEnergy(0);
+    };
+  }, [
+    liveSource.active, actions, liveSourceManagerRef, textureManagerRef,
+    engineModeRef, renderStateRef, rendererRef,
+  ]);
 
   return { handleStartCamera, handleStartScreenShare, handleLoadVideoFile, handleStopLiveSource };
 }

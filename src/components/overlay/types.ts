@@ -1,3 +1,4 @@
+import type { MotionMode } from '../../engine/motionModes';
 import type { ColorProfileControls } from '../../hooks/useColorProfiles';
 import type { ExportPanelProps } from './ExportPanel';
 import type { PresetsPanelProps } from './PresetsPanel';
@@ -84,6 +85,11 @@ export interface TracerPanelProps {
   tracerAboveDuration: number;
   tracerBelowDuration: number;
   tracerMode: number;
+  /** Temporal tracer term — see `engine/motionModes.ts`. */
+  motionMode: MotionMode;
+  motionGain: number;
+  motionDecayBias: number;
+  motionThreshold: number;
   outputMode: number;
   layerBlendMode: number;
   tracerBlendMode: number;
@@ -100,6 +106,10 @@ export interface TracerPanelProps {
   onTracerAboveDurationChange: (value: number) => void;
   onTracerBelowDurationChange: (value: number) => void;
   onTracerModeChange: (value: number) => void;
+  onMotionModeChange: (value: MotionMode) => void;
+  onMotionGainChange: (value: number) => void;
+  onMotionDecayBiasChange: (value: number) => void;
+  onMotionThresholdChange: (value: number) => void;
   onOutputModeChange: (value: number) => void;
   onLayerBlendModeChange: (value: number) => void;
   onTracerBlendModeChange: (value: number) => void;

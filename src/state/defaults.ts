@@ -2,6 +2,12 @@ import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { defaultCompareSlot } from '../engine/compareViews';
 import { getRendererPreference } from '../engine/rendererMode';
 import { CLASSIC_PROFILE_ID } from '../engine/color/colorProfile';
+import {
+  DEFAULT_MOTION_DECAY_BIAS,
+  DEFAULT_MOTION_GAIN,
+  DEFAULT_MOTION_MODE,
+  DEFAULT_MOTION_THRESHOLD,
+} from '../engine/motionModes';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { ChromashiftState, LayerTriple } from './types';
 
@@ -79,6 +85,10 @@ export function createInitialState(): ChromashiftState {
       scale: 1,
       layerBlendMode: 0,
       tracerBlendMode: 0,
+      motionMode: DEFAULT_MOTION_MODE,
+      motionGain: DEFAULT_MOTION_GAIN,
+      motionDecayBias: DEFAULT_MOTION_DECAY_BIAS,
+      motionThreshold: DEFAULT_MOTION_THRESHOLD,
     },
     output: {
       mainViewMode: MAIN_VIEW_MODES.PROCESSED_COMPOSITE,

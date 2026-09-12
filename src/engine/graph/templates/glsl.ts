@@ -1,5 +1,8 @@
 import { DECAY_GLSL } from '../../shaders/decayLiterals';
 import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
+import type { CoincidenceDecayOptions } from './wgsl';
+
+export type { CoincidenceDecayOptions } from './wgsl';
 
 /**
  * GLSL ES 3.00 template library — the WebGL diagnostic backend's half of the
@@ -8,6 +11,24 @@ import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
  */
 
 const layerList = (count: number) => Array.from({ length: count }, (_, i) => i);
+
+/**
+ * GLSL twin of `WGSL_MOTION_HELPERS` — same maths, same names, so the two
+ * backends stay comparable by eye when a motion preset diverges.
+ */
+export const GLSL_MOTION_HELPERS = `
+vec3 motionDirectionRgb(vec2 flow, float magnitude, float gain) {
+  float hue = fract(atan(flow.y, flow.x) / 6.2831853 + 1.0);
+  vec3 k = vec3(0.0, 8.0, 4.0) + hue * 12.0;
+  vec3 wedge = clamp(abs(mod(k, 6.0) - 3.0) - 1.0, vec3(0.0), vec3(1.0));
+  vec3 rgb = 0.5 - 0.45 + 0.45 * wedge;
+  return rgb * clamp(magnitude * gain, 0.0, 1.0);
+}
+
+float motionDecayScale(float magnitude, float bias, bool enabled) {
+  return enabled ? max(1.0 - bias * magnitude, 0.0) : 1.0;
+}
+`;
 
 /** `cropColor` — every layer's CROP ramp behind one `int layer` switch. */
 export function emitCropColorGlsl(specs: readonly LayerSpec[]): string {
@@ -137,13 +158,50 @@ export function emitNunifAlphaGlsl(specs: readonly LayerSpec[]): string {
 }
 
 /** `coincidence` + `decay` → the WebGL persistence pass. */
-export function emitCoincidenceDecayGlsl(layerCount: number): string {
+export function emitCoincidenceDecayGlsl(
+  layerCount: number,
+  options: CoincidenceDecayOptions = {},
+): string {
+  const motion = options.motion === true;
   const layers = layerList(layerCount);
   const uniforms = layers.map((i) => `uniform sampler2D u_layer${i};`).join('\n');
   const samples = layers.map((i) => `  vec4 c${i} = texture(u_layer${i}, v_uv);`).join('\n');
   const count = layers.map((i) => `step(0.01, c${i}.a)`).join(' + ');
   const weighted = layers.map((i) => `c${i}.rgb * step(0.01, c${i}.a)`).join(' + ');
   const fullOverlap = (layerCount - 1).toFixed(1);
+
+  // Mirrors the WGSL variant field for field: same binding shape, same modes,
+  // same decay bias, so a preset looks the same on the diagnostic backend.
+  const motionUniforms = motion
+    ? '\nuniform sampler2D u_motion;\nuniform int u_motionMode;'
+      + '\nuniform float u_motionGain;\nuniform float u_motionDecayBias;\n'
+      + GLSL_MOTION_HELPERS
+    : '';
+  const motionSample = motion
+    ? '  vec4 motionSample = texture(u_motion, v_uv);\n'
+      + '  float motion = clamp(motionSample.r, 0.0, 1.0);\n'
+    : '';
+  // The parenthesised form is emitted only for the motion variant: without it
+  // the non-motion token stream stays byte-identical to the golden source.
+  const decayMod = motion
+    ? `(hadOverlap ? ${DECAY_GLSL.overlapDecayExponent} : ${DECAY_GLSL.idleDecayExponent})`
+      + ' * motionDecayScale(motion, u_motionDecayBias, u_motionMode != 0)'
+    : `hadOverlap ? ${DECAY_GLSL.overlapDecayExponent} : ${DECAY_GLSL.idleDecayExponent}`;
+  const motionTerm = motion
+    ? [
+        '',
+        '  // Temporal term — see the WGSL emitter for the mode semantics.',
+        '  if (u_motionMode == 2 && motion <= 0.0) {',
+        '    outColor = decayed;',
+        '    return;',
+        '  }',
+        '  if (u_motionMode == 3) {',
+        '    stamped = motionDirectionRgb(motionSample.gb, motion, u_motionGain);',
+        '  } else if (u_motionMode != 0) {',
+        '    stamped = min(stamped * (1.0 + u_motionGain * motion), vec3(1.0));',
+        '  }',
+      ].join('\n')
+    : '';
 
   return `#version 300 es
 precision highp float;
@@ -154,20 +212,20 @@ uniform float u_decay;
 uniform float u_stampBoost;
 uniform int u_tracerMode;
 uniform int u_peakMode;
-
+${motionUniforms}
 in vec2 v_uv;
 out vec4 outColor;
 
 void main() {
 ${samples}
   vec4 prev = texture(u_previous, v_uv);
-  // count is an exact sum of step() results (each 0.0 or 1.0), so the integer
+${motionSample}  // count is an exact sum of step() results (each 0.0 or 1.0), so the integer
   // comparisons below need no epsilon.
   float count = ${count};
   bool hadOverlap = count > 1.0;
   // Decay modifier: decay faster when actively overlapping, slower otherwise —
   // mirrors the WGSL persistence pass and effectiveDecay() in math/decay.ts.
-  float decayMod = hadOverlap ? ${DECAY_GLSL.overlapDecayExponent} : ${DECAY_GLSL.idleDecayExponent};
+  float decayMod = ${decayMod};
   float effectiveDecay = pow(u_decay, decayMod);
   // Peak mode discards the decayed history so only fresh collision stamps show,
   // mirroring the WebGPU persistence pass (peakMode -> decayed = 0).
@@ -179,6 +237,7 @@ ${samples}
   vec3 combined = (${weighted}) / count;
   float lum = dot(combined, vec3(0.2126, 0.7152, 0.0722));
   vec3 stamped = u_tracerMode == 1 ? vec3(min(lum * u_stampBoost, 1.0)) : min(combined * u_stampBoost, vec3(1.0));
+${motionTerm}
   vec4 fresh = vec4(stamped, count > ${fullOverlap} ? 1.0 : 0.72);
   outColor = max(decayed, fresh);
 }

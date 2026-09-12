@@ -5,5 +5,5 @@ export {
   UV_GRID_DEBUG_FRAGMENT,
   LAYER_ISOLATION_DEBUG_FRAGMENT,
 } from './debug';
-export { PERSISTENCE_FRAGMENT_SOURCE } from './persistence';
+export { PERSISTENCE_FRAGMENT_SOURCE, PERSISTENCE_MOTION_FRAGMENT_SOURCE } from './persistence';
 export { COMPOSITOR_FRAGMENT_SOURCE } from './compositor';

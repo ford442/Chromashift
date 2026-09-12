@@ -52,20 +52,39 @@ describe('parseTimestampMarkers', () => {
     const stamps = new BigUint64Array(GPU_TIMESTAMP_MARKERS);
     stamps[0] = 0n;
     stamps[1] = 1_000_000n;
-    stamps[2] = 2_500_000n;
-    stamps[3] = 4_000_000n;
-    stamps[4] = 4_500_000n;
+    stamps[2] = 1_200_000n;
+    stamps[3] = 2_700_000n;
+    stamps[4] = 4_200_000n;
+    stamps[5] = 4_700_000n;
 
     const timings = parseTimestampMarkers(stamps, periodNs);
     expect(timings.layersMs).toBeCloseTo(1);
+    expect(timings.motionMs).toBeCloseTo(0.2);
     expect(timings.persistenceMs).toBeCloseTo(1.5);
     expect(timings.compositorMs).toBeCloseTo(1.5);
     expect(timings.readbackMs).toBeCloseTo(0.5);
-    expect(timings.totalGpuMs).toBeCloseTo(4.5);
+    expect(timings.totalGpuMs).toBeCloseTo(4.7);
   });
 });
 
 describe('estimatePassBandwidthMBps', () => {
+  it('adds the motion pass\u2019s quarter-scale traffic only when it ran', () => {
+    const dims = {
+      canvasW: 1920,
+      canvasH: 1080,
+      layerScale: 1,
+      tracerScale: 1,
+      sampleCount: 1,
+      readbackActive: false,
+    } as const;
+    const timings = {
+      layersMs: 1, motionMs: 0.2, persistenceMs: 1, compositorMs: 1, readbackMs: 0, totalGpuMs: 3.2,
+    };
+    const withMotion = estimatePassBandwidthMBps({ ...dims, motionActive: true }, timings);
+    const withoutMotion = estimatePassBandwidthMBps({ ...dims, motionActive: false }, timings);
+    expect(withMotion).toBeGreaterThan(withoutMotion);
+  });
+
   it('returns a positive rate for typical 1080p dimensions', () => {
     const rate = estimatePassBandwidthMBps(
       {
@@ -78,10 +97,11 @@ describe('estimatePassBandwidthMBps', () => {
       },
       {
         layersMs: 2,
+        motionMs: 0.2,
         persistenceMs: 1,
         compositorMs: 1,
         readbackMs: 0.5,
-        totalGpuMs: 4.5,
+        totalGpuMs: 4.7,
       },
     );
     expect(rate).toBeGreaterThan(0);
@@ -97,7 +117,7 @@ describe('estimatePassBandwidthMBps', () => {
         sampleCount: 1,
         readbackActive: true,
       },
-      { layersMs: 1, persistenceMs: 1, compositorMs: 1, readbackMs: 0, totalGpuMs: 3 },
+      { layersMs: 1, motionMs: 0, persistenceMs: 1, compositorMs: 1, readbackMs: 0, totalGpuMs: 3 },
     );
     const withoutReadback = estimatePassBandwidthMBps(
       {
@@ -108,7 +128,7 @@ describe('estimatePassBandwidthMBps', () => {
         sampleCount: 1,
         readbackActive: false,
       },
-      { layersMs: 1, persistenceMs: 1, compositorMs: 1, readbackMs: 0, totalGpuMs: 3 },
+      { layersMs: 1, motionMs: 0, persistenceMs: 1, compositorMs: 1, readbackMs: 0, totalGpuMs: 3 },
     );
     expect(withReadback).toBeGreaterThan(withoutReadback);
   });

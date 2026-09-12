@@ -1,3 +1,4 @@
+import type { MotionMode } from '../engine/motionModes';
 import type { ColorProfileControls } from '../hooks/useColorProfiles';
 import type { RefObject } from 'react';
 import type { ChromashiftRefs } from '../hooks/useChromashiftStore';
@@ -246,6 +247,14 @@ export interface AppUIControlProps {
   setTracerBelowDuration: (value: number) => void;
   tracerMode: number;
   setTracerMode: (mode: number) => void;
+  motionMode: MotionMode;
+  setMotionMode: (mode: MotionMode) => void;
+  motionGain: number;
+  setMotionGain: (value: number) => void;
+  motionDecayBias: number;
+  setMotionDecayBias: (value: number) => void;
+  motionThreshold: number;
+  setMotionThreshold: (value: number) => void;
   layerBlendMode: number;
   setLayerBlendMode: (mode: number) => void;
   tracerBlendMode: number;
