@@ -156,7 +156,7 @@ export function buildControlProps(
     xrBusy: webxr.xrBusy,
     xrError: webxr.xrError,
     xrEnterAllowed: webxr.xrEnterAllowed,
-    onEnterXr: () => { void webxr.enterXr(); },
+    onEnterXr: webxr.startXr,
     onExitXr: webxr.exitXr,
     isViewingTracer: derived.isViewingTracer,
     currentImage: derived.currentImage,
@@ -178,10 +178,7 @@ export function buildControlProps(
     onAudioEnabledChange: actions.setReactiveAudioEnabled,
     onMidiEnabledChange: actions.setReactiveMidiEnabled,
     onAudioSensitivityChange: actions.setReactiveAudioSensitivity,
-    onStartMicDemo: () => {
-      actions.setReactiveEnabled(true);
-      actions.setReactiveAudioEnabled(true);
-    },
+    onStartMicDemo: actions.startMicDemo,
     onMidiLearnTargetChange: actions.setMidiLearnTarget,
     onRemoveMidiBinding: actions.removeMidiBinding,
   };

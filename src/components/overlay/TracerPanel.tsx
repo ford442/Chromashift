@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { getBlendModeInfo } from '../../engine/blendModes';
 import type { ReferenceBlendMode, OverlayImageSource, TracerPanelProps } from './types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 const BLEND_OPTIONS = (
   <>
@@ -35,6 +36,9 @@ function BlendModeSelect({
       <div className="flex items-center gap-2">
         <label className="text-xs text-amber-400/80 font-mono whitespace-nowrap">{label}:</label>
         <select
+          // The visible <label> is a sibling, not a wrapper, so it names nothing
+          // on its own — spell the accessible name out here.
+          aria-label={`${label} blend mode`}
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
           className="text-xs px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30 text-white"
@@ -85,6 +89,7 @@ export const TracerPanel = memo(function TracerPanel({
   onSwapSourceReference,
   onToggleImageStrip,
 }: TracerPanelProps) {
+  useRenderCount('TracerPanel');
   return (
     <div className="space-y-3">
       <div className="panel-3d space-y-2">

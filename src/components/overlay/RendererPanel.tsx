@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { WEBGL_BACKEND_ENABLED } from '../../engine/rendererMode';
 import type { RendererPanelProps } from './types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 const WEBGL_TOOLTIP = 'Diagnostic / XR / screenshot backend — not an automatic fallback. Reloads with ?renderer=webgl and does not request a WebGPU device.';
 
@@ -23,6 +24,7 @@ export const RendererPanel = memo(function RendererPanel({
   onEnterXr,
   onExitXr,
 }: RendererPanelProps) {
+  useRenderCount('RendererPanel');
   return (
     <div className="space-y-3">
       <div className="panel-3d space-y-2">

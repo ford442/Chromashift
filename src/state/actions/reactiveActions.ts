@@ -13,6 +13,9 @@ export function createReactiveActions(dispatch: ChromashiftDispatch) {
       }),
     setReactiveAudioEnabled: (audioEnabled: boolean) =>
       dispatch({ type: 'reactive/patch', patch: { audioEnabled } }),
+    /** Arm reactive input and its audio lane in one dispatch (the panel's "mic demo" button). */
+    startMicDemo: () =>
+      dispatch({ type: 'reactive/patch', patch: { enabled: true, audioEnabled: true } }),
     setReactiveMidiEnabled: (midiEnabled: boolean) =>
       dispatch({ type: 'reactive/patch', patch: { midiEnabled } }),
     setReactiveAudioSensitivity: (audioSensitivity: number) =>

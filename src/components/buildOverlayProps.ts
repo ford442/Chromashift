@@ -1,12 +1,20 @@
-import { MAIN_VIEW_MODES } from '../engine/viewModes';
-import type { MainViewMode } from '../engine/viewModes';
 import { switchRendererPreference } from '../engine/rendererMode';
-import type { LayerTriple } from '../state/types';
 import type { OverlayProps } from './overlay/types';
 import type { AppUIProps } from './AppUI.types';
-import type { LayerIndex } from './overlay/types';
+import type { RendererOverlayHandlers, StableOverlayHandlers } from './useOverlayProps';
 
-export function buildOverlayProps(p: AppUIProps): OverlayProps {
+/**
+ * Flatten {@link AppUIProps} into the overlay's prop bag.
+ *
+ * Everything here is a plain forward of an already-stable action or a value
+ * straight off app state. The handlers that need to wrap an action live in
+ * `useOverlayProps`, which pins their identity across renders and passes them
+ * in as `stable` — build them here and every panel's `memo()` misses.
+ */
+export function buildOverlayProps(
+  p: AppUIProps,
+  stable: StableOverlayHandlers,
+): Omit<OverlayProps, keyof RendererOverlayHandlers> {
   return {
     layerExtensions: p.layerExtensions,
     frameRate: p.frameRate,
@@ -55,14 +63,9 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     referenceBlendMode: p.referenceBlendMode,
     overlayImageSource: p.overlayImageSource,
     referenceOpacity: p.referenceOpacity,
-    onTracerViewToggle: (next) => p.setMainViewMode(
-      next ? MAIN_VIEW_MODES.FULL_RES_TRACER : MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
-    ),
-    onMainViewModeChange: (value: number) => p.setMainViewMode(value as MainViewMode),
-    onEngineModeChange: (mode) => {
-      if (mode === 'wasm' && !p.isWasmReady()) return;
-      p.setEngineMode(mode);
-    },
+    onTracerViewToggle: stable.onTracerViewToggle,
+    onMainViewModeChange: stable.onMainViewModeChange,
+    onEngineModeChange: stable.onEngineModeChange,
     onToggleImageStrip: p.toggleImageStrip,
     onSwapSourceReference: p.swapSourceAndReference,
     onReferenceBlendModeChange: p.setReferenceBlendMode,
@@ -100,11 +103,7 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     onExtensionChange: p.handleExtensionChange,
     onFrameRateChange: p.setFrameRate,
     onLayerOpacityChange: p.setLayerOpacity,
-    onLayerOpacityPerLayerChange: (layer: LayerIndex, opacity: number) => {
-      const next = [...p.layerOpacities] as LayerTriple<number>;
-      next[layer] = opacity;
-      p.setLayerOpacities(next);
-    },
+    onLayerOpacityPerLayerChange: stable.onLayerOpacityPerLayerChange,
     onLayerScaleChange: p.setLayerScale,
     onTracerScaleChange: p.setTracerScale,
     onTracerAboveIntensityChange: p.setTracerAboveIntensity,
@@ -123,10 +122,6 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     performanceAutoDegrade: p.performanceAutoDegrade,
     onPerformanceHudToggle: p.setPerformanceHudEnabled,
     onPerformanceAutoDegradeToggle: p.setPerformanceAutoDegrade,
-    onApplyPerformanceDegrade: () => {
-      p.rendererRef.current?.setAntialiasing(false);
-      p.applyPerformanceDegrade();
-    },
     colorMode: p.colorMode,
     onColorModeChange: p.setColorMode,
     sobelEnabled: p.sobelEnabled,
@@ -134,21 +129,9 @@ export function buildOverlayProps(p: AppUIProps): OverlayProps {
     softCropEnabled: p.softCropEnabled,
     onSoftCropEnabledToggle: p.setSoftCropEnabled,
     onSquareCanvasToggle: p.setSquareCanvas,
-    onAntialiasToggle: (enabled) => {
-      p.setAntialiasEnabled(enabled);
-      p.rendererRef.current?.setAntialiasing(enabled);
-    },
-    onDisplayColorSpaceChange: (space) => {
-      p.setDisplayColorSpace(space);
-    },
-    onViewportQuarterZoomToggle: (enabled) => {
-      p.setViewportQuarterZoom(enabled);
-      if (enabled) p.setViewportHalfOverlay(false);
-    },
-    onViewportHalfOverlayToggle: (enabled) => {
-      p.setViewportHalfOverlay(enabled);
-      if (enabled) p.setViewportQuarterZoom(false);
-    },
+    onDisplayColorSpaceChange: stable.onDisplayColorSpaceChange,
+    onViewportQuarterZoomToggle: stable.onViewportQuarterZoomToggle,
+    onViewportHalfOverlayToggle: stable.onViewportHalfOverlayToggle,
     onReset: p.handleReset,
     builtinPresets: p.builtinPresets,
     savedPresets: p.savedPresets,

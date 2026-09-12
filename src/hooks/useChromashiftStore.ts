@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer } from 'react';
+import { useCallback, useEffect, useMemo, useReducer } from 'react';
 import { chromashiftReducer } from '../state/chromashiftReducer';
 import { createChromashiftActions } from '../state/actions';
 import type { ChromashiftDispatch } from '../state/actions';
@@ -58,12 +58,26 @@ export function useChromashiftStore(refs: ChromashiftRefs) {
 
   const actions = useMemo(() => createChromashiftActions(dispatch), []);
 
+  /**
+   * Read the current state without subscribing to it.
+   *
+   * Handlers that need the whole state to do their job — serialize a preset,
+   * build a share URL, start a video export — used to close over `state` and
+   * list it as a `useCallback` dependency. That gave them a new identity after
+   * *every* dispatch, and since they end up in the overlay prop bag, an
+   * unrelated dispatch re-rendered the panels holding them. They run from DOM
+   * events, always after the commit that refreshed `renderStateRef`, so reading
+   * through the ref is both current and stable.
+   */
+  const getState = useCallback(() => renderStateRef.current, [renderStateRef]);
+
   const selectSourceIndex = useSelectSourceIndex(dispatch, imageListRef, currentImageIndexRef);
   const handleAngleChange = useHandleAngleChange(dispatch, animAnglesRef);
   const handleExtensionChange = useHandleExtensionChange(dispatch);
 
   return {
     state,
+    getState,
     dispatch: dispatch as ChromashiftDispatch,
     actions,
     selectSourceIndex,

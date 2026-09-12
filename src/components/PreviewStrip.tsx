@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { PreviewStripProps } from './AppUI.types';
+import { useRenderCount } from '../debug/renderCounts';
 
 export const PreviewStrip = memo(function PreviewStrip({
   previewOriginalRef,
@@ -10,6 +11,7 @@ export const PreviewStrip = memo(function PreviewStrip({
   livePreviewEnabled,
   setLivePreviewEnabled,
 }: PreviewStripProps) {
+  useRenderCount('PreviewStrip');
   return (
     <>
       <div className="absolute top-14 right-3 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">

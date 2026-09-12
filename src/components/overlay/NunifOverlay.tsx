@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { CollapsibleSection } from './CollapsibleSection';
 import { DiagnosticsPanel } from './DiagnosticsPanel';
 import { ExportPanel } from './ExportPanel';
@@ -11,9 +12,39 @@ import { UpscalePanel } from './UpscalePanel';
 import { ViewportPanel } from './ViewportPanel';
 import type { OverlayProps } from './types';
 import { useOverlaySections } from './useOverlaySections';
+import { useRenderCount } from '../../debug/renderCounts';
+import {
+  selectDiagnosticsPanelProps,
+  selectExportPanelProps,
+  selectLayerPanelProps,
+  selectPlayPanelProps,
+  selectPresetsPanelProps,
+  selectReactivePanelProps,
+  selectRendererPanelProps,
+  selectTracerPanelProps,
+  selectUpscalePanelProps,
+  selectViewportPanelProps,
+} from './panelProps';
 
-export function NunifOverlay(props: OverlayProps) {
+export const NunifOverlay = memo(function NunifOverlay(props: OverlayProps) {
+  useRenderCount('NunifOverlay');
   const { sections, toggleSection } = useOverlaySections();
+
+  // One narrowed prop slice per panel. `memo` compares a panel's props
+  // shallowly, so narrowing is what makes the wrappers bite: `TracerPanel`
+  // re-renders when a tracer field moves and not when the compare layout does.
+  // Spreading the whole bag (`<TracerPanel {...props} />`) made every panel's
+  // `memo` miss on every unrelated change.
+  const playProps = selectPlayPanelProps(props);
+  const rendererProps = selectRendererPanelProps(props);
+  const layerProps = selectLayerPanelProps(props);
+  const tracerProps = selectTracerPanelProps(props);
+  const reactiveProps = selectReactivePanelProps(props);
+  const upscaleProps = selectUpscalePanelProps(props);
+  const diagnosticsProps = selectDiagnosticsPanelProps(props);
+  const exportProps = selectExportPanelProps(props);
+  const presetsProps = selectPresetsPanelProps(props);
+  const viewportProps = selectViewportPanelProps(props);
 
   return (
     <div className="fixed left-0 top-1/2 -translate-y-1/2 z-50 w-96 bg-zinc-950/95 backdrop-blur-xl border-r border-amber-500/20 text-white p-4 select-none overflow-y-auto max-h-[95vh] rounded-r-xl shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(245,158,11,0.15)] space-y-4">
@@ -43,7 +74,7 @@ export function NunifOverlay(props: OverlayProps) {
         </div>
       </div>
 
-      <PlayPanel {...props} />
+      <PlayPanel {...playProps} />
 
       <CollapsibleSection
         id="renderer"
@@ -51,7 +82,7 @@ export function NunifOverlay(props: OverlayProps) {
         open={sections.renderer}
         onToggle={toggleSection}
       >
-        <RendererPanel {...props} />
+        <RendererPanel {...rendererProps} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -60,7 +91,7 @@ export function NunifOverlay(props: OverlayProps) {
         open={sections.layers}
         onToggle={toggleSection}
       >
-        <LayerPanel {...props} />
+        <LayerPanel {...layerProps} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -69,7 +100,7 @@ export function NunifOverlay(props: OverlayProps) {
         open={sections.tracer}
         onToggle={toggleSection}
       >
-        <TracerPanel {...props} />
+        <TracerPanel {...tracerProps} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -79,7 +110,7 @@ export function NunifOverlay(props: OverlayProps) {
         onToggle={toggleSection}
         hint="Audio + MIDI performance control"
       >
-        <ReactivePanel {...props} />
+        <ReactivePanel {...reactiveProps} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -89,7 +120,7 @@ export function NunifOverlay(props: OverlayProps) {
         onToggle={toggleSection}
         hint="Real-ESRGAN / waifu2x research tools"
       >
-        <UpscalePanel {...props} />
+        <UpscalePanel {...upscaleProps} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -99,7 +130,7 @@ export function NunifOverlay(props: OverlayProps) {
         onToggle={toggleSection}
         hint="Collision stats, heatmap, tracer export"
       >
-        <DiagnosticsPanel {...props} />
+        <DiagnosticsPanel {...diagnosticsProps} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -109,7 +140,7 @@ export function NunifOverlay(props: OverlayProps) {
         onToggle={toggleSection}
         hint="Offline composite render to WebM/MP4"
       >
-        <ExportPanel {...props} />
+        <ExportPanel {...exportProps} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -119,7 +150,7 @@ export function NunifOverlay(props: OverlayProps) {
         onToggle={toggleSection}
         hint="Save, share URL, gallery"
       >
-        <PresetsPanel {...props} />
+        <PresetsPanel {...presetsProps} />
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -129,8 +160,8 @@ export function NunifOverlay(props: OverlayProps) {
         onToggle={toggleSection}
         hint="Canvas shape, MSAA, quarter zoom"
       >
-        <ViewportPanel {...props} />
+        <ViewportPanel {...viewportProps} />
       </CollapsibleSection>
     </div>
   );
-}
+});

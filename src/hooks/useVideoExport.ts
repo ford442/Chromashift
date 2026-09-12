@@ -5,7 +5,7 @@ import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
-  const { state, actions } = store;
+  const { state, getState, actions } = store;
   const { rendererRef, mainCanvasRef, animAnglesRef } = refs;
   const abortRef = useRef<AbortController | null>(null);
 
@@ -39,15 +39,16 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
 
   const handleExportVideo = useCallback(async () => {
     const renderer = rendererRef.current;
-    if (!renderer || state.ui.exportingVideo) return;
+    const snapshot = getState();
+    if (!renderer || snapshot.ui.exportingVideo) return;
 
-    const settings = state.ui.videoExportSettings;
+    const settings = snapshot.ui.videoExportSettings;
     const mainCanvas = mainCanvasRef.current;
     const baseWidth = Math.max(1, Math.round(mainCanvas?.width ?? 1024));
     const baseHeight = Math.max(1, Math.round(mainCanvas?.height ?? 1024));
 
-    const wasAutoPlay = state.ui.isAutoPlayActive;
-    const wasPaused = state.engine.paused;
+    const wasAutoPlay = snapshot.ui.isAutoPlayActive;
+    const wasPaused = snapshot.engine.paused;
 
     abortRef.current = new AbortController();
     actions.setExportingVideo(true);
@@ -59,7 +60,7 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
       const { downloadVideoExport, exportVideo } = await import('../engine/videoExport/VideoExporter');
       const result = await exportVideo(
         renderer,
-        state,
+        snapshot,
         animAnglesRef.current,
         baseWidth,
         baseHeight,
@@ -85,17 +86,13 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
       actions.setIsAutoPlayActive(wasAutoPlay);
       actions.setIsPaused(wasPaused);
     }
-  }, [rendererRef, mainCanvasRef, animAnglesRef, state, actions]);
+  }, [rendererRef, mainCanvasRef, animAnglesRef, getState, actions]);
 
   const patchVideoExportSettings = actions.patchVideoExportSettings;
 
-  return {
-    codecSupport,
-    exportingVideo: state.ui.exportingVideo,
-    videoExportProgress: state.ui.videoExportProgress,
-    videoExportSettings: state.ui.videoExportSettings,
-    handleExportVideo,
-    handleCancelVideoExport,
+  // Built once: these all land in `ExportPanel`'s props, and a fresh arrow per
+  // render would re-render the panel on every unrelated dispatch.
+  const settingSetters = useMemo(() => ({
     onVideoExportDurationChange: (durationSec: number) => patchVideoExportSettings({ durationSec }),
     onVideoExportFpsChange: (fps: number) => patchVideoExportSettings({ fps }),
     onVideoExportScaleChange: (resolutionScale: number) => patchVideoExportSettings({ resolutionScale }),
@@ -105,5 +102,15 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
     onVideoExportUsePresetAnglesChange: (usePreset: boolean) => patchVideoExportSettings({ usePresetAngles: usePreset }),
     onVideoExportContainerChange: (container: VideoExportContainer) => patchVideoExportSettings({ container }),
     onVideoExportQualityChange: (quality: VideoExportQuality) => patchVideoExportSettings({ quality }),
+  }), [patchVideoExportSettings]);
+
+  return {
+    codecSupport,
+    exportingVideo: state.ui.exportingVideo,
+    videoExportProgress: state.ui.videoExportProgress,
+    videoExportSettings: state.ui.videoExportSettings,
+    handleExportVideo,
+    handleCancelVideoExport,
+    ...settingSetters,
   };
 }

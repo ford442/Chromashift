@@ -1,3 +1,4 @@
+import { memo, useCallback } from 'react';
 import { ImageStrip } from './ImageStrip';
 import { KioskRemote } from './KioskRemote';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
@@ -5,6 +6,7 @@ import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { openWebGlDiagnosticSession, readRequestedBackend } from '../engine/rendererMode';
 import { isFatalGpuDeviceRequestError } from '../engine/gpuBootstrap';
 import { useCollisionStats, useRenderCpuTiming } from '../engine/telemetryStore';
+import { useRenderCount } from '../debug/renderCounts';
 import type { ChromeShellProps } from './AppUI.types';
 
 /**
@@ -35,7 +37,7 @@ function TelemetryBadge({ performanceHudEnabled }: { performanceHudEnabled: bool
   );
 }
 
-export function ChromeShell({
+export const ChromeShell = memo(function ChromeShell({
   showChrome,
   showKioskRemote,
   gpuError,
@@ -71,6 +73,24 @@ export function ChromeShell({
   toggleKioskFullscreen,
   setSpecificImageError,
 }: ChromeShellProps) {
+  useRenderCount('ChromeShell');
+
+  // `ImageStrip` renders one row per corpus entry (thousands of them), so its
+  // `memo()` has to hold. Inline arrows here would hand it fresh callbacks on
+  // every render and make that memo miss every time.
+  const handleSelectSource = useCallback((index: number) => {
+    if (liveSource.active) handleStopLiveSource();
+    selectSourceIndex(index);
+    setMainViewMode(MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
+  }, [liveSource.active, handleStopLiveSource, selectSourceIndex, setMainViewMode]);
+
+  const handleSelectReference = useCallback((index: number) => {
+    setReferenceImage(imageList[index] ?? null);
+  }, [imageList, setReferenceImage]);
+
+  const startCamera = useCallback(() => { void handleStartCamera(); }, [handleStartCamera]);
+  const startScreenShare = useCallback(() => { void handleStartScreenShare(); }, [handleStartScreenShare]);
+  const loadVideoFile = useCallback((file: File) => { void handleLoadVideoFile(file); }, [handleLoadVideoFile]);
   return (
     <>
       {showChrome && imageList.length > 1 && (
@@ -118,19 +138,13 @@ export function ChromeShell({
           referenceUrl={referenceImage?.url ?? null}
           isOpen={isImageStripOpen}
           onToggleOpen={toggleImageStrip}
-          onSelectSource={(index) => {
-            if (liveSource.active) handleStopLiveSource();
-            selectSourceIndex(index);
-            setMainViewMode(MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
-          }}
-          onSelectReference={(index) => {
-            setReferenceImage(imageList[index] ?? null);
-          }}
+          onSelectSource={handleSelectSource}
+          onSelectReference={handleSelectReference}
           onClearLibrary={handleClearLocalLibrary}
           liveSource={liveSource}
-          onStartCamera={() => { void handleStartCamera(); }}
-          onStartScreenShare={() => { void handleStartScreenShare(); }}
-          onLoadVideoFile={(file) => { void handleLoadVideoFile(file); }}
+          onStartCamera={startCamera}
+          onStartScreenShare={startScreenShare}
+          onLoadVideoFile={loadVideoFile}
           onStopLiveSource={handleStopLiveSource}
         />
       )}
@@ -247,4 +261,4 @@ export function ChromeShell({
       )}
     </>
   );
-}
+});

@@ -12,7 +12,7 @@ import { deserializeSettings, settingsToJson } from '../state/serializeSettings'
 import type { ChromashiftStore } from './useChromashiftStore';
 
 export function usePresets(store: ChromashiftStore) {
-  const { state, actions } = store;
+  const { state, getState, actions } = store;
   const [savedPresets, setSavedPresets] = useState<StoredPreset[]>(() => listStoredPresets());
   const [presetStatus, setPresetStatus] = useState<string | null>(null);
   const [presetError, setPresetError] = useState<string | null>(state.ui.presetLoadError);
@@ -23,10 +23,10 @@ export function usePresets(store: ChromashiftStore) {
       setPresetError('Preset name cannot be empty.');
       return;
     }
-    setSavedPresets(saveStoredPreset(trimmed, state));
+    setSavedPresets(saveStoredPreset(trimmed, getState()));
     setPresetError(null);
     setPresetStatus(`Saved “${trimmed}”`);
-  }, [state]);
+  }, [getState]);
 
   const handleLoadPreset = useCallback((name: string) => {
     const preset = getStoredPreset(name);
@@ -74,11 +74,12 @@ export function usePresets(store: ChromashiftStore) {
   }, [actions]);
 
   const handleCopyPresetUrl = useCallback(async () => {
-    const url = buildPresetUrl(state, window.location.href);
+    const snapshot = getState();
+    const url = buildPresetUrl(snapshot, window.location.href);
     // Keep the address bar in sync so a plain reload restores this look too.
     try {
       const current = new URL(window.location.href);
-      current.searchParams.set(PRESET_URL_PARAM, encodeSettingsParam(state));
+      current.searchParams.set(PRESET_URL_PARAM, encodeSettingsParam(snapshot));
       window.history.replaceState(null, '', current.toString());
     } catch {
       // history can be unavailable in embedded contexts; the copy still works
@@ -90,10 +91,10 @@ export function usePresets(store: ChromashiftStore) {
     } catch {
       setPresetError('Could not access the clipboard — the preset URL is in the address bar.');
     }
-  }, [state]);
+  }, [getState]);
 
   const handleExportPresetFile = useCallback(() => {
-    const blob = new Blob([settingsToJson(state)], { type: 'application/json' });
+    const blob = new Blob([settingsToJson(getState())], { type: 'application/json' });
     const href = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = href;
@@ -101,7 +102,7 @@ export function usePresets(store: ChromashiftStore) {
     link.click();
     URL.revokeObjectURL(href);
     setPresetStatus('Preset exported');
-  }, [state]);
+  }, [getState]);
 
   const handleImportPresetFile = useCallback(async (file: File) => {
     const text = await file.text();

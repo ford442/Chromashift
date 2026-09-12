@@ -1,6 +1,7 @@
 import { memo, useRef, useState } from 'react';
 import type { BuiltinPreset } from '../../state/presetGallery';
 import type { StoredPreset } from '../../state/presetLibrary';
+import { useRenderCount } from '../../debug/renderCounts';
 
 export interface PresetsPanelProps {
   builtinPresets: readonly BuiltinPreset[];
@@ -36,6 +37,7 @@ export const PresetsPanel = memo(function PresetsPanel({
   onCompareWithBuiltin,
   onCompareWithSaved,
 }: PresetsPanelProps) {
+  useRenderCount('PresetsPanel');
   const [name, setName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 

@@ -1,5 +1,6 @@
 import { memo, useRef } from 'react';
 import type { PlayPanelProps } from './types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 export const PlayPanel = memo(function PlayPanel({
   imageChangeInterval,
@@ -12,6 +13,7 @@ export const PlayPanel = memo(function PlayPanel({
   onLoadReferenceImage,
   onLoadReferenceFile,
 }: PlayPanelProps) {
+  useRenderCount('PlayPanel');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const referenceFileInputRef = useRef<HTMLInputElement>(null);
 

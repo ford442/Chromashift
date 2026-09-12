@@ -90,17 +90,29 @@ export function useColorProfiles(store: ChromashiftStore): { colorProfiles: Colo
       ? `Colour profile “${activeProfileId}” was not found — showing Classic.`
       : null);
 
-  return {
-    colorProfiles: {
-      builtinProfiles: BUILTIN_COLOR_PROFILES,
-      userProfiles,
-      activeProfileId: resolved.missing ? CLASSIC_PROFILE_ID : activeProfileId,
-      profileError,
-      profileStatus,
-      onSelectProfile,
-      onImportProfileFile,
-      onExportActiveProfile,
-      onDeleteProfile,
-    },
-  };
+  // Memoized: this bundle is a single `LayerPanel` prop, so rebuilding it every
+  // render would re-render the panel on every unrelated dispatch.
+  const colorProfiles = useMemo(() => ({
+    builtinProfiles: BUILTIN_COLOR_PROFILES,
+    userProfiles,
+    activeProfileId: resolved.missing ? CLASSIC_PROFILE_ID : activeProfileId,
+    profileError,
+    profileStatus,
+    onSelectProfile,
+    onImportProfileFile,
+    onExportActiveProfile,
+    onDeleteProfile,
+  }), [
+    userProfiles,
+    resolved.missing,
+    activeProfileId,
+    profileError,
+    profileStatus,
+    onSelectProfile,
+    onImportProfileFile,
+    onExportActiveProfile,
+    onDeleteProfile,
+  ]);
+
+  return { colorProfiles };
 }
