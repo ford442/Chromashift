@@ -19,6 +19,7 @@ import {
   type WebGpuSession,
 } from '../engine/gpuBootstrap';
 import { listLocalImages } from '../engine/LocalLibrary';
+import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/corpusManifest';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
 
 export interface UseAppWebGPUInitProps {
@@ -365,7 +366,12 @@ export function useAppWebGPUInit({
     const bailIfCancelled = (): boolean => isCancelled(cancelToken, signal);
 
     try {
-      const list = await localTextureManager.fetchImageList('./images.json', signal);
+      // Revalidated against an IndexedDB copy, so a repeat visit answers 304
+      // instead of re-downloading and re-parsing ~360 kB before the first frame.
+      const { entries: list } = await fetchCorpusManifest('./images.json', {
+        signal,
+        store: createIndexedDbManifestStore(),
+      });
       if (bailIfCancelled()) return;
 
       const localRecords = await listLocalImages().catch(() => []);

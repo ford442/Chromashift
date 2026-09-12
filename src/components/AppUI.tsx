@@ -51,6 +51,7 @@ export function AppUI(props: AppUIProps) {
     wasmAvailable,
     performanceHudEnabled,
     imageList,
+    localImageCount,
     currentImageIndex,
     isImageStripOpen,
     specificImageError,
@@ -187,6 +188,7 @@ export function AppUI(props: AppUIProps) {
         wasmAvailable={wasmAvailable}
         performanceHudEnabled={performanceHudEnabled}
         imageList={imageList}
+        localImageCount={localImageCount}
         currentImageIndex={currentImageIndex}
         referenceImage={referenceImage}
         isImageStripOpen={isImageStripOpen}

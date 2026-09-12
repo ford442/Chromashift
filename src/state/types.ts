@@ -43,6 +43,12 @@ export interface LiveSourceState {
 
 export interface MediaSlice {
   imageList: ImageEntry[];
+  /**
+   * Number of `imageList` entries backed by the local IndexedDB library.
+   * Derived by the reducer whenever `imageList` is replaced, so the image strip
+   * can read it in O(1) instead of scanning thousands of entries per render.
+   */
+  localCount: number;
   currentIndex: number;
   reference: ImageEntry | null;
   previous: ImageEntry | null;

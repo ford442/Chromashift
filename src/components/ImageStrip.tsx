@@ -2,9 +2,12 @@ import { memo, useRef } from 'react';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { LiveSourceState } from '../state/types';
 import { useRenderCount } from '../debug/renderCounts';
+import { CorpusBrowser } from './CorpusBrowser';
 
 interface Props {
   images: ImageEntry[];
+  /** Pre-derived by the reducer — never recount `images` here (it holds thousands). */
+  localCount: number;
   currentIndex: number;
   referenceUrl: string | null;
   isOpen: boolean;
@@ -26,19 +29,18 @@ function liveSourceLabel(kind: LiveSourceState['kind']): string {
   return 'Live';
 }
 
-function getImageLabel(image: ImageEntry, index: number): string {
-  if (image.label?.trim()) return image.label.trim();
-  try {
-    const path = new URL(image.url, window.location.href).pathname;
-    const last = path.split('/').filter(Boolean).pop();
-    return last || `Image ${index + 1}`;
-  } catch {
-    return image.url.split('/').filter(Boolean).pop() || `Image ${index + 1}`;
-  }
-}
-
+/**
+ * The bottom toolbar (browser toggle + live-source controls), plus the corpus
+ * panel when it is open.
+ *
+ * The panel itself lives in `CorpusBrowser` so that a closed strip mounts none
+ * of its machinery, and so this component keeps rendering exactly as often as
+ * its own props change — `e2e/render-churn.spec.ts` asserts that is never,
+ * while the app merely runs.
+ */
 export const ImageStrip = memo(function ImageStrip({
   images,
+  localCount,
   currentIndex,
   referenceUrl,
   isOpen,
@@ -53,7 +55,6 @@ export const ImageStrip = memo(function ImageStrip({
   onStopLiveSource,
 }: Props) {
   useRenderCount('ImageStrip');
-  const localCount = images.filter((image) => image.localId).length;
   const videoFileInputRef = useRef<HTMLInputElement | null>(null);
 
   return (
@@ -61,6 +62,7 @@ export const ImageStrip = memo(function ImageStrip({
       <div className="flex justify-center items-center gap-2 mb-2 pointer-events-auto">
         <button
           onClick={onToggleOpen}
+          data-testid="corpus-browser-toggle"
           className="px-3 py-1 rounded-full bg-black/65 backdrop-blur-md border border-amber-500/30 text-amber-200 text-xs font-mono hover:bg-black/80 transition-colors"
         >
           {isOpen ? 'Hide Browser' : 'Browse Images'}
@@ -122,104 +124,15 @@ export const ImageStrip = memo(function ImageStrip({
       )}
 
       {isOpen && (
-        <div className="mx-4 mb-4 pointer-events-auto rounded-2xl border border-amber-500/20 bg-black/65 backdrop-blur-xl shadow-[0_0_50px_rgba(0,0,0,0.55)]">
-          <div className="flex items-center justify-between px-4 py-2 border-b border-amber-500/15">
-            <div className="text-xs font-mono text-amber-300">
-              Corpus Browser
-              <span className="ml-2 text-amber-200/60">
-                {images.length} images{localCount > 0 ? ` (${localCount} local)` : ''}
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="text-[10px] font-mono text-amber-200/60">
-                Click card = source, `Ref` = reference. Drag images/folders in to add.
-              </div>
-              {localCount > 0 && (
-                <button
-                  onClick={() => {
-                    if (window.confirm(`Remove all ${localCount} locally-stored image(s)? This cannot be undone.`)) {
-                      onClearLibrary();
-                    }
-                  }}
-                  className="rounded px-2 py-1 text-[10px] font-mono bg-red-900/60 text-red-200 hover:bg-red-800/80 transition-colors"
-                  title="Delete every local (drag-dropped) image from this browser's storage"
-                >
-                  Clear Library
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="overflow-x-auto px-4 py-3">
-            <div className="flex gap-3 min-w-max">
-              {images.map((image, index) => {
-                const isCurrent = index === currentIndex;
-                const isReference = image.url === referenceUrl;
-                return (
-                  <div
-                    key={`${image.url}-${index}`}
-                    className={`group w-36 shrink-0 rounded-xl border overflow-hidden transition-all ${
-                      isCurrent
-                        ? 'border-amber-400 shadow-[0_0_18px_rgba(245,158,11,0.3)]'
-                        : isReference
-                          ? 'border-cyan-400 shadow-[0_0_18px_rgba(34,211,238,0.25)]'
-                          : 'border-white/10'
-                    }`}
-                    style={{ contentVisibility: 'auto' }}
-                  >
-                    <button
-                      onClick={() => onSelectSource(index)}
-                      className="block w-full bg-zinc-900 hover:bg-zinc-800 transition-colors text-left"
-                    >
-                      <img
-                        src={image.thumbUrl ?? image.url}
-                        alt={getImageLabel(image, index)}
-                        loading="lazy"
-                        className="w-full h-24 object-cover bg-black"
-                        referrerPolicy="no-referrer"
-                      />
-                      <div className="px-2 py-1.5">
-                        <div className="flex items-center gap-1 flex-wrap mb-1">
-                          {isCurrent && (
-                            <span className="rounded bg-amber-500/90 px-1.5 py-0.5 text-[9px] font-mono text-black">
-                              SOURCE
-                            </span>
-                          )}
-                          {isReference && (
-                            <span className="rounded bg-cyan-400/90 px-1.5 py-0.5 text-[9px] font-mono text-black">
-                              REF
-                            </span>
-                          )}
-                          <span
-                            className={`rounded px-1.5 py-0.5 text-[9px] font-mono ${
-                              image.localId ? 'bg-emerald-900/70 text-emerald-200' : 'bg-zinc-700/70 text-zinc-300'
-                            }`}
-                          >
-                            {image.localId ? 'LOCAL' : 'REMOTE'}
-                          </span>
-                        </div>
-                        <div className="text-[11px] font-mono text-amber-100 line-clamp-2 min-h-[2rem]">
-                          {getImageLabel(image, index)}
-                        </div>
-                      </div>
-                    </button>
-                    <div className="border-t border-white/10 bg-black/40 p-2">
-                      <button
-                        onClick={() => onSelectReference(index)}
-                        className={`w-full rounded px-2 py-1 text-[10px] font-mono transition-colors ${
-                          isReference
-                            ? 'bg-cyan-500 text-black'
-                            : 'bg-zinc-800 text-cyan-200 hover:bg-zinc-700'
-                        }`}
-                      >
-                        {isReference ? 'Reference Active' : 'Set Reference'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+        <CorpusBrowser
+          images={images}
+          localCount={localCount}
+          currentIndex={currentIndex}
+          referenceUrl={referenceUrl}
+          onSelectSource={onSelectSource}
+          onSelectReference={onSelectReference}
+          onClearLibrary={onClearLibrary}
+        />
       )}
     </div>
   );
