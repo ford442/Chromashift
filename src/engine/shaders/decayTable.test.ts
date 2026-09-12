@@ -11,7 +11,7 @@ import {
   effectiveDecay,
 } from '../math/decay';
 import { PERSISTENCE_FRAGMENT_SOURCE } from '../webgl/shaders/persistence';
-import { DECAY_GLSL, DECAY_SHADER_FLOAT, DECAY_WGSL } from './decayLiterals';
+import { DECAY_GLSL, DECAY_SHADER_FLOAT, DECAY_WGSL, shaderFloat } from './decayLiterals';
 import { persistenceCompositeFragmentSource, persistenceFragmentSource } from './persistence';
 
 /**
@@ -52,12 +52,39 @@ describe('canonical decay table', () => {
     expect(effectiveDecay(decay, true)).toBeLessThan(effectiveDecay(decay, false));
   });
 
-  it('formats every constant as a shader f32 literal', () => {
+  it('formats every constant as an f32 literal that round-trips exactly', () => {
     for (const [name, value] of Object.entries(DECAY)) {
-      expect(DECAY_SHADER_FLOAT[name as keyof typeof DECAY]).toBe(value.toFixed(1));
+      const literal = DECAY_SHADER_FLOAT[name as keyof typeof DECAY];
+      // Round-trip, not a re-derivation of the formatter: a formatter that
+      // rounded (e.g. toFixed(1) on a 0.05 constant) would pass the latter.
+      expect(Number(literal), `${name} literal ${literal} lost precision`).toBe(value);
+      // WGSL and GLSL both need the decimal point to type the literal as f32.
+      expect(literal).toMatch(/[.eE]/);
     }
     // WGSL and GLSL share one table — a divergence here would be silent.
     expect(DECAY_WGSL).toBe(DECAY_GLSL);
+  });
+});
+
+describe('shaderFloat', () => {
+  it('adds a decimal point to integers so the literal types as f32', () => {
+    expect(shaderFloat(1)).toBe('1.0');
+    expect(shaderFloat(2)).toBe('2.0');
+    expect(shaderFloat(0)).toBe('0.0');
+  });
+
+  it('preserves values with more than one fractional digit', () => {
+    // Regression: toFixed(1) turned 0.05 into 0.1 — a 2x divergence from the
+    // canonical TS value that only the shaders would have carried.
+    expect(shaderFloat(0.05)).toBe('0.05');
+    expect(shaderFloat(1.25)).toBe('1.25');
+    expect(shaderFloat(0.001)).toBe('0.001');
+  });
+
+  it('round-trips any plausible canonical value', () => {
+    for (const value of [0, 0.001, 0.05, 0.1, 1, 1.25, 1.5, 2]) {
+      expect(Number(shaderFloat(value))).toBe(value);
+    }
   });
 });
 
@@ -99,7 +126,7 @@ describe('C++ engine divergence guard', () => {
     const header = readFileSync(join(CPP_ROOT, 'decay_table.h'), 'utf8');
     const constantOf = (name: string) => {
       const match = header.match(
-        new RegExp(`constexpr float ${name} = ([0-9.]+)f;`),
+        new RegExp(`constexpr float ${name} = ([0-9.eE+-]+)f;`),
       );
       expect(match, `decay_table.h is missing ${name}`).not.toBeNull();
       return Number(match![1]);
@@ -115,6 +142,6 @@ describe('C++ engine divergence guard', () => {
     expect(source).toContain('#include "decay_table.h"');
     expect(source).toContain('std::pow(chromashift::DECAY_RESIDUAL_BRIGHTNESS, 1.0f / frames)');
     // The literal it replaced must not creep back in.
-    expect(source).not.toContain(`std::pow(${DECAY_RESIDUAL_BRIGHTNESS}f`);
+    expect(source).not.toMatch(/std::pow\(\s*[0-9]/);
   });
 });

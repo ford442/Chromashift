@@ -39,8 +39,19 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-/** Float literal with an explicit decimal point, so `1` emits as `1.0f`. */
-const cppFloat = (value) => `${value.toFixed(1)}f`;
+/**
+ * C++ float literal for a canonical constant. Preserves the value exactly —
+ * `0.05` must not become `0.1` — and adds `.0` only to integers so `1` emits as
+ * `1.0f`. Mirrors `shaderFloat()` in src/engine/shaders/decayLiterals.ts; the
+ * two must agree, or the C++ and shader literals diverge from the JSON.
+ */
+const cppFloat = (value) => {
+  const literal = String(value);
+  const withPoint = Number.isInteger(value) && !/[.eE]/.test(literal)
+    ? `${literal}.0`
+    : literal;
+  return `${withPoint}f`;
+};
 
 const lines = [
   '#pragma once',
