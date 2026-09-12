@@ -379,7 +379,13 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
 - **Dual tracers**: There are two independent ping-pong buffers — "Above" and "Below".
   - `tracerAboveDuration` / `tracerAboveIntensity` — short-lived, vivid overlay (default 500 ms, 85 %).
   - `tracerBelowDuration` / `tracerBelowIntensity` — longer-lived base glow (default 2000 ms, 30 %).
-- **Decay**: `durationToDecay(ms, fps)` computes a per-frame multiplier so the tracer fades to ~1/255 over the configured duration. 3-layer overlaps decay slower than 2-layer overlaps.
+- **Decay**: `durationToDecay(ms, fps)` computes a per-frame multiplier so the tracer fades to
+  ~10 % brightness over the configured duration (`residualBrightness` in `shared/decay.json`).
+  Pixels where **2 or more** layers overlap fade *faster*: the persistence passes raise that
+  multiplier to `overlapDecayExponent` (1.5) rather than `idleDecayExponent` (1.0) — one
+  threshold at 2+, so 2- and 3-layer overlaps decay at the same rate (`layerCount >= 3u` only
+  affects the diagnostic output). Reference implementation: `effectiveDecay()` in
+  `src/engine/math/decay.ts`.
 - **Modes**: `tracerMode` can be `0` (combined colours) or `1` (grey highlight).
 - **Blend modes**: Both the live layers and the tracers support independent blend modes — Alpha, Add, Subtract, Multiply, Screen.
 
