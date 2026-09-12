@@ -6,6 +6,7 @@
  */
 
 #include "../chromashift_engine.h"
+#include "../decay_table.h"
 
 #include <cmath>
 #include <cstdio>
@@ -126,14 +127,50 @@ TEST(duration_to_decay_matches_wgsl_formula)
 {
     const float decay = durationToDecay(500.0f, 30.0f);
     const float frames = 30.0f * 500.0f / 1000.0f;
-    const float expected = std::pow(0.1f, 1.0f / frames);
+    const float expected = std::pow(chromashift::DECAY_RESIDUAL_BRIGHTNESS, 1.0f / frames);
     EXPECT_NEAR(decay, expected, 1e-6);
 
     float brightness = 1.0f;
     for (int i = 0; i < static_cast<int>(frames); ++i) {
         brightness *= decay;
     }
-    EXPECT_NEAR(brightness, 0.1f, 1e-4);
+    EXPECT_NEAR(brightness, chromashift::DECAY_RESIDUAL_BRIGHTNESS, 1e-4);
+}
+
+// decay_table.h is generated from shared/decay.json, and
+// src/engine/shaders/decayTable.test.ts guards the header text against that JSON.
+// This pins the values the C++ formula is actually *compiled* against — retuning
+// the fade means editing shared/decay.json and this test together, deliberately.
+TEST(decay_table_matches_canonical_constants)
+{
+    EXPECT_NEAR(chromashift::DECAY_RESIDUAL_BRIGHTNESS, 0.1f, 1e-9);
+    EXPECT_NEAR(chromashift::DECAY_OVERLAP_EXPONENT, 1.5f, 1e-9);
+    EXPECT_NEAR(chromashift::DECAY_IDLE_EXPONENT, 1.0f, 1e-9);
+}
+
+// Formula parity for the persistence passes' per-pixel decay-rate switch —
+// mirrors effectiveDecay() in src/engine/math/decay.ts and the
+// pow(decayFactor, decayMod) step in the WGSL/GLSL persistence shaders. There
+// is deliberately no WASM export for this: it runs per pixel on the GPU.
+TEST(effective_decay_exponents_match_shader_switch)
+{
+    const float decay = durationToDecay(500.0f, 30.0f);
+    const float idle = std::pow(decay, chromashift::DECAY_IDLE_EXPONENT);
+    const float overlap = std::pow(decay, chromashift::DECAY_OVERLAP_EXPONENT);
+
+    // Idle exponent is 1 → the plain per-frame multiplier.
+    EXPECT_NEAR(idle, decay, 1e-6);
+    // Overlapping pixels keep less brightness per frame.
+    if (!(overlap < idle)) {
+        std::fprintf(stderr,
+            "FAIL %s:%d: overlap decay %.8f should be below idle decay %.8f\n",
+            __FILE__, __LINE__, static_cast<double>(overlap), static_cast<double>(idle));
+        ++failures;
+    }
+
+    // A paused tracer (decay 1) survives untouched on both branches.
+    EXPECT_NEAR(std::pow(1.0f, chromashift::DECAY_OVERLAP_EXPONENT), 1.0f, 1e-9);
+    EXPECT_NEAR(std::pow(1.0f, chromashift::DECAY_IDLE_EXPONENT), 1.0f, 1e-9);
 }
 
 TEST(duration_to_decay_edge_cases)

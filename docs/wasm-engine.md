@@ -24,7 +24,7 @@ for real-time rendering.
 |---|---|---|
 | **In scope (load-time)** | `computeAverageLuminanceWith`, `computeAverageLuminanceStridedWith`, `classifyImageMaskWith`, histogram/band helpers | Average luminance and classification masks when GPU compute analysis (#82) is unavailable; strided luminance for large (4K–8K) and upscaled buffers |
 | **In scope (export / offline)** | `advanceAnglesBy` | Video-export angle stepping when Engine = C++ WASM |
-| **Out of scope (GPU)** | Layer rotation, persistence/compositing, tracer decay, tracer overlap detection | Handled by WGSL/GLSL shaders in `WebGPURenderer` / `WebGLRenderer`; the per-frame decay multiplier is the pure `durationToDecay()` in `math/decay.ts`, and the 3-layer overlap ("coincidence") detection is a `gpu-chores` compute pass (`op: 'coincidence'`, see `docs/gpu-bootstrap.md`) with a fragment-shader fallback — neither is ever dispatched through WASM |
+| **Out of scope (GPU)** | Layer rotation, persistence/compositing, tracer decay, tracer overlap detection | Handled by WGSL/GLSL shaders in `WebGPURenderer` / `WebGLRenderer`; the per-frame decay multiplier is the pure `durationToDecay()` in `math/decay.ts` (constants from `shared/decay.json`, see [Shared decay table](#shared-decay-table-shareddecayjson)), and the 3-layer overlap ("coincidence") detection is a `gpu-chores` compute pass (`op: 'coincidence'`, see `docs/gpu-bootstrap.md`) with a fragment-shader fallback — neither is ever dispatched through WASM |
 | **Test / benchmark only** | `durationToDecayWith`, `simulateTracerDecayWith`, `buildRotationMat3With`, `computeLuminanceHistogramWith`, `computeColorBandCountsWith`, bulk classify helpers | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
 
 **Selection order for image analysis** — encoded in the **`gpu-chores`** facade
@@ -177,6 +177,37 @@ Edit `shared/band.json` — WGSL/GLSL/TS pick up changes on the next `npm run de
 
 ---
 
+## Shared decay table (`shared/decay.json`)
+
+The tracer-persistence fade constants follow the same pattern — authored once in
+`shared/decay.json`, never hand-written into a shader:
+
+| Constant | Meaning |
+|---|---|
+| `residualBrightness` | Brightness fraction a tracer retains after its configured duration (0.1 = 10%) |
+| `overlapDecayExponent` | Decay exponent for a pixel where 2+ layers overlap — fades faster |
+| `idleDecayExponent` | Decay exponent with no current overlap — the plain decay rate |
+
+| Consumer | Mechanism |
+|---|---|
+| TypeScript | `import` in `math/decay.ts` — `durationToDecay()` (per-frame multiplier) and `effectiveDecay()` (the per-pixel exponent switch, the shaders' reference implementation) |
+| C++ | `npm run codegen:decay` → `cpp/decay_table.h`, consumed by `durationToDecay` in `chromashift_engine.cpp` |
+| WGSL | `DECAY_WGSL` in `shaders/decayLiterals.ts`, interpolated into `shaders/persistence.ts` (both the fused and the compute-fed composite shader) |
+| GLSL (WebGL) | `DECAY_GLSL` in `shaders/decayLiterals.ts`, interpolated into `webgl/shaders/persistence.ts` |
+
+`src/engine/shaders/decayTable.test.ts` is the divergence guard (the
+`bandTable.test.ts` counterpart): it pins TS ↔ shader literals ↔ `cpp/decay_table.h`
+↔ `shared/decay.json` and fails if a shader module hand-writes the overlap
+exponent again. `cpp/tests/test_engine.cpp` covers the C++ formula parity —
+`durationToDecay` against the canonical residual, and the exponent switch
+against `effectiveDecay()`. There is deliberately **no** WASM export for the
+exponent switch: it runs per pixel on the GPU.
+
+Note `npm run codegen` runs both generators (`codegen:band` + `codegen:decay`);
+`build:wasm*` calls it for you.
+
+---
+
 ## Band LUT fast path
 
 `buildBandLut(avgLum)` amortises the per-pixel threshold chain into a 256-entry table.
@@ -214,10 +245,12 @@ LUT on a synthetic 3840×2160 buffer. Acceptance target: LUT ≥2× faster in Ch
 | `npm run build:wasm` | `make release` | `-O3` | Production / default dev |
 | `npm run build:wasm:debug` | `make debug` | `-O0 -g -s ASSERTIONS=1` | WASM debugging |
 | `npm run build:wasm:force` | `make rebuild` | `-O3` after `clean` | Force recompile (stale artifacts / equal mtimes) |
+| `npm run codegen` | `make codegen` | — | Regenerate every `cpp/*_table.h` from `shared/*.json` |
 | `npm run codegen:band` | — | — | Regenerate `cpp/band_table.h` from `shared/band.json` |
+| `npm run codegen:decay` | — | — | Regenerate `cpp/decay_table.h` from `shared/decay.json` |
 
 ```bash
-npm run codegen:band   # shared/band.json → cpp/band_table.h
+npm run codegen        # shared/band.json + shared/decay.json → cpp/*_table.h
 npm run build:wasm     # release: public/chromashift_engine.{js,wasm}
 npm run build:wasm:debug
 npm run build:wasm:force   # clean + release when make says "Nothing to be done"
@@ -226,7 +259,8 @@ npm run build:wasm:force   # clean + release when make says "Nothing to be done"
 
 `make` tracks build mode (release/debug) and emcc flags in local stamp files
 (`cpp/.wasm_mode`, `cpp/.wasm_flags`). Switching mode, editing `EXPORTED_FUNCS`,
-or changing `shared/band.json` invalidates `public/chromashift_engine.*` so the
+or changing `shared/band.json` / `shared/decay.json` invalidates
+`public/chromashift_engine.*` so the
 next build is not a silent no-op. If you still see `Nothing to be done for 'all'`
 with stale glue (common after a git checkout of committed WASM), run
 `make -C cpp rebuild` or `npm run build:wasm:force`.
@@ -387,15 +421,18 @@ cpp/
 ├── chromashift_engine.h     Header — exported C function declarations
 ├── chromashift_engine.cpp   C++ implementation
 ├── band_table.h             Generated from shared/band.json (codegen)
+├── decay_table.h            Generated from shared/decay.json (codegen)
 ├── Makefile                 Emscripten build recipe → public/*.{js,wasm}
 └── tests/
     └── test_engine.cpp      Host-side g++ unit tests
 
 shared/
-└── band.json                Canonical band thresholds (single source of truth)
+├── band.json                Canonical band thresholds (single source of truth)
+└── decay.json               Canonical tracer-decay constants (single source of truth)
 
 scripts/
-└── codegen-band.mjs         shared/band.json → cpp/band_table.h
+├── codegen-band.mjs         shared/band.json → cpp/band_table.h
+└── codegen-decay.mjs        shared/decay.json → cpp/decay_table.h
 
 public/
 ├── chromashift_engine.js    (generated) Emscripten ES-module glue

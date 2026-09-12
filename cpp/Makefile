@@ -5,7 +5,7 @@
 #
 # Quick start:
 #   source /path/to/emsdk/emsdk_env.sh   # activate Emscripten in your shell
-#   npm run codegen:band                # shared/band.json → cpp/band_table.h
+#   npm run codegen                     # shared/*.json → cpp/*_table.h
 #   cd cpp && make release              # optimised build (default)
 #   cd cpp && make debug                # assertions + symbols
 #   cd cpp && make rebuild              # force clean rebuild (fixes stale artifacts)
@@ -20,7 +20,11 @@ SRC      := chromashift_engine.cpp
 HEADER   := chromashift_engine.h
 BAND_HDR := band_table.h
 BAND_JSON := ../shared/band.json
-CODEGEN  := ../scripts/codegen-band.mjs
+BAND_CODEGEN := ../scripts/codegen-band.mjs
+DECAY_HDR := decay_table.h
+DECAY_JSON := ../shared/decay.json
+DECAY_CODEGEN := ../scripts/codegen-decay.mjs
+GEN_HDRS := $(BAND_HDR) $(DECAY_HDR)
 
 # Outputs land in /public/ so Vite's dev server and production build both serve them.
 OUT_JS   := ../public/chromashift_engine.js
@@ -88,7 +92,7 @@ debug:
 _build: ensure-mode ensure-flags
 	@$(MAKE) --no-print-directory $(OUT_JS) CS_BUILD_MODE=$(CS_BUILD_MODE)
 
-codegen: $(BAND_HDR)
+codegen: $(GEN_HDRS)
 
 # Invalidate artifacts when switching release ↔ debug.
 ensure-mode:
@@ -115,7 +119,7 @@ ensure-flags:
 	  rm -f $(FLAGS_STAMP).new; \
 	fi
 
-# shared/band.json → band_table.h (codegen only rewrites when content changes).
+# shared/*.json → *_table.h (codegen only rewrites when content changes).
 # Depend on the JSON only — not the codegen script — so editing the script
 # does not force an every-build no-op regenerate.
 $(BAND_HDR): $(BAND_JSON)
@@ -124,7 +128,15 @@ $(BAND_HDR): $(BAND_JSON)
 	  echo "    Run: npm run codegen:band"; \
 	  exit 1; \
 	fi
-	$(NODE) $(CODEGEN)
+	$(NODE) $(BAND_CODEGEN)
+
+$(DECAY_HDR): $(DECAY_JSON)
+	@if [ -z "$(NODE)" ]; then \
+	  echo "❌  node not found on PATH — cannot regenerate $(DECAY_HDR)"; \
+	  echo "    Run: npm run codegen:decay"; \
+	  exit 1; \
+	fi
+	$(NODE) $(DECAY_CODEGEN)
 
 # Select flags from CS_BUILD_MODE (set by release/debug → _build).
 # Expanded in the recipe so nested make does not mangle quoted -s args.
@@ -132,7 +144,7 @@ CS_EMFLAGS = $(if $(filter debug,$(CS_BUILD_MODE)),$(EMFLAGS_DEBUG),$(EMFLAGS_RE
 
 # Grouped target (&:) so -j does not run emcc twice for the dual outputs.
 # Also depends on Makefile so editing this file forces a rebuild.
-$(OUT_JS) $(OUT_WASM) &: $(SRC) $(HEADER) $(BAND_HDR) Makefile
+$(OUT_JS) $(OUT_WASM) &: $(SRC) $(HEADER) $(GEN_HDRS) Makefile
 	@command -v $(EMCC) >/dev/null 2>&1 || \
 	  (echo "❌  emcc not found — run: source /path/to/emsdk/emsdk_env.sh" && exit 1)
 	$(EMCC) $(SRC) $(CS_EMFLAGS) -o $(OUT_JS)
@@ -148,7 +160,7 @@ check:
 	  (echo "❌  emcc not found — run: source /path/to/emsdk/emsdk_env.sh" && exit 1)
 	@echo "✅  emcc found: $$($(EMCC) --version | head -1)"
 
-$(TEST_BIN): $(SRC) $(TEST_SRC) $(HEADER) $(BAND_HDR)
+$(TEST_BIN): $(SRC) $(TEST_SRC) $(HEADER) $(GEN_HDRS)
 	$(CXX) -std=c++17 -Wall -Wextra -I. $(SRC) $(TEST_SRC) -o $(TEST_BIN) -lm
 
 test: $(TEST_BIN)

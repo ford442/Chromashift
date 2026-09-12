@@ -2,15 +2,30 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { durationToDecayWith } from '../WasmEngine';
-import { durationToDecay } from './decay';
+import {
+  DECAY_IDLE_EXPONENT,
+  DECAY_OVERLAP_EXPONENT,
+  DECAY_RESIDUAL_BRIGHTNESS,
+  durationToDecay,
+  effectiveDecay,
+} from './decay';
 
-/** Per-frame render/persistence files must compute decay directly, never via a WASM dispatcher. */
+/**
+ * Per-frame render/persistence/compositor files must compute decay directly and
+ * stay off the WASM bridge entirely — no `*With()` dispatcher, no `WasmEngine`
+ * import, no reach into `wasm/dispatch`. See issue #145.
+ */
 const HOT_PATH_FILES = [
   '../PersistencePass.ts',
+  '../CompositorPass.ts',
   '../WebGPURenderer.ts',
   '../StationaryPreviewRenderer.ts',
+  '../compute/chores/webgpuBackend.ts',
   '../webgl/WebGLRenderer.ts',
+  '../webgl/WebGLPersistencePass.ts',
+  '../webgl/WebGLCompositorPass.ts',
   '../webgl/WebGLStationaryPreviewRenderer.ts',
+  '../../hooks/useAnimationLoop.ts',
 ];
 
 describe('durationToDecay', () => {
@@ -23,7 +38,7 @@ describe('durationToDecay', () => {
     expect(durationToDecay(durationMs, fps)).toBeCloseTo(expected, 6);
   });
 
-  it('reaches ~10% brightness after the configured frame count', () => {
+  it('reaches the canonical residual brightness after the configured frame count', () => {
     const fps = 30;
     const durationMs = 500;
     const frames = Math.floor((fps * durationMs) / 1000);
@@ -33,7 +48,8 @@ describe('durationToDecay', () => {
     for (let i = 0; i < frames; i++) {
       brightness *= decay;
     }
-    expect(brightness).toBeCloseTo(0.1, 4);
+    expect(brightness).toBeCloseTo(DECAY_RESIDUAL_BRIGHTNESS, 4);
+    expect(DECAY_RESIDUAL_BRIGHTNESS).toBe(0.1);
   });
 
   it('returns 0 when duration is zero or negative', () => {
@@ -44,6 +60,37 @@ describe('durationToDecay', () => {
   it('returns 0 when fewer than one frame elapses', () => {
     expect(durationToDecay(10, 30)).toBe(0);
     expect(durationToDecay(500, 0)).toBe(0);
+  });
+});
+
+describe('effectiveDecay', () => {
+  it('applies the decay factor unchanged when no layers overlap', () => {
+    const decay = durationToDecay(500, 30);
+    expect(effectiveDecay(decay, false)).toBeCloseTo(
+      Math.pow(decay, DECAY_IDLE_EXPONENT),
+      12,
+    );
+    expect(effectiveDecay(decay, false)).toBeCloseTo(decay, 12);
+  });
+
+  it('raises the decay factor to the overlap exponent where layers overlap', () => {
+    const decay = durationToDecay(500, 30);
+    expect(effectiveDecay(decay, true)).toBeCloseTo(
+      Math.pow(decay, DECAY_OVERLAP_EXPONENT),
+      12,
+    );
+    // Faster fade means a smaller surviving fraction per frame.
+    expect(effectiveDecay(decay, true)).toBeLessThan(effectiveDecay(decay, false));
+  });
+
+  it('leaves a paused tracer (decay 1) untouched on both branches', () => {
+    expect(effectiveDecay(1, true)).toBe(1);
+    expect(effectiveDecay(1, false)).toBe(1);
+  });
+
+  it('stays at zero for a zero decay factor', () => {
+    expect(effectiveDecay(0, true)).toBe(0);
+    expect(effectiveDecay(0, false)).toBe(0);
   });
 });
 
@@ -73,9 +120,12 @@ describe('durationToDecayWith (TS fallback)', () => {
 });
 
 describe('per-frame decay does not route through WASM', () => {
-  it.each(HOT_PATH_FILES)('%s never imports the WasmEngine decay dispatcher', (relPath) => {
+  it.each(HOT_PATH_FILES)('%s never imports a WASM dispatcher', (relPath) => {
     const source = readFileSync(join(__dirname, relPath), 'utf-8');
     expect(source).not.toMatch(/durationToDecayWith/);
-    expect(source).not.toMatch(/from ['"](\.\.\/)+WasmEngine['"]/);
+    // Any `*With()` dispatcher, however it was imported.
+    expect(source).not.toMatch(/\b\w+With\(/);
+    expect(source).not.toMatch(/from ['"][^'"]*WasmEngine['"]/);
+    expect(source).not.toMatch(/from ['"][^'"]*wasm\/(dispatch|loadEngine)/);
   });
 });

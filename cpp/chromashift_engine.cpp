@@ -16,6 +16,7 @@
 
 #include "chromashift_engine.h"
 #include "band_table.h"
+#include "decay_table.h"
 
 #include <cmath>
 #include <cstdint>
@@ -298,7 +299,9 @@ float durationToDecay(float durationMs, float fps)
     if (durationMs <= 0.0f || fps <= 0.0f) return 0.0f;
     const float frames = fps * durationMs / 1000.0f;
     if (frames < 1.0f) return 0.0f;
-    return std::pow(0.1f, 1.0f / frames);
+    // Residual brightness comes from the canonical table in shared/decay.json
+    // (generated into decay_table.h) — never hardcode it here.
+    return std::pow(chromashift::DECAY_RESIDUAL_BRIGHTNESS, 1.0f / frames);
 }
 
 // ─── advanceLayerAngles ──────────────────────────────────────────────────────
