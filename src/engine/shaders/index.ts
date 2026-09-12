@@ -23,6 +23,7 @@ export {
   fragmentShaderRedOrange,
   fragmentShaderVioletBlue,
   fragmentShaderGreenYellow,
+  layerFragmentSources,
 } from './layers';
 export { persistenceFragmentSource, persistenceCompositeFragmentSource } from './persistence';
 export { compositorFragmentSource } from './compositor';

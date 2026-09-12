@@ -1,8 +1,5 @@
-import {
-  fragmentShaderRedOrange,
-  fragmentShaderVioletBlue,
-  fragmentShaderGreenYellow
-} from './shaders';
+import { layerFragmentSources } from './shaders';
+import { DEFAULT_LAYER_COUNT } from './graph';
 import { WebGPUPipelines, type LayerPipeline } from './WebGPUPipelines';
 import { MAIN_VIEW_MODES } from './viewModes';
 import {
@@ -66,7 +63,7 @@ export class WebGPURenderer {
   private readonly gpuProfiler: GpuTimestampProfiler | null;
   private readonly compositorSampler: GPUSampler;
   private readonly stationaryPreview: StationaryPreviewRenderer;
-  private readonly layerBindGroupCache = createLayerBindGroupCache(3);
+  private readonly layerBindGroupCache = createLayerBindGroupCache(DEFAULT_LAYER_COUNT);
 
   private lastRenderCpuMs = 0;
   private averageRenderCpuMs = 0;
@@ -107,8 +104,7 @@ export class WebGPURenderer {
 
     this.profileLut = new ProfileLutTexture(device);
 
-    const fragSources = [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow];
-    for (const src of fragSources) {
+    for (const src of layerFragmentSources) {
       this.layerPipelines.push(this.pipelines.createLayerPipeline(src, this.sampleCount));
     }
 
@@ -151,7 +147,7 @@ export class WebGPURenderer {
     if (this.texW === w && this.texH === h &&
         this.currentLayerScale === this.layerScale &&
         this.currentTracerScale === this.tracerScale &&
-        this.layerTextures.length === 3) return;
+        this.layerTextures.length === DEFAULT_LAYER_COUNT) return;
 
     this.currentLayerScale = this.layerScale;
     this.currentTracerScale = this.tracerScale;
@@ -164,7 +160,7 @@ export class WebGPURenderer {
     const tracerW = Math.max(1, Math.round(w * this.tracerScale));
     const tracerH = Math.max(1, Math.round(h * this.tracerScale));
 
-    this.layerTextures = [0, 1, 2].map(() => this.device.createTexture({
+    this.layerTextures = Array.from({ length: DEFAULT_LAYER_COUNT }, () => this.device.createTexture({
       size: [layerW, layerH, 1],
       format: this.internalFormat,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -213,7 +209,7 @@ export class WebGPURenderer {
     this.sampleCount = next;
 
     this.layerPipelines = [];
-    for (const src of [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow]) {
+    for (const src of layerFragmentSources) {
       this.layerPipelines.push(this.pipelines.createLayerPipeline(src, this.sampleCount));
     }
 
@@ -277,7 +273,7 @@ export class WebGPURenderer {
     const softCropEnabled = state.softCropEnabled ? 1 : 0;
     const aspect = canvasSize.width / canvasSize.height;
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < this.layerPipelines.length; i++) {
       const lp = this.layerPipelines[i];
       const layer = state.layers[i];
 
@@ -574,7 +570,7 @@ export class WebGPURenderer {
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
     const above = this.persistence.aboveTextures[this.persistence.pingPong];
     const below = this.persistence.belowTextures[this.persistence.pingPong];
-    if (!above || !below || this.layerTextures.length < 3) return null;
+    if (!above || !below || this.layerTextures.length < DEFAULT_LAYER_COUNT) return null;
 
     return this.readback.exportTracerView(
       this.tracerInspect,

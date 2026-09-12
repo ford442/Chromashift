@@ -80,13 +80,14 @@ layers that do not currently scale.
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
 | P1 | Automation timeline (schema v5) | [#153](https://github.com/ford442/Chromashift/issues/153) | Feature | L | Presets are poses, not performances; unblocks authored exports and kiosk attract. Depends on #149 |
-| P2 | Pass-graph IR + compiler | [#154](https://github.com/ford442/Chromashift/issues/154) | Architecture | XL | "3 layers" is welded across WGSL, GLSL, TS and C++; default graph must be pixel-identical |
+| P2 | Pass-graph IR + compiler | [#154](https://github.com/ford442/Chromashift/issues/154) | Architecture | XL | 🚧 Phase 1 shipped behind `?graph=1` — IR, validator, scheduler, transient texture pool, structural-hash cache, and WGSL/GLSL templates that now *emit* the layer, persistence and compositor shaders (pinned pixel-identical against pre-refactor goldens). Phase 2 is the graph-driven executor; see [PASS_GRAPH.md](PASS_GRAPH.md) |
 | P2 | Motion-aware tracers | [#155](https://github.com/ford442/Chromashift/issues/155) | Feature | L | Persistence is spatial-only — live source's most interesting signal is discarded. Composes with #154 and #145 |
 
 **Reading the split:** #149 and #150 are the two that make everything else cheaper,
 and neither changes a pixel. #153 is the highest-value *product* addition — it is
 what makes video export and kiosk mode worth using. #154 is the one that removes
-the ceiling, and it is deliberately gated (`?graph=1`) so it can ship dark.
+the ceiling, and it is deliberately gated (`?graph=1`) so it can ship dark — Phase 1
+is in tree; the renderers still encode the fixed topology themselves.
 
 ## Research
 

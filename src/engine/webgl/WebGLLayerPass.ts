@@ -1,4 +1,5 @@
 import { LAYER_FRAGMENT_SOURCE, ROTATION_VERTEX_SOURCE } from './shaders';
+import { DEFAULT_LAYER_COUNT } from '../graph';
 import {
   bindTexture,
   createProgram,
@@ -39,7 +40,10 @@ export class WebGLLayerPass {
     for (const target of this.layerTargets) {
       destroyTarget(this.gl, target);
     }
-    this.layerTargets = [0, 1, 2].map(() => createTarget(this.gl, width, height));
+    this.layerTargets = Array.from(
+      { length: DEFAULT_LAYER_COUNT },
+      () => createTarget(this.gl, width, height),
+    );
     this.width = width;
     this.height = height;
   }
