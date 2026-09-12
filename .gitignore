@@ -21,6 +21,12 @@ cpp/.wasm_mode
 cpp/.wasm_flags
 cpp/.wasm_flags.new
 
+# Host-side C++ test binary (built by `npm run test:cpp`). Committing it is a
+# trap: a fresh checkout gives the binary and its sources equal mtimes, so make
+# considers it up to date and `make test` runs the stale binary instead of the
+# tests in the working tree.
+cpp/tests/test_engine
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -2,7 +2,13 @@
 /**
  * chromashift_engine.h — Chromashift C++ engine public interface.
  *
- * Functions are exported to WebAssembly via Emscripten.
+ * Every function here is exported to WebAssembly through the flat C ABI
+ * (EMSCRIPTEN_KEEPALIVE + EXPORTED_FUNCTIONS) and called from TypeScript as
+ * `mod._name(...)`; pointer parameters are offsets into the WASM heap.  Adding
+ * one means updating EXPORTED_FUNCS in cpp/Makefile (guarded by
+ * `make -C cpp verify-exports`) and WASM_API_FUNCTIONS in
+ * src/engine/wasm/types.ts.
+ *
  * See cpp/Makefile for build instructions.
  */
 
@@ -29,9 +35,9 @@ float computeAverageLuminance(const uint8_t* pixels, uint32_t length);
  *
  * This is the preferred path for large upscaled images (4K–8K) where
  * sampling every pixel is prohibitively expensive.  A stride of 1 is
- * equivalent to computeAverageLuminance().  The inner loop is written
- * in a SIMD-friendly style so the compiler/Emscripten can auto-vectorise
- * it when -msimd128 is enabled.
+ * equivalent to computeAverageLuminance() and takes the same SIMD128 path;
+ * larger strides are a sparse gather with no useful vector form, and run a
+ * scalar loop with exact integer row sums.
  *
  * @param pixels  Pointer to tightly-packed RGBA bytes (4 bytes per pixel).
  * @param width   Image width in pixels.

@@ -11,6 +11,14 @@
  *   public/chromashift_engine.js   (Emscripten ES-module glue)
  *   public/chromashift_engine.wasm (binary payload)
  *
+ * The bulk pixel kernels have hand-written WebAssembly SIMD128 paths guarded by
+ * `__wasm_simd128__` (see "SIMD helpers" below).  The scalar bodies are kept and
+ * are what the host `g++` test build compiles, so cpp/tests/test_engine.cpp keeps
+ * proving the two against each other.
+ *
+ * Every exported symbol uses the flat C ABI (pointers are WASM heap offsets);
+ * `src/engine/wasm/types.ts` calls them as `mod._name(...)`.
+ *
  * See docs/wasm-engine.md for detailed build instructions.
  */
 
@@ -23,9 +31,15 @@
 
 #ifdef __EMSCRIPTEN__
 #  include <emscripten/emscripten.h>
-#  include <emscripten/bind.h>
 #else
 #  define EMSCRIPTEN_KEEPALIVE
+#endif
+
+#ifdef __wasm_simd128__
+#  include <wasm_simd128.h>
+#  define CS_HAS_SIMD 1
+#else
+#  define CS_HAS_SIMD 0
 #endif
 
 namespace {
@@ -37,6 +51,26 @@ using chromashift::DARK_BAND_INDEX;
 constexpr float kBt709R = 0.2126f;
 constexpr float kBt709G = 0.7152f;
 constexpr float kBt709B = 0.0722f;
+
+/**
+ * The branchless band ladder below replaces the original linear scan
+ * ("first i where rgb > BAND_THRESHOLDS[i]") with `BAND_COUNT - popcount`.
+ * That identity only holds while the thresholds are strictly descending and
+ * the dark band sits directly after the last one, so pin both at compile time:
+ * a future shared/band.json that breaks either fails the build instead of
+ * silently returning wrong bands.
+ */
+constexpr bool bandThresholdsStrictlyDescending()
+{
+    for (std::size_t i = 1; i < BAND_COUNT; ++i) {
+        if (!(BAND_THRESHOLDS[i] < BAND_THRESHOLDS[i - 1])) return false;
+    }
+    return true;
+}
+static_assert(bandThresholdsStrictlyDescending(),
+              "BAND_THRESHOLDS must be strictly descending for the branchless ladder");
+static_assert(DARK_BAND_INDEX == BAND_COUNT,
+              "DARK_BAND_INDEX must follow the last band for the branchless ladder");
 
 inline float bt709Luminance(int r, int g, int b)
 {
@@ -59,14 +93,133 @@ inline float lightDarkOffset(int avgLum)
     return lightDark / 2.0f;
 }
 
+/**
+ * Band index for a pre-offset luminance value.
+ *
+ * Constant time: counts how many (descending) thresholds `rgb` clears instead
+ * of scanning for the first one.  Clearing k thresholds means the first match
+ * was at index BAND_COUNT - k, and clearing none means the dark band — which
+ * is exactly BAND_COUNT.  NaN clears nothing and lands on dark, matching the
+ * original scan.
+ */
 inline int classifyRgb(float rgb)
 {
+    int exceeded = 0;
     for (std::size_t i = 0; i < BAND_COUNT; ++i) {
-        if (rgb > BAND_THRESHOLDS[i]) {
-            return static_cast<int>(i);
-        }
+        exceeded += (rgb > BAND_THRESHOLDS[i]) ? 1 : 0;
     }
-    return static_cast<int>(DARK_BAND_INDEX);
+    return static_cast<int>(BAND_COUNT) - exceeded;
+}
+
+// ─── SIMD helpers ────────────────────────────────────────────────────────────
+#if CS_HAS_SIMD
+
+/**
+ * BT.709 luminance of 4 consecutive RGBA pixels, one per f32 lane.
+ *
+ * The three multiplies and two adds are issued in the same order as the scalar
+ * `bt709LuminanceBytes()` — `(r*R + g*G) + b*B` — and f32x4 lanes round exactly
+ * like scalar f32, so the vector path is bit-identical to the scalar one.
+ */
+inline v128_t bt709LuminanceQuad(const uint8_t* px)
+{
+    const v128_t bytes = wasm_v128_load(px);
+    const v128_t zero  = wasm_i8x16_splat(0);
+    // Gather one channel into the low byte of each i32 lane, zero-filling the rest.
+    const v128_t r = wasm_i8x16_shuffle(bytes, zero,
+        0, 16, 16, 16,  4, 16, 16, 16,  8, 16, 16, 16, 12, 16, 16, 16);
+    const v128_t g = wasm_i8x16_shuffle(bytes, zero,
+        1, 16, 16, 16,  5, 16, 16, 16,  9, 16, 16, 16, 13, 16, 16, 16);
+    const v128_t b = wasm_i8x16_shuffle(bytes, zero,
+        2, 16, 16, 16,  6, 16, 16, 16, 10, 16, 16, 16, 14, 16, 16, 16);
+
+    return wasm_f32x4_add(
+        wasm_f32x4_add(
+            wasm_f32x4_mul(wasm_f32x4_convert_i32x4(r), wasm_f32x4_splat(kBt709R)),
+            wasm_f32x4_mul(wasm_f32x4_convert_i32x4(g), wasm_f32x4_splat(kBt709G))),
+        wasm_f32x4_mul(wasm_f32x4_convert_i32x4(b), wasm_f32x4_splat(kBt709B)));
+}
+
+/** Vector form of classifyRgb() — 4 band indices in i32 lanes. */
+inline v128_t classifyRgbQuad(v128_t rgb)
+{
+    // wasm_f32x4_gt yields -1 per true lane, so subtracting it accumulates the count.
+    v128_t exceeded = wasm_i32x4_splat(0);
+    for (std::size_t i = 0; i < BAND_COUNT; ++i) {
+        exceeded = wasm_i32x4_sub(
+            exceeded, wasm_f32x4_gt(rgb, wasm_f32x4_splat(BAND_THRESHOLDS[i])));
+    }
+    return wasm_i32x4_sub(wasm_i32x4_splat(static_cast<int>(BAND_COUNT)), exceeded);
+}
+
+/** Band indices for 4 pixels straight from their RGBA bytes. */
+inline v128_t classifyQuad(const uint8_t* px, v128_t offsetVec)
+{
+    return classifyRgbQuad(wasm_f32x4_add(bt709LuminanceQuad(px), offsetVec));
+}
+
+#endif // CS_HAS_SIMD
+
+/**
+ * Exact per-channel byte sums over a contiguous RGBA run.
+ *
+ * Summing the channels as integers and weighting once at the end is both
+ * faster than per-pixel double FMAs and free of accumulated rounding error —
+ * the SIMD and scalar paths therefore agree exactly with each other.
+ */
+inline void accumulateChannelSums(const uint8_t* px, uint32_t pixelCount,
+                                  double& sumR, double& sumG, double& sumB)
+{
+    // A u32 channel accumulator overflows after 2^32 / 255 ≈ 16.8M pixels — an
+    // 8K frame is twice that — so both paths below drain into the double sums
+    // well before then.
+    constexpr uint32_t kFlushInterval = 1u << 20;
+    uint32_t i = 0u;
+
+#if CS_HAS_SIMD
+    // Lane layout of the vector accumulator is [R, G, B, A].
+    const uint32_t vectorEnd = pixelCount & ~3u;
+
+    while (i < vectorEnd) {
+        const uint32_t chunkEnd = (vectorEnd - i > kFlushInterval)
+            ? i + kFlushInterval : vectorEnd;
+        v128_t acc = wasm_i32x4_splat(0);
+
+        for (; i < chunkEnd; i += 4u) {
+            const v128_t bytes = wasm_v128_load(px + i * 4u);
+            const v128_t lo16 = wasm_u16x8_extend_low_u8x16(bytes);   // pixels 0,1
+            const v128_t hi16 = wasm_u16x8_extend_high_u8x16(bytes);  // pixels 2,3
+            acc = wasm_i32x4_add(acc, wasm_u32x4_extend_low_u16x8(lo16));
+            acc = wasm_i32x4_add(acc, wasm_u32x4_extend_high_u16x8(lo16));
+            acc = wasm_i32x4_add(acc, wasm_u32x4_extend_low_u16x8(hi16));
+            acc = wasm_i32x4_add(acc, wasm_u32x4_extend_high_u16x8(hi16));
+        }
+
+        sumR += static_cast<double>(static_cast<uint32_t>(wasm_i32x4_extract_lane(acc, 0)));
+        sumG += static_cast<double>(static_cast<uint32_t>(wasm_i32x4_extract_lane(acc, 1)));
+        sumB += static_cast<double>(static_cast<uint32_t>(wasm_i32x4_extract_lane(acc, 2)));
+    }
+#endif
+
+    while (i < pixelCount) {
+        const uint32_t chunkEnd = (pixelCount - i > kFlushInterval)
+            ? i + kFlushInterval : pixelCount;
+        uint32_t chunkR = 0u, chunkG = 0u, chunkB = 0u;
+        for (; i < chunkEnd; ++i) {
+            chunkR += px[i * 4u];
+            chunkG += px[i * 4u + 1u];
+            chunkB += px[i * 4u + 2u];
+        }
+        sumR += static_cast<double>(chunkR);
+        sumG += static_cast<double>(chunkG);
+        sumB += static_cast<double>(chunkB);
+    }
+}
+
+inline float weightedAverage(double sumR, double sumG, double sumB, uint32_t n)
+{
+    const double sum = sumR * 0.2126 + sumG * 0.7152 + sumB * 0.0722;
+    return static_cast<float>(sum / static_cast<double>(n));
 }
 
 } // namespace
@@ -79,15 +232,10 @@ float computeAverageLuminance(const uint8_t* pixels, uint32_t length)
     if (length < 4) return 128.0f;
 
     const uint32_t pixel_count = length / 4u;
-    double sum = 0.0;
+    double sumR = 0.0, sumG = 0.0, sumB = 0.0;
+    accumulateChannelSums(pixels, pixel_count, sumR, sumG, sumB);
 
-    for (uint32_t i = 0; i < length; i += 4) {
-        sum += static_cast<double>(pixels[i])     * 0.2126
-             + static_cast<double>(pixels[i + 1]) * 0.7152
-             + static_cast<double>(pixels[i + 2]) * 0.0722;
-    }
-
-    return static_cast<float>(sum / static_cast<double>(pixel_count));
+    return weightedAverage(sumR, sumG, sumB, pixel_count);
 }
 
 // ─── computeAverageLuminanceStrided ──────────────────────────────────────────
@@ -101,21 +249,33 @@ float computeAverageLuminanceStrided(const uint8_t* pixels,
     if (width == 0u || height == 0u) return 128.0f;
     if (stride < 1u) stride = 1u;
 
-    double sum = 0.0;
+    double sumR = 0.0, sumG = 0.0, sumB = 0.0;
     uint32_t n = 0u;
 
-    for (uint32_t y = 0u; y < height; y += stride) {
-        const uint32_t row_base = y * width;
-        for (uint32_t x = 0u; x < width; x += stride) {
-            const uint32_t offset = (row_base + x) * 4u;
-            sum += static_cast<double>(pixels[offset])      * 0.2126
-                 + static_cast<double>(pixels[offset + 1u]) * 0.7152
-                 + static_cast<double>(pixels[offset + 2u]) * 0.0722;
-            ++n;
+    if (stride == 1u) {
+        // Every pixel is visited in order — one contiguous (vectorised) run.
+        n = width * height;
+        accumulateChannelSums(pixels, n, sumR, sumG, sumB);
+    } else {
+        // Sparse gather: no useful vector form, but integer row sums still beat
+        // per-sample double FMAs and keep the result exact.
+        for (uint32_t y = 0u; y < height; y += stride) {
+            const uint32_t row_base = y * width;
+            uint32_t rowR = 0u, rowG = 0u, rowB = 0u;
+            for (uint32_t x = 0u; x < width; x += stride) {
+                const uint32_t offset = (row_base + x) * 4u;
+                rowR += pixels[offset];
+                rowG += pixels[offset + 1u];
+                rowB += pixels[offset + 2u];
+                ++n;
+            }
+            sumR += static_cast<double>(rowR);
+            sumG += static_cast<double>(rowG);
+            sumB += static_cast<double>(rowB);
         }
     }
 
-    return n == 0u ? 128.0f : static_cast<float>(sum / static_cast<double>(n));
+    return n == 0u ? 128.0f : weightedAverage(sumR, sumG, sumB, n);
 }
 
 // ─── classifyPixel ───────────────────────────────────────────────────────────
@@ -125,7 +285,6 @@ int classifyPixel(int r, int g, int b, int avgLum)
 {
     const float lum = bt709Luminance(r, g, b);
     const float rgb = lum + lightDarkOffset(avgLum);
-    (void)avgLum; // diff kept for WGSL parity documentation
     return classifyRgb(rgb);
 }
 
@@ -145,6 +304,12 @@ void buildBandLut(int avgLum, uint8_t* outLut)
  * Classify using a 256-entry lum LUT.  When adjacent buckets share a band the
  * LUT value is returned directly; otherwise the exact float rgb path runs so
  * results match classifyPixel() byte-for-byte.
+ *
+ * Note the shortcut is only ever a shortcut: classifyRgb() is monotonically
+ * non-increasing, so when floor(lum) and floor(lum)+1 land in the same band,
+ * every lum in between does too.  That is why the SIMD bulk paths below can run
+ * the branchless ladder for all lanes and still produce identical output to
+ * this scalar LUT walk.
  */
 static inline int classifyLumWithLut(float lum, float offset, const uint8_t* lut)
 {
@@ -175,7 +340,16 @@ void classifyPixelsBulk(const uint8_t* pixels, uint32_t byteLen,
 {
     const float offset = lightDarkOffset(avgLum);
     const uint32_t pixelCount = byteLen / 4u;
-    for (uint32_t i = 0; i < pixelCount; ++i) {
+    uint32_t i = 0u;
+
+#if CS_HAS_SIMD
+    const v128_t offsetVec = wasm_f32x4_splat(offset);
+    for (; i + 4u <= pixelCount; i += 4u) {
+        wasm_v128_store(outBands + i, classifyQuad(pixels + i * 4u, offsetVec));
+    }
+#endif
+
+    for (; i < pixelCount; ++i) {
         const uint8_t* px = pixels + i * 4u;
         const float rgb = bt709LuminanceBytes(px) + offset;
         outBands[i] = classifyRgb(rgb);
@@ -191,13 +365,52 @@ void classifyPixelsBulkLut(const uint8_t* pixels, uint32_t byteLen,
     const float offset = lightDarkOffset(avgLum);
 
     const uint32_t pixelCount = byteLen / 4u;
-    for (uint32_t i = 0; i < pixelCount; ++i) {
+    uint32_t i = 0u;
+
+#if CS_HAS_SIMD
+    // The ladder is constant time, so vectorising it beats the LUT's
+    // data-dependent shortcut outright (and returns the same bands).
+    const v128_t offsetVec = wasm_f32x4_splat(offset);
+    for (; i + 4u <= pixelCount; i += 4u) {
+        wasm_v128_store(outBands + i, classifyQuad(pixels + i * 4u, offsetVec));
+    }
+#endif
+
+    for (; i < pixelCount; ++i) {
         const float lum = bt709LuminanceBytes(pixels + i * 4u);
         outBands[i] = classifyLumWithLut(lum, offset, lut);
     }
 }
 
 // ─── computeClassificationMask ───────────────────────────────────────────────
+
+#if CS_HAS_SIMD
+namespace {
+/**
+ * Vector body shared by both mask kernels: 16 pixels per iteration, narrowed
+ * down to one 16-byte mask store.  Returns the first pixel index it did not
+ * process, for the caller's scalar tail.
+ */
+inline uint32_t classificationMaskSimd(const uint8_t* pixels, uint32_t pixelCount,
+                                       float offset, uint8_t* outMask)
+{
+    const v128_t offsetVec = wasm_f32x4_splat(offset);
+    uint32_t i = 0u;
+    for (; i + 16u <= pixelCount; i += 16u) {
+        const uint8_t* px = pixels + i * 4u;
+        const v128_t b0 = classifyQuad(px,       offsetVec);
+        const v128_t b1 = classifyQuad(px + 16u, offsetVec);
+        const v128_t b2 = classifyQuad(px + 32u, offsetVec);
+        const v128_t b3 = classifyQuad(px + 48u, offsetVec);
+        // Band indices are 0–10, so the saturating narrows are exact.
+        wasm_v128_store(outMask + i,
+            wasm_u8x16_narrow_i16x8(wasm_i16x8_narrow_i32x4(b0, b1),
+                                    wasm_i16x8_narrow_i32x4(b2, b3)));
+    }
+    return i;
+}
+} // namespace
+#endif
 
 extern "C" EMSCRIPTEN_KEEPALIVE
 void computeClassificationMask(const uint8_t* pixels,
@@ -209,8 +422,13 @@ void computeClassificationMask(const uint8_t* pixels,
     const uint32_t pixelCount = width * height;
     const int roundedAvgLum = static_cast<int>(std::lround(avgLum));
     const float offset = lightDarkOffset(roundedAvgLum);
+    uint32_t i = 0u;
 
-    for (uint32_t i = 0; i < pixelCount; ++i) {
+#if CS_HAS_SIMD
+    i = classificationMaskSimd(pixels, pixelCount, offset, outMask);
+#endif
+
+    for (; i < pixelCount; ++i) {
         const uint8_t* px = pixels + i * 4u;
         const float rgb = bt709LuminanceBytes(px) + offset;
         outMask[i] = static_cast<uint8_t>(classifyRgb(rgb));
@@ -229,8 +447,15 @@ void computeClassificationMaskLut(const uint8_t* pixels,
     uint8_t lut[256];
     buildBandLut(roundedAvgLum, lut);
     const float offset = lightDarkOffset(roundedAvgLum);
+    uint32_t i = 0u;
 
-    for (uint32_t i = 0; i < pixelCount; ++i) {
+#if CS_HAS_SIMD
+    // Same vector ladder as computeClassificationMask — see classifyLumWithLut
+    // for why that is byte-for-byte equivalent to the LUT walk below.
+    i = classificationMaskSimd(pixels, pixelCount, offset, outMask);
+#endif
+
+    for (; i < pixelCount; ++i) {
         const float lum = bt709LuminanceBytes(pixels + i * 4u);
         outMask[i] = static_cast<uint8_t>(
             classifyLumWithLut(lum, offset, lut));
@@ -246,7 +471,23 @@ void computeLuminanceHistogram(const uint8_t* pixels, uint32_t byteLen,
     for (int b = 0; b < 256; ++b) outHistogram[b] = 0u;
 
     const uint32_t pixelCount = byteLen / 4u;
-    for (uint32_t i = 0; i < pixelCount; ++i) {
+    uint32_t i = 0u;
+
+#if CS_HAS_SIMD
+    // Luminance vectorises; the histogram increment is a scatter, which WASM
+    // SIMD cannot express, so lanes are drained one at a time.
+    for (; i + 4u <= pixelCount; i += 4u) {
+        v128_t bucket = wasm_i32x4_trunc_sat_f32x4(bt709LuminanceQuad(pixels + i * 4u));
+        bucket = wasm_i32x4_max(bucket, wasm_i32x4_splat(0));
+        bucket = wasm_i32x4_min(bucket, wasm_i32x4_splat(255));
+        outHistogram[wasm_i32x4_extract_lane(bucket, 0)]++;
+        outHistogram[wasm_i32x4_extract_lane(bucket, 1)]++;
+        outHistogram[wasm_i32x4_extract_lane(bucket, 2)]++;
+        outHistogram[wasm_i32x4_extract_lane(bucket, 3)]++;
+    }
+#endif
+
+    for (; i < pixelCount; ++i) {
         const float lum = bt709LuminanceBytes(pixels + i * 4u);
         const int bucket = static_cast<int>(lum);
         outHistogram[bucket < 0 ? 0 : (bucket > 255 ? 255 : bucket)]++;
@@ -263,7 +504,20 @@ void computeColorBandCounts(const uint8_t* pixels, uint32_t byteLen,
 
     const float offset = lightDarkOffset(avgLum);
     const uint32_t pixelCount = byteLen / 4u;
-    for (uint32_t i = 0; i < pixelCount; ++i) {
+    uint32_t i = 0u;
+
+#if CS_HAS_SIMD
+    const v128_t offsetVec = wasm_f32x4_splat(offset);
+    for (; i + 4u <= pixelCount; i += 4u) {
+        const v128_t band = classifyQuad(pixels + i * 4u, offsetVec);
+        outCounts[wasm_i32x4_extract_lane(band, 0)]++;
+        outCounts[wasm_i32x4_extract_lane(band, 1)]++;
+        outCounts[wasm_i32x4_extract_lane(band, 2)]++;
+        outCounts[wasm_i32x4_extract_lane(band, 3)]++;
+    }
+#endif
+
+    for (; i < pixelCount; ++i) {
         const float rgb = bt709LuminanceBytes(pixels + i * 4u) + offset;
         const int band = classifyRgb(rgb);
         outCounts[band]++;
@@ -327,124 +581,17 @@ void simulateTracerDecay(float* tracerBuffer, uint32_t pixelCount,
                          float decayFactor)
 {
     const uint32_t floatCount = pixelCount * 4u;
-    for (uint32_t i = 0; i < floatCount; ++i) {
+    uint32_t i = 0u;
+
+#if CS_HAS_SIMD
+    const v128_t factor = wasm_f32x4_splat(decayFactor);
+    for (; i + 4u <= floatCount; i += 4u) {
+        wasm_v128_store(tracerBuffer + i,
+            wasm_f32x4_mul(wasm_v128_load(tracerBuffer + i), factor));
+    }
+#endif
+
+    for (; i < floatCount; ++i) {
         tracerBuffer[i] *= decayFactor;
     }
 }
-
-// ─── Emscripten bindings ──────────────────────────────────────────────────────
-
-#ifdef __EMSCRIPTEN__
-using namespace emscripten;
-
-EMSCRIPTEN_BINDINGS(chromashift_engine) {
-    function("computeAverageLuminance",
-        optional_override([](uintptr_t ptr, uint32_t length) -> float {
-            return computeAverageLuminance(
-                reinterpret_cast<const uint8_t*>(ptr), length);
-        })
-    );
-
-    function("computeAverageLuminanceStrided",
-        optional_override([](uintptr_t ptr, uint32_t width,
-                             uint32_t height, uint32_t stride) -> float {
-            return computeAverageLuminanceStrided(
-                reinterpret_cast<const uint8_t*>(ptr), width, height, stride);
-        })
-    );
-
-    function("classifyPixel", &classifyPixel);
-
-    function("buildBandLut",
-        optional_override([](int avgLum, uintptr_t outPtr) {
-            buildBandLut(avgLum, reinterpret_cast<uint8_t*>(outPtr));
-        })
-    );
-
-    function("classifyPixelLut",
-        optional_override([](int r, int g, int b, int avgLum, uintptr_t lutPtr) -> int {
-            return classifyPixelLut(r, g, b, avgLum,
-                reinterpret_cast<const uint8_t*>(lutPtr));
-        })
-    );
-
-    function("classifyPixelsBulk",
-        optional_override([](uintptr_t inPtr, uint32_t byteLen,
-                             int avgLum, uintptr_t outPtr) {
-            classifyPixelsBulk(
-                reinterpret_cast<const uint8_t*>(inPtr), byteLen, avgLum,
-                reinterpret_cast<int*>(outPtr));
-        })
-    );
-
-    function("classifyPixelsBulkLut",
-        optional_override([](uintptr_t inPtr, uint32_t byteLen,
-                             int avgLum, uintptr_t outPtr) {
-            classifyPixelsBulkLut(
-                reinterpret_cast<const uint8_t*>(inPtr), byteLen, avgLum,
-                reinterpret_cast<int*>(outPtr));
-        })
-    );
-
-    function("computeClassificationMask",
-        optional_override([](uintptr_t inPtr, uint32_t width, uint32_t height,
-                             float avgLum, uintptr_t outPtr) {
-            computeClassificationMask(
-                reinterpret_cast<const uint8_t*>(inPtr), width, height, avgLum,
-                reinterpret_cast<uint8_t*>(outPtr));
-        })
-    );
-
-    function("computeClassificationMaskLut",
-        optional_override([](uintptr_t inPtr, uint32_t width, uint32_t height,
-                             float avgLum, uintptr_t outPtr) {
-            computeClassificationMaskLut(
-                reinterpret_cast<const uint8_t*>(inPtr), width, height, avgLum,
-                reinterpret_cast<uint8_t*>(outPtr));
-        })
-    );
-
-    function("computeLuminanceHistogram",
-        optional_override([](uintptr_t inPtr, uint32_t byteLen,
-                             uintptr_t outPtr) {
-            computeLuminanceHistogram(
-                reinterpret_cast<const uint8_t*>(inPtr), byteLen,
-                reinterpret_cast<uint32_t*>(outPtr));
-        })
-    );
-
-    function("computeColorBandCounts",
-        optional_override([](uintptr_t inPtr, uint32_t byteLen,
-                             int avgLum, uintptr_t outPtr) {
-            computeColorBandCounts(
-                reinterpret_cast<const uint8_t*>(inPtr), byteLen, avgLum,
-                reinterpret_cast<uint32_t*>(outPtr));
-        })
-    );
-
-    function("buildRotationMat3",
-        optional_override([](float angleDeg, uintptr_t outPtr) {
-            buildRotationMat3(angleDeg, reinterpret_cast<float*>(outPtr));
-        })
-    );
-
-    function("durationToDecay", &durationToDecay);
-
-    function("advanceLayerAngles",
-        optional_override([](float a0, float a1, float a2,
-                             float s0, float s1, float s2,
-                             uintptr_t outPtr) {
-            advanceLayerAngles(a0, a1, a2, s0, s1, s2,
-                               reinterpret_cast<float*>(outPtr));
-        })
-    );
-
-    function("simulateTracerDecay",
-        optional_override([](uintptr_t bufPtr, uint32_t pixelCount,
-                             float decayFactor) {
-            simulateTracerDecay(
-                reinterpret_cast<float*>(bufPtr), pixelCount, decayFactor);
-        })
-    );
-}
-#endif

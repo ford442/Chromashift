@@ -6,6 +6,7 @@
  */
 
 #include "../chromashift_engine.h"
+#include "../band_table.h"
 #include "../decay_table.h"
 
 #include <cmath>
@@ -178,6 +179,245 @@ TEST(duration_to_decay_edge_cases)
     EXPECT_NEAR(durationToDecay(0.0f, 30.0f), 0.0f, 1e-9);
     EXPECT_NEAR(durationToDecay(500.0f, 0.0f), 0.0f, 1e-9);
     EXPECT_NEAR(durationToDecay(10.0f, 30.0f), 0.0f, 1e-9);
+}
+
+// ─── Branchless band ladder ──────────────────────────────────────────────────
+//
+// classifyRgb() counts cleared thresholds instead of scanning for the first
+// match. These pin that rewrite against the original linear scan — and, because
+// the host build compiles without -msimd128, they are what keeps the scalar
+// path honest now that the WASM build runs a vectorised ladder.
+
+/** The original linear scan, verbatim, as the reference implementation. */
+static int classifyRgbLinearScan(float rgb)
+{
+    for (std::size_t i = 0; i < chromashift::BAND_COUNT; ++i) {
+        if (rgb > chromashift::BAND_THRESHOLDS[i]) {
+            return static_cast<int>(i);
+        }
+    }
+    return static_cast<int>(chromashift::DARK_BAND_INDEX);
+}
+
+TEST(band_ladder_matches_linear_scan_on_every_grey_pixel)
+{
+    // r = g = b makes the BT.709 weights sum back to the byte value, so this
+    // walks classifyRgb() across its whole input range for each offset.
+    for (int avgLum = 0; avgLum <= 255; ++avgLum) {
+        const float lightDark = 128.0f + std::fabs(static_cast<float>(avgLum) - 128.0f) / 2.0f;
+        const float offset = lightDark / 2.0f;
+        for (int grey = 0; grey < 256; ++grey) {
+            const float lum = static_cast<float>(grey) * 0.2126f
+                            + static_cast<float>(grey) * 0.7152f
+                            + static_cast<float>(grey) * 0.0722f;
+            EXPECT_EQ(classifyPixel(grey, grey, grey, avgLum),
+                      classifyRgbLinearScan(lum + offset));
+        }
+    }
+}
+
+TEST(band_lut_entries_match_linear_scan)
+{
+    uint8_t lut[256];
+    const int avgLums[] = {0, 1, 32, 100, 127, 128, 129, 190, 254, 255};
+
+    for (int avgLum : avgLums) {
+        buildBandLut(avgLum, lut);
+        const float lightDark = 128.0f + std::fabs(static_cast<float>(avgLum) - 128.0f) / 2.0f;
+        const float offset = lightDark / 2.0f;
+        for (int lum = 0; lum < 256; ++lum) {
+            EXPECT_EQ(static_cast<int>(lut[lum]),
+                      classifyRgbLinearScan(static_cast<float>(lum) + offset));
+        }
+    }
+}
+
+// ─── Bulk kernels agree with the single-pixel path ───────────────────────────
+
+TEST(bulk_kernels_agree_with_classify_pixel)
+{
+    constexpr uint32_t width = 37u;   // deliberately not a multiple of the
+    constexpr uint32_t height = 11u;  // SIMD block size, to exercise the tails
+    constexpr uint32_t pixelCount = width * height;
+    static uint8_t rgba[pixelCount * 4u];
+
+    for (uint32_t i = 0u; i < pixelCount; ++i) {
+        rgba[i * 4u]      = static_cast<uint8_t>((i * 7u) & 0xffu);
+        rgba[i * 4u + 1u] = static_cast<uint8_t>((i * 13u + 40u) & 0xffu);
+        rgba[i * 4u + 2u] = static_cast<uint8_t>((i * 29u + 90u) & 0xffu);
+        rgba[i * 4u + 3u] = 255u;
+    }
+
+    const int avgLum = 137;
+    static int bands[pixelCount];
+    static int bandsLut[pixelCount];
+    static uint8_t mask[pixelCount];
+    uint32_t counts[11] = {0};
+    uint32_t expectedCounts[11] = {0};
+
+    classifyPixelsBulk(rgba, pixelCount * 4u, avgLum, bands);
+    classifyPixelsBulkLut(rgba, pixelCount * 4u, avgLum, bandsLut);
+    computeClassificationMask(rgba, width, height, static_cast<float>(avgLum), mask);
+    computeColorBandCounts(rgba, pixelCount * 4u, avgLum, counts);
+
+    for (uint32_t i = 0u; i < pixelCount; ++i) {
+        const int expected = classifyPixel(rgba[i * 4u], rgba[i * 4u + 1u],
+                                           rgba[i * 4u + 2u], avgLum);
+        EXPECT_EQ(bands[i], expected);
+        EXPECT_EQ(bandsLut[i], expected);
+        EXPECT_EQ(static_cast<int>(mask[i]), expected);
+        expectedCounts[expected]++;
+    }
+    for (int b = 0; b < 11; ++b) {
+        EXPECT_EQ(counts[b], expectedCounts[b]);
+    }
+}
+
+TEST(luminance_histogram_totals_every_pixel)
+{
+    constexpr uint32_t pixelCount = 401u;  // prime — lands mid-block
+    static uint8_t rgba[pixelCount * 4u];
+    for (uint32_t i = 0u; i < pixelCount; ++i) {
+        rgba[i * 4u]      = static_cast<uint8_t>((i * 3u) & 0xffu);
+        rgba[i * 4u + 1u] = static_cast<uint8_t>((i * 5u) & 0xffu);
+        rgba[i * 4u + 2u] = static_cast<uint8_t>((i * 11u) & 0xffu);
+        rgba[i * 4u + 3u] = 255u;
+    }
+
+    uint32_t hist[256] = {0};
+    computeLuminanceHistogram(rgba, pixelCount * 4u, hist);
+
+    uint32_t total = 0u;
+    for (int b = 0; b < 256; ++b) total += hist[b];
+    EXPECT_EQ(total, pixelCount);
+
+    for (uint32_t i = 0u; i < pixelCount; ++i) {
+        const float lum = static_cast<float>(rgba[i * 4u]) * 0.2126f
+                        + static_cast<float>(rgba[i * 4u + 1u]) * 0.7152f
+                        + static_cast<float>(rgba[i * 4u + 2u]) * 0.0722f;
+        const int bucket = static_cast<int>(lum);
+        if (hist[bucket] == 0u) {
+            std::fprintf(stderr, "FAIL %s:%d: histogram bucket %d empty for pixel %u\n",
+                         __FILE__, __LINE__, bucket, i);
+            ++failures;
+        }
+    }
+}
+
+// ─── Average luminance ───────────────────────────────────────────────────────
+//
+// The kernels sum the channels as integers and weight once at the end, so the
+// result is the exactly-rounded average rather than a running double sum.
+
+TEST(average_luminance_matches_exact_reference)
+{
+    constexpr uint32_t width = 53u;
+    constexpr uint32_t height = 19u;
+    constexpr uint32_t pixelCount = width * height;
+    static uint8_t rgba[pixelCount * 4u];
+
+    double sumR = 0.0, sumG = 0.0, sumB = 0.0;
+    for (uint32_t i = 0u; i < pixelCount; ++i) {
+        rgba[i * 4u]      = static_cast<uint8_t>((i * 17u) & 0xffu);
+        rgba[i * 4u + 1u] = static_cast<uint8_t>((i * 31u) & 0xffu);
+        rgba[i * 4u + 2u] = static_cast<uint8_t>((i * 47u) & 0xffu);
+        rgba[i * 4u + 3u] = 255u;
+        sumR += rgba[i * 4u];
+        sumG += rgba[i * 4u + 1u];
+        sumB += rgba[i * 4u + 2u];
+    }
+
+    const float expected = static_cast<float>(
+        (sumR * 0.2126 + sumG * 0.7152 + sumB * 0.0722) / static_cast<double>(pixelCount));
+
+    EXPECT_NEAR(computeAverageLuminance(rgba, pixelCount * 4u), expected, 0.0);
+    EXPECT_NEAR(computeAverageLuminanceStrided(rgba, width, height, 1u), expected, 0.0);
+    // A stride of 0 is clamped to 1.
+    EXPECT_NEAR(computeAverageLuminanceStrided(rgba, width, height, 0u), expected, 0.0);
+}
+
+// The channel accumulators are u32 and are drained into double every 2^20
+// pixels; this walks past two of those flush boundaries (and ends mid-chunk, and
+// off a 4-pixel vector block) so an off-by-one there would skew the average.
+TEST(average_luminance_crosses_accumulator_flush_boundaries)
+{
+    const uint32_t pixelCount = (2u << 20) + 7u;
+    uint8_t* rgba = static_cast<uint8_t*>(std::malloc(pixelCount * 4u));
+    if (rgba == nullptr) {
+        std::fprintf(stderr, "FAIL %s:%d: out of memory\n", __FILE__, __LINE__);
+        ++failures;
+        return;
+    }
+
+    for (uint32_t i = 0u; i < pixelCount; ++i) {
+        rgba[i * 4u]      = 250u;
+        rgba[i * 4u + 1u] = 200u;
+        rgba[i * 4u + 2u] = 150u;
+        rgba[i * 4u + 3u] = 255u;
+    }
+
+    // Every pixel is identical, so the exact average is the single-pixel value.
+    const double expected = 250.0 * 0.2126 + 200.0 * 0.7152 + 150.0 * 0.0722;
+    EXPECT_NEAR(computeAverageLuminance(rgba, pixelCount * 4u), expected, 1e-4);
+    EXPECT_NEAR(computeAverageLuminanceStrided(rgba, pixelCount, 1u, 1u), expected, 1e-4);
+
+    std::free(rgba);
+}
+
+TEST(average_luminance_strided_samples_the_expected_grid)
+{
+    constexpr uint32_t width = 16u;
+    constexpr uint32_t height = 16u;
+    static uint8_t rgba[width * height * 4u];
+
+    // Grey ramp so luminance == the byte value (BT.709 weights sum to 1).
+    for (uint32_t i = 0u; i < width * height; ++i) {
+        const uint8_t v = static_cast<uint8_t>(i);
+        rgba[i * 4u] = v;
+        rgba[i * 4u + 1u] = v;
+        rgba[i * 4u + 2u] = v;
+        rgba[i * 4u + 3u] = 255u;
+    }
+
+    const uint32_t stride = 4u;
+    double sum = 0.0;
+    uint32_t n = 0u;
+    for (uint32_t y = 0u; y < height; y += stride) {
+        for (uint32_t x = 0u; x < width; x += stride) {
+            sum += static_cast<double>(rgba[(y * width + x) * 4u]);
+            ++n;
+        }
+    }
+    EXPECT_NEAR(computeAverageLuminanceStrided(rgba, width, height, stride),
+                sum / static_cast<double>(n), 1e-4);
+}
+
+TEST(average_luminance_edge_cases)
+{
+    const uint8_t single[4] = {10u, 20u, 30u, 255u};
+    // Fewer than one whole pixel → the neutral 128 default.
+    EXPECT_NEAR(computeAverageLuminance(single, 0u), 128.0f, 1e-9);
+    EXPECT_NEAR(computeAverageLuminanceStrided(single, 0u, 4u, 1u), 128.0f, 1e-9);
+    EXPECT_NEAR(computeAverageLuminanceStrided(single, 4u, 0u, 1u), 128.0f, 1e-9);
+    EXPECT_NEAR(computeAverageLuminance(single, 4u),
+                10.0 * 0.2126 + 20.0 * 0.7152 + 30.0 * 0.0722, 1e-5);
+}
+
+// ─── simulateTracerDecay ─────────────────────────────────────────────────────
+
+TEST(simulate_tracer_decay_scales_every_component)
+{
+    constexpr uint32_t pixelCount = 7u;  // 28 floats — not a multiple of 4 pixels
+    float buffer[pixelCount * 4u];
+    for (uint32_t i = 0u; i < pixelCount * 4u; ++i) {
+        buffer[i] = static_cast<float>(i) / 32.0f;
+    }
+
+    simulateTracerDecay(buffer, pixelCount, 0.5f);
+
+    for (uint32_t i = 0u; i < pixelCount * 4u; ++i) {
+        EXPECT_NEAR(buffer[i], (static_cast<float>(i) / 32.0f) * 0.5f, 1e-9);
+    }
 }
 
 int main()

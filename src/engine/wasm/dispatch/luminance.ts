@@ -20,7 +20,7 @@ export function computeAverageLuminanceWith(
   image: PixelSource,
   useWasm: boolean,
 ): number {
-  if (canUseWasmFn('computeAverageLuminance', useWasm)) {
+  if (canUseWasmFn('_computeAverageLuminance', useWasm)) {
     // Downscale to ≤256 px, copy RGBA bytes into WASM heap, call C++.
     const bytes = getImageBytes(image);
     if (!bytes) return tsComputeAverageLuminance(image);
@@ -28,7 +28,7 @@ export function computeAverageLuminanceWith(
     const mod = getWasmModule()!;
     const ptr = getPersistentBuf(bytes.length);
     mod.HEAPU8.set(bytes, ptr);
-    return mod.computeAverageLuminance(ptr, bytes.length);
+    return mod._computeAverageLuminance(ptr, bytes.length);
   }
 
   return tsComputeAverageLuminance(image);
@@ -59,12 +59,12 @@ export function computeAverageLuminanceStridedWith(
 ): number {
   const safeStride = Math.max(1, stride);
 
-  if (canUseWasmFn('computeAverageLuminanceStrided', useWasm)) {
+  if (canUseWasmFn('_computeAverageLuminanceStrided', useWasm)) {
     const mod = getWasmModule()!;
     const byteLen = width * height * 4;
     const ptr = getPersistentBuf(byteLen);
     mod.HEAPU8.set(pixels, ptr);
-    return mod.computeAverageLuminanceStrided(ptr, width, height, safeStride);
+    return mod._computeAverageLuminanceStrided(ptr, width, height, safeStride);
   }
 
   return tsComputeAverageLuminanceStrided(pixels, width, height, safeStride);

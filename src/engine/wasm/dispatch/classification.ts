@@ -36,8 +36,8 @@ export function classifyPixelWith(
   avgLum: number,
   useWasm: boolean,
 ): number {
-  if (canUseWasmFn('classifyPixel', useWasm)) {
-    return getWasmModule()!.classifyPixel(r, g, b, avgLum);
+  if (canUseWasmFn('_classifyPixel', useWasm)) {
+    return getWasmModule()!._classifyPixel(r, g, b, avgLum);
   }
 
   // TypeScript fallback — mirrors the C++ implementation.
@@ -65,7 +65,7 @@ export function classifyPixelsBulkWith(
   const { data } = imageData;
   const pixelCount = data.length / 4;
 
-  if (canUseWasmFn('classifyPixelsBulk', useWasm)) {
+  if (canUseWasmFn('_classifyPixelsBulk', useWasm)) {
     const mod = getWasmModule()!;
     // Input buffer comes from the shared persistent pool (like the other
     // dispatchers in this file); the output buffer is small/transient per
@@ -73,7 +73,7 @@ export function classifyPixelsBulkWith(
     const inPtr  = getPersistentBuf(data.length);
     const outPtr = mod._malloc(pixelCount * 4); // int32 per pixel
     mod.HEAPU8.set(data, inPtr);
-    mod.classifyPixelsBulk(inPtr, data.length, Math.round(avgLum), outPtr);
+    mod._classifyPixelsBulk(inPtr, data.length, Math.round(avgLum), outPtr);
     const result = mod.HEAP32.subarray(outPtr >> 2, (outPtr >> 2) + pixelCount).slice();
     mod._free(outPtr);
     return result;
@@ -108,12 +108,12 @@ export function classifyImageMaskWith(
   const { data, width, height } = imageData;
   const pixelCount = width * height;
 
-  if (canUseWasmFn('computeClassificationMaskLut', useWasm)) {
+  if (canUseWasmFn('_computeClassificationMaskLut', useWasm)) {
     const mod = getWasmModule()!;
     const inPtr = mod._malloc(data.length);
     const outPtr = mod._malloc(pixelCount);
     mod.HEAPU8.set(data, inPtr);
-    mod.computeClassificationMaskLut(inPtr, width, height, avgLum, outPtr);
+    mod._computeClassificationMaskLut(inPtr, width, height, avgLum, outPtr);
     const mask = new Uint8Array(pixelCount);
     mask.set(mod.HEAPU8.subarray(outPtr, outPtr + pixelCount));
     mod._free(inPtr);
@@ -121,12 +121,12 @@ export function classifyImageMaskWith(
     return { mask, width, height };
   }
 
-  if (canUseWasmFn('computeClassificationMask', useWasm)) {
+  if (canUseWasmFn('_computeClassificationMask', useWasm)) {
     const mod = getWasmModule()!;
     const inPtr = mod._malloc(data.length);
     const outPtr = mod._malloc(pixelCount);
     mod.HEAPU8.set(data, inPtr);
-    mod.computeClassificationMask(inPtr, width, height, avgLum, outPtr);
+    mod._computeClassificationMask(inPtr, width, height, avgLum, outPtr);
     const mask = new Uint8Array(pixelCount);
     mask.set(mod.HEAPU8.subarray(outPtr, outPtr + pixelCount));
     mod._free(inPtr);
@@ -160,12 +160,12 @@ export function computeLuminanceHistogramWith(
   const bytes = getImageBytes(image);
   if (!bytes) return new Uint32Array(256);
 
-  if (canUseWasmFn('computeLuminanceHistogram', useWasm)) {
+  if (canUseWasmFn('_computeLuminanceHistogram', useWasm)) {
     const mod = getWasmModule()!;
     const inPtr  = getPersistentBuf(bytes.length);
     const outPtr = mod._malloc(256 * 4); // 256 uint32 values — fixed small size
     mod.HEAPU8.set(bytes, inPtr);
-    mod.computeLuminanceHistogram(inPtr, bytes.length, outPtr);
+    mod._computeLuminanceHistogram(inPtr, bytes.length, outPtr);
     const result = new Uint32Array(256);
     for (let i = 0; i < 256; i++) {
       result[i] = mod.HEAPU32[(outPtr >> 2) + i];
@@ -204,12 +204,12 @@ export function computeColorBandCountsWith(
   const bytes = getImageBytes(image);
   if (!bytes) return new Uint32Array(11);
 
-  if (canUseWasmFn('computeColorBandCounts', useWasm)) {
+  if (canUseWasmFn('_computeColorBandCounts', useWasm)) {
     const mod = getWasmModule()!;
     const inPtr  = getPersistentBuf(bytes.length);
     const outPtr = mod._malloc(11 * 4); // 11 uint32 values — fixed small size
     mod.HEAPU8.set(bytes, inPtr);
-    mod.computeColorBandCounts(inPtr, bytes.length, Math.round(avgLum), outPtr);
+    mod._computeColorBandCounts(inPtr, bytes.length, Math.round(avgLum), outPtr);
     const result = new Uint32Array(11);
     for (let i = 0; i < 11; i++) {
       result[i] = mod.HEAPU32[(outPtr >> 2) + i];

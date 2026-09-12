@@ -45,6 +45,9 @@ jobs:
       - name: Rebuild WASM from scratch
         run: npm run build:wasm:force
 
+      - name: WASM kernel throughput gate
+        run: npm run bench:wasm -- --assert
+
       - name: Fail if committed WASM artifacts are stale
         run: |
           if ! git diff --exit-code -- public/chromashift_engine.js public/chromashift_engine.wasm; then
