@@ -106,7 +106,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     } else if (count >= 3u) {
       overlay = vec3<f32>(1.0, 1.0, 1.0);
     }
-    col.rgb = max(col.rgb, mix(col.rgb, overlay, tvu.heatmapOpacity));
+    col = vec4<f32>(max(col.rgb, mix(col.rgb, overlay, tvu.heatmapOpacity)), col.a);
   }
 
   // Apply the same exposure + Reinhard tonemap as the compositor.

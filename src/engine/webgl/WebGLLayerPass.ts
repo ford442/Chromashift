@@ -1,4 +1,5 @@
 import { LAYER_FRAGMENT_SOURCE, ROTATION_VERTEX_SOURCE } from './shaders';
+import { DEFAULT_LAYER_COUNT } from '../graph';
 import {
   bindTexture,
   createProgram,
@@ -35,11 +36,14 @@ export class WebGLLayerPass {
   }
 
   ensureTextures(width: number, height: number): void {
-    if (this.width === width && this.height === height && this.layerTargets.length === 3) return;
+    if (this.width === width && this.height === height && this.layerTargets.length === DEFAULT_LAYER_COUNT) return;
     for (const target of this.layerTargets) {
       destroyTarget(this.gl, target);
     }
-    this.layerTargets = [0, 1, 2].map(() => createTarget(this.gl, width, height));
+    this.layerTargets = Array.from(
+      { length: DEFAULT_LAYER_COUNT },
+      () => createTarget(this.gl, width, height),
+    );
     this.width = width;
     this.height = height;
   }
@@ -55,7 +59,7 @@ export class WebGLLayerPass {
     this.profileLut.update(state.colorProfileLut);
     const profileMode = state.colorProfileLut && state.colorProfileMode ? 1 : 0;
 
-    for (let layerIndex = 0; layerIndex < 3; layerIndex += 1) {
+    for (let layerIndex = 0; layerIndex < this.layerTargets.length; layerIndex += 1) {
       const target = this.layerTargets[layerIndex];
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
       gl.viewport(0, 0, target.width, target.height);

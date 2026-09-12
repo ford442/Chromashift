@@ -21,6 +21,7 @@ import {
 import { listLocalImages } from '../engine/LocalLibrary';
 import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/corpusManifest';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
+import { activatePassGraph } from '../engine/graph';
 
 export interface UseAppWebGPUInitProps {
   mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
@@ -255,6 +256,11 @@ export function useAppWebGPUInit({
       const fallbackReason = bootstrapped.orchestrator.getFallbackReason();
       setRendererFallbackReason(fallbackReason);
       publishRendererBreadcrumbs(bootstrapped.orchestrator.getBackend(), fallbackReason);
+      // Pass-graph gate (?graph=1). Compiles the default graph for the live
+      // backend and publishes the breadcrumbs; the graph is byte-for-byte the
+      // pipeline the renderer already runs, so this observes rather than
+      // changes what is drawn. See docs/PASS_GRAPH.md.
+      activatePassGraph(bootstrapped.orchestrator.getBackend());
       // Apply the requested canvas colour space now: the standing effect below
       // only re-runs when `displayColorSpace` changes, so a preset URL that
       // selects display-p3 before boot would otherwise never reach the canvas.

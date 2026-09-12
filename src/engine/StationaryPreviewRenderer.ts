@@ -1,13 +1,10 @@
-import {
-  fragmentShaderGreenYellow,
-  fragmentShaderRedOrange,
-  fragmentShaderVioletBlue,
-} from './shaders';
+import { layerFragmentSources } from './shaders';
 import {
   createLayerBindGroupCache,
   getOrCreateLayerBindGroup,
   invalidateLayerBindGroupCache,
 } from './BindGroupCache';
+import { DEFAULT_LAYER_COUNT } from './graph';
 import { CompositorPass } from './CompositorPass';
 import { ProfileLutTexture } from './color/ProfileLutTexture';
 import { GpuReadback } from './GpuReadback';
@@ -36,7 +33,7 @@ export class StationaryPreviewRenderer {
   private readonly compositor: CompositorPass;
   private readonly tracerInspect: TracerInspectPass;
   private readonly readback: GpuReadback;
-  private readonly layerBindGroupCache = createLayerBindGroupCache(3);
+  private readonly layerBindGroupCache = createLayerBindGroupCache(DEFAULT_LAYER_COUNT);
   private readonly layerPipelines: ReturnType<WebGPUPipelines['createLayerPipeline']>[] = [];
   private layerTextures: GPUTexture[] = [];
   private outputTexture: GPUTexture | null = null;
@@ -71,7 +68,7 @@ export class StationaryPreviewRenderer {
 
     this.profileLut = new ProfileLutTexture(device);
 
-    for (const src of [fragmentShaderRedOrange, fragmentShaderVioletBlue, fragmentShaderGreenYellow]) {
+    for (const src of layerFragmentSources) {
       this.layerPipelines.push(pipelines.createLayerPipeline(src, 1));
     }
 
@@ -156,7 +153,7 @@ export class StationaryPreviewRenderer {
     for (const t of this.layerTextures) t.destroy();
     this.outputTexture?.destroy();
 
-    this.layerTextures = [0, 1, 2].map(() => this.device.createTexture({
+    this.layerTextures = Array.from({ length: DEFAULT_LAYER_COUNT }, () => this.device.createTexture({
       size: [size, size, 1],
       format: this.internalFormat,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -189,7 +186,7 @@ export class StationaryPreviewRenderer {
     const softCropEnabled = state.softCropEnabled ? 1 : 0;
     const aspect = 1;
 
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < this.layerPipelines.length; i++) {
       const lp = this.layerPipelines[i];
       const layer = state.layers[i];
 
