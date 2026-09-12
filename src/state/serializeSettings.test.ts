@@ -24,10 +24,10 @@ describe('serializeSettings', () => {
     expect(doc?.settings.layers?.angles).toEqual([10, 20, 30]);
   });
 
-  it('always emits schema version 4', () => {
+  it('always emits the current schema version', () => {
     const doc = serializeSettings(createInitialState());
     expect(doc.version).toBe(SETTINGS_SCHEMA_VERSION);
-    expect(doc.version).toBe(4);
+    expect(SETTINGS_SCHEMA_VERSION).toBe(5);
   });
 
   it('round-trips v2 field groups', () => {
@@ -141,6 +141,57 @@ describe('serializeSettings', () => {
     expect(doc?.settings.layers?.colorProfile).toBeNull();
   });
 
+  describe('schema v5 tracer motion', () => {
+    it('migrates a pre-motion document to motionMode: off', () => {
+      const v4 = {
+        version: 4,
+        settings: {
+          tracers: { aboveIntensity: 0.4, mode: 1 },
+        },
+      };
+      const migrated = migrateToLatest(v4);
+      expect(migrated.version).toBe(SETTINGS_SCHEMA_VERSION);
+      // The pre-motion look is exactly what `off` renders, so an old preset
+      // must never come back with the temporal term switched on.
+      expect(migrated.settings.tracers?.motionMode).toBe('off');
+      expect(migrated.settings.tracers?.aboveIntensity).toBe(0.4);
+      expect(migrated.settings.tracers?.motionGain).toBe(1);
+      expect(migrated.settings.tracers?.motionDecayBias).toBe(0.5);
+      expect(migrated.settings.tracers?.motionThreshold).toBe(0.04);
+
+      const restored = applySettingsToState(createInitialState(), migrated.settings);
+      expect(restored.tracers.motionMode).toBe('off');
+    });
+
+    it('round-trips an enabled motion term', () => {
+      const state = chromashiftReducer(createInitialState(), {
+        type: 'tracers/patch',
+        patch: {
+          motionMode: 'gate',
+          motionGain: 2.5,
+          motionDecayBias: 0.8,
+          motionThreshold: 0.12,
+        },
+      });
+      const doc = deserializeSettings(settingsToJson(state));
+      expect(doc?.settings.tracers?.motionMode).toBe('gate');
+      expect(doc?.settings.tracers?.motionGain).toBe(2.5);
+
+      const restored = applySettingsToState(createInitialState(), doc!.settings);
+      expect(restored.tracers.motionMode).toBe('gate');
+      expect(restored.tracers.motionDecayBias).toBe(0.8);
+      expect(restored.tracers.motionThreshold).toBe(0.12);
+    });
+
+    it('falls back to off for an unknown mode string', () => {
+      const doc = migrateToLatest({
+        version: 5,
+        settings: { tracers: { motionMode: 'wormhole' as never } },
+      });
+      expect(doc.settings.tracers?.motionMode).toBe('off');
+    });
+  });
+
   it('rejects invalid JSON payloads', () => {
     expect(deserializeSettings('not json')).toBeNull();
     expect(deserializeSettings('{"version":99}')).toBeNull();
@@ -228,7 +279,7 @@ describe('schema v4 display colour space', () => {
       patch: { displayColorSpace: 'display-p3' },
     });
     const doc = serializeSettings(state);
-    expect(doc.version).toBe(4);
+    expect(doc.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(doc.settings.viewport?.colorSpace).toBe('display-p3');
     expect((doc.settings.output as { displayColorSpace?: unknown } | undefined)?.displayColorSpace).toBeUndefined();
 
@@ -242,7 +293,7 @@ describe('schema v4 display colour space', () => {
       settings: { layers: { opacity: 0.4 }, viewport: { quarterZoom: true } },
     };
     const doc = deserializeSettings(JSON.stringify(v3));
-    expect(doc?.version).toBe(4);
+    expect(doc?.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(doc?.settings.viewport?.colorSpace).toBe('srgb');
     expect(doc?.settings.viewport?.quarterZoom).toBe(true);
   });

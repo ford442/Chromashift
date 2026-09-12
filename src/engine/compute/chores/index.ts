@@ -31,17 +31,34 @@ export type {
   CpuChoreHost,
   CpuImageAnalysisOutput,
   CpuImageAnalysisResult,
+  CpuMotionFieldHost,
+  CpuMotionFieldOutput,
+  CpuMotionFieldResult,
   GpuCoincidenceOutput,
   GpuImageAnalysisOutput,
+  GpuMotionFieldOutput,
   ImageAnalysisJob,
   ImageAnalysisOutput,
+  MotionFieldJob,
+  MotionFieldOutput,
+  MotionFieldStats,
+  MotionFramePixels,
 } from './types';
 export { CHORE_BACKEND_ORDER } from './types';
 
 export { CpuChoreBackend } from './cpuBackend';
 
-export type { CoincidenceEncodeParams } from './webgpuBackend';
+export type { CoincidenceEncodeParams, MotionFieldEncodeParams } from './webgpuBackend';
 export { WebGpuChoreBackend, averageFromHistogram } from './webgpuBackend';
+
+export type { LuminancePlane, MotionFrame } from './motionKernel';
+export {
+  EMPTY_MOTION_FIELD_STATS,
+  downsampleLuminance,
+  motionFieldSize,
+  motionMagnitudeField,
+  summariseMotionField,
+} from './motionKernel';
 
 export { ChoreRuntimeImpl, createChoresRuntime } from './runtime';
 
@@ -54,6 +71,8 @@ export {
   isSrgbTextureFormat,
   publishChoreBreadcrumbs,
   publishGpuComputeBreadcrumbs,
+  publishMotionFieldBreadcrumbs,
+  publishMotionFieldEnergy,
   readGpuComputeDiagnostics,
 } from './support';
 
@@ -61,6 +80,7 @@ export {
   CLASSIFICATION_COMPUTE_SHADER,
   COINCIDENCE_COMPUTE_SHADER,
   HISTOGRAM_COMPUTE_SHADER,
+  MOTION_FIELD_COMPUTE_SHADER,
   WGSL_IMAGE_ANALYSIS_HELPERS,
 } from './kernels';
 

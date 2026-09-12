@@ -2,7 +2,9 @@ import {
   vertexShaderSource,
   fullscreenVertexSource,
   persistenceFragmentSource,
+  persistenceMotionFragmentSource,
   persistenceCompositeFragmentSource,
+  persistenceCompositeMotionFragmentSource,
   compositorFragmentSource,
   tracerViewFragmentSource,
   displayTextureFragmentSource,
@@ -27,7 +29,9 @@ export class WebGPUPipelines {
   public internalFormat: GPUTextureFormat;
 
   public persistBGL: GPUBindGroupLayout;
+  public persistMotionBGL: GPUBindGroupLayout;
   public persistCompositeBGL: GPUBindGroupLayout;
+  public persistCompositeMotionBGL: GPUBindGroupLayout;
   public compositorBGL: GPUBindGroupLayout;
   public tracerViewBGL: GPUBindGroupLayout;
   public displayBGL: GPUBindGroupLayout;
@@ -42,7 +46,9 @@ export class WebGPUPipelines {
     this.internalFormat = internalFormat;
 
     this.persistBGL = this.createPersistBGL();
+    this.persistMotionBGL = this.createPersistMotionBGL();
     this.persistCompositeBGL = this.createPersistCompositeBGL();
+    this.persistCompositeMotionBGL = this.createPersistCompositeMotionBGL();
     this.compositorBGL = this.createCompositorBGL();
     this.tracerViewBGL = this.createTracerViewBGL();
     this.displayBGL = this.createDisplayBGL();
@@ -66,6 +72,28 @@ export class WebGPUPipelines {
     });
   }
 
+  /**
+   * The fused persistence pass plus the motion field at binding 6.
+   *
+   * A second layout (rather than an optional entry) is what lets
+   * `motionMode: 'off'` bind the original layout and the original program,
+   * with no motion texture in the frame at all.
+   */
+  public createPersistMotionBGL(): GPUBindGroupLayout {
+
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ],
+    });
+  }
+
   /** Lighter compute-fed composite pass — no sampler, exact-resolution `textureLoad` reads. */
   public createPersistCompositeBGL(): GPUBindGroupLayout {
 
@@ -74,6 +102,20 @@ export class WebGPUPipelines {
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+  }
+
+  /** Compute-fed composite pass plus a sampled (quarter-resolution) motion field. */
+  public createPersistCompositeMotionBGL(): GPUBindGroupLayout {
+
+    return this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
       ],
     });
   }
@@ -187,6 +229,26 @@ export class WebGPUPipelines {
     });
   }
 
+  /** Motion-aware twin of {@link createPersistPipeline}. */
+  public createPersistMotionPipeline(): GPURenderPipeline {
+
+    const device = this.device;
+    return device.createRenderPipeline({
+      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistMotionBGL] }),
+      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module     : device.createShaderModule({ code: persistenceMotionFragmentSource }),
+        entryPoint : 'main',
+        targets    : [
+          { format: this.internalFormat },   // @location(0) persistence colour
+          { format: 'rgba8unorm' },          // @location(1) diagnostic stamp info
+        ],
+      },
+      primitive  : { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
   public createPersistCompositePipeline(): GPURenderPipeline {
 
     const device = this.device;
@@ -195,6 +257,25 @@ export class WebGPUPipelines {
       vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
         module     : device.createShaderModule({ code: persistenceCompositeFragmentSource }),
+        entryPoint : 'main',
+        targets    : [
+          { format: this.internalFormat },   // @location(0) persistence colour
+        ],
+      },
+      primitive  : { topology: 'triangle-list' },
+      multisample: { count: 1 },
+    });
+  }
+
+  /** Motion-aware twin of {@link createPersistCompositePipeline}. */
+  public createPersistCompositeMotionPipeline(): GPURenderPipeline {
+
+    const device = this.device;
+    return device.createRenderPipeline({
+      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistCompositeMotionBGL] }),
+      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
+      fragment: {
+        module     : device.createShaderModule({ code: persistenceCompositeMotionFragmentSource }),
         entryPoint : 'main',
         targets    : [
           { format: this.internalFormat },   // @location(0) persistence colour

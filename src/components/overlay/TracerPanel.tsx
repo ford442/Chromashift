@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { getBlendModeInfo } from '../../engine/blendModes';
+import { MOTION_MODES, type MotionMode } from '../../engine/motionModes';
 import type { ReferenceBlendMode, OverlayImageSource, TracerPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
 
@@ -56,12 +57,66 @@ function BlendModeSelect({
   );
 }
 
+
+const MOTION_MODE_LABELS: Record<MotionMode, string> = {
+  off: 'Off',
+  boost: 'Boost',
+  gate: 'Gate',
+  direction: 'Direction',
+};
+
+const MOTION_MODE_HINTS: Record<MotionMode, string> = {
+  off: 'Tracers ignore time — identical to the classic pipeline.',
+  boost: 'Moving regions stamp brighter and hold their trail longer.',
+  gate: 'Stamp only where the frame changed — isolates a live subject.',
+  direction: 'Flow angle drives hue (zero flow reads as a magnitude tint).',
+};
+
+function MotionSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  format,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  format: (value: number) => string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-xs text-amber-400/80 font-mono">{label}:</span>
+      <input
+        aria-label={`Motion ${label.toLowerCase()}`}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-16 h-1 accent-amber-400"
+      />
+      <span className="text-[10px] tabular-nums text-amber-300 w-10 text-right">{format(value)}</span>
+    </div>
+  );
+}
+
 export const TracerPanel = memo(function TracerPanel({
   tracerAboveIntensity,
   tracerBelowIntensity,
   tracerAboveDuration,
   tracerBelowDuration,
   tracerMode,
+  motionMode,
+  motionGain,
+  motionDecayBias,
+  motionThreshold,
   outputMode,
   layerBlendMode,
   tracerBlendMode,
@@ -78,6 +133,10 @@ export const TracerPanel = memo(function TracerPanel({
   onTracerAboveDurationChange,
   onTracerBelowDurationChange,
   onTracerModeChange,
+  onMotionModeChange,
+  onMotionGainChange,
+  onMotionDecayBiasChange,
+  onMotionThresholdChange,
   onOutputModeChange,
   onLayerBlendModeChange,
   onTracerBlendModeChange,
@@ -290,6 +349,64 @@ export const TracerPanel = memo(function TracerPanel({
             {isImageStripOpen ? 'Browser Open' : 'Open Browser'}
           </button>
         </div>
+      </div>
+
+      <div className="panel-3d space-y-2">
+        <div className="text-[10px] text-amber-300 font-mono uppercase tracking-wider">🌊 Motion</div>
+        <div className="flex items-center gap-2">
+          <label
+            htmlFor="tracer-motion-mode"
+            className="text-xs text-amber-400/80 font-mono whitespace-nowrap"
+          >
+            Mode:
+          </label>
+          <select
+            id="tracer-motion-mode"
+            data-testid="tracer-motion-mode"
+            value={motionMode}
+            onChange={(e) => onMotionModeChange(e.target.value as MotionMode)}
+            className="flex-1 text-xs px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30 text-white"
+            title="Steer tracers by what changed since the last frame (live source only)."
+          >
+            {MOTION_MODES.map((mode) => (
+              <option key={mode} value={mode}>{MOTION_MODE_LABELS[mode]}</option>
+            ))}
+          </select>
+        </div>
+        <div className="text-[10px] text-amber-300/60 font-mono leading-tight">
+          {MOTION_MODE_HINTS[motionMode]}
+        </div>
+        {motionMode !== 'off' && (
+          <>
+            <MotionSlider
+              label="Gain"
+              value={motionGain}
+              min={0}
+              max={4}
+              step={0.05}
+              format={(v) => `${v.toFixed(2)}×`}
+              onChange={onMotionGainChange}
+            />
+            <MotionSlider
+              label="Hold"
+              value={motionDecayBias}
+              min={0}
+              max={1}
+              step={0.01}
+              format={(v) => `${Math.round(v * 100)}%`}
+              onChange={onMotionDecayBiasChange}
+            />
+            <MotionSlider
+              label="Floor"
+              value={motionThreshold}
+              min={0}
+              max={0.3}
+              step={0.005}
+              format={(v) => v.toFixed(3)}
+              onChange={onMotionThresholdChange}
+            />
+          </>
+        )}
       </div>
 
       <div className="panel-3d space-y-2">

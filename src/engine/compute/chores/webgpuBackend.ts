@@ -20,7 +20,9 @@ import {
   CLASSIFICATION_COMPUTE_SHADER,
   COINCIDENCE_COMPUTE_SHADER,
   HISTOGRAM_COMPUTE_SHADER,
+  MOTION_FIELD_COMPUTE_SHADER,
 } from './kernels';
+import { EMPTY_MOTION_FIELD_STATS, motionFieldSize, type MotionFieldStats } from './motionKernel';
 import type {
   ChoreBackendImpl,
   ChoreJob,
@@ -28,8 +30,20 @@ import type {
   CoincidenceJob,
   GpuCoincidenceOutput,
   GpuImageAnalysisOutput,
+  GpuMotionFieldOutput,
   ImageAnalysisJob,
+  MotionFieldJob,
 } from './types';
+
+/** Per-frame parameters the motion-field compute pass needs, minus geometry. */
+export interface MotionFieldEncodeParams {
+  /** Resolution divisor; the field is `ceil(width / divisor)` wide. */
+  divisor: number;
+  /** Noise floor on the normalised luminance difference, in [0,1). */
+  threshold: number;
+  /** Drop the previous-frame history (source switch, seek, resize). */
+  reset: boolean;
+}
 
 /** Per-pixel parameters the coincidence compute pass needs, minus geometry. */
 export interface CoincidenceEncodeParams {
@@ -94,6 +108,25 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   /** Serializes overlapping analyze() calls that share staging buffers. */
   private analyzeChain: Promise<unknown> = Promise.resolve();
 
+  private motionPipeline: GPUComputePipeline | null = null;
+  private motionBGL: GPUBindGroupLayout | null = null;
+  private motionUniformBuffer: GPUBuffer | null = null;
+  private motionStatsBuffer: GPUBuffer | null = null;
+  private motionStatsStagingBuffer: GPUBuffer | null = null;
+  private motionFieldTexture: GPUTexture | null = null;
+  /** Ping-ponged previous/next luminance history — one float per field cell. */
+  private motionLumTextures: [GPUTexture | null, GPUTexture | null] = [null, null];
+  private motionLumSlot: 0 | 1 = 0;
+  private motionFieldWidth = 0;
+  private motionFieldHeight = 0;
+  private motionSourceWidth = 0;
+  private motionSourceHeight = 0;
+  private motionHistoryValid = false;
+  private motionBindGroups: [GPUBindGroup | null, GPUBindGroup | null] = [null, null];
+  private motionBindGroupSource: GPUTexture | null = null;
+  private motionStatsMapPending = false;
+  private lastMotionStats: MotionFieldStats = EMPTY_MOTION_FIELD_STATS;
+
   private coincidencePipeline: GPUComputePipeline | null = null;
   private coincidenceBGL: GPUBindGroupLayout | null = null;
   private coincidenceUniformBuffer: GPUBuffer | null = null;
@@ -140,6 +173,11 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
       return `Coincidence buffer ${job.width}×${job.height} exceeds maxTextureDimension2D `
         + `(${this.support.maxTextureDimension2D})`;
     }
+    if (job.op === 'motion-field') {
+      if (!job.source) return 'No GPU-resident source frame';
+      return `Motion source ${job.width}×${job.height} exceeds maxTextureDimension2D `
+        + `(${this.support.maxTextureDimension2D})`;
+    }
     if (!job.source) return 'No GPU-resident source texture';
     return `Image ${job.width}×${job.height} exceeds maxTextureDimension2D `
       + `(${this.support.maxTextureDimension2D})`;
@@ -149,6 +187,9 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     if (!this.canRun(job)) return null;
     if (job.op === 'coincidence') {
       return this.runCoincidence(job);
+    }
+    if (job.op === 'motion-field') {
+      return this.runMotionField(job);
     }
     const analysisJob = job as ImageAnalysisJob;
     return this.analyze(analysisJob.source!, analysisJob.width, analysisJob.height, analysisJob.avgLumHint);
@@ -468,6 +509,242 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     };
   }
 
+  // ── motion-field ───────────────────────────────────────────────────────────
+
+  /**
+   * One-shot motion-field job for the async kit facade (sibling apps, tests).
+   * Chromashift's own render loop calls `encodeMotionFieldInto()` so the
+   * dispatch lands in the same `GPUCommandEncoder` as the rest of the frame,
+   * exactly as it does for `coincidence`.
+   */
+  private async runMotionField(job: MotionFieldJob): Promise<GpuMotionFieldOutput | null> {
+    const source = job.source;
+    if (!source) return null;
+    const enc = this.device.createCommandEncoder();
+    const output = this.encodeMotionFieldInto(enc, source, job.width, job.height, {
+      divisor: job.divisor ?? 4,
+      threshold: job.threshold,
+      reset: job.reset === true,
+    });
+    this.device.queue.submit([enc.finish()]);
+    return output;
+  }
+
+  /**
+   * Encode the motion-field compute pass into a caller-owned encoder.
+   *
+   * Nothing is read back here — the field is a `GPUTexture` the persistence
+   * pass binds directly, and the summary statistics accumulate into a 16-byte
+   * storage buffer that {@link readMotionFieldStats} maps on the caller's own
+   * (much slower) cadence.
+   */
+  encodeMotionFieldInto(
+    enc: GPUCommandEncoder,
+    source: GPUTexture,
+    width: number,
+    height: number,
+    params: MotionFieldEncodeParams,
+  ): GpuMotionFieldOutput | null {
+    if (!this.canAnalyze(width, height)) return null;
+    this.ensureMotionPipeline();
+
+    const divisor = Math.max(1, Math.floor(params.divisor));
+    const resized = this.ensureMotionTextures(width, height, divisor);
+    // A resize throws the history away, so the first field after it must be
+    // zero rather than a difference against an unrelated frame.
+    const reset = params.reset || resized || !this.motionHistoryValid;
+
+    const readSlot = this.motionLumSlot;
+    const writeSlot: 0 | 1 = readSlot === 0 ? 1 : 0;
+
+    const uniformData = new ArrayBuffer(32);
+    const u32 = new Uint32Array(uniformData);
+    const f32 = new Float32Array(uniformData);
+    u32[0] = width;
+    u32[1] = height;
+    u32[2] = this.motionFieldWidth;
+    u32[3] = this.motionFieldHeight;
+    u32[4] = divisor;
+    u32[5] = reset ? 1 : 0;
+    u32[6] = isSrgbTextureFormat(source.format) ? 1 : 0;
+    f32[7] = params.threshold;
+    this.device.queue.writeBuffer(this.motionUniformBuffer!, 0, uniformData);
+    // Statistics are per-frame, not cumulative.
+    this.device.queue.writeBuffer(this.motionStatsBuffer!, 0, new Uint32Array(4));
+
+    if (this.motionBindGroupSource !== source) {
+      this.motionBindGroups = [null, null];
+      this.motionBindGroupSource = source;
+    }
+    let bindGroup = this.motionBindGroups[writeSlot];
+    if (!bindGroup) {
+      bindGroup = this.device.createBindGroup({
+        layout: this.motionBGL!,
+        entries: [
+          { binding: 0, resource: source.createView() },
+          { binding: 1, resource: this.motionLumTextures[readSlot]!.createView() },
+          { binding: 2, resource: this.motionFieldTexture!.createView() },
+          { binding: 3, resource: this.motionLumTextures[writeSlot]!.createView() },
+          { binding: 4, resource: { buffer: this.motionStatsBuffer! } },
+          { binding: 5, resource: { buffer: this.motionUniformBuffer! } },
+        ],
+      });
+      this.motionBindGroups[writeSlot] = bindGroup;
+    }
+
+    const pass = enc.beginComputePass();
+    pass.setPipeline(this.motionPipeline!);
+    pass.setBindGroup(0, bindGroup);
+    pass.dispatchWorkgroups(
+      Math.ceil(this.motionFieldWidth / WORKGROUP_SIZE),
+      Math.ceil(this.motionFieldHeight / WORKGROUP_SIZE),
+    );
+    pass.end();
+
+    this.motionLumSlot = writeSlot;
+    this.motionHistoryValid = true;
+
+    return {
+      kind: 'gpu-motion-field',
+      fieldTexture: this.motionFieldTexture!,
+      width: this.motionFieldWidth,
+      height: this.motionFieldHeight,
+    };
+  }
+
+  /** The field texture the last `encodeMotionFieldInto` wrote, if any. */
+  getMotionFieldTexture(): GPUTexture | null {
+    return this.motionFieldTexture;
+  }
+
+  /**
+   * Last summary statistics read back, or zeros before the first read. Call
+   * {@link pollMotionFieldStats} to refresh — deliberately decoupled so the
+   * per-frame path never awaits a map.
+   */
+  getMotionFieldStats(): MotionFieldStats {
+    return this.lastMotionStats;
+  }
+
+  /**
+   * Copy and map the 16-byte statistics buffer. Safe to call at any rate: a
+   * call made while a previous map is in flight is dropped rather than queued.
+   */
+  pollMotionFieldStats(): void {
+    if (!this.motionStatsBuffer || !this.motionStatsStagingBuffer) return;
+    if (this.motionStatsMapPending) return;
+    this.motionStatsMapPending = true;
+
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(this.motionStatsBuffer, 0, this.motionStatsStagingBuffer, 0, 16);
+    this.device.queue.submit([enc.finish()]);
+
+    void this.motionStatsStagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const view = new Uint32Array(this.motionStatsStagingBuffer!.getMappedRange().slice(0));
+      this.motionStatsStagingBuffer!.unmap();
+      this.motionStatsMapPending = false;
+      const cells = view[2];
+      this.lastMotionStats = cells === 0
+        ? EMPTY_MOTION_FIELD_STATS
+        : { meanMagnitude: view[0] / 1000 / cells, movingFraction: view[1] / cells, cells };
+    }).catch(() => {
+      this.motionStatsMapPending = false;
+    });
+  }
+
+  /** True when the history was dropped and the next field will be all-zero. */
+  private ensureMotionTextures(width: number, height: number, divisor: number): boolean {
+    const size = motionFieldSize(width, height, divisor);
+    if (
+      this.motionFieldTexture
+      && this.motionLumTextures[0]
+      && this.motionLumTextures[1]
+      && this.motionFieldWidth === size.width
+      && this.motionFieldHeight === size.height
+      && this.motionSourceWidth === width
+      && this.motionSourceHeight === height
+    ) {
+      return false;
+    }
+
+    this.destroyMotionTextures();
+    this.motionFieldTexture = this.device.createTexture({
+      size: [size.width, size.height, 1],
+      format: 'rgba16float',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    const createLumTexture = () => this.device.createTexture({
+      size: [size.width, size.height, 1],
+      format: 'r32float',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.motionLumTextures = [createLumTexture(), createLumTexture()];
+    this.motionLumSlot = 0;
+    this.motionFieldWidth = size.width;
+    this.motionFieldHeight = size.height;
+    this.motionSourceWidth = width;
+    this.motionSourceHeight = height;
+    this.motionHistoryValid = false;
+    this.motionBindGroups = [null, null];
+    this.motionBindGroupSource = null;
+    return true;
+  }
+
+  private ensureMotionPipeline(): void {
+    if (this.motionPipeline) return;
+
+    const module = this.device.createShaderModule({ code: MOTION_FIELD_COMPUTE_SHADER });
+    this.motionBGL = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' },
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: { access: 'write-only', format: 'r32float', viewDimension: '2d' },
+        },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.motionPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.motionBGL] }),
+      compute: { module, entryPoint: 'motion_field_main' },
+    });
+    this.motionUniformBuffer = this.device.createBuffer({
+      size: 32,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.motionStatsBuffer = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+    this.motionStatsStagingBuffer = this.device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+  }
+
+  private destroyMotionTextures(): void {
+    this.motionFieldTexture?.destroy();
+    this.motionLumTextures[0]?.destroy();
+    this.motionLumTextures[1]?.destroy();
+    this.motionFieldTexture = null;
+    this.motionLumTextures = [null, null];
+    this.motionFieldWidth = 0;
+    this.motionFieldHeight = 0;
+    this.motionSourceWidth = 0;
+    this.motionSourceHeight = 0;
+    this.motionHistoryValid = false;
+    this.motionBindGroups = [null, null];
+    this.motionBindGroupSource = null;
+  }
+
   destroy(): void {
     this.cachedMaskTexture?.destroy();
     this.cachedMaskTexture = null;
@@ -490,6 +767,15 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     this.cachedCoincidenceHeight = 0;
     this.coincidenceUniformBuffer?.destroy();
     this.coincidenceUniformBuffer = null;
+
+    this.destroyMotionTextures();
+    this.motionUniformBuffer?.destroy();
+    this.motionStatsBuffer?.destroy();
+    this.motionStatsStagingBuffer?.destroy();
+    this.motionUniformBuffer = null;
+    this.motionStatsBuffer = null;
+    this.motionStatsStagingBuffer = null;
+    this.lastMotionStats = EMPTY_MOTION_FIELD_STATS;
   }
 
   /** Pipelines, layouts, and the staging pool are built once and cached. */

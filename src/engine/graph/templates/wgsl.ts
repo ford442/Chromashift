@@ -325,13 +325,56 @@ ${emitSoftArmsWgsl(spec, 3)}
 const layerList = (count: number) => Array.from({ length: count }, (_, i) => i);
 
 /**
+ * Options for the coincidence + decay emitters.
+ *
+ * `motion` is deliberately opt-in and off by default: with it off the emitted
+ * token stream is byte-for-byte what shipped before the temporal term existed,
+ * which is what makes `graph/__golden__/coincidence-decay.wgsl` a real
+ * pixel-identity guard rather than a snapshot that moves with the code.
+ */
+export interface CoincidenceDecayOptions {
+  /** Emit the motion-field binding, uniforms and temporal term. */
+  motion?: boolean;
+}
+
+/**
+ * Shared motion helpers for the `motion` variant of the coincidence + decay
+ * pass. Kept as its own emitted block so the pass-graph work (#154) can lift it
+ * into a `motion` node's template without untangling it from the decay maths.
+ */
+export const WGSL_MOTION_HELPERS = /* wgsl */ `
+// Flow angle -> hue, magnitude -> intensity. The frame-difference stage of the
+// motion chore writes a zero flow vector, so \`atan2(0, 0)\` pins the hue and
+// the mode reads as a magnitude tint until a real flow stage fills gb in.
+fn motionDirectionRgb(flow: vec2<f32>, magnitude: f32, gain: f32) -> vec3<f32> {
+  let hue = fract(atan2(flow.y, flow.x) / 6.2831853 + 1.0);
+  let k = vec3<f32>(0.0, 8.0, 4.0) + hue * 12.0;
+  let wedge = clamp(abs((k % 6.0) - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
+  // hsl2rgb at s = 0.9, l = 0.5, scaled by the (gain-weighted) magnitude.
+  let rgb = 0.5 - 0.45 + 0.45 * wedge;
+  return rgb * clamp(magnitude * gain, 0.0, 1.0);
+}
+
+// Motion slows decay locally: a smaller exponent on a sub-1 decay factor means
+// less fade per frame, so a moving region holds its trail while a static one
+// fades at the usual rate. That difference is what reads as a comet tail.
+fn motionDecayScale(magnitude: f32, bias: f32, enabled: bool) -> f32 {
+  return select(1.0, max(1.0 - bias * magnitude, 0.0), enabled);
+}
+`;
+
+/**
  * `coincidence` + `decay` fused into one pass — today's persistence shader.
  *
  * The overlap counter is unrolled over `layerCount` inputs instead of three
  * literal `if` statements, which is the whole reason a fourth colour band used
  * to mean editing this file.
  */
-export function emitCoincidenceDecayWgsl(layerCount: number): string {
+export function emitCoincidenceDecayWgsl(
+  layerCount: number,
+  options: CoincidenceDecayOptions = {},
+): string {
+  const motion = options.motion === true;
   const layers = layerList(layerCount);
   const bindings = layers
     .map((i) => `@group(0) @binding(${i + 1}) var layer${i}    : texture_2d<f32>;`)
@@ -358,6 +401,42 @@ export function emitCoincidenceDecayWgsl(layerCount: number): string {
     .join('\n');
   const prevBinding = layerCount + 1;
   const uniformBinding = layerCount + 2;
+  const motionBinding = layerCount + 3;
+  const motionHelpers = motion ? WGSL_MOTION_HELPERS : '';
+  const motionTexBinding = motion
+    ? `@group(0) @binding(${motionBinding}) var motionTex : texture_2d<f32>;\n`
+    : '';
+  // The motion variant spends the three tail pads of the original 32-byte
+  // uniform block, so both pipelines share one buffer size and one writer.
+  const motionUniformFields = motion
+    ? '  motionMode  : u32,\n  motionGain  : f32,\n  motionDecayBias : f32,'
+    : '  _pad0       : u32,\n  _pad1       : u32,\n  _pad2       : u32,';
+  const motionSample = motion
+    ? '  let motionSample = textureSample(motionTex, cSampler, uv);\n'
+      + '  let motion = clamp(motionSample.r, 0.0, 1.0);\n'
+    : '';
+  const motionTerm = motion
+    ? [
+        '',
+        '  // Temporal term: the spatial stamp above knows nothing about what',
+        '  // changed since the last frame; this is where that enters.',
+        '  if (pu.motionMode != 0u && newColor.a > 0.0) {',
+        '    if (pu.motionMode == 2u && motion <= 0.0) {',
+        '      // gate: a stamp survives only where the frame actually changed,',
+        '      // which isolates a live subject from its background with no',
+        '      // segmentation model at all.',
+        '      newColor = vec4<f32>(0.0);',
+        '    } else if (pu.motionMode == 3u) {',
+        '      newColor = vec4<f32>(motionDirectionRgb(motionSample.gb, motion, pu.motionGain), newColor.a);',
+        '    } else {',
+        '      newColor = vec4<f32>(min(newColor.rgb * (1.0 + pu.motionGain * motion), vec3<f32>(1.0)), newColor.a);',
+        '    }',
+        '  }',
+      ].join('\n')
+    : '';
+  const decayScale = motion
+    ? ' * motionDecayScale(motion, pu.motionDecayBias, pu.motionMode != 0u)'
+    : '';
   // Diagnostic red channel encodes the dominant layer normalised to [0,1].
   const dominantScale = Math.max(1, layerCount - 1).toFixed(1);
   const fullOverlap = `${layerCount}u`;
@@ -366,19 +445,17 @@ export function emitCoincidenceDecayWgsl(layerCount: number): string {
 @group(0) @binding(0) var cSampler  : sampler;
 ${bindings}
 @group(0) @binding(${prevBinding}) var prevTex   : texture_2d<f32>;
-
+${motionTexBinding}
 struct PersistUniforms {
   decayFactor : f32,
   colorThresh : f32,
   stampBoost  : f32,
   tracerMode  : u32,
   peakMode    : u32,
-  _pad0       : u32,
-  _pad1       : u32,
-  _pad2       : u32,
+${motionUniformFields}
 };
 @group(0) @binding(${uniformBinding}) var<uniform> pu : PersistUniforms;
-
+${motionHelpers}
 struct FragmentOutputs {
   @location(0) persistence : vec4<f32>,
   @location(1) stampDiagnostic : vec4<f32>,
@@ -388,7 +465,7 @@ struct FragmentOutputs {
 fn main(@location(0) uv : vec2<f32>) -> FragmentOutputs {
 ${samples}
   let prev = textureSample(prevTex, cSampler, uv);
-
+${motionSample}
   // Count how many layers have visible colour at this pixel.
   var layerCount = 0u;
   let thresh = pu.colorThresh;
@@ -424,9 +501,9 @@ ${dominant}
       }
     }
   }
-
+${motionTerm}
   // Decay modifier: decay faster when actively overlapping, slower otherwise.
-  let decayMod = select(${DECAY_WGSL.idleDecayExponent}, ${DECAY_WGSL.overlapDecayExponent}, layerCount >= 2u);
+  let decayMod = select(${DECAY_WGSL.idleDecayExponent}, ${DECAY_WGSL.overlapDecayExponent}, layerCount >= 2u)${decayScale};
   let effectiveDecay = pow(pu.decayFactor, decayMod);
   var decayed = prev * effectiveDecay;
   if (pu.peakMode == 1u) {

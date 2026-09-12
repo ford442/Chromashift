@@ -7,6 +7,8 @@ import {
   getOrCreateLayerBindGroup,
   invalidateLayerBindGroupCache,
 } from './BindGroupCache';
+import { MotionFieldPass } from './MotionFieldPass';
+import { MOTION_FIELD_DIVISOR } from './motionModes';
 import { PersistencePass } from './PersistencePass';
 import { CompositorPass } from './CompositorPass';
 import { TracerInspectPass } from './TracerInspectPass';
@@ -57,6 +59,14 @@ export class WebGPURenderer {
   private tracerScale = 1.0;
 
   private readonly persistence: PersistencePass;
+  private readonly motionField: MotionFieldPass;
+  /**
+   * Set whenever the source texture *object* changes (a new image, a live
+   * frame at a new resolution). A live source re-uploads into the same texture
+   * every tick, so identity — not the `setTexture` call itself — is what tells
+   * a genuinely new source apart from the next frame of the current one.
+   */
+  private motionResetPending = true;
   private readonly compositor: CompositorPass;
   private readonly tracerInspect: TracerInspectPass;
   private readonly readback: GpuReadback;
@@ -109,6 +119,7 @@ export class WebGPURenderer {
     }
 
     this.persistence = new PersistencePass(device, this.pipelines, this.internalFormat, this.compositorSampler);
+    this.motionField = new MotionFieldPass(device);
     this.compositor = new CompositorPass(device, this.pipelines, this.compositorSampler);
     this.tracerInspect = new TracerInspectPass(device, this.pipelines, this.compositorSampler);
     this.readback = new GpuReadback(device, format, this.pipelines);
@@ -188,6 +199,9 @@ export class WebGPURenderer {
   setTexture(handle: ChromashiftTextureHandle): void {
     if (handle.backend !== 'webgpu') {
       throw new Error(`Expected a webgpu texture handle, received ${handle.backend}.`);
+    }
+    if (this.currentTexture !== handle.texture) {
+      this.motionResetPending = true;
     }
     this.currentTexture = handle.texture;
     this.stationaryPreview.setSourceTexture(this.currentTexture);
@@ -343,6 +357,8 @@ export class WebGPURenderer {
         sampleCount: this.sampleCount,
         readbackActive: state.livePreviewEnabled !== false,
         internalBytesPerPixel: internalColorFormatBytesPerPixel(this.internalFormat),
+        motionActive: (state.motionMode ?? 0) !== 0,
+        motionDivisor: MOTION_FIELD_DIVISOR,
       });
     }
 
@@ -373,6 +389,9 @@ export class WebGPURenderer {
       ? this.lastRenderCpuMs
       : this.averageRenderCpuMs * 0.9 + this.lastRenderCpuMs * 0.1;
     this.gpuProfiler?.afterSubmit();
+    // Only when a mode is selected: `off` must not map a stats buffer, or
+    // publish a breadcrumb, for a pass that never ran.
+    if ((state.motionMode ?? 0) !== 0) this.motionField.afterSubmit();
     this.readback.afterSubmit(readbackFlags);
   }
 
@@ -448,6 +467,30 @@ export class WebGPURenderer {
     this.encodeLayerPasses(enc, state, canvasSize, layerOpacities);
     profiler?.markLayersEnd(enc);
 
+    // The motion field depends only on the source frame, so it runs before the
+    // persistence pass that consumes it. Encoded only when a mode is selected:
+    // `motionMode: 'off'` leaves the frame exactly as it was before the
+    // temporal term existed, down to the command buffer.
+    const motionMode = state.motionMode ?? 0;
+    let motionTexture: GPUTexture | null = null;
+    if (motionMode !== 0 && this.currentTexture) {
+      motionTexture = this.motionField.encode(
+        enc,
+        this.currentTexture,
+        this.currentTexture.width,
+        this.currentTexture.height,
+        {
+          threshold: state.motionThreshold ?? 0.04,
+          // A paused session shows a frozen frame; differencing it against
+          // itself is zero anyway, but the explicit reset keeps the first frame
+          // after unpausing from stamping a whole-screen "change".
+          reset: this.motionResetPending || state.paused === true,
+        },
+      );
+      this.motionResetPending = false;
+    }
+    profiler?.markMotionEnd(enc);
+
     this.persistence.encode(enc, layerTextures, {
       fps,
       colorThresh: state.tracerThreshold ?? 0.05,
@@ -457,6 +500,10 @@ export class WebGPURenderer {
       belowDuration: state.tracerBelowDuration ?? 0,
       aboveDuration: state.tracerAboveDuration ?? 1000,
       paused: state.paused ?? false,
+      motionMode,
+      motionGain: state.motionGain ?? 1,
+      motionDecayBias: state.motionDecayBias ?? 0.5,
+      motionTexture,
     });
     profiler?.markPersistenceEnd(enc);
 
@@ -592,6 +639,7 @@ export class WebGPURenderer {
     for (const t of this.layerTextures) t.destroy();
     this.msaaTexture?.destroy();
     this.persistence.destroy();
+    this.motionField.destroy();
     this.compositor.destroy();
     this.tracerInspect.destroy();
     this.readback.destroy();

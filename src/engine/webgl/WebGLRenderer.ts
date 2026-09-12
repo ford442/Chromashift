@@ -2,6 +2,7 @@ import { MAIN_VIEW_MODES } from '../viewModes';
 import type { CollisionStats, RendererState } from '../types/RendererState';
 import type {
   ChromashiftRenderer,
+  CpuMotionField,
   ExportFrameOptions,
   ExportFrameResult,
   ExportTracerOptions,
@@ -85,6 +86,18 @@ export class WebGLRenderer implements ChromashiftRenderer {
 
   clearPersistence(): void {
     this.persistencePass.clear();
+  }
+
+  /**
+   * Hand the diagnostic backend the latest motion field.
+   *
+   * There is no compute lane here, so the field arrives from the chore kit's
+   * `wasm`/`ts` lanes as a small `Float32Array` (see `useMotionField`) and is
+   * uploaded into a quarter-resolution R16F texture. `null` drops it, which
+   * returns the persistence pass to the non-motion program.
+   */
+  setMotionField(motion: CpuMotionField | null): void {
+    this.persistencePass.setMotionField(motion);
   }
 
   async renderStationaryPreviews(

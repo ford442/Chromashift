@@ -12,7 +12,7 @@
  * simply registers no `webgpu` lane and falls through to WASM/TS.
  */
 
-import { publishChoreBreadcrumbs } from './support';
+import { publishChoreBreadcrumbs, publishMotionFieldBreadcrumbs } from './support';
 import {
   CHORE_BACKEND_ORDER,
   type ChoreAttempt,
@@ -26,7 +26,28 @@ import {
   type GpuCoincidenceOutput,
   type ImageAnalysisJob,
   type ImageAnalysisOutput,
+  type MotionFieldJob,
+  type MotionFieldOutput,
 } from './types';
+
+/**
+ * Breadcrumbs are per-op: a `motion-field` job runs on the render loop's
+ * cadence and would otherwise overwrite the load-time `gpuChoreBackend`
+ * breadcrumb several times a second, hiding which lane actually classified
+ * the image. `window.motionFieldBackend` / `window.motionFieldReason` follow
+ * the same convention against their own pair of globals.
+ */
+function publishBreadcrumbsForOp(
+  op: ChoreJob['op'],
+  backend: string | null,
+  reason: string | null,
+): void {
+  if (op === 'motion-field') {
+    publishMotionFieldBreadcrumbs(backend, reason);
+    return;
+  }
+  publishChoreBreadcrumbs(backend, reason);
+}
 
 export class ChoreRuntimeImpl implements ChoresRuntime {
   private readonly backends = new Map<ChoreBackend, ChoreBackendImpl>();
@@ -51,6 +72,7 @@ export class ChoreRuntimeImpl implements ChoresRuntime {
 
   runJob(job: ImageAnalysisJob): Promise<ChoreResult<ImageAnalysisOutput>>;
   runJob(job: CoincidenceJob): Promise<ChoreResult<GpuCoincidenceOutput>>;
+  runJob(job: MotionFieldJob): Promise<ChoreResult<MotionFieldOutput>>;
   async runJob(job: ChoreJob): Promise<ChoreResult<ChoreOutput>> {
     const attempts: ChoreAttempt[] = [];
 
@@ -69,7 +91,7 @@ export class ChoreRuntimeImpl implements ChoresRuntime {
       try {
         const value = await backend.run(job);
         if (value) {
-          publishChoreBreadcrumbs(backend.breadcrumbLabel?.() ?? name, null);
+          publishBreadcrumbsForOp(job.op, backend.breadcrumbLabel?.() ?? name, null);
           return { ok: true, backend: name, value };
         }
         attempts.push({ backend: name, outcome: 'failed', reason: 'Lane returned no result' });
@@ -85,7 +107,7 @@ export class ChoreRuntimeImpl implements ChoresRuntime {
     const reason = attempts.length === 0
       ? 'No backends registered'
       : attempts.map((a) => `${a.backend}: ${a.reason}`).join('; ');
-    publishChoreBreadcrumbs(null, reason);
+    publishBreadcrumbsForOp(job.op, null, reason);
     return { ok: false, backend: null, reason, attempts };
   }
 

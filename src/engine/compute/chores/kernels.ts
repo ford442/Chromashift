@@ -206,3 +206,96 @@ fn coincidence_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   textureStore(diag_tex, coord, diag);
 }
 `;
+
+/**
+ * Quarter-resolution frame-difference motion field.
+ *
+ * Mirrors `motionKernel.ts` (the `ts` lane's portable implementation): box
+ * average BT.709 luminance over each `divisor`×`divisor` block, difference it
+ * against the previous frame's luminance for the same cell, subtract the noise
+ * floor and rescale the remainder.
+ *
+ * The previous-frame luminance lives in a pair of ping-ponged `r32float`
+ * storage textures owned by the lane, so the caller never has to keep a
+ * full-resolution copy of the last frame alive — the history is one float per
+ * *cell*, which at the default divisor is 1/16 of a plane.
+ *
+ * `motion_stats` accumulates the only numbers that may ever cross back to the
+ * CPU: a summed magnitude, a moving-cell count, and a cell total. The field
+ * itself stays a `GPUTexture`.
+ */
+export const MOTION_FIELD_COMPUTE_SHADER = /* wgsl */ `
+${WGSL_IMAGE_ANALYSIS_HELPERS}
+
+struct MotionParams {
+  src_width    : u32,
+  src_height   : u32,
+  field_width  : u32,
+  field_height : u32,
+  divisor      : u32,
+  reset        : u32,
+  is_srgb      : u32,
+  threshold    : f32,
+};
+
+struct MotionStats {
+  // Magnitude is in [0,1]; scaling by 1000 before the atomic keeps three
+  // decimal places without needing float atomics (not in WebGPU core).
+  sum_milli : atomic<u32>,
+  moving    : atomic<u32>,
+  cells     : atomic<u32>,
+  _pad      : u32,
+};
+
+@group(0) @binding(0) var src_tex       : texture_2d<f32>;
+@group(0) @binding(1) var prev_lum_tex  : texture_2d<f32>;
+@group(0) @binding(2) var field_tex     : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(3) var next_lum_tex  : texture_storage_2d<r32float, write>;
+@group(0) @binding(4) var<storage, read_write> motion_stats : MotionStats;
+@group(0) @binding(5) var<uniform> mp : MotionParams;
+
+@compute @workgroup_size(8, 8)
+fn motion_field_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= mp.field_width || gid.y >= mp.field_height) {
+    return;
+  }
+
+  let base = vec2<i32>(i32(gid.x * mp.divisor), i32(gid.y * mp.divisor));
+  var sum = 0.0;
+  var count = 0.0;
+  for (var dy = 0u; dy < mp.divisor; dy = dy + 1u) {
+    for (var dx = 0u; dx < mp.divisor; dx = dx + 1u) {
+      let coord = base + vec2<i32>(i32(dx), i32(dy));
+      if (coord.x < i32(mp.src_width) && coord.y < i32(mp.src_height)) {
+        let texel = textureLoad(src_tex, coord, 0);
+        let rgb = stored_rgb_u8(texel, mp.is_srgb != 0u) / 255.0;
+        sum = sum + dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        count = count + 1.0;
+      }
+    }
+  }
+  let lum = select(0.0, sum / max(count, 1.0), count > 0.0);
+
+  let cell = vec2<i32>(gid.xy);
+  let prev = textureLoad(prev_lum_tex, cell, 0).r;
+
+  var magnitude = 0.0;
+  if (mp.reset == 0u) {
+    let floor_value = clamp(mp.threshold, 0.0, 0.999);
+    let delta = abs(lum - prev);
+    if (delta > floor_value) {
+      magnitude = min((delta - floor_value) / max(1.0 - floor_value, 1e-4), 1.0);
+    }
+  }
+
+  // gb are reserved for the flow vector a block-matching / Lucas-Kanade stage
+  // would write; the frame-difference stage leaves them zero, which the
+  // persistence shader's \`direction\` mode reads as "no direction known yet".
+  textureStore(field_tex, cell, vec4<f32>(magnitude, 0.0, 0.0, 1.0));
+  textureStore(next_lum_tex, cell, vec4<f32>(lum, 0.0, 0.0, 1.0));
+
+  atomicAdd(&motion_stats.sum_milli, u32(magnitude * 1000.0));
+  atomicAdd(&motion_stats.moving, select(0u, 1u, magnitude > 0.0));
+  atomicAdd(&motion_stats.cells, 1u);
+}
+`;

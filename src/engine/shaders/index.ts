@@ -25,7 +25,12 @@ export {
   fragmentShaderGreenYellow,
   layerFragmentSources,
 } from './layers';
-export { persistenceFragmentSource, persistenceCompositeFragmentSource } from './persistence';
+export {
+  persistenceFragmentSource,
+  persistenceMotionFragmentSource,
+  persistenceCompositeFragmentSource,
+  persistenceCompositeMotionFragmentSource,
+} from './persistence';
 export { compositorFragmentSource } from './compositor';
 export {
   tracerViewFragmentSource,

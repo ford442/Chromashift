@@ -8,7 +8,9 @@ import type { VideoExportContainer, VideoExportQuality } from '../engine/videoEx
 import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
 import type { CompareViewState } from '../engine/compareViews';
 import type { ColorProfile } from '../engine/color/colorProfile';
+import type { MotionMode } from '../engine/motionModes';
 export type { ReactiveSlice } from '../engine/reactive/types';
+export type { MotionMode } from '../engine/motionModes';
 
 export type DisplayColorSpace = import('../engine/gpuOptions').DisplayColorSpace;
 
@@ -92,6 +94,18 @@ export interface TracersSlice {
   scale: number;
   layerBlendMode: number;
   tracerBlendMode: number;
+  /**
+   * Temporal term applied on top of the purely spatial coincidence test —
+   * `off` (the default) is behaviourally identical to the pre-motion pipeline.
+   * See `engine/motionModes.ts` and `docs/LIVE_SOURCE.md`.
+   */
+  motionMode: MotionMode;
+  /** How strongly motion boosts a fresh stamp. */
+  motionGain: number;
+  /** How much motion slows local decay (0 = none, 1 = trail fully held). */
+  motionDecayBias: number;
+  /** Noise floor on the frame difference, so sensor grain does not light up. */
+  motionThreshold: number;
 }
 
 export interface OutputSlice {

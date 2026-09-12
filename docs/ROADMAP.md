@@ -39,6 +39,7 @@ Recent closures (**#126–#133**) added the architecture below. All are **shippe
 | WebGPU bootstrap hardening | [#112](https://github.com/ford442/Chromashift/issues/112) / [#113](https://github.com/ford442/Chromashift/issues/113) | ✅ Shipped | Context resize + broader GPU/browser compatibility |
 | Named colour profiles | [#130](https://github.com/ford442/Chromashift/issues/130) | ✅ Shipped | [COLOR_PROFILES.md](COLOR_PROFILES.md), LUT path, preset schema v3 |
 | Live source (camera / screen / video file) | [#127](https://github.com/ford442/Chromashift/issues/127) | ✅ Shipped | [LIVE_SOURCE.md](LIVE_SOURCE.md), `LiveSource.ts` — not serialized into presets |
+| Settings schema v5 (tracer motion) | [#155](https://github.com/ford442/Chromashift/issues/155) | ✅ Shipped | `serializeSettings.ts` version 5 — `motionMode` / `motionGain` / `motionDecayBias` / `motionThreshold`; v1–v4 migrate to `motionMode: 'off'` |
 | gpu-chores facade | [#132](https://github.com/ford442/Chromashift/issues/132) | ✅ Shipped | `src/engine/compute/chores/` — WebGPU → WASM → TS |
 | Optional GPU features consumed | [#142](https://github.com/ford442/Chromashift/issues/142) | ✅ Shipped | `timestamp-query` + `rg11b10ufloat-renderable`; `float32-filterable` dropped; [gpu-bootstrap.md](gpu-bootstrap.md) |
 | WebGPU hard-fail (no silent WebGL) | [#133](https://github.com/ford442/Chromashift/issues/133) | ✅ Shipped | `WEBGL_BACKEND_ENABLED = false`; probe overlay, `usingWebGL` false on failure; [webgl-fallback.md](webgl-fallback.md) |
@@ -79,9 +80,9 @@ layers that do not currently scale.
 
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
-| P1 | Automation timeline (schema v5) | [#153](https://github.com/ford442/Chromashift/issues/153) | Feature | L | Presets are poses, not performances; unblocks authored exports and kiosk attract. Depends on #149 |
+| P1 | Automation timeline (schema v6) | [#153](https://github.com/ford442/Chromashift/issues/153) | Feature | L | Presets are poses, not performances; unblocks authored exports and kiosk attract. Depends on #149. (Was planned as v5; #155's tracer motion took that version first.) |
 | P2 | Pass-graph IR + compiler | [#154](https://github.com/ford442/Chromashift/issues/154) | Architecture | XL | 🚧 Phase 1 shipped behind `?graph=1` — IR, validator, scheduler, transient texture pool, structural-hash cache, and WGSL/GLSL templates that now *emit* the layer, persistence and compositor shaders (pinned pixel-identical against pre-refactor goldens). Phase 2 is the graph-driven executor; see [PASS_GRAPH.md](PASS_GRAPH.md) |
-| P2 | Motion-aware tracers | [#155](https://github.com/ford442/Chromashift/issues/155) | Feature | L | Persistence is spatial-only — live source's most interesting signal is discarded. Composes with #154 and #145 |
+| P2 | Motion-aware tracers | [#155](https://github.com/ford442/Chromashift/issues/155) | Feature | L | ✅ Stage 1 shipped — a `gpu-chores` `op: 'motion-field'` (quarter-res frame difference, GPU + WASM/TS lanes) feeding a `motionMode` / `motionGain` / `motionDecayBias` / `motionThreshold` term on both persistence backends, preset schema v5, and its own Perf HUD row. `off` is the default and binds the pre-motion shader variant unchanged. Stage 2 (real optical flow behind `direction` mode) is still open; lifts naturally into #154 as a `motion` node. See [LIVE_SOURCE.md](LIVE_SOURCE.md#motion-field-temporal-tracers) |
 
 **Reading the split:** #149 and #150 are the two that make everything else cheaper,
 and neither changes a pixel. #153 is the highest-value *product* addition — it is

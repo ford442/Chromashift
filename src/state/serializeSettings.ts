@@ -8,9 +8,15 @@ import {
   isClassicProfile,
   parseColorProfile,
 } from '../engine/color/colorProfile';
+import {
+  DEFAULT_MOTION_DECAY_BIAS,
+  DEFAULT_MOTION_GAIN,
+  DEFAULT_MOTION_THRESHOLD,
+  parseMotionMode,
+} from '../engine/motionModes';
 
-export const SETTINGS_SCHEMA_VERSION = 4 as const;
-export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4] as const;
+export const SETTINGS_SCHEMA_VERSION = 5 as const;
+export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4, 5] as const;
 
 export interface ChromashiftSettingsDocument {
   version: typeof SETTINGS_SCHEMA_VERSION;
@@ -66,7 +72,29 @@ function migrateColorProfile(
   };
 }
 
-/** Normalize a v1–v4 raw document to the current schema. */
+/**
+ * v5 added the tracer motion (temporal) term. A v1–v4 document predates it, so
+ * it migrates to `motionMode: 'off'` — the mode that renders exactly what the
+ * preset was saved as. The numeric parameters get their defaults, which are
+ * inert while the mode is off but keep a later toggle from landing on zeroes.
+ */
+function migrateMotion(
+  tracers: ChromashiftSettingsInput['tracers'],
+): ChromashiftSettingsInput['tracers'] {
+  return {
+    ...tracers,
+    motionMode: parseMotionMode(tracers?.motionMode),
+    motionGain: typeof tracers?.motionGain === 'number' ? tracers.motionGain : DEFAULT_MOTION_GAIN,
+    motionDecayBias: typeof tracers?.motionDecayBias === 'number'
+      ? tracers.motionDecayBias
+      : DEFAULT_MOTION_DECAY_BIAS,
+    motionThreshold: typeof tracers?.motionThreshold === 'number'
+      ? tracers.motionThreshold
+      : DEFAULT_MOTION_THRESHOLD,
+  };
+}
+
+/** Normalize a v1–v5 raw document to the current schema. */
 export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDocument {
   const { settings } = doc;
   const output = settings.output ? { ...settings.output } : undefined;
@@ -104,6 +132,7 @@ export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDo
     settings: {
       ...settings,
       layers: migrateColorProfile(settings.layers),
+      tracers: migrateMotion(settings.tracers),
       output,
       reactive,
       viewport: {

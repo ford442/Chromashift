@@ -7,6 +7,8 @@ import {
   type CoincidenceJob,
   type ImageAnalysisJob,
   type ImageAnalysisOutput,
+  type MotionFieldJob,
+  type MotionFramePixels,
 } from './types';
 
 const IMAGE = {} as HTMLImageElement;
@@ -282,5 +284,187 @@ describe('gpu-chores runtime — coincidence op (GPU-only, no CPU lane)', () => 
     expect(result.attempts.map((a) => a.backend)).toEqual(['webgpu', 'wasm', 'ts']);
     expect(result.attempts[1].reason).toContain('GPU compute only');
     expect(result.attempts[2].reason).toContain('GPU compute only');
+  });
+});
+
+describe('gpu-chores runtime — motion-field op', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Solid-grey RGBA frame, 4x4, at `level`. */
+  function frame(level: number): MotionFramePixels {
+    const data = new Uint8ClampedArray(4 * 4 * 4);
+    for (let i = 0; i < 16; i += 1) {
+      data[i * 4] = level;
+      data[i * 4 + 1] = level;
+      data[i * 4 + 2] = level;
+      data[i * 4 + 3] = 255;
+    }
+    return { data, width: 4, height: 4 };
+  }
+
+  function motionJob(overrides: Partial<MotionFieldJob> = {}): MotionFieldJob {
+    return { op: 'motion-field', width: 4, height: 4, threshold: 0.04, divisor: 2, ...overrides };
+  }
+
+  /** Minimal stand-in for the WebGPU lane's motion support. */
+  function motionGpuLane(overrides: Partial<ChoreBackendImpl> = {}): ChoreBackendImpl {
+    return {
+      backend: 'webgpu',
+      canRun: (j) => j.op === 'motion-field' && Boolean(j.source),
+      declineReason: () => 'No GPU-resident source frame',
+      run: async () => ({
+        kind: 'gpu-motion-field',
+        fieldTexture: TEXTURE,
+        width: 2,
+        height: 2,
+      }),
+      ...overrides,
+    };
+  }
+
+  it('prefers the webgpu lane when a GPU frame is present', async () => {
+    const runtime = createChoresRuntime([
+      motionGpuLane(),
+      new CpuChoreBackend('wasm', cpuHost()),
+      new CpuChoreBackend('ts', cpuHost()),
+    ]);
+
+    const result = await runtime.runJob(motionJob({ source: TEXTURE, pixels: frame(10) }));
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.backend).toBe('webgpu');
+    expect(result.ok && result.value.kind).toBe('gpu-motion-field');
+  });
+
+  it('falls through to ts when the host supplies no WASM motion kernel', async () => {
+    const runtime = createChoresRuntime([
+      motionGpuLane(),
+      new CpuChoreBackend('wasm', cpuHost()),
+      new CpuChoreBackend('ts', cpuHost()),
+    ]);
+
+    // No GPU source, and the default host has no `motionField` — the WASM
+    // lane must decline with a reason rather than pretend.
+    const result = await runtime.runJob(motionJob({ pixels: frame(10) }));
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.backend).toBe('ts');
+    expect(result.ok && result.value.kind).toBe('cpu-motion-field');
+  });
+
+  it('uses the wasm lane when the host does supply the kernel', async () => {
+    const motionField = vi.fn(async () => ({
+      field: new Float32Array([0, 0.5, 0, 0]),
+      width: 2,
+      height: 2,
+    }));
+    const runtime = createChoresRuntime([
+      new CpuChoreBackend('wasm', cpuHost({ motionField })),
+      new CpuChoreBackend('ts', cpuHost()),
+    ]);
+
+    const result = await runtime.runJob(motionJob({ pixels: frame(10) }));
+
+    expect(result.ok && result.backend).toBe('wasm');
+    expect(motionField).toHaveBeenCalledTimes(1);
+    expect(result.ok && result.value.kind === 'cpu-motion-field' && result.value.stats.movingFraction)
+      .toBeCloseTo(0.25, 5);
+  });
+
+  it('returns a small array from the CPU lane, never a full-resolution readback', async () => {
+    const runtime = createChoresRuntime([new CpuChoreBackend('ts', cpuHost())]);
+
+    const result = await runtime.runJob(motionJob({ pixels: frame(10) }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value.kind !== 'cpu-motion-field') throw new Error('expected a CPU field');
+    // 4x4 source at divisor 2 -> a 2x2 field, not 16 entries.
+    expect(result.value.width).toBe(2);
+    expect(result.value.height).toBe(2);
+    expect(result.value.field.length).toBe(4);
+  });
+
+  it('holds the frame history in the lane: still frames stay at zero, a change does not', async () => {
+    const lane = new CpuChoreBackend('ts', cpuHost());
+    const runtime = createChoresRuntime([lane]);
+
+    const first = await runtime.runJob(motionJob({ pixels: frame(10) }));
+    const still = await runtime.runJob(motionJob({ pixels: frame(10) }));
+    const moved = await runtime.runJob(motionJob({ pixels: frame(200) }));
+
+    // First frame has no history to difference against.
+    expect(first.ok && first.value.kind === 'cpu-motion-field' && first.value.stats.meanMagnitude).toBe(0);
+    expect(still.ok && still.value.kind === 'cpu-motion-field' && still.value.stats.meanMagnitude).toBe(0);
+    expect(moved.ok && moved.value.kind === 'cpu-motion-field' && moved.value.stats.meanMagnitude)
+      .toBeGreaterThan(0);
+  });
+
+  it('reset drops the history, so the next field is zero again', async () => {
+    const runtime = createChoresRuntime([new CpuChoreBackend('ts', cpuHost())]);
+
+    await runtime.runJob(motionJob({ pixels: frame(10) }));
+    const result = await runtime.runJob(motionJob({ pixels: frame(200), reset: true }));
+
+    expect(result.ok && result.value.kind === 'cpu-motion-field' && result.value.stats.meanMagnitude)
+      .toBe(0);
+  });
+
+  it('a pinned lane never slides to another lane', async () => {
+    const runtime = createChoresRuntime([
+      motionGpuLane(),
+      new CpuChoreBackend('wasm', cpuHost()),
+      new CpuChoreBackend('ts', cpuHost()),
+    ]);
+
+    const result = await runtime.runJob(motionJob({ pixels: frame(10), prefer: 'webgpu' }));
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.attempts).toHaveLength(1);
+    expect(result.attempts[0].backend).toBe('webgpu');
+    expect(result.attempts[0].reason).toContain('No GPU-resident source frame');
+  });
+
+  it('never silently skips: a total failure reports every attempt', async () => {
+    const runtime = createChoresRuntime([
+      motionGpuLane(),
+      new CpuChoreBackend('wasm', cpuHost()),
+      new CpuChoreBackend('ts', cpuHost()),
+    ]);
+
+    // No GPU texture and no decoded pixels: nothing can take the job.
+    const result = await runtime.runJob(motionJob());
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.attempts.map((a) => a.backend)).toEqual(['webgpu', 'wasm', 'ts']);
+    expect(result.attempts[1].reason).toContain('No decoded frame pixels');
+    expect(result.attempts[2].reason).toContain('No decoded frame pixels');
+  });
+
+  it('publishes motionField breadcrumbs, leaving the image-analysis pair untouched', async () => {
+    const fakeWindow = {} as unknown as Window;
+    vi.stubGlobal('window', fakeWindow);
+    try {
+      const runtime = createChoresRuntime([
+        new CpuChoreBackend('wasm', cpuHost()),
+        new CpuChoreBackend('ts', cpuHost()),
+      ]);
+      await runtime.runJob(motionJob({ pixels: frame(10) }));
+
+      const w = fakeWindow as unknown as {
+        motionFieldBackend?: string | null;
+        motionFieldReason?: string | null;
+        gpuChoreBackend?: string | null;
+      };
+      expect(w.motionFieldBackend).toBe('ts-inline');
+      expect(w.motionFieldReason).toBeNull();
+      // The render-loop op must not stamp over the load-time analysis crumb.
+      expect(w.gpuChoreBackend).toBeUndefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

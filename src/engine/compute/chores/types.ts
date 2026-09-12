@@ -10,6 +10,10 @@
  * Nothing in this file may import Chromashift-specific modules.
  */
 
+import type { MotionFieldStats } from './motionKernel';
+
+export type { MotionFieldStats } from './motionKernel';
+
 /** Concrete execution lanes, in the order the facade prefers them. */
 export type ChoreBackend = 'webgpu' | 'wasm' | 'ts';
 
@@ -29,7 +33,7 @@ export type ChorePreference = 'auto' | ChoreBackend;
 export const CHORE_BACKEND_ORDER: readonly ChoreBackend[] = ['webgpu', 'wasm', 'ts'];
 
 /** Operations the kit knows how to dispatch. */
-export type ChoreOp = 'image-analysis' | 'coincidence';
+export type ChoreOp = 'image-analysis' | 'coincidence' | 'motion-field';
 
 /**
  * Analyze an image: 256-bin BT.709 luminance histogram + per-pixel band mask.
@@ -76,7 +80,46 @@ export interface CoincidenceJob {
   prefer?: ChorePreference;
 }
 
-export type ChoreJob = ImageAnalysisJob | CoincidenceJob;
+/**
+ * Produce a low-resolution motion field for the current source frame.
+ *
+ * The lane owns the previous frame's luminance, so a caller only ever hands
+ * over the *current* frame: on a per-frame render loop that is the difference
+ * between one texture upload and an extra full-resolution history copy.
+ *
+ * Both lane families are real here, unlike `coincidence`: the `webgpu` lane
+ * consumes a GPU-resident frame and keeps the field on the GPU, while the
+ * `wasm`/`ts` lanes consume decoded pixels and return a small array — which is
+ * what keeps the WebGL diagnostic backend and headless CI honest.
+ */
+export interface MotionFieldJob {
+  op: 'motion-field';
+  /** GPU-resident current frame. Required by the `webgpu` lane. */
+  source?: GPUTexture | null;
+  /** Decoded current frame, tightly packed RGBA8. Required by the CPU lanes. */
+  pixels?: MotionFramePixels | null;
+  width: number;
+  height: number;
+  /** Resolution divisor for the field; defaults to 4 (quarter resolution). */
+  divisor?: number;
+  /** Noise floor on the normalised luminance difference, in [0,1). */
+  threshold: number;
+  /**
+   * Drop the previous-frame history before differencing (source switch, seek,
+   * resize). The resulting field is all-zero, exactly like a first frame.
+   */
+  reset?: boolean;
+  prefer?: ChorePreference;
+}
+
+/** Decoded RGBA8 frame handed to the CPU lanes. */
+export interface MotionFramePixels {
+  data: Uint8ClampedArray | Uint8Array;
+  width: number;
+  height: number;
+}
+
+export type ChoreJob = ImageAnalysisJob | CoincidenceJob | MotionFieldJob;
 
 /**
  * GPU lane output. The mask stays a `GPUTexture` — the CPU contract for this
@@ -118,7 +161,40 @@ export interface GpuCoincidenceOutput {
   diagTexture: GPUTexture;
 }
 
-export type ChoreOutput = ImageAnalysisOutput | GpuCoincidenceOutput;
+/**
+ * GPU lane output. The field stays a `GPUTexture` — no full readback, ever.
+ * Summary statistics are fetched separately and on the caller's own cadence
+ * (see `WebGpuChoreBackend.readMotionFieldStats`), so the per-frame path never
+ * maps a buffer.
+ */
+export interface GpuMotionFieldOutput {
+  kind: 'gpu-motion-field';
+  /**
+   * `rgba16float`: r = magnitude in [0,1], gb = flow vector (zero for the
+   * frame-difference stage), a = 1. Owned and reused by the lane; callers
+   * must not destroy it.
+   */
+  fieldTexture: GPUTexture;
+  width: number;
+  height: number;
+}
+
+/**
+ * CPU lane output. One float per field cell — at the default quarter-scale
+ * divisor a 1080p frame is a 480×270 array, which is the "small array" half of
+ * the chores CPU contract, not a full-image readback.
+ */
+export interface CpuMotionFieldOutput {
+  kind: 'cpu-motion-field';
+  field: Float32Array;
+  width: number;
+  height: number;
+  stats: MotionFieldStats;
+}
+
+export type MotionFieldOutput = GpuMotionFieldOutput | CpuMotionFieldOutput;
+
+export type ChoreOutput = ImageAnalysisOutput | GpuCoincidenceOutput | MotionFieldOutput;
 
 /** A lane ran the job. */
 export interface ChoreSuccess<T> {
@@ -182,6 +258,30 @@ export interface CpuImageAnalysisResult {
 }
 
 /**
+ * Optional WASM acceleration for the `motion-field` op.
+ *
+ * A host that cannot supply it simply omits it: the `wasm` lane then declines
+ * motion jobs with a recorded reason and `auto` slides to `ts`, which always
+ * has the portable kernel. That is the same "decline, never pretend" rule the
+ * WASM lane already follows for `image-analysis`.
+ */
+export interface CpuMotionFieldHost {
+  motionField(
+    frame: MotionFramePixels,
+    divisor: number,
+    threshold: number,
+    reset: boolean,
+  ): Promise<CpuMotionFieldResult | null>;
+}
+
+/** Result of a host-supplied WASM motion-field call. */
+export interface CpuMotionFieldResult {
+  field: Float32Array;
+  width: number;
+  height: number;
+}
+
+/**
  * Host-supplied CPU implementation backing the `wasm` and `ts` lanes. Injected
  * rather than imported so `chores/` stays free of Chromashift-specific
  * dependencies — sibling apps supply their own equivalent.
@@ -191,7 +291,7 @@ export interface CpuImageAnalysisResult {
  * a Web Worker — without changing the lane contract: `ChoresRuntime.runJob`
  * is already `async`.
  */
-export interface CpuChoreHost {
+export interface CpuChoreHost extends Partial<CpuMotionFieldHost> {
   /** True when the WASM module is loaded and callable. */
   isWasmReady(): boolean;
   /**
@@ -224,6 +324,7 @@ export interface ChoresRuntime {
   /** Overloaded so callers get back the output type their job's `op` implies. */
   runJob(job: ImageAnalysisJob): Promise<ChoreResult<ImageAnalysisOutput>>;
   runJob(job: CoincidenceJob): Promise<ChoreResult<GpuCoincidenceOutput>>;
+  runJob(job: MotionFieldJob): Promise<ChoreResult<MotionFieldOutput>>;
   /** Lanes currently registered and reporting themselves usable. */
   availableBackends(): readonly ChoreBackend[];
   destroy(): void;

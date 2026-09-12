@@ -1,4 +1,5 @@
 import { MAIN_VIEW_MODES } from './viewModes';
+import { motionModeIndex } from './motionModes';
 import { getColorProfileLut, isClassicProfile } from './color/colorProfile';
 import { resolveColorProfile } from './color/colorProfileLibrary';
 import type { ChromashiftState } from '../state/types';
@@ -76,6 +77,10 @@ export function buildRendererState(
   target.tracerAboveDuration = tracers.aboveDuration * (60 / engine.fps);
   target.tracerBelowDuration = tracers.belowDuration * (60 / engine.fps);
   target.tracerMode = tracers.mode;
+  target.motionMode = motionModeIndex(tracers.motionMode);
+  target.motionGain = tracers.motionGain;
+  target.motionDecayBias = tracers.motionDecayBias;
+  target.motionThreshold = tracers.motionThreshold;
   target.colorMode = layers.colorMode;
   target.colorProfileLut = useProfileLut ? getColorProfileLut(profile, engine.avgLuminance) : null;
   target.colorProfileMode = useProfileLut ? 1 : 0;
