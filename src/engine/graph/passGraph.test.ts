@@ -201,6 +201,19 @@ describe('transient texture pool', () => {
     expect(allocation.assignment[DEFAULT_GRAPH_IDS.source]).toBe('external');
   });
 
+  it('gives a ping-pong node its history slot even when it writes the output', () => {
+    // `consumers` is built from non-feedback inputs, so the swapchain shortcut
+    // cannot see that a decay node reads its own previous frame. Without the
+    // persistent check running first, `d` would lose its history pair.
+    const graph = graphOf(
+      [node('src', 'source'), node('d', 'decay', ['src']), node('out', 'output', ['d'])],
+      'out',
+    );
+    const allocation = plan(graph);
+    expect(allocation.assignment.d).toBe('persist:d');
+    expect(allocation.slotsByResolution.tracer).toBe(1);
+  });
+
   it('reuses one slot across non-overlapping lifetimes', () => {
     // A chain of blurs: each result dies as soon as the next pass reads it, so
     // the whole chain needs two targets, not four.
@@ -317,7 +330,9 @@ describe('backend capabilities', () => {
 });
 
 describe('arbitrary layer counts', () => {
-  it.each([1, 2, 3, 5, 8])('compiles a %i-layer graph on both backends', (layerCount) => {
+  // 10 is the maximum: it is the only count where every group owns a single
+  // band, which is what makes the highlight band the last one in its group.
+  it.each([1, 2, 3, 5, 8, 10])('compiles a %i-layer graph on both backends', (layerCount) => {
     for (const backend of ['webgpu', 'webgl'] as const) {
       const compiled = compileGraph(buildDefaultGraph(layerCount), backend);
       expect(compiled.layerCount).toBe(layerCount);
@@ -342,6 +357,19 @@ describe('arbitrary layer counts', () => {
       // Every canonical band index is claimed by exactly one layer.
       expect(new Set(bands).size).toBe(bands.length);
       expect(bands).toHaveLength(10);
+    }
+  });
+
+  it('gives every generated layer at least one gradient arm', () => {
+    // A band group of size one used to emit no gradient arm at all, leaving
+    // that layer fully transparent in Chromashift gradient mode.
+    for (let count = 1; count <= 10; count += 1) {
+      for (const spec of buildLayerSpecs(count)) {
+        expect(
+          spec.gradient.length,
+          `layerCount=${count} layer=${spec.index} has no gradient arm`,
+        ).toBeGreaterThanOrEqual(1);
+      }
     }
   });
 

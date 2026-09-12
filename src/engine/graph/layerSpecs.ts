@@ -261,9 +261,11 @@ export function buildLayerSpecs(layerCount: number): readonly LayerSpec[] {
       })),
       cropUpper,
       nunif2Alpha: index === 0 ? '0.5' : '0.777',
-      gradient: bandIndices.slice(0, -1).map((_, i) => ({
-        lo: lowers[i + 1],
-        hi: i === 0 && cropUpper === null ? '255.0' : (i === 0 ? cropUpper! : lowers[i]),
+      // One arm per band, highest first, so a group that owns a single band
+      // still renders in gradient mode instead of staying fully transparent.
+      gradient: bandIndices.map((_, i) => ({
+        lo: lowers[i],
+        hi: i === 0 ? cropUpper ?? '255.0' : lowers[i - 1],
         hueLo: (hue + 10 * i).toFixed(1),
         hueHi: (hue + 10 * (i + 1)).toFixed(1),
         sat: '1.0',

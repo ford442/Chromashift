@@ -187,7 +187,10 @@ function emitSoftArmsWgsl(spec: LayerSpec, depth: number): string {
   const arms = spec.fixed.map((band, i) => {
     const head = i === 0 ? `${pad}if` : `${pad}} else if`;
     if (band.highlight) {
-      const fade = spec.fixed[i + 1];
+      // The band below the highlight, or the dark tail when the highlight is
+      // the only band this layer owns (every group is single-band at the
+      // maximum layer count).
+      const fade = spec.fixed[i + 1] ?? spec.darkFade;
       return [
         `${head} (rgb > ${band.lower} - tw) {`,
         `${pad}  let t = softThreshold(rgb, ${band.lower}, tw);`,

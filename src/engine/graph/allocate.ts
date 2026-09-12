@@ -71,11 +71,10 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
       continue;
     }
 
-    if (writesSwapchain(pass.nodeId)) {
-      assignment[pass.nodeId] = SWAPCHAIN_SLOT;
-      continue;
-    }
-
+    // Ping-pong first: a `decay` whose only consumer is the output node still
+    // needs its own history pair, or next frame's `prevTex` read has no
+    // backing target. `consumers` is built from non-feedback inputs, so the
+    // swapchain shortcut below cannot see that the node reads itself.
     const lifetime = lifetimeOf.get(pass.nodeId)!;
     if (lifetime.persistent) {
       const slot: PoolSlot = {
@@ -85,6 +84,11 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
       };
       slots.push(slot);
       assignment[pass.nodeId] = slot.id;
+      continue;
+    }
+
+    if (writesSwapchain(pass.nodeId)) {
+      assignment[pass.nodeId] = SWAPCHAIN_SLOT;
       continue;
     }
 
