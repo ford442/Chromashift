@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { ExportPassMode } from '../../engine/types/RendererContracts';
 import type { VideoCodecSupport } from '../../engine/videoExport/videoCodecs';
 import type { VideoExportContainer, VideoExportQuality, VideoExportSettings } from '../../state/types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 export interface ExportPanelProps {
   exportingVideo: boolean;
@@ -56,6 +57,7 @@ export const ExportPanel = memo(function ExportPanel({
   onVideoExportContainerChange,
   onVideoExportQualityChange,
 }: ExportPanelProps) {
+  useRenderCount('ExportPanel');
   const progressPct = Math.round(videoExportProgress * 100);
   const canExport = (codecSupport.webCodecsUsable || codecSupport.mediaRecorder) && !exportingVideo;
   const showWebCodecsControls = codecSupport.webCodecsUsable;

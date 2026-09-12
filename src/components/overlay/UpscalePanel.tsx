@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { UpscalePanelProps } from './types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 function composeSwinModel(style: string, scale: string, noise: string): string {
   const n = scale === '1' && noise === '-1' ? '0' : noise;
@@ -15,6 +16,7 @@ export const UpscalePanel = memo(function UpscalePanel({
   onUpscaleSource,
   onUpscaleOutput,
 }: UpscalePanelProps) {
+  useRenderCount('UpscalePanel');
   const isSwin = upscaleModel.startsWith('swin_unet');
   const swinParts = isSwin ? upscaleModel.split(':') : [];
   const swinStyle = swinParts[1] ?? 'art';

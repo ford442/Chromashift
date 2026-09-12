@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { MIDI_PARAM_LABELS, type MidiParamId } from '../../engine/reactive/types';
 import type { ReactivePanelProps } from './types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 function LevelMeter({ label, value, color }: { label: string; value: number; color: string }) {
   const pct = Math.round(value * 100);
@@ -39,6 +40,7 @@ export const ReactivePanel = memo(function ReactivePanel({
   onMidiLearnTargetChange,
   onRemoveMidiBinding,
 }: ReactivePanelProps) {
+  useRenderCount('ReactivePanel');
   const layer0Binding = midiBindings.find((b) => b.param === 'layers.extensions.0');
 
   return (

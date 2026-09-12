@@ -3,11 +3,14 @@ import { NunifOverlay } from './NunifOverlay';
 import { MainViewport } from './MainViewport';
 import { PreviewStrip } from './PreviewStrip';
 import { ChromeShell } from './ChromeShell';
-import { buildOverlayProps } from './buildOverlayProps';
+import { useOverlayProps } from './useOverlayProps';
+import { useRenderCount } from '../debug/renderCounts';
 import { collectImageFilesFromDataTransfer } from '../engine/fileDrop';
 import type { AppUIProps } from './AppUI.types';
 
 export function AppUI(props: AppUIProps) {
+  useRenderCount('AppUI');
+  const overlayProps = useOverlayProps(props);
   const {
     containerRef,
     mainViewportRef,
@@ -210,7 +213,7 @@ export function AppUI(props: AppUIProps) {
         setSpecificImageError={setSpecificImageError}
       />
 
-      {showChrome && <NunifOverlay {...buildOverlayProps(props)} />}
+      {showChrome && <NunifOverlay {...overlayProps} />}
     </div>
   );
 }

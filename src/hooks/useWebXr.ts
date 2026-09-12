@@ -12,6 +12,8 @@ export interface WebXrControls {
   xrError: string | null;
   xrEnterAllowed: boolean;
   enterXr: () => Promise<void>;
+  /** `enterXr` with the promise discarded — stable, for prop bags that want a `() => void`. */
+  startXr: () => void;
   exitXr: () => void;
 }
 
@@ -101,6 +103,9 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
     }
   }, [animAnglesRef, renderStateRef, xrBusy, xrEnterAllowed, xrImmersive]);
 
+  /** `enterXr` with the promise discarded — a stable identity for the overlay props. */
+  const startXr = useCallback(() => { void enterXr(); }, [enterXr]);
+
   return {
     xrAvailable,
     xrReason,
@@ -109,6 +114,7 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
     xrError,
     xrEnterAllowed,
     enterXr,
+    startXr,
     exitXr,
   };
 }

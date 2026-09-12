@@ -385,12 +385,13 @@ export function useTracerExport(
   refs: ChromashiftRefs,
   store: ChromashiftStore,
 ) {
-  const { state, actions } = store;
+  const { getState, actions } = store;
   const { rendererRef, mainCanvasRef } = refs;
 
   const handleExportTracer = useCallback(async () => {
     const renderer = rendererRef.current;
-    if (!renderer || state.ui.exportingTracer) return;
+    const snapshot = getState();
+    if (!renderer || snapshot.ui.exportingTracer) return;
     actions.setExportingTracer(true);
     try {
       const mainCanvas = mainCanvasRef.current;
@@ -400,7 +401,7 @@ export function useTracerExport(
       const exportScale = Math.max(1, 3840 / longestEdge);
       const width = Math.max(1, Math.round(baseWidth * exportScale));
       const height = Math.max(1, Math.round(baseHeight * exportScale));
-      const { tracers, layers, output } = state;
+      const { tracers, layers, output } = snapshot;
       const inspect = output.tracerInspect;
       const result = await renderer.exportTracerView({
         width,
@@ -440,7 +441,7 @@ export function useTracerExport(
     } finally {
       actions.setExportingTracer(false);
     }
-  }, [rendererRef, mainCanvasRef, state, actions]);
+  }, [rendererRef, mainCanvasRef, getState, actions]);
 
   return { handleExportTracer };
 }

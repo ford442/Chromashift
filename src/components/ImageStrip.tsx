@@ -1,6 +1,7 @@
 import { memo, useRef } from 'react';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { LiveSourceState } from '../state/types';
+import { useRenderCount } from '../debug/renderCounts';
 
 interface Props {
   images: ImageEntry[];
@@ -51,6 +52,7 @@ export const ImageStrip = memo(function ImageStrip({
   onLoadVideoFile,
   onStopLiveSource,
 }: Props) {
+  useRenderCount('ImageStrip');
   const localCount = images.filter((image) => image.localId).length;
   const videoFileInputRef = useRef<HTMLInputElement | null>(null);
 

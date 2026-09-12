@@ -9,6 +9,7 @@ import {
 } from '../../engine/telemetryStore';
 import type { RendererBackend } from '../../engine/RendererTypes';
 import type { DiagnosticsPanelProps } from './types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 function formatPassMs(value: number | undefined): string {
   return value === undefined ? '—' : value.toFixed(2);
@@ -124,6 +125,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   onTracerInspectShowLayersToggle,
   onResetInspectView,
 }: DiagnosticsPanelProps) {
+  useRenderCount('DiagnosticsPanel');
   return (
     <div className="space-y-3">
       <div className="panel-3d space-y-2">

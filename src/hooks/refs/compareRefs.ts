@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import type { LayerTriple } from '../../state/types';
 import type { CompareRefs } from './types';
 
@@ -18,7 +18,7 @@ export function useCompareRefs(): CompareRefs {
   const lastRenderMetricSyncRef = useRef(0);
   const refreshQuadCellsRef = useRef<(() => void) | null>(null);
 
-  return {
+  return useMemo(() => ({
     canvasBRef,
     rendererBRef,
     canvasARef,
@@ -29,5 +29,16 @@ export function useCompareRefs(): CompareRefs {
     lastAngleSyncRef,
     lastRenderMetricSyncRef,
     refreshQuadCellsRef,
-  };
+  }), [
+    canvasBRef,
+    rendererBRef,
+    canvasARef,
+    canvasCRef,
+    quadRenderersRef,
+    animAnglesRef,
+    animAnglesBRef,
+    lastAngleSyncRef,
+    lastRenderMetricSyncRef,
+    refreshQuadCellsRef,
+  ]);
 }

@@ -4,6 +4,7 @@ import { CLASSIC_PROFILE_ID } from '../../engine/color/colorProfile';
 import { useLiveLayerAngle } from '../../engine/telemetryStore';
 import { LAYER_COLORS, LAYER_LABELS } from './constants';
 import type { LayerIndex, LayerPanelProps } from './types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 /**
  * Subscribes directly to the live angle for one layer (see
@@ -55,6 +56,7 @@ export const LayerPanel = memo(function LayerPanel({
   onSoftCropEnabledToggle,
   colorProfiles,
 }: LayerPanelProps) {
+  useRenderCount('LayerPanel');
   const profileFileInputRef = useRef<HTMLInputElement>(null);
   const isCustomProfileActive = colorProfiles.userProfiles.some(
     (profile) => profile.id === colorProfiles.activeProfileId,

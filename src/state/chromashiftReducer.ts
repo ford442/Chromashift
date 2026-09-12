@@ -63,6 +63,41 @@ export interface ChromashiftSettingsInput {
   kiosk?: Pick<UiSlice, 'kioskEnabled' | 'kioskUiHidden' | 'kioskAttractMode'>;
 }
 
+/**
+ * Merge `patch` into `slice`, returning `slice` itself when nothing moved.
+ *
+ * Several writers re-publish a value they recompute rather than one they know
+ * changed — the luminance sampler re-reports the same rounded average a couple
+ * of times a second, image loads re-report the same aspect ratio. Allocating a
+ * new slice for those makes `useReducer` hand React a new root state, which
+ * re-renders the whole UI tree for a change of nothing at all. Bailing out on a
+ * no-op patch lets React skip the render entirely (`useReducer` compares the
+ * returned state by identity), which is what keeps an idle session still.
+ *
+ * The comparison is shallow by design: a patch carrying a fresh array or object
+ * (a new image list, a rebuilt opacity triple) is always treated as a change,
+ * so this can never swallow a real update.
+ */
+function patchSlice<T extends object>(slice: T, patch: Partial<T>): T {
+  let changed = false;
+  for (const key of Object.keys(patch) as (keyof T)[]) {
+    if (!Object.is(slice[key], patch[key])) {
+      changed = true;
+      break;
+    }
+  }
+  return changed ? { ...slice, ...patch } : slice;
+}
+
+/** Re-wrap `state` with a replaced slice, keeping `state` itself when the slice did not move. */
+function withSlice<K extends keyof ChromashiftState>(
+  state: ChromashiftState,
+  key: K,
+  next: ChromashiftState[K],
+): ChromashiftState {
+  return Object.is(state[key], next) ? state : { ...state, [key]: next };
+}
+
 export function chromashiftReducer(
   state: ChromashiftState,
   action: ChromashiftAction,
@@ -80,50 +115,39 @@ export function chromashiftReducer(
       };
 
     case 'media/patch':
-      return { ...state, media: { ...state.media, ...action.patch } };
+      return withSlice(state, 'media', patchSlice(state.media, action.patch));
 
     case 'media/patchLiveSource':
-      return {
-        ...state,
-        media: {
-          ...state.media,
-          liveSource: { ...state.media.liveSource, ...action.patch },
-        },
-      };
+      return withSlice(state, 'media', patchSlice(state.media, {
+        liveSource: patchSlice(state.media.liveSource, action.patch),
+      }));
 
     case 'media/selectIndex':
-      return {
-        ...state,
-        media: {
-          ...state.media,
-          currentIndex: action.index,
-          previous: action.previous ?? state.media.previous,
-        },
-      };
+      return withSlice(state, 'media', patchSlice(state.media, {
+        currentIndex: action.index,
+        previous: action.previous ?? state.media.previous,
+      }));
 
     case 'layers/patch':
-      return { ...state, layers: { ...state.layers, ...action.patch } };
+      return withSlice(state, 'layers', patchSlice(state.layers, action.patch));
 
     case 'layers/setTriple': {
+      if (Object.is(state.layers[action.field][action.layer], action.value)) return state;
       const next = [...state.layers[action.field]] as LayerTriple<number>;
       next[action.layer] = action.value;
-      return { ...state, layers: { ...state.layers, [action.field]: next } };
+      return withSlice(state, 'layers', { ...state.layers, [action.field]: next });
     }
 
     case 'tracers/patch':
-      return { ...state, tracers: { ...state.tracers, ...action.patch } };
+      return withSlice(state, 'tracers', patchSlice(state.tracers, action.patch));
 
     case 'output/patch':
-      return { ...state, output: { ...state.output, ...action.patch } };
+      return withSlice(state, 'output', patchSlice(state.output, action.patch));
 
     case 'output/patchInspect':
-      return {
-        ...state,
-        output: {
-          ...state.output,
-          tracerInspect: { ...state.output.tracerInspect, ...action.patch },
-        },
-      };
+      return withSlice(state, 'output', patchSlice(state.output, {
+        tracerInspect: patchSlice(state.output.tracerInspect, action.patch),
+      }));
 
     case 'output/resetInspectView':
       return {
@@ -135,19 +159,15 @@ export function chromashiftReducer(
       };
 
     case 'engine/patch':
-      return { ...state, engine: { ...state.engine, ...action.patch } };
+      return withSlice(state, 'engine', patchSlice(state.engine, action.patch));
 
     case 'ui/patch':
-      return { ...state, ui: { ...state.ui, ...action.patch } };
+      return withSlice(state, 'ui', patchSlice(state.ui, action.patch));
 
     case 'ui/patchVideoExport':
-      return {
-        ...state,
-        ui: {
-          ...state.ui,
-          videoExportSettings: { ...state.ui.videoExportSettings, ...action.patch },
-        },
-      };
+      return withSlice(state, 'ui', patchSlice(state.ui, {
+        videoExportSettings: patchSlice(state.ui.videoExportSettings, action.patch),
+      }));
 
     case 'ui/togglePaused':
       return { ...state, engine: { ...state.engine, paused: !state.engine.paused } };

@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import type { DomRefs } from './types';
 
 export function useDomRefs(): DomRefs {
@@ -13,7 +13,7 @@ export function useDomRefs(): DomRefs {
   const tracerDragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const capturePreviewAfterRender = useRef(false);
 
-  return {
+  return useMemo(() => ({
     containerRef,
     mainViewportRef,
     mainCanvasRef,
@@ -24,5 +24,16 @@ export function useDomRefs(): DomRefs {
     tracerScratchRef,
     tracerDragRef,
     capturePreviewAfterRender,
-  };
+  }), [
+    containerRef,
+    mainViewportRef,
+    mainCanvasRef,
+    previewOriginalRef,
+    previewSeparatedRef,
+    overlaySeparatedRef,
+    previewTracerRef,
+    tracerScratchRef,
+    tracerDragRef,
+    capturePreviewAfterRender,
+  ]);
 }

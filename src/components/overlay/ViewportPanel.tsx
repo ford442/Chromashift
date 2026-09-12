@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { ViewportPanelProps } from './types';
+import { useRenderCount } from '../../debug/renderCounts';
 
 export const ViewportPanel = memo(function ViewportPanel({
   squareCanvas,
@@ -21,6 +22,7 @@ export const ViewportPanel = memo(function ViewportPanel({
   onCompareLayoutChange,
   onCompareSyncPlayToggle,
 }: ViewportPanelProps) {
+  useRenderCount('ViewportPanel');
   const multiViewActive = compareLayout === 'dual' || compareLayout === 'swipe';
   const quadActive = compareLayout === 'quad';
   const multiViewUnavailableTitle = 'Requires the WebGPU renderer (and kiosk mode off)';

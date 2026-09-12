@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import type { GpuRefs } from './types';
 
 export function useGpuRefs(): GpuRefs {
@@ -11,7 +11,7 @@ export function useGpuRefs(): GpuRefs {
   const gpuImageAnalysisRef = useRef<import('../../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>(null);
   const upscalerRef = useRef<import('../../engine/Upscaler').Upscaler | null>(null);
 
-  return {
+  return useMemo(() => ({
     orchestratorRef,
     rendererRef,
     textureManagerRef,
@@ -20,5 +20,14 @@ export function useGpuRefs(): GpuRefs {
     maskTextureRef,
     gpuImageAnalysisRef,
     upscalerRef,
-  };
+  }), [
+    orchestratorRef,
+    rendererRef,
+    textureManagerRef,
+    deviceRef,
+    webGpuSessionRef,
+    maskTextureRef,
+    gpuImageAnalysisRef,
+    upscalerRef,
+  ]);
 }

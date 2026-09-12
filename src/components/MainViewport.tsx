@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { isQuadCompareLayout, isTwoSlotCompareLayout, QUAD_VIEW_CELLS } from '../engine/compareViews';
 import type { MainViewportProps } from './AppUI.types';
+import { useRenderCount } from '../debug/renderCounts';
 
 const QUAD_LAYER_LABELS = ['Layer 0', 'Layer 1', 'Layer 2'] as const;
 
@@ -30,6 +31,7 @@ export const MainViewport = memo(function MainViewport({
   quadLayerIndex,
   onQuadLayerCycle,
 }: MainViewportProps) {
+  useRenderCount('MainViewport');
   const dualActive = compareLayout === 'dual';
   const swipeActive = compareLayout === 'swipe';
   const quadActive = isQuadCompareLayout(compareLayout);

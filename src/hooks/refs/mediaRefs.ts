@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import type { ImageEntry } from '../../engine/TextureManager';
 import type { LiveSourceManager } from '../../engine/LiveSource';
 import type { ChromashiftTextureHandle } from '../../engine/types/TextureHandle';
@@ -17,7 +17,7 @@ export function useMediaRefs(): MediaRefs {
   const sourceTextureRef = useRef<ChromashiftTextureHandle | null>(null);
   const liveSourceManagerRef = useRef<LiveSourceManager | null>(null);
 
-  return {
+  return useMemo(() => ({
     imageListRef,
     currentImageIndexRef,
     ownedObjectUrlsRef,
@@ -26,5 +26,14 @@ export function useMediaRefs(): MediaRefs {
     renderStateRef,
     sourceTextureRef,
     liveSourceManagerRef,
-  };
+  }), [
+    imageListRef,
+    currentImageIndexRef,
+    ownedObjectUrlsRef,
+    loadGenRef,
+    engineModeRef,
+    renderStateRef,
+    sourceTextureRef,
+    liveSourceManagerRef,
+  ]);
 }
