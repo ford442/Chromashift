@@ -52,7 +52,7 @@ Strategic audit (2026-08). **Build these before another still-image effect.** Co
 |-----|--------|-------|------|------------|-------|
 | P1 | Colour profile designer + live LUT | [#143](https://github.com/ford442/Chromashift/issues/143) | Feature | L | JSON import is the current ceiling of the profile system |
 | P1 | Kiosk camera attract + live export | [#144](https://github.com/ford442/Chromashift/issues/144) | Feature | L | Consent splash; never `getUserMedia` from `?preset=` |
-| P1 | Compute persistence | [#145](https://github.com/ford442/Chromashift/issues/145) | Architecture | L–XL | ✅ Shipped — WASM hot-path cut, plus a `gpu-chores` `op: 'coincidence'` compute pass replacing the fragment shader's duplicated 3-layer overlap math; fragment path remains the fallback (see [gpu-bootstrap.md](gpu-bootstrap.md#gpu-chores-compute-device-adoption)) |
+| P1 | Compute persistence | [#145](https://github.com/ford442/Chromashift/issues/145) | Architecture | L–XL | ✅ Shipped — WASM hot-path cut, plus a `gpu-chores` `op: 'coincidence'` compute pass replacing the fragment shader's duplicated 3-layer overlap math; fragment path remains the fallback (see [gpu-bootstrap.md](gpu-bootstrap.md#gpu-chores-compute-device-adoption)). Decay constants are now codegen'd from `shared/decay.json` into TS/WGSL/GLSL/C++ with a `bandTable`-style divergence guard (see [wasm-engine.md](wasm-engine.md#shared-decay-table-shareddecayjson)) |
 
 **Foundation vs features:** **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145** has landed in full.
 

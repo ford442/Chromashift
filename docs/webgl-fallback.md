@@ -117,6 +117,6 @@ Use this workflow for shader-based image effects:
 Important differences:
 
 - WebGPU textures use `rgba8unorm-srgb` source uploads; the WebGL path uses standard WebGL texture uploads and is visually approximate.
-- WebGPU keeps the full dual-ping-pong tracer and diagnostic texture path; WebGL implements a simpler FBO-based tracer suitable for reference/debug work.
+- WebGPU keeps the full dual-ping-pong tracer and diagnostic texture path; WebGL implements a simpler FBO-based tracer suitable for reference/debug work. The *fade rate* is shared, though: both persistence shaders interpolate the same decay exponents from `shared/decay.json` (see [wasm-engine.md](wasm-engine.md#shared-decay-table-shareddecayjson)), so tracers decay at the same rate on both backends. The GLSL pass still approximates the stamp itself — it uses a fixed alpha threshold instead of the `colorThresh` uniform and has no colour-variance gate.
 - WebGPU remains the source of truth for deployment-quality output.
 - The dual (2-up) compare view (docs/COMPARE_VIEWS.md Phase 1) is WebGPU-only: it requires a second renderer sharing one `GPUDevice`, which the WebGL path does not support. The Dual toggle is disabled on the WebGL backend.

@@ -81,6 +81,7 @@ src/
     ├── shaders/              # WGSL modules assembled in TS (thin assembler)
     │   ├── index.ts          # Re-exports all shader sources (import via './shaders')
     │   ├── bandLiterals.ts   # BAND_WGSL / BAND_GLSL f32 literals from shared/band.json
+    │   ├── decayLiterals.ts  # DECAY_WGSL / DECAY_GLSL f32 literals from shared/decay.json
     │   ├── common.ts         # Vertex shaders, colour/blend helpers, BAND_WGSL
     │   │                     # (band thresholds generated from math/bandClassification.ts BAND)
     │   ├── layers.ts         # 3 layer fragment shaders (shared header/prelude)
@@ -180,7 +181,7 @@ WebGL-only debug helpers are in the Renderer panel:
 - `Rotation UV grid` — transformed UVs and a grid to debug layer rotation/flips.
 - `Layer mask isolation` — shows active per-layer mask output before final compositing.
 
-For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
+For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. The tracer-decay constants follow the same rule: the `DECAY` table in `src/engine/math/decay.ts` (from `shared/decay.json`) via `DECAY_WGSL` / `DECAY_GLSL` in `decayLiterals.ts`, guarded by `src/engine/shaders/decayTable.test.ts` — see [docs/wasm-engine.md](docs/wasm-engine.md#shared-decay-table-shareddecayjson). Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
 ### Rendering Pipeline (Detailed)
 
@@ -378,7 +379,13 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
 - **Dual tracers**: There are two independent ping-pong buffers — "Above" and "Below".
   - `tracerAboveDuration` / `tracerAboveIntensity` — short-lived, vivid overlay (default 500 ms, 85 %).
   - `tracerBelowDuration` / `tracerBelowIntensity` — longer-lived base glow (default 2000 ms, 30 %).
-- **Decay**: `durationToDecay(ms, fps)` computes a per-frame multiplier so the tracer fades to ~1/255 over the configured duration. 3-layer overlaps decay slower than 2-layer overlaps.
+- **Decay**: `durationToDecay(ms, fps)` computes a per-frame multiplier so the tracer fades to
+  ~10 % brightness over the configured duration (`residualBrightness` in `shared/decay.json`).
+  Pixels where **2 or more** layers overlap fade *faster*: the persistence passes raise that
+  multiplier to `overlapDecayExponent` (1.5) rather than `idleDecayExponent` (1.0) — one
+  threshold at 2+, so 2- and 3-layer overlaps decay at the same rate (`layerCount >= 3u` only
+  affects the diagnostic output). Reference implementation: `effectiveDecay()` in
+  `src/engine/math/decay.ts`.
 - **Modes**: `tracerMode` can be `0` (combined colours) or `1` (grey highlight).
 - **Blend modes**: Both the live layers and the tracers support independent blend modes — Alpha, Add, Subtract, Multiply, Screen.
 

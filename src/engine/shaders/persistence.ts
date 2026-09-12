@@ -11,6 +11,12 @@
 //  12: tracerMode   (u32)  – 0 = combined colors, 1 = grey highlight
 //
 // Keep the uniform definition in sync with WebGPURenderer.ts
+//
+// The decay-rate exponents are interpolated from the canonical table in
+// shared/decay.json (via DECAY_WGSL) — never hand-write them here; see
+// math/decay.ts and decayTable.test.ts.
+
+import { DECAY_WGSL } from './decayLiterals';
 
 export const persistenceFragmentSource = /* wgsl */ `
 @group(0) @binding(0) var cSampler  : sampler;
@@ -102,7 +108,7 @@ fn main(@location(0) uv : vec2<f32>) -> FragmentOutputs {
   }
 
   // Decay modifier: decay faster when actively overlapping, slower otherwise
-  let decayMod = select(1.0, 1.5, layerCount >= 2u);
+  let decayMod = select(${DECAY_WGSL.idleDecayExponent}, ${DECAY_WGSL.overlapDecayExponent}, layerCount >= 2u);
   let effectiveDecay = pow(pu.decayFactor, decayMod);
   var decayed = prev * effectiveDecay;
   if (pu.peakMode == 1u) {
@@ -171,7 +177,7 @@ fn main(@builtin(position) fragCoord : vec4<f32>) -> FragmentOutputs {
   let newColor   = vec4<f32>(stamp.rgb, stamp.a);
   let hadOverlap = stamp.a > 0.5 || stamp.b > 0.5;
 
-  let decayMod = select(1.0, 1.5, hadOverlap);
+  let decayMod = select(${DECAY_WGSL.idleDecayExponent}, ${DECAY_WGSL.overlapDecayExponent}, hadOverlap);
   let effectiveDecay = pow(pu.decayFactor, decayMod);
   var decayed = prev * effectiveDecay;
   if (pu.peakMode == 1u) {

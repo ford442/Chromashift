@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "description": "Canonical Chromashift tracer-persistence decay constants. residualBrightness is the fraction of the original brightness a tracer retains after its configured duration; the two exponents are the per-pixel decay-rate switch applied in the persistence pass (overlapping pixels fade faster than idle ones).",
+  "constants": {
+    "residualBrightness": 0.1,
+    "overlapDecayExponent": 1.5,
+    "idleDecayExponent": 1.0
+  }
+}
