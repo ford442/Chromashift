@@ -129,6 +129,8 @@ export interface AppUIChromeProps {
   wasmAvailable: boolean;
   performanceHudEnabled: boolean;
   imageList: ImageEntry[];
+  /** Derived in the reducer so the strip never scans `imageList` per render. */
+  localImageCount: number;
   currentImageIndex: number;
   referenceImage: ImageEntry | null;
   isImageStripOpen: boolean;

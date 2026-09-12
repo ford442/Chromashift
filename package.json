@@ -28,6 +28,7 @@
     "test:cpp": "make -C cpp test"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.12",
     "@tensorflow/tfjs": "^4.22.0",
     "@tensorflow/tfjs-backend-webgl": "^4.22.0",
     "@tensorflow/tfjs-backend-webgpu": "^4.22.0",

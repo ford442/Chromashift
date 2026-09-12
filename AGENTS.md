@@ -54,7 +54,8 @@ src/
 ├── index.css                 # @import "tailwindcss" + extensive gold/glass custom CSS
 ├── components/
 │   ├── AppUI.tsx              # Presentational root: canvas, previews, ImageStrip, overlay
-│   ├── ImageStrip.tsx         # Corpus browser (remote + LOCAL/REMOTE badges, drag-drop target)
+│   ├── ImageStrip.tsx         # Bottom toolbar: browser toggle + live-source controls
+│   ├── CorpusBrowser.tsx      # Virtualized, searchable corpus panel (LOCAL/REMOTE badges)
 │   ├── RotaryKnob.tsx         # Reusable rotation-angle dial control
 │   └── overlay/               # NunifOverlay split into per-concern section panels
 │       ├── NunifOverlay.tsx       # Shell that composes the panels below
@@ -193,7 +194,7 @@ For shader-based effect work, prototype/inspect in `src/engine/webgl/` when brow
 
 ### Rendering Pipeline (Detailed)
 
-1. `TextureManager.fetchImageList('/images.json')` loads the image list on startup.
+1. `fetchCorpusManifest('./images.json')` (`src/engine/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
 2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
    - 3 independent `GPURenderPipeline`s for the colour layers (each can use 4× MSAA).
@@ -236,7 +237,23 @@ Dual 2-up, swipe split, and quad analytical grid are shipped on WebGPU (see [doc
 
 Dropping image files (or whole folders) anywhere on `#chromashift-container` persists them to IndexedDB (`src/engine/LocalLibrary.ts`, db `chromashift-library`) — labels, dimensions, and a small WebP thumbnail alongside the original bytes — so the personal library survives page reloads without any server upload. `src/engine/fileDrop.ts` flattens a drop's `DataTransfer` (including nested folders, via `webkitGetAsEntry`) into a plain `File[]`; `useMediaHandlers.handleDropFiles` writes them to IndexedDB and appends `ImageEntry`s carrying a `localId` and a `blob:` URL — the corpus, image strip, and texture pipeline don't otherwise distinguish local from remote entries.
 
-`ImageStrip` shows a LOCAL/REMOTE badge per entry (using `thumbUrl`, not the full-res `url`, to avoid decoding full images just for a 144px thumbnail) and a "Clear Library" button that wipes IndexedDB and drops every `localId`-tagged entry from the corpus.
+`CorpusBrowser` shows a LOCAL/REMOTE badge per entry (using `thumbUrl`, not the full-res `url`, to avoid decoding full images just for a 144px thumbnail) and a "Clear Library" button that wipes IndexedDB and drops every `localId`-tagged entry from the corpus. Local and remote entries are the same `ImageEntry` shape all the way through the browser — virtualization, search, and the badge all read the one list.
+
+### Corpus browser (`components/CorpusBrowser.tsx`)
+
+`public/images.json` ships ~3.1k entries, so the panel is windowed rather than flat (issue #168 — it used to mount 3137 DOM subtrees and fire 3137 image requests the moment it opened):
+
+- **Virtualized.** `@tanstack/react-virtual`'s `useVirtualizer({ horizontal: true })` renders the visible window plus `OVERSCAN` cards on each side. The virtualizer lives in the `VirtualCardRow` leaf because `useVirtualizer` makes the React Compiler skip memoizing its caller; keeping it there leaves the header and search index compiler-optimized. It receives the scroll element *through state* (a callback ref), not a ref object: a child's mount effect runs before an ancestor's ref is attached, so a ref object is still `null` when the virtualizer first looks for something to observe.
+- **Mounted only while open.** `ImageStrip` renders `CorpusBrowser` only when the strip is open, so a closed browser costs no observers and no index — and `ImageStrip` itself keeps rendering as rarely as `e2e/render-churn.spec.ts` demands.
+- **Thumbnails are guarded, not just lazy.** Every `<img>` carries `loading="lazy" decoding="async"`, but the actual `src` is withheld until an `IntersectionObserver` says the card has stayed on screen for `THUMB_SETTLE_MS`. Flinging the strip therefore does not queue a request per card swept past.
+- **Searchable.** `engine/corpusIndex.ts` precomputes a display label and a lowercased `label + url` haystack per entry once per corpus identity (`buildCorpusIndex`, memoized on the array); `filterCorpusIndex` then does one pass of AND-ed substring terms. It returns *corpus* indices, so a click in a filtered view still selects the right entry.
+- **`localCount` is derived in the reducer.** `media.localCount` is recomputed by `chromashiftReducer` whenever `media.imageList` is replaced (`countLocalEntries`), so the browser never scans thousands of entries per render.
+
+`e2e/corpus-browser.spec.ts` pins all of this against a stubbed 3137-entry corpus (`stubLargeCorpus` in `e2e/helpers/mockCorpus.ts`).
+
+### Corpus manifest (`engine/corpusManifest.ts`)
+
+The manifest is ~360 kB fetched before the first frame. `fetchCorpusManifest` keeps the parsed entries in IndexedDB (db `chromashift-corpus`) alongside the response's `ETag`/`Last-Modified`, and revalidates on the next visit with `If-None-Match` / `If-Modified-Since` and `cache: 'no-cache'`. A 304 — or a 200 whose ETag matches what was stored, which is what the browser returns when it satisfies the revalidation from its own HTTP cache — reuses the cached entries and skips the parse. Every cache path is best-effort: no IndexedDB, no validators, a storage error, or a dead network all degrade to a plain fetch (or to serving the last good copy), never to a failed boot. `TextureManager.fetchImageList` remains on the renderer contract for direct callers, but the boot path goes through the cached loader.
 
 Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureManager` need no special-casing to decode them (no CORS, unlike some remote hosts). `evictExcept(keepUrls)` runs after each texture swap in `useImagePlayback` (and `handleLoadSpecificImage`): local `blob:` textures outside the keep set are destroyed immediately so switching away frees GPU memory and switching back re-decodes from the resident IndexedDB blob on demand. Remote `http(s)` and other cached keys follow LRU eviction against an estimated mip-chain byte budget (256 MB default) and a hard entry cap (12 default); the keep set is the current source URL plus the reference image URL. Compare layouts share one decoded texture per URL via the orchestrator's single texture manager. Breadcrumbs: `window.textureCacheSize` and `window.textureCacheBytes`.
 
@@ -414,7 +431,7 @@ Edit `public/images.json` to change the image list:
 ]
 ```
 
-The `TextureManager` fetches this file at startup and caches textures by URL.
+`fetchCorpusManifest` fetches this file at startup and caches the parsed entries in IndexedDB against its ETag; `TextureManager` then caches decoded textures by URL. Bump the file (any content change moves its ETag) and clients pick it up on their next load.
 
 ## Code Style & Conventions
 
@@ -433,7 +450,7 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | Tier | Command | Scope |
 |------|---------|-------|
 | **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
-| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
+| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band/decay parity with `chromashift_engine.cpp`; no Emscripten required |
 
 ### CI job matrix

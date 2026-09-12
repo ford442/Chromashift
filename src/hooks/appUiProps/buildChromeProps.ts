@@ -19,6 +19,7 @@ export function buildChromeProps(
     wasmAvailable: engine.wasmAvailable,
     performanceHudEnabled: state.output.performanceHudEnabled,
     imageList: media.imageList,
+    localImageCount: media.localCount,
     currentImageIndex: media.currentIndex,
     referenceImage: media.reference,
     isImageStripOpen: ui.isImageStripOpen,

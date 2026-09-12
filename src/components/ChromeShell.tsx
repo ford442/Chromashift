@@ -48,6 +48,7 @@ export const ChromeShell = memo(function ChromeShell({
   wasmAvailable,
   performanceHudEnabled,
   imageList,
+  localImageCount,
   currentImageIndex,
   referenceImage,
   isImageStripOpen,
@@ -100,7 +101,7 @@ export const ChromeShell = memo(function ChromeShell({
             disabled={currentImageIndex === 0}
             className="text-amber-400 hover:text-amber-200 font-mono text-sm disabled:opacity-30 transition-colors"
           >◀</button>
-          <span className="text-amber-300 font-mono text-xs tabular-nums select-none">
+          <span className="text-amber-300 font-mono text-xs tabular-nums select-none" data-testid="corpus-position">
             {currentImageIndex + 1} / {imageList.length}
           </span>
           <button
@@ -134,6 +135,7 @@ export const ChromeShell = memo(function ChromeShell({
       {showChrome && (
         <ImageStrip
           images={imageList}
+          localCount={localImageCount}
           currentIndex={currentImageIndex}
           referenceUrl={referenceImage?.url ?? null}
           isOpen={isImageStripOpen}

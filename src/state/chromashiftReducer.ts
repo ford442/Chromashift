@@ -1,4 +1,5 @@
 import type { ImageEntry } from '../engine/TextureManager';
+import { countLocalEntries } from '../engine/corpusIndex';
 import { parseDisplayColorSpace } from '../engine/gpuOptions';
 import {
   DEFAULT_ANGLES,
@@ -114,8 +115,15 @@ export function chromashiftReducer(
         engine: { ...state.engine, fps: DEFAULT_FPS },
       };
 
-    case 'media/patch':
-      return withSlice(state, 'media', patchSlice(state.media, action.patch));
+    case 'media/patch': {
+      // `localCount` is derived, never dispatched: recompute it here (once per
+      // corpus change) so `ImageStrip` never scans the list on a render.
+      const { imageList } = action.patch;
+      const patch = imageList && imageList !== state.media.imageList
+        ? { ...action.patch, localCount: countLocalEntries(imageList) }
+        : action.patch;
+      return withSlice(state, 'media', patchSlice(state.media, patch));
+    }
 
     case 'media/patchLiveSource':
       return withSlice(state, 'media', patchSlice(state.media, {

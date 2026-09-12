@@ -50,6 +50,7 @@ export function createInitialState(): ChromashiftState {
   return {
     media: {
       imageList: [],
+      localCount: 0,
       currentIndex: 0,
       reference: null,
       previous: null,
