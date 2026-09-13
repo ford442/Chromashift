@@ -218,7 +218,6 @@ export class TracerInspectPass {
         params.sourceSampler,
         canvasWidth / Math.max(1, canvasHeight),
         params.sourceTexture.width / Math.max(1, params.sourceTexture.height),
-        0,
       );
       return true;
     }
@@ -230,7 +229,6 @@ export class TracerInspectPass {
         canvasView,
         params.layerTextures[layerIndex],
         this.compositorSampler,
-        1,
         1,
         1,
       );
@@ -331,11 +329,10 @@ export class TracerInspectPass {
     sampler: GPUSampler,
     canvasAspect: number,
     textureAspect: number,
-    mode: number,
   ): void {
     this.displayF32[0] = canvasAspect;
     this.displayF32[1] = textureAspect;
-    this.displayU32[2] = mode;
+    this.displayU32[2] = 0;
     this.displayU32[3] = 0;
     this.device.queue.writeBuffer(this.displayUniformBuf, 0, this.displayUniformData);
 

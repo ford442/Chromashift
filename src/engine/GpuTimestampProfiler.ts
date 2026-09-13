@@ -15,8 +15,18 @@ export const GPU_TIMING_HISTORY_SIZE = 120;
 const QUERIES_PER_FRAME = GPU_TIMESTAMP_MARKERS;
 const BYTES_PER_QUERY = 8;
 const RESOLVE_SLOTS = 2;
-const SLOT_BYTES = QUERIES_PER_FRAME * BYTES_PER_QUERY;
-const TIMING_BUFFER_BYTES = SLOT_BYTES * RESOLVE_SLOTS;
+/** Bytes a frame's markers actually occupy (6 × 8 = 48). */
+const SLOT_PAYLOAD_BYTES = QUERIES_PER_FRAME * BYTES_PER_QUERY;
+/**
+ * `resolveQuerySet`'s destination offset must be a multiple of 256, so the
+ * per-frame slots are padded out to that stride rather than packed end to end.
+ * Packing them put slot 1 at offset 48, which failed validation and — because
+ * the resolve shares the frame's command encoder — threw away the whole
+ * command buffer on every other frame. That is the steady black blink the
+ * Perf HUD used to produce.
+ */
+const SLOT_STRIDE_BYTES = 256;
+const TIMING_BUFFER_BYTES = SLOT_STRIDE_BYTES * RESOLVE_SLOTS;
 
 export interface GpuTimestampCreateResult {
   profiler: GpuTimestampProfiler | null;
@@ -126,6 +136,15 @@ export class GpuTimestampProfiler {
       return { profiler: null, reason: 'timestamp-query not granted' };
     }
 
+    // `GPUCommandEncoder.writeTimestamp` is an optional Dawn extension, not
+    // core WebGPU. Calling a missing method mid-encode would abandon the frame
+    // *after* the swap-chain texture was acquired — i.e. present a black
+    // frame — so the profiler opts out up front instead.
+    if (typeof GPUCommandEncoder !== 'undefined'
+        && typeof GPUCommandEncoder.prototype.writeTimestamp !== 'function') {
+      return { profiler: null, reason: 'encoder timestamps unavailable; using CPU timing' };
+    }
+
     const timestampPeriodNs = resolveTimestampPeriodNs(device);
     if (!(timestampPeriodNs > 0)) {
       return { profiler: null, reason: 'timestamp period is 0; using CPU timing' };
@@ -221,7 +240,7 @@ export class GpuTimestampProfiler {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 5);
     const slot = this.writeSlot;
-    const offset = slot * SLOT_BYTES;
+    const offset = slot * SLOT_STRIDE_BYTES;
     enc.resolveQuerySet(
       this.querySet,
       0,
@@ -234,7 +253,7 @@ export class GpuTimestampProfiler {
       offset,
       this.readbackBuffer,
       offset,
-      SLOT_BYTES,
+      SLOT_PAYLOAD_BYTES,
     );
     this.pendingSlot = slot;
     this.writeSlot = (this.writeSlot + 1) % RESOLVE_SLOTS;
@@ -245,8 +264,8 @@ export class GpuTimestampProfiler {
     const slot = this.pendingSlot;
     this.pendingSlot = null;
     this.mapPending = true;
-    const offset = slot * SLOT_BYTES;
-    const byteLength = SLOT_BYTES;
+    const offset = slot * SLOT_STRIDE_BYTES;
+    const byteLength = SLOT_PAYLOAD_BYTES;
 
     void this.readbackBuffer.mapAsync(GPUMapMode.READ, offset, byteLength).then(() => {
       const stamps = new BigUint64Array(

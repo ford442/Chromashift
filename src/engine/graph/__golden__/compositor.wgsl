@@ -79,6 +79,19 @@ fn blend(dst: vec4<f32>, src: vec4<f32>, mode: u32) -> vec4<f32> {
 }
 
 
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+  let lin = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+  let lo = lin * 12.92;
+  let hi = 1.055 * pow(lin, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+  return select(hi, lo, lin <= vec3<f32>(0.0031308));
+}
+
+/** Linear scene colour -> sRGB-encoded bytes for a non-sRGB canvas format. */
+fn encode_display(c: vec3<f32>) -> vec3<f32> {
+  return linear_to_srgb(c);
+}
+
+
 @group(0) @binding(0) var cSampler       : sampler;
 @group(0) @binding(1) var layer0         : texture_2d<f32>;
 @group(0) @binding(2) var layer1         : texture_2d<f32>;
@@ -127,7 +140,7 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
   let c1Opaque = scale_premultiplied(c1, cu.layerOpacity1);
   let c2Opaque = scale_premultiplied(c2, cu.layerOpacity2);
 
-  // 1. Blend the main active layers together
+  // 1. Blend the main active layers together.
   var layerCol = vec4<f32>(0.0);
   layerCol = blend(layerCol, c2Opaque, cu.layerBlendMode);
   layerCol = blend(layerCol, c1Opaque, cu.layerBlendMode);
@@ -164,22 +177,22 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
     }
   }
 
-  // 2. Build the final depth stack based on output mode
+  // 2. Build the final depth stack based on output mode.
   var finalCol = vec4<f32>(0.0);
 
   if (cu.outputMode == 1u) {
-    // Tracer Focus: layers first, then both tracers on top
+    // Tracer Focus: layers first, then both tracers on top.
     finalCol = alpha_blend(finalCol, layerCol);
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 2u) {
-    // Tracer Only: suppress live layers
+    // Tracer Only: suppress live layers.
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 3u) {
     finalCol = stamp;
   } else {
-    // Mixed (default): Below -> Layers -> Above
+    // Mixed (default): Below -> Layers -> Above.
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = alpha_blend(finalCol, layerCol);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
@@ -188,11 +201,7 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
   // Force opaque output. Without this, no-layer / no-tracer regions produce
   // alpha=0 pixels and some browser/GPU combos let the OS compositor see
   // through the canvas even though alphaMode is 'opaque' on the swapchain.
-  // Subtle filmic tonemapping + gentle exposure lift. The pipeline works in
-  // 16-bit float, but the swapchain is 8 bpc — a cheap tonemap here
-  // distributes energy better across quantisation steps, reducing banding.
-  let x = finalCol.rgb * 1.04;                // tiny exposure bias
-  var tonemapped = x / (x + vec3<f32>(0.15)); // very soft Reinhard variant
+  var graded = finalCol.rgb;
   if (cu.diagnosticsMode == 1u) {
     let diagBase = vec3<f32>(
       clamp(c0Opaque.a, 0.0, 1.0),
@@ -206,9 +215,10 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
       collisionTint = vec3<f32>(1.0, 1.0, 1.0);
     }
     let diagOverlay = max(diagBase, collisionTint * stamp.a);
-    tonemapped = mix(tonemapped, diagOverlay, clamp(cu.diagnosticsOpacity, 0.0, 1.0));
+    graded = mix(graded, diagOverlay, clamp(cu.diagnosticsOpacity, 0.0, 1.0));
   }
-  return vec4<f32>(tonemapped, 1.0);
+  // The canvas format is never an -srgb one, so this pass owns the OETF.
+  return vec4<f32>(encode_display(graded), 1.0);
 }
 
 @fragment

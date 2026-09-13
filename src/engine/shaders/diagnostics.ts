@@ -1,4 +1,4 @@
-import { WGSL_BLEND_HELPERS } from './common';
+import { WGSL_BLEND_HELPERS, WGSL_OUTPUT_ENCODE } from './common';
 
 // ─── Tracer View (centered aspect-fit blit, issues #58/#59/#61) ──────────────
 // "Show Full Tracer" inspection path. Previously bypassed the compositor
@@ -8,6 +8,7 @@ import { WGSL_BLEND_HELPERS } from './common';
 // the aspect-fit letterboxing for non-1.0 tracerScale values.
 export const tracerViewFragmentSource = /* wgsl */ `
 ${WGSL_BLEND_HELPERS}
+${WGSL_OUTPUT_ENCODE}
 
 @group(0) @binding(0) var texSampler  : sampler;
 @group(0) @binding(1) var persistAbove: texture_2d<f32>;
@@ -109,26 +110,30 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     col = vec4<f32>(max(col.rgb, mix(col.rgb, overlay, tvu.heatmapOpacity)), col.a);
   }
 
-  // Apply the same exposure + Reinhard tonemap as the compositor.
-  // exposure defaults to 1.04 and can be adjusted in the inspector controls.
+  // Same output transfer function as the compositor, so the inspector and the
+  // main view agree pixel for pixel. Exposure is a linear-light gain applied
+  // before the encode; it defaults to 1.04 in the inspector controls.
   if (tvu.applyTonemap == 1u) {
-    let x = col.rgb * tvu.exposure;
-    let tonemapped = x / (x + vec3<f32>(0.15));
-    return vec4<f32>(tonemapped, 1.0);
+    return vec4<f32>(encode_display(col.rgb * tvu.exposure), 1.0);
   }
-  return vec4<f32>(col.rgb, 1.0);
+  return vec4<f32>(encode_display(col.rgb), 1.0);
 }
 `;
 
 export const displayTextureFragmentSource = /* wgsl */ `
+${WGSL_OUTPUT_ENCODE}
+
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 
 struct DisplayUniforms {
   canvasAspect : f32,
   texAspect    : f32,
-  tonemap      : u32,
+  // Was a "tonemap on/off" flag back when this pass carried its own Reinhard
+  // curve. Output is now just the sRGB OETF, which every source this pass
+  // shows needs unconditionally, so the slots are padding.
   _pad0        : u32,
+  _pad1        : u32,
 };
 @group(0) @binding(2) var<uniform> du : DisplayUniforms;
 
@@ -151,18 +156,17 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     sampleUV.y = (uv.y - y0) / visH;
   }
 
+  // The sampled texture is linear light (source images are uploaded as
+  // rgba8unorm-srgb and the internal targets store linear), so it needs the
+  // OETF on the way out to the non-sRGB canvas format.
   let sampleColor = textureSampleLevel(tex, texSampler, sampleUV, 0.0);
-  if (du.tonemap == 0u) {
-    return vec4<f32>(sampleColor.rgb, 1.0);
-  }
-
-  let x = sampleColor.rgb * 1.04;
-  let tonemapped = x / (x + vec3<f32>(0.15));
-  return vec4<f32>(tonemapped, 1.0);
+  return vec4<f32>(encode_display(sampleColor.rgb), 1.0);
 }
 `;
 
 export const coincidenceHeatmapFragmentSource = /* wgsl */ `
+${WGSL_OUTPUT_ENCODE}
+
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var layer0     : texture_2d<f32>;
 @group(0) @binding(2) var layer1     : texture_2d<f32>;
@@ -189,17 +193,17 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
   if (count < 2u) {
     let maxBand = max(max(c0.rgb, c1.rgb), c2.rgb) * 0.22;
-    return vec4<f32>(maxBand, 1.0);
+    return vec4<f32>(encode_display(maxBand), 1.0);
   }
 
   let combined = c0.rgb + c1.rgb + c2.rgb;
   if (count == 2u) {
     let warm = normalize(max(combined, vec3<f32>(0.0001))) * vec3<f32>(1.0, 0.9, 0.25);
-    return vec4<f32>(warm, 1.0);
+    return vec4<f32>(encode_display(warm), 1.0);
   }
 
   let hot = vec3<f32>(1.0, 0.98, 0.98) + combined * 0.15;
-  return vec4<f32>(min(hot, vec3<f32>(1.0)), 1.0);
+  return vec4<f32>(encode_display(min(hot, vec3<f32>(1.0))), 1.0);
 }
 `;
 
@@ -274,6 +278,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 
 export const compareFragmentSource = /* wgsl */ `
 ${WGSL_BLEND_HELPERS}
+${WGSL_OUTPUT_ENCODE}
 
 @group(0) @binding(0) var cSampler       : sampler;
 @group(0) @binding(1) var sourceTex      : texture_2d<f32>;
@@ -344,8 +349,7 @@ fn compositeAt(uv : vec2<f32>) -> vec3<f32> {
     finalCol = blend(finalCol, pAbove, cu.tracerBlendMode);
   }
 
-  let x = finalCol.rgb * 1.04;
-  return x / (x + vec3<f32>(0.15));
+  return finalCol.rgb;
 }
 
 fn sampleSourceFitted(uv : vec2<f32>) -> vec3<f32> {
@@ -356,7 +360,7 @@ fn sampleSourceFitted(uv : vec2<f32>) -> vec3<f32> {
     let visH = 1.0 / halfAspect;
     let y0 = (1.0 - visH) * 0.5;
     if (uv.y < y0 || uv.y > y0 + visH) {
-      return vec3<f32>(0.02, 0.02, 0.03);
+      return vec3<f32>(0.00155, 0.00155, 0.00235);
     }
     sampleUV.y = (uv.y - y0) / visH;
   } else if (1.0 > halfAspect + 0.0001) {
@@ -364,7 +368,7 @@ fn sampleSourceFitted(uv : vec2<f32>) -> vec3<f32> {
     let x0 = (1.0 - visW) * 0.5;
     let localX = uv.x * 2.0;
     if (localX < x0 || localX > x0 + visW) {
-      return vec3<f32>(0.02, 0.02, 0.03);
+      return vec3<f32>(0.00155, 0.00155, 0.00235);
     }
     sampleUV.x = (localX - x0) / visW;
   }
@@ -380,11 +384,11 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   }
 
   if (uv.x < 0.5) {
-    return vec4<f32>(sampleSourceFitted(uv), 1.0);
+    return vec4<f32>(encode_display(sampleSourceFitted(uv)), 1.0);
   }
 
   let rightUV = vec2<f32>((uv.x - 0.5) * 2.0, uv.y);
-  return vec4<f32>(compositeAt(rightUV), 1.0);
+  return vec4<f32>(encode_display(compositeAt(rightUV)), 1.0);
 }
 `;
 

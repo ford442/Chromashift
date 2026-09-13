@@ -209,4 +209,43 @@ describe('GpuTimestampProfiler.create', () => {
     expect(copy[4]).toBe(GPU_TIMESTAMP_MARKERS * 8);
     profiler!.destroy();
   });
+
+  it('resolves every slot at a 256-byte aligned destination offset', () => {
+    installBufferUsageGlobals();
+    const device = mockTimestampDevice();
+    const { profiler } = GpuTimestampProfiler.create(device);
+    expect(profiler).not.toBeNull();
+    profiler!.setEnabled(true);
+
+    const enc = {
+      writeTimestamp: vi.fn(),
+      resolveQuerySet: vi.fn(),
+      copyBufferToBuffer: vi.fn(),
+    };
+
+    // Every slot, twice round the ping-pong. A destination offset that is not
+    // a multiple of 256 fails `resolveQuerySet` validation, and because the
+    // resolve shares the frame's encoder it takes the whole command buffer —
+    // and the frame — down with it.
+    for (let frame = 0; frame < 4; frame++) {
+      profiler!.finishFrame(enc as unknown as GPUCommandEncoder);
+    }
+
+    const resolveOffsets = enc.resolveQuerySet.mock.calls.map((call) => Number(call[4]));
+    expect(resolveOffsets).toHaveLength(4);
+    for (const offset of resolveOffsets) {
+      expect(offset % 256).toBe(0);
+    }
+    expect(new Set(resolveOffsets).size).toBe(2);
+
+    // The readback copy reads from the same padded offsets but only moves the
+    // bytes the markers actually occupy.
+    for (const call of enc.copyBufferToBuffer.mock.calls) {
+      expect(Number(call[1]) % 256).toBe(0);
+      expect(Number(call[3]) % 256).toBe(0);
+      expect(Number(call[4])).toBe(GPU_TIMESTAMP_MARKERS * 8);
+    }
+
+    profiler!.destroy();
+  });
 });
