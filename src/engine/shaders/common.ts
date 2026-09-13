@@ -2,6 +2,8 @@ export { BAND_GLSL, BAND_SHADER_FLOAT, BAND_WGSL, DARK_BAND_RGB_MAX } from './ba
 import { CANONICAL_LAYER_SPECS } from '../graph/layerSpecs';
 import { emitColorHelpersWgsl } from '../graph/templates/wgsl';
 
+export { WGSL_OUTPUT_ENCODE } from '../graph/templates/wgsl';
+
 // ─── Vertex: rotate/flip layers (3 copies, one per layer) ──────────────────────────────────────────────────
 export const vertexShaderSource = /* wgsl */ `
 struct VertexOutput {

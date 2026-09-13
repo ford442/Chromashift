@@ -140,6 +140,41 @@ fn sobelBoostedLuminance(
 }
 `;
 
+/**
+ * Output transfer function for every pass that renders to the *canvas* format.
+ *
+ * Source images are uploaded as `rgba8unorm-srgb`, so every texel the pipeline
+ * samples has already been decoded to linear light, and the internal layer /
+ * tracer targets (`rgba8unorm`, `rg11b10ufloat`) store linear light too.
+ * `navigator.gpu.getPreferredCanvasFormat()` only ever returns a *non*-sRGB
+ * format (`bgra8unorm` / `rgba8unorm`), so nothing re-encodes on the way out:
+ * writing those linear values straight to the swap chain makes the display
+ * apply its EOTF a second time, which crushes shadows and darkens the whole
+ * picture. `encode_display` is the missing OETF.
+ *
+ * The encode is an exact inverse of the `-srgb` decode on the way in, so a
+ * passthrough frame round-trips to the byte values that were uploaded — white
+ * stays white. It deliberately has no tone curve: any monotone map that fixes
+ * f(1) = 1 has to be flat above 1, so a shoulder can only buy above-white
+ * detail by darkening everything below it, which is the bug this replaces
+ * (the old `x / (x + 0.15)` Reinhard landed pure white at 222/255). Additive
+ * tracer overflow out of `rg11b10ufloat` clips at white, same as the LDR
+ * `rgba8unorm` path and the WebGL2 backend.
+ */
+export const WGSL_OUTPUT_ENCODE = /* wgsl */ `
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+  let lin = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+  let lo = lin * 12.92;
+  let hi = 1.055 * pow(lin, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+  return select(hi, lo, lin <= vec3<f32>(0.0031308));
+}
+
+/** Linear scene colour -> sRGB-encoded bytes for a non-sRGB canvas format. */
+fn encode_display(c: vec3<f32>) -> vec3<f32> {
+  return linear_to_srgb(c);
+}
+`;
+
 /** The full colour-helper block: shared maths plus one crop ramp per layer. */
 export function emitColorHelpersWgsl(specs: readonly LayerSpec[]): string {
   return `${WGSL_COLOR_HELPER_PRELUDE}${emitCropHelpersWgsl(specs)}\n`;
@@ -605,6 +640,7 @@ export function emitCompositorWgsl(layerCount: number, blendHelpers: string): st
 
   return /* wgsl */ `
 ${blendHelpers}
+${WGSL_OUTPUT_ENCODE}
 
 @group(0) @binding(0) var cSampler       : sampler;
 ${bindings}
@@ -699,10 +735,7 @@ ${variances}
   // Force opaque output. Without this, no-layer / no-tracer regions produce
   // alpha=0 pixels and some browser/GPU combos let the OS compositor see
   // through the canvas even though alphaMode is 'opaque' on the swapchain.
-  // The subtle filmic tonemap distributes energy across the 8-bpc swapchain's
-  // quantisation steps, reducing banding out of the 16-bit float pipeline.
-  let x = finalCol.rgb * 1.04;                // tiny exposure bias
-  var tonemapped = x / (x + vec3<f32>(0.15)); // very soft Reinhard variant
+  var graded = finalCol.rgb;
   if (cu.diagnosticsMode == 1u) {
     let diagBase = vec3<f32>(
       ${diagChannel(0)},
@@ -716,9 +749,10 @@ ${variances}
       collisionTint = vec3<f32>(1.0, 1.0, 1.0);
     }
     let diagOverlay = max(diagBase, collisionTint * stamp.a);
-    tonemapped = mix(tonemapped, diagOverlay, clamp(cu.diagnosticsOpacity, 0.0, 1.0));
+    graded = mix(graded, diagOverlay, clamp(cu.diagnosticsOpacity, 0.0, 1.0));
   }
-  return vec4<f32>(tonemapped, 1.0);
+  // The canvas format is never an -srgb one, so this pass owns the OETF.
+  return vec4<f32>(encode_display(graded), 1.0);
 }
 
 @fragment
