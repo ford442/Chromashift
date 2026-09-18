@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   activatePassGraph,
+  passGraphSelection,
+  publishGraphExecutorBreadcrumbs,
   buildDefaultGraph,
   compileGraph,
   graphCompileCount,
@@ -68,6 +70,50 @@ describe('?graph=1 gate', () => {
       get localStorage(): Storage { throw new Error('blocked'); },
     });
     expect(passGraphRequested()).toBe(false);
+  });
+});
+
+describe('named graph shapes', () => {
+  it.each([
+    ['?graph=1', 'default'],
+    ['?graph=default', 'default'],
+    ['?graph=blur', 'blur'],
+    ['?graph=warp', 'warp'],
+    // An unrecognised name is the default graph, not a refusal: the gate's job
+    // is to pick a shape, and "on with something unknown" means "on".
+    ['?graph=nonsense', 'default'],
+  ])('%s selects the %s graph', (search, name) => {
+    installBrowserGlobals(search);
+    expect(passGraphSelection()).toEqual({ enabled: true, name });
+  });
+
+  it('compiles the selected shape and names it', () => {
+    const win = installBrowserGlobals('?graph=blur');
+    const compiled = activatePassGraph('webgpu');
+    expect(win.passGraphName).toBe('blur');
+    expect(compiled!.passes.map((pass) => pass.nodeId)).toContain('layer0-blur-x');
+  });
+
+  it('refuses a warp graph on the WebGL diagnostic backend, naming the node', () => {
+    const win = installBrowserGlobals('?graph=warp');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(activatePassGraph('webgl')).toBeNull();
+    expect(win.passGraphError).toContain('unsupported-node');
+    expect(win.passGraphError).toContain("'warp'");
+    expect(win.passGraphExecuting).toBeNull();
+    warn.mockRestore();
+  });
+
+  it('separates "the compiler ran" from "something is drawing it"', () => {
+    const win = installBrowserGlobals('?graph=1');
+    activatePassGraph('webgpu');
+    expect(win.passGraphActive).toBe(true);
+    expect(win.passGraphExecuting ?? null).toBeNull();
+
+    publishGraphExecutorBreadcrumbs('default', ['layer0', 'composite']);
+    expect(win.passGraphExecuting).toBe('default');
+    expect(win.passGraphExecutedPasses).toEqual(['layer0', 'composite']);
   });
 });
 

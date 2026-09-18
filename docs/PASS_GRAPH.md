@@ -3,10 +3,13 @@
 A declarative intermediate representation the renderers **compile**, instead of a
 pipeline they hard-code.
 
-> **Status: Phase 1 — the IR, compiler and default graph ship behind `?graph=1`.**
-> The shipped renderers still encode the fixed five-pass topology themselves;
-> they consume the graph's shader templates and layer count, not its schedule.
-> See [Phase 2](#phase-2--what-is-not-done-yet) for what that leaves.
+> **Status: Phase 2 — the graph *executes* on WebGPU behind `?graph=1`.**
+> `WebGpuGraphExecutor` walks `compiled.passes`, binds the allocator's pool and
+> encodes the frame. The default graph is byte-for-byte the shipped topology, so
+> `?graph=1` changes the encode path and not the pixels; `?graph=blur` and
+> `?graph=warp` are different *shapes* that draw without a renderer edit. The
+> WebGL diagnostic backend still compiles only.
+> See [Phase 2](#phase-2--shipped) for what landed and what is left.
 
 ---
 
@@ -152,32 +155,134 @@ already runs, the gate changes what is *observable*, not what is drawn.
 | `window.passGraphPasses` | scheduled pass order, as node ids |
 | `window.passGraphSlots` | pool slot count per resolution class |
 | `window.passGraphError` | a refusal, naming the node, or `null` |
+| `window.passGraphName` | which named shape the gate selected |
+| `window.passGraphExecuting` | the shape a GPU executor is **drawing**, or `null` |
+| `window.passGraphExecutedPasses` | node ids the executor encodes, in order |
+
+`passGraphActive` says the compiler ran; `passGraphExecuting` says something is
+drawing what it produced. `passGraphExecutedPasses` is shorter than
+`passGraphPasses`: `source` and `output` own no pass, and a `coincidence` fused
+into its `decay` consumers is absorbed by them.
 
 `?graph=0` forces it off.
 
-## Phase 2 — what is not done yet
+## The executor
 
-Phase 1 deliberately stops at the compiler. Still open:
+`src/engine/graph/exec/` is the half Phase 1 deliberately left out: something
+that *draws* what the compiler produced.
 
-- **A graph-driven executor.** `WebGPURenderer` and `WebGLRenderer` still encode
-  the fixed topology (layers → coincidence → decay×2 → blend) by hand. They now
-  take their shader sources and layer count from the graph module, so the
-  literal `3` lives in `DEFAULT_LAYER_COUNT` and a change to it fails the
-  type-check loudly rather than mis-rendering — but a graph with a *different
-  shape* (a blur before persistence, a second persistence stage) compiles and
-  schedules without anything executing it.
-- **Running a non-default layer count on the GPU.** Blocked on the same thing:
-  the fixed three-tuples in `BindGroupCache.ts`, `PersistencePass.ts`,
-  `CompositorPass.ts`, `TracerInspectPass.ts`, `GpuReadback.ts`, the
-  `coincidence` compute kernel, and `RendererState.layers`. Compilation and
-  emission for any count are done and tested; execution is not.
-- **GPU-level parity.** `shaderParity.test.ts` proves the emitted source is
-  unchanged, which is stronger than a screenshot for this refactor (it cannot
-  flake and it covers every uniform path, not the one the screenshot happens to
-  exercise). Extending `renderer-parity.spec.ts` to a second graph is Phase 2
-  work, once there is a second graph that executes.
+```
+compileGraph(buildDefaultGraph(3))  →  CompiledGraph { passes, allocation, emitted }
+buildEncodePlan(compiled)           →  EncodeStep[]  (pure; no WebGPU)
+WebGpuGraphExecutor.encode(...)     →  one render pass per step
+```
+
+| File | Job |
+|---|---|
+| `plan.ts` | `CompiledGraph` → encodable steps, with every input resolved to a producer. No WebGPU: this is where the fusion rule lives, so a unit test checks it rather than a screenshot. |
+| `pool.ts` | `AllocationPlan` → textures. Lazy, so a slot nothing writes costs nothing; ping-pong pairs for accumulators; one shared MSAA target for the band layers. |
+| `nodePipelines.ts` | One emitted pass → bind-group layout, pipeline, uniform block. The layout is *derived* from `EmittedPass.textureBindings`, not hand-written per kind. |
+| `WebGpuGraphExecutor.ts` | Walks the steps: writes uniforms, binds, encodes, flips the ping-pong. |
+
+### Coincidence fusion is what makes the default graph identical
+
+`PersistencePass` runs the overlap math **twice**, once per tracer timescale,
+and has no standalone stamp pass. The compiler already matches that: it emits
+the same fused coincidence+decay source for both kinds. So the executor does
+too — a `coincidence` node read *only* by `decay` nodes emits no pass of its
+own, and each consumer inherits its inputs.
+
+A `coincidence` read by anything else keeps its own pass. A `decay` that would
+then stamp the wrong number of inputs is a `PassGraphError`, named and refused,
+because the emitted shader unrolls exactly `layerCount` stamp samplers.
+
+### No compute op is assumed
+
+Every `decay` pass runs the **fragment** fused shader — precisely the fallback
+`PersistencePass` uses when compute storage textures are unavailable. The
+compute `coincidence` kernel is an optimisation of the hand-encoded path, not a
+requirement of the graph, so a device without it runs the graph unchanged.
+
+### Pipelines are cached on the structural hash
+
+`compileGraph` memoises on the structural hash and the executor keys its
+pipelines on the same hash, so a parameter change re-enters `encode()` with the
+same `CompiledGraph` and creates nothing. Bind groups are rebuilt only when a
+bound texture changes identity — the per-frame allocation `BindGroupCache`
+exists to avoid on the hand-encoded path.
+
+`window.passGraphCompileCount` makes the first half observable and
+`WebGpuGraphExecutor.pipelineBuildCount` the second.
+
+### The roles the rest of the renderer still needs
+
+The live preview, the collision-stats readback and the tracer-inspect passes
+read named textures. When the executor draws the frame they come out of *its*
+pool: `roleTextures()` maps the graph's `band-layer` nodes (in `layerIndex`
+order) and the `blend` node's two tracer inputs onto those roles. A graph
+without them is legal — those extras simply do not run.
+
+## Graph shapes
+
+`altGraphs.ts` holds the named shapes the gate can select. They exist to prove
+the executor is not a second hand-written encoder:
+
+| `?graph=` | Shape |
+|---|---|
+| `1` / `default` | today's pipeline: layers → coincidence → decay×2 → blend |
+| `blur` | each band layer through a separable gaussian (H then V) **before** coincidence; the compositor keeps the sharp layers |
+| `warp` | an affine `warp` on layer 0 before coincidence |
+| `0` | off — the hand encoder |
+
+`blur` is the case the transient pool was built for: each layer's horizontal
+result dies the instant its vertical pass reads it, so the allocator hands the
+same target back out instead of sizing 2N of them.
+
+## Phase 2 — shipped
+
+- **A graph-driven executor.** `WebGpuGraphExecutor` encodes `compiled.passes`
+  on WebGPU, binding the allocator's pool, with MSAA resolve and ping-pong
+  handled per node kind.
+- **Default-graph identity.** `shaderParity.test.ts` still pins every emitted
+  shader against the pre-refactor goldens, and
+  `e2e/graph-executor.spec.ts` asserts default-graph-via-executor ≡ hand encoder
+  as a canvas screenshot comparison. That comparison is deterministic because
+  the fixture is a still image: where layers overlap the fused pass writes the
+  fresh stamp every frame, and where they do not the tracer starts at zero and
+  stays there, so there is no frame-count-dependent state to disagree about.
+- **Different-shape graphs that draw.** `?graph=blur` and `?graph=warp` compile,
+  schedule, allocate **and** reach the canvas with no edit to
+  `WebGPUPipelines.ts` or `PersistencePass.ts`. Both run emitters
+  (`emitBlurWgsl`, `emitWarpWgsl`) that had no runtime at all before.
+- **Refusals stay refusals.** `?graph=warp` on the WebGL backend is still a
+  `PassGraphError` with `code: 'unsupported-node'` naming the node, published as
+  `window.passGraphError`; a graph the executor cannot encode is refused with
+  the node named and the renderer stays on the hand encoder.
+
+## Phase 3 — what is not done yet
+
+- **The WebGL executor.** The diagnostic / XR / screenshot backend still
+  compiles only. It is second in line on purpose: it has no template for `warp`
+  or `blur`, so the shapes worth executing are WebGPU's first.
+- **N-layer execution.** `buildDefaultGraph(5)` compiles and emits on both
+  backends today, and the executor's pool, plans and bind-group layouts are all
+  written against `layerCount` rather than a literal 3. What still assumes three
+  is everything *around* the graph: `RendererState.layers: [L, L, L]`, and the
+  fixed triples in `BindGroupCache.ts`, `TracerInspectPass.ts`,
+  `GpuReadback.ts`, `CompositorPass.ts` and the `coincidence` compute kernel.
+  Un-tupling `RendererState` is the next step.
+- **A third tracer timescale.** `emitCompositorWgsl` binds exactly two tracer
+  textures (`persistBelow`, `persistAbove`), so a graph with three `decay`
+  nodes is refused rather than approximated. Generalising the compositor
+  template to N tracers is what unblocks it.
+- **The temporal (motion) term.** `motionMode` has no graph node, so a session
+  that selects one falls back to the hand encoder rather than quietly dropping
+  the term. The node kind is the fix, not a uniform.
+- **The assembler shim.** `shaders/{layers,persistence,compositor}.ts` are still
+  the hand encoder's entry point into the templates. They can become re-exports
+  once the hand-encoded path itself goes away.
 - **The node editor.** `@xyflow/react` in a Graph panel. The IR is useful with a
-  JSON text field and no editor at all, which is why it is not here.
+  named preset and a JSON text field, which is why it is still not here.
 
 ## Files
 
@@ -193,8 +298,14 @@ src/engine/graph/
 ├── compile.ts        # validate → schedule → allocate → emit → cache
 ├── defaultGraph.ts   # today's pipeline as a graph, for any layer count
 ├── layerSpecs.ts     # the band table the band-layer templates read
-├── gate.ts           # ?graph=1 + window.passGraph* breadcrumbs
+├── gate.ts           # ?graph=1|blur|warp + window.passGraph* breadcrumbs
+├── altGraphs.ts      # the named graph shapes the gate can select
 ├── shaderText.ts     # shader normalisation used by the parity test
+├── exec/
+│   ├── plan.ts                  # CompiledGraph → encodable steps (no WebGPU)
+│   ├── pool.ts                  # AllocationPlan → textures, lazily
+│   ├── nodePipelines.ts         # one emitted pass → layout + pipeline + uniforms
+│   └── WebGpuGraphExecutor.ts   # walks the steps and encodes the frame
 ├── templates/
 │   ├── wgsl.ts       # band-layer, coincidence+decay, blend, lut, warp, blur
 │   └── glsl.ts       # band-layer, coincidence+decay, blend, lut

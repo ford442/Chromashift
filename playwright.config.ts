@@ -21,7 +21,7 @@ export default defineConfig({
       // (Playwright screenshots, kiosk, presets). Distinct from chromium-webgpu.
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts/,
+      testIgnore: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts/,
     },
     {
       name: 'chromium-webgpu',
@@ -31,7 +31,7 @@ export default defineConfig({
           args: WEBGPU_LAUNCH_ARGS,
         },
       },
-      testMatch: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts/,
+      testMatch: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts/,
     },
   ],
   webServer: {

@@ -80,14 +80,20 @@ src/
 │   ├── actions/                  # Dispatch wrapper factories mirroring reducer slices (media, compare, reactive, …)
 │   └── serializeSettings.ts, presetUrl.ts, presetLibrary.ts, presetGallery.ts  # see docs/PRESETS.md
 └── engine/
-    ├── graph/                # Pass-graph IR + compiler — see docs/PASS_GRAPH.md
+    ├── graph/                # Pass-graph IR + compiler + WebGPU executor — see docs/PASS_GRAPH.md
     │   ├── types.ts, nodeKinds.ts     # The IR and the per-node-kind registry
     │   ├── validate.ts, schedule.ts, allocate.ts  # DAG/type check, pass order, transient texture pool
     │   ├── hash.ts, compile.ts        # Structural hash cache; validate→schedule→allocate→emit
     │   ├── capabilities.ts            # Which node kinds each backend can emit (WebGL: no warp/blur)
     │   ├── defaultGraph.ts            # Today's pipeline as a graph, for any layer count
     │   ├── layerSpecs.ts              # The band table the band-layer templates read
-    │   ├── gate.ts                    # ?graph=1 + window.passGraph* breadcrumbs
+    │   ├── gate.ts                    # ?graph=1|blur|warp + window.passGraph* breadcrumbs
+    │   ├── altGraphs.ts               # Named graph shapes the gate can select (blur, warp)
+    │   ├── exec/                      # Phase 2: walks compiled.passes and encodes the frame
+    │   │   ├── plan.ts                # CompiledGraph → encodable steps (no WebGPU; owns coincidence fusion)
+    │   │   ├── pool.ts                # AllocationPlan → textures, lazily; ping-pong + MSAA targets
+    │   │   ├── nodePipelines.ts       # One emitted pass → bind-group layout, pipeline, uniform block
+    │   │   └── WebGpuGraphExecutor.ts # The WebGPU encode path behind ?graph=1
     │   ├── templates/                 # WGSL + GLSL emitter per node kind
     │   └── __golden__/                # Pre-refactor shader sources (pixel-identity baseline)
     ├── shaders/              # WGSL modules assembled in TS (thin assembler)
@@ -204,7 +210,9 @@ WebGL-only debug helpers are in the Renderer panel:
 - `Rotation UV grid` — transformed UVs and a grid to debug layer rotation/flips.
 - `Layer mask isolation` — shows active per-layer mask output before final compositing.
 
-The WGSL and GLSL sources for the band layers, the coincidence/decay (persistence) pass and the compositor are **emitted** from the node templates in `src/engine/graph/templates/` rather than hand-written — one template plus a band table (`graph/layerSpecs.ts`) instead of three copies per backend. `src/engine/graph/shaderParity.test.ts` pins the emitted output against `graph/__golden__/`, the pre-refactor sources, so a template change that alters the rendered result fails loudly on both backends. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
+The WGSL and GLSL sources for the band layers, the coincidence/decay (persistence) pass and the compositor are **emitted** from the node templates in `src/engine/graph/templates/` rather than hand-written — one template plus a band table (`graph/layerSpecs.ts`) instead of three copies per backend. `src/engine/graph/shaderParity.test.ts` pins the emitted output against `graph/__golden__/`, the pre-refactor sources, so a template change that alters the rendered result fails loudly on both backends.
+
+On WebGPU the graph is also **executed**: `?graph=1` hands the compiled graph to `WebGpuGraphExecutor`, which walks `compiled.passes` and binds the allocator's pool instead of running the hand-written five-pass encode in `WebGPURenderer`. The default graph is byte-for-byte that topology; `?graph=blur` and `?graph=warp` are different shapes that draw with no renderer edit. The WebGL diagnostic backend compiles only. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
 
 For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. The tracer-decay constants follow the same rule: the `DECAY` table in `src/engine/math/decay.ts` (from `shared/decay.json`) via `DECAY_WGSL` / `DECAY_GLSL` in `decayLiterals.ts`, guarded by `src/engine/shaders/decayTable.test.ts` — see [docs/wasm-engine.md](docs/wasm-engine.md#shared-decay-table-shareddecayjson). Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
