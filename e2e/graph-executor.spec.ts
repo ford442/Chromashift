@@ -37,7 +37,12 @@ const frozenScene = (
 ) => encodePresetParam({
   version: 1,
   settings: {
-    layers: { angles: [0, 40, 80], extensions: [0, 0, 0] },
+    // `opacity` is here purely so a test can confirm the preset arrived: the
+    // Layers panel renders it as "66%", which is a non-pixel signal that the
+    // document was parsed and applied. Without that, a silently dropped preset
+    // turns the parity comparison into two captures of a *spinning* scene and
+    // every assertion in this file starts measuring something else.
+    layers: { angles: [0, 40, 80], extensions: [0, 0, 0], opacity: 0.66 },
     ...(overrides.tracers ? { tracers: overrides.tracers } : {}),
     ...(overrides.output ? { output: overrides.output } : {}),
   },
@@ -167,6 +172,18 @@ test.describe('pass-graph executor', () => {
    * override entirely and rendered the default composite, which is exactly how
    * the earlier `shot.length > 0` check managed to assert nothing.
    */
+  test('the frozen-scene preset is applied at all', async ({ page }) => {
+    test.setTimeout(90_000);
+    await openScene(page, '1');
+    await expect(page.getByText('NUNIF Controls')).toBeVisible();
+
+    // Same check the shipped preset-URL spec makes, for the same reason: it
+    // reads an applied value out of the UI rather than inferring one from
+    // pixels. If this fails, nothing else in this file means what it says.
+    const layersSection = page.locator('.section-divider').filter({ hasText: '🌍 Layers & Global' });
+    await expect(layersSection.getByText('66%', { exact: true })).toBeVisible();
+  });
+
   test('the output-mode overrides reach the renderer and the stamp has content', async ({ page }) => {
     test.setTimeout(240_000);
 
