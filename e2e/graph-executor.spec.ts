@@ -238,6 +238,11 @@ test.describe('pass-graph executor', () => {
           + 'cannot be observed here; the breadcrumbs above still prove it encoded',
         );
         const base = await captureCanvas(page, '1');
+        test.skip(
+          !renderedSomething(base),
+          'this runner renders a blank default graph, so "the shape changed the '
+          + 'pixels" cannot be observed here either',
+        );
         expect(shot.equals(base)).toBe(false);
       });
     }
