@@ -1,5 +1,9 @@
 import { layerFragmentSources } from './shaders';
-import { DEFAULT_LAYER_COUNT } from './graph';
+import { DEFAULT_LAYER_COUNT, publishGraphExecutorBreadcrumbs } from './graph';
+import { WebGpuGraphExecutor, type GraphRoleTextures } from './graph/exec/WebGpuGraphExecutor';
+import { PassGraphError } from './graph/errors';
+import type { GraphPresetName } from './graph/altGraphs';
+import type { CompiledGraph } from './graph/types';
 import { WebGPUPipelines, type LayerPipeline } from './WebGPUPipelines';
 import { MAIN_VIEW_MODES } from './viewModes';
 import {
@@ -10,7 +14,7 @@ import {
 import { MotionFieldPass } from './MotionFieldPass';
 import { MOTION_FIELD_DIVISOR } from './motionModes';
 import { PersistencePass } from './PersistencePass';
-import { CompositorPass } from './CompositorPass';
+import { CompositorPass, type CompositorUniformParams } from './CompositorPass';
 import { TracerInspectPass } from './TracerInspectPass';
 import { GpuReadback } from './GpuReadback';
 import { GpuTimestampProfiler, publishGpuTimestampBreadcrumbs } from './GpuTimestampProfiler';
@@ -77,6 +81,25 @@ export class WebGPURenderer {
 
   private lastRenderCpuMs = 0;
   private averageRenderCpuMs = 0;
+
+  /**
+   * Pass-graph executor (docs/PASS_GRAPH.md Phase 2). Non-null once
+   * `setPassGraph()` adopts a compiled graph; `render()` then encodes
+   * `compiled.passes` instead of the hand-written five-pass topology.
+   */
+  private graphExecutor: WebGpuGraphExecutor | null = null;
+  private graphName: GraphPresetName | null = null;
+  /**
+   * Whether the graph executor — rather than the hand encoder — encoded the
+   * most recent frame.
+   *
+   * Adopting a graph is not the same as drawing with it: a motion mode or a
+   * `tracers` / `layers` export falls back to the hand encoder, which writes
+   * *its* layer and persistence textures. The preview, readback and export
+   * helpers below have to follow whichever path actually ran, or they publish a
+   * stale frame from the other one's targets.
+   */
+  private executorEncodedLastFrame = false;
 
   constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = false) {
     this.device  = device;
@@ -196,6 +219,68 @@ export class WebGPURenderer {
     this.invalidateBindGroupCaches();
   }
 
+  /**
+   * Adopt a compiled pass graph, or `null` to return to the hand encoder.
+   *
+   * A graph that compiled but cannot be *encoded* — a `decay` reading the wrong
+   * number of stamp inputs, a `blend` with three tracers — is refused here with
+   * the node named, and the renderer stays on the hand encoder rather than
+   * drawing an approximation of what was asked for.
+   */
+  setPassGraph(compiled: CompiledGraph | null, name: GraphPresetName | null = null): void {
+    if (!compiled) {
+      this.graphExecutor?.destroy();
+      this.graphExecutor = null;
+      this.graphName = null;
+      publishGraphExecutorBreadcrumbs(null, []);
+      return;
+    }
+
+    this.graphExecutor ??= new WebGpuGraphExecutor(
+      this.device,
+      this.pipelines,
+      this.internalFormat,
+      this.pipelines.format,
+      this.sampler,
+      this.compositorSampler,
+    );
+    try {
+      this.graphExecutor.setGraph(compiled);
+      this.graphExecutor.setSampleCount(this.sampleCount);
+    } catch (error) {
+      const message = error instanceof PassGraphError
+        ? `${error.code}: ${error.message}`
+        : String(error);
+      console.warn('[Chromashift:PassGraph] executor refused the graph —', message);
+      this.graphExecutor.destroy();
+      this.graphExecutor = null;
+      this.graphName = null;
+      if (typeof window !== 'undefined') window.passGraphError = message;
+      publishGraphExecutorBreadcrumbs(null, []);
+      return;
+    }
+    this.graphName = name;
+    publishGraphExecutorBreadcrumbs(name, this.graphExecutor.encodedPasses());
+  }
+
+  /** Name of the graph shape the executor is drawing, or `null`. */
+  get passGraphName(): GraphPresetName | null {
+    return this.graphName;
+  }
+
+  /**
+   * True when the graph executor draws this frame.
+   *
+   * The temporal (motion) term has no graph node yet, so a session that selects
+   * one falls back to the hand encoder rather than quietly dropping it.
+   */
+  private executorDrawsFrame(state: RendererState, passMode: ExportPassMode): boolean {
+    return this.graphExecutor !== null
+      && this.graphExecutor.active
+      && passMode === 'composite'
+      && (state.motionMode ?? 0) === 0;
+  }
+
   setTexture(handle: ChromashiftTextureHandle): void {
     if (handle.backend !== 'webgpu') {
       throw new Error(`Expected a webgpu texture handle, received ${handle.backend}.`);
@@ -232,6 +317,7 @@ export class WebGPURenderer {
     this.msaaTexture?.destroy();
     this.msaaTexture = null;
     this.persistence.resetTextures();
+    this.graphExecutor?.setSampleCount(this.sampleCount);
     this.texW = 0;
     this.texH = 0;
     this.layerScale = 1.0;
@@ -257,17 +343,42 @@ export class WebGPURenderer {
 
   clearPersistence(): void {
     this.persistence.clear();
+    // The graph's pool owns the tracers while the executor draws, so clearing
+    // only the hand encoder's pass would leave the trails on screen.
+    this.graphExecutor?.clearAccumulators();
+  }
+
+  /**
+   * Textures the preview, readback and inspect passes read.
+   *
+   * When the executor drew the frame, these come out of *its* pool — otherwise
+   * the live preview and the collision-stats readback would sample the hand
+   * encoder's now-untouched targets and report a black frame.
+   */
+  /** Graph-owned textures, but only when the graph encoded the current frame. */
+  private lastFrameRoleTextures(): GraphRoleTextures | null {
+    if (!this.executorEncodedLastFrame) return null;
+    return this.graphExecutor?.roleTextures() ?? null;
   }
 
   private getLayerTexturesTuple(): [GPUTexture, GPUTexture, GPUTexture] {
+    const roles = this.lastFrameRoleTextures();
+    if (roles) return [roles.layers[0], roles.layers[1], roles.layers[2]];
     return [this.layerTextures[0], this.layerTextures[1], this.layerTextures[2]];
   }
 
   private getTracerTextures(): { below: GPUTexture; above: GPUTexture } {
+    const roles = this.lastFrameRoleTextures();
+    if (roles) return { below: roles.tracerBelow, above: roles.tracerAbove };
     return {
       below: this.persistence.belowTextures[this.persistence.pingPong]!,
       above: this.persistence.aboveTextures[this.persistence.pingPong]!,
     };
+  }
+
+  /** Ping-pong index the bind-group caches key on, from whichever path drew. */
+  private get activePingPong(): 0 | 1 {
+    return this.lastFrameRoleTextures()?.pingPong ?? this.persistence.pingPong;
   }
 
   private encodeLayerPasses(
@@ -373,12 +484,10 @@ export class WebGPURenderer {
           this.getLayerTexturesTuple(),
           this.getTracerTextures().below,
           this.getTracerTextures().above,
-          this.persistence.pingPong,
+          this.activePingPong,
         );
       },
-      state.paused
-        ? this.persistence.getDiagnosticTextureForReadback(true)
-        : this.persistence.getDiagnosticTextureForReadback(false),
+      this.diagnosticForReadback(state.paused === true),
     );
 
     this.gpuProfiler?.finishFrame(enc);
@@ -393,6 +502,13 @@ export class WebGPURenderer {
     // publish a breadcrumb, for a pass that never ran.
     if ((state.motionMode ?? 0) !== 0) this.motionField.afterSubmit();
     this.readback.afterSubmit(readbackFlags);
+  }
+
+  /** Stamp-diagnostic texture the collision-stats readback samples. */
+  private diagnosticForReadback(paused: boolean): GPUTexture | null {
+    const roles = this.lastFrameRoleTextures();
+    if (roles) return roles.diagnostic;
+    return this.persistence.getDiagnosticTextureForReadback(paused);
   }
 
   /** Rebuild GPU targets after export at a different resolution. */
@@ -451,6 +567,40 @@ export class WebGPURenderer {
   ): void {
     profiler?.beginFrame(enc);
 
+    // Pass-graph executor (docs/PASS_GRAPH.md Phase 2). When a compiled graph
+    // is adopted it encodes `compiled.passes` — the default graph byte-for-byte
+    // the topology below, or a different shape entirely — and the hand-written
+    // encode path is skipped whole rather than partly reused.
+    if (this.executorDrawsFrame(state, passMode) && this.currentTexture) {
+      this.executorEncodedLastFrame = true;
+      // The live-preview readback still runs through `CompositorPass`, so its
+      // uniform block has to be written even though the graph drew the frame.
+      this.compositor.writeUniforms(this.compositorUniformParams(state));
+      this.graphExecutor!.encode(
+        enc,
+        {
+          source: this.currentTexture,
+          classificationMask: this.classificationMaskTexture ?? this.fallbackMaskTexture,
+          hasClassificationMask: this.classificationMaskTexture !== null,
+          profileLut: this.updatedProfileLut(state),
+        },
+        {
+          state,
+          outputView,
+          width,
+          height,
+          fps,
+          marks: {
+            layersEnd: () => { profiler?.markLayersEnd(enc); profiler?.markMotionEnd(enc); },
+            stampEnd: () => profiler?.markPersistenceEnd(enc),
+            compositorEnd: () => profiler?.markCompositorEnd(enc),
+          },
+        },
+      );
+      return;
+    }
+
+    this.executorEncodedLastFrame = false;
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
     const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
     const layerOpacities: [number, number, number] = [
@@ -512,21 +662,7 @@ export class WebGPURenderer {
     const layerBlendMode = state.layerBlendMode ?? 0;
     const tracerBlendMode = state.tracerBlendMode ?? 0;
 
-    this.compositor.writeUniforms({
-      tracerAboveOp,
-      tracerBelowOp,
-      layerBlendMode,
-      tracerBlendMode,
-      layerOpacities,
-      diagnosticsOpacity: state.diagnosticsOpacity ?? 0.55,
-      stampBoost,
-      outputMode: state.outputMode ?? 0,
-      tracerMode,
-      diagnosticsMode: state.diagnosticsMode ?? false,
-      viewportQuarterZoom: false,
-      halfOverlayAlpha: state.halfOverlayAlpha ?? 0.5,
-      viewportHalfOverlay: false,
-    });
+    this.compositor.writeUniforms(this.compositorUniformParams(state));
 
     if (passMode === 'tracers') {
       this.tracerInspect.encodeTracerView(
@@ -610,14 +746,47 @@ export class WebGPURenderer {
     profiler?.markCompositorEnd(enc);
   }
 
+  /** Compositor uniform block for one frame, shared by both encode paths. */
+  private compositorUniformParams(state: RendererState): CompositorUniformParams {
+    const globalLayerOpacity = state.layerOpacity ?? 1.0;
+    const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
+    return {
+      tracerAboveOp: state.tracerAboveIntensity ?? 0.85,
+      tracerBelowOp: state.tracerBelowIntensity ?? 0.30,
+      layerBlendMode: state.layerBlendMode ?? 0,
+      tracerBlendMode: state.tracerBlendMode ?? 0,
+      layerOpacities: [
+        globalLayerOpacity * sourceLayerOpacities[0],
+        globalLayerOpacity * sourceLayerOpacities[1],
+        globalLayerOpacity * sourceLayerOpacities[2],
+      ],
+      diagnosticsOpacity: state.diagnosticsOpacity ?? 0.55,
+      stampBoost: state.stampBoost ?? 1.8,
+      outputMode: state.outputMode ?? 0,
+      tracerMode: state.tracerMode ?? 0.0,
+      diagnosticsMode: state.diagnosticsMode ?? false,
+      viewportQuarterZoom: false,
+      halfOverlayAlpha: state.halfOverlayAlpha ?? 0.5,
+      viewportHalfOverlay: false,
+    };
+  }
+
+  /** Upload the active colour profile LUT and hand back its texture. */
+  private updatedProfileLut(state: RendererState): GPUTexture {
+    this.profileLut.update(state.colorProfileLut);
+    return this.profileLut.texture;
+  }
+
   private get format(): GPUTextureFormat {
     return this.context.getCurrentTexture().format;
   }
 
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
-    const above = this.persistence.aboveTextures[this.persistence.pingPong];
-    const below = this.persistence.belowTextures[this.persistence.pingPong];
-    if (!above || !below || this.layerTextures.length < DEFAULT_LAYER_COUNT) return null;
+    const roles = this.lastFrameRoleTextures();
+    const above = roles?.tracerAbove ?? this.persistence.aboveTextures[this.persistence.pingPong];
+    const below = roles?.tracerBelow ?? this.persistence.belowTextures[this.persistence.pingPong];
+    if (!above || !below) return null;
+    if (!roles && this.layerTextures.length < DEFAULT_LAYER_COUNT) return null;
 
     return this.readback.exportTracerView(
       this.tracerInspect,
@@ -625,13 +794,15 @@ export class WebGPURenderer {
         persistAbove: above,
         persistBelow: below,
         layerTextures: this.getLayerTexturesTuple(),
-        pingPong: this.persistence.pingPong,
+        pingPong: this.activePingPong,
       },
       options,
     );
   }
 
   destroy(): void {
+    this.graphExecutor?.destroy();
+    this.graphExecutor = null;
     for (const lp of this.layerPipelines) {
       lp.rotationBuffer.destroy();
       lp.fragUniformBuffer.destroy();

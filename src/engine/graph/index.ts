@@ -34,6 +34,18 @@ export { backendSupports, supportedNodeKinds } from './capabilities';
 export { compileGraph, graphCompileCount, resetGraphCompileCache } from './compile';
 export { DEFAULT_GRAPH_IDS, DEFAULT_LAYER_COUNT, buildDefaultGraph } from './defaultGraph';
 export {
+  GRAPH_PRESETS,
+  buildBlurGraph,
+  buildGraphPreset,
+  buildWarpGraph,
+  isGraphPresetName,
+  type GraphPresetName,
+} from './altGraphs';
+// The executor is deliberately *not* re-exported here. `WebGLLayerPass` and
+// `StationaryPreviewRenderer` import this barrel for `DEFAULT_LAYER_COUNT`, and
+// a value export would drag the WebGPU encode path into the WebGL diagnostic
+// chunk. Import `./exec/WebGpuGraphExecutor` directly instead.
+export {
   CANONICAL_LAYER_COUNT,
   CANONICAL_LAYER_SPECS,
   buildLayerSpecs,
@@ -42,6 +54,9 @@ export {
 export {
   activatePassGraph,
   passGraphRequested,
+  passGraphSelection,
+  publishGraphExecutorBreadcrumbs,
   setStoredPassGraphPreference,
+  type PassGraphSelection,
 } from './gate';
 export { normaliseShaderSource } from './shaderText';
