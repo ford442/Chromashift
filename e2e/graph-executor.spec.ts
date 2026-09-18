@@ -32,17 +32,28 @@ import { STRUCTURED_FIXTURE_PNG } from './helpers/structuredFixture';
  * where they do not the accumulator starts at zero and stays there. So there is
  * no frame-count-dependent state left for two runs to disagree about.
  */
-const frozenScene = (tracers?: Record<string, number>) => encodePresetParam({
+const frozenScene = (
+  overrides: { tracers?: Record<string, number>; output?: Record<string, number> } = {},
+) => encodePresetParam({
   version: 1,
   settings: {
     layers: { angles: [0, 40, 80], extensions: [0, 0, 0] },
-    ...(tracers ? { tracers } : {}),
+    ...(overrides.tracers ? { tracers: overrides.tracers } : {}),
+    ...(overrides.output ? { output: overrides.output } : {}),
   },
 });
 
 const FROZEN_SCENE = frozenScene();
 /** The same scene with the tracers composited at zero opacity. */
-const NO_TRACERS = frozenScene({ aboveIntensity: 0, belowIntensity: 0 });
+const NO_TRACERS = frozenScene({ tracers: { aboveIntensity: 0, belowIntensity: 0 } });
+/**
+ * `outputMode: 3` makes the compositor output its *own* freshly computed
+ * overlap stamp, straight from the layer textures. It never reads an
+ * accumulator, so it reports on the scene alone.
+ */
+const STAMP_ONLY = frozenScene({ output: { outputMode: 3 } });
+/** `outputMode: 2` suppresses the live layers and shows only the accumulators. */
+const TRACERS_ONLY = frozenScene({ output: { outputMode: 2 } });
 
 const SETTLE_MS = 2500;
 
@@ -143,6 +154,34 @@ test.describe('pass-graph executor', () => {
     // A black or flat canvas is 1. The structured fixture through the band
     // layers and compositor is hundreds.
     expect(distinctColourCount(frame)).toBeGreaterThan(64);
+  });
+
+  /**
+   * Splits "the scene has no overlapping layers" from "the accumulators are not
+   * being filled", which the tracer test below cannot distinguish on its own.
+   *
+   * `outputMode: 3` is the compositor's own overlap stamp, computed inline from
+   * the layer textures with no accumulator involved: it answers whether the
+   * scene overlaps at all. `outputMode: 2` shows only the accumulators. A flat
+   * frame is one distinct colour, so which of the two is flat names the fault.
+   */
+  test('the scene overlaps layers, and the accumulators hold the stamp', async ({ page }) => {
+    test.setTimeout(180_000);
+
+    const stampOnly = await captureCanvas(page, '1', STAMP_ONLY);
+    expect(
+      distinctColourCount(stampOnly),
+      'compositor stamp is flat: no pixel has 2+ band layers active, so the scene '
+      + 'never triggers coincidence (a fixture/angle problem, not an executor one)',
+    ).toBeGreaterThan(1);
+
+    const tracersOnly = await captureCanvas(page, '1', TRACERS_ONLY);
+    expect(
+      distinctColourCount(tracersOnly),
+      'the scene overlaps but the tracer accumulators are empty: the executor\u2019s '
+      + 'decay passes are not writing, or the compositor is bound to the wrong side '
+      + 'of the ping-pong pair',
+    ).toBeGreaterThan(1);
   });
 
   test('the scene exercises the tracer path', async ({ page }) => {
