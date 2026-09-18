@@ -1,9 +1,11 @@
 import { WebGPURenderer } from './WebGPURenderer';
-import { WebGLRenderer } from './WebGLRenderer';
+import { WebGLRenderer } from './webgl/WebGLRenderer';
 import { TextureManager } from './TextureManager';
 import { WebGLTextureManager } from './WebGLTextureManager';
 import { GpuImageAnalysis } from './compute/GpuImageAnalysis';
-import { publishGpuComputeBreadcrumbs, readGpuComputeDiagnostics } from './compute/computeSupport';
+import { publishGpuComputeBreadcrumbs, readGpuComputeDiagnostics } from './compute/chores/support';
+import { resolveWebGL2PreserveDrawingBuffer } from './gpuOptions';
+import { acquireGpuChoreSession, type GpuChoreLease } from './compute/GpuChoreSession';
 import { getRendererPreference } from './rendererMode';
 import {
   bootstrapWebGpu,
@@ -76,6 +78,8 @@ export interface RendererOrchestratorDeps {
   createTextureManager: (device: GPUDevice) => ChromashiftTextureManager;
   createWebGLTextureManager: (gl: WebGL2RenderingContext) => ChromashiftTextureManager;
   createGpuImageAnalysis: (device: GPUDevice) => GpuImageAnalysis;
+  /** Borrow the device's shared chore backend. Injected so tests need no device. */
+  acquireGpuChoreSession: (device: GPUDevice) => GpuChoreLease;
   getRendererPreference: () => RendererBackend;
 }
 
@@ -93,6 +97,7 @@ export const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
   createTextureManager: (device) => new TextureManager(device),
   createWebGLTextureManager: (gl) => new WebGLTextureManager(gl),
   createGpuImageAnalysis: (device) => new GpuImageAnalysis(device),
+  acquireGpuChoreSession,
   getRendererPreference,
 };
 
@@ -107,6 +112,14 @@ export class RendererOrchestrator {
   private webglContext: WebGL2RenderingContext | null = null;
   private textureManager: ChromashiftTextureManager | null = null;
   private gpuImageAnalysis: GpuImageAnalysis | null = null;
+  /**
+   * Session-lifetime lease on the device's single `WebGpuChoreBackend`.
+   * Analysis, `PersistencePass` (coincidence), and `MotionFieldPass` each take
+   * their own lease on the same backend; this one outlives all of them, so a
+   * slot teardown or an analysis rebuild never destroys compute state the other
+   * lanes are still using.
+   */
+  private choreLease: GpuChoreLease | null = null;
   private backend: RendererBackend;
   private fallbackReason: string | null = null;
   private readonly antialias: boolean;
@@ -350,9 +363,11 @@ export class RendererOrchestrator {
     }
 
     this.gpuImageAnalysis?.destroy();
+    this.choreLease?.release();
     this.textureManager?.destroy();
     this.session?.detach();
 
+    this.choreLease = null;
     this.gpuImageAnalysis = null;
     this.textureManager = null;
     this.session = null;
@@ -373,6 +388,9 @@ export class RendererOrchestrator {
         this.onRuntimeError?.(error);
       },
     });
+    // Taken before any lane so the shared backend is constructed once, here,
+    // and torn down only when this orchestrator lets go.
+    this.choreLease = this.deps.acquireGpuChoreSession(this.session.device);
     this.textureManager = this.deps.createTextureManager(this.session.device);
     this.gpuImageAnalysis = this.deps.createGpuImageAnalysis(this.session.device);
     publishGpuComputeBreadcrumbs(
@@ -383,7 +401,12 @@ export class RendererOrchestrator {
 
   private bootstrapWebGL(primaryCanvas: HTMLCanvasElement): void {
     this.primaryCanvas = primaryCanvas;
-    const gl = this.deps.createWebGL2Context(primaryCanvas, { antialias: this.antialias });
+    const gl = this.deps.createWebGL2Context(primaryCanvas, {
+      antialias: this.antialias,
+      // Off for a live session; on for screenshot / readback callers. See
+      // resolveWebGL2PreserveDrawingBuffer for how that is decided.
+      preserveDrawingBuffer: resolveWebGL2PreserveDrawingBuffer(),
+    });
     this.webglContext = gl;
     this.textureManager = this.deps.createWebGLTextureManager(gl);
   }
@@ -391,6 +414,8 @@ export class RendererOrchestrator {
   private resetWebGpuResources(): void {
     this.gpuImageAnalysis?.destroy();
     this.gpuImageAnalysis = null;
+    this.choreLease?.release();
+    this.choreLease = null;
     this.textureManager?.destroy();
     this.textureManager = null;
     const session = this.session;

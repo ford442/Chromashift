@@ -21,8 +21,11 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Host-side C++ unit tests
-        run: npm run test:cpp
+      # -Werror, so a new conversion / unused-parameter warning fails the job
+      # rather than scrolling past. The shipped emcc build carries the same
+      # -Wall -Wextra (see cpp/Makefile EMFLAGS_COMMON).
+      - name: Host-side C++ unit tests (-Werror)
+        run: npm run test:cpp:werror
 
   wasm-freshness:
     runs-on: ubuntu-latest
@@ -30,11 +33,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Single source of truth for the toolchain version. Committed
+      # public/chromashift_engine.* are only reproducible for a pinned emsdk,
+      # which is what the staleness check at the end of this job relies on.
+      - name: Read pinned emsdk version
+        id: emsdk
+        run: echo "version=$(cat cpp/emsdk.version)" >> "$GITHUB_OUTPUT"
+
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.64
+          version: ${{ steps.emsdk.outputs.version }}
           cache: true
+
+      - name: Verify the installed emsdk matches the pin
+        run: make -C cpp check
 
       - name: Verify export list matches header
         run: make -C cpp verify-exports

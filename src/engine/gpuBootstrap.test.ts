@@ -8,13 +8,21 @@ import {
   listAvailableOptionalFeatures,
   logAdapterReport,
   MIN_DEVICE_TEXTURE_DIMENSION,
+  configureWebGpuCanvas,
+  getCanvasToneMappingSupport,
   releasePageGpuDevice,
   requestWebGpuDevice,
+  resetCanvasToneMappingSupportForTests,
   resetGpuDeviceGateForTests,
   toBootstrapRuntimeError,
   deviceLostRuntimeError,
 } from './gpuBootstrap';
-import { getWebGL2ContextAttributes, CHROMASHIFT_OPTIONAL_FEATURES, CHROMASHIFT_TARGET_MAX_TEXTURE } from './gpuOptions';
+import {
+  getWebGL2ContextAttributes,
+  resolveWebGL2PreserveDrawingBuffer,
+  CHROMASHIFT_OPTIONAL_FEATURES,
+  CHROMASHIFT_TARGET_MAX_TEXTURE,
+} from './gpuOptions';
 
 function mockAdapterLimits(overrides: Partial<GPUAdapter['limits']> = {}): GPUAdapter['limits'] {
   return {
@@ -413,20 +421,120 @@ describe('getWebGL2ContextAttributes', () => {
     expect(getWebGL2ContextAttributes({ antialias: false }).antialias).toBe(false);
   });
 
-  it('keeps alpha disabled and preserveDrawingBuffer enabled', () => {
+  it('keeps alpha disabled and preserveDrawingBuffer off by default', () => {
     const attrs = getWebGL2ContextAttributes({ antialias: false });
     expect(attrs.alpha).toBe(false);
-    expect(attrs.preserveDrawingBuffer).toBe(true);
+    // The live diagnostic session never reads the canvas back; preserving it
+    // costs a copy per frame. Screenshot / readback callers opt in below.
+    expect(attrs.preserveDrawingBuffer).toBe(false);
   });
 
-  it('allows callers to override preserveDrawingBuffer and xr compatibility', () => {
+  it('allows screenshot/readback callers to opt into preserveDrawingBuffer', () => {
     const attrs = getWebGL2ContextAttributes({
       antialias: false,
-      preserveDrawingBuffer: false,
+      preserveDrawingBuffer: true,
       xrCompatible: true,
     });
-    expect(attrs.preserveDrawingBuffer).toBe(false);
+    expect(attrs.preserveDrawingBuffer).toBe(true);
     expect(attrs.xrCompatible).toBe(true);
+  });
+});
+
+describe('resolveWebGL2PreserveDrawingBuffer', () => {
+  // The suite runs in the `node` environment, so window/navigator are stubbed
+  // rather than mutated.
+  function setEnvironment(options: { search?: string; webdriver?: boolean }): void {
+    vi.stubGlobal('window', { location: { search: options.search ?? '' } });
+    vi.stubGlobal('navigator', { webdriver: options.webdriver ?? false });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('is off for a normal live session', () => {
+    setEnvironment({});
+    expect(resolveWebGL2PreserveDrawingBuffer()).toBe(false);
+  });
+
+  it('is on under automation so Playwright captures a drawn canvas', () => {
+    setEnvironment({ webdriver: true });
+    expect(resolveWebGL2PreserveDrawingBuffer()).toBe(true);
+  });
+
+  it('lets the URL param force it on in a normal tab', () => {
+    setEnvironment({ search: '?preserve_drawing_buffer=1' });
+    expect(resolveWebGL2PreserveDrawingBuffer()).toBe(true);
+    setEnvironment({ search: '?preserve_drawing_buffer' });
+    expect(resolveWebGL2PreserveDrawingBuffer()).toBe(true);
+  });
+
+  it('lets the URL param force it off under automation', () => {
+    setEnvironment({ search: '?preserve_drawing_buffer=0', webdriver: true });
+    expect(resolveWebGL2PreserveDrawingBuffer()).toBe(false);
+  });
+});
+
+describe('configureWebGpuCanvas tone mapping', () => {
+  const device = { features: new Set<string>() } as unknown as GPUDevice;
+
+  function fakeContext(overrides: Partial<GPUCanvasContext> = {}) {
+    return {
+      configure: vi.fn(),
+      unconfigure: vi.fn(),
+      ...overrides,
+    } as unknown as GPUCanvasContext & { configure: ReturnType<typeof vi.fn> };
+  }
+
+  beforeEach(() => {
+    resetCanvasToneMappingSupportForTests();
+    vi.stubGlobal('GPUTextureUsage', { RENDER_ATTACHMENT: 0x10, COPY_SRC: 0x01 });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    resetCanvasToneMappingSupportForTests();
+  });
+
+  it('requests tone mapping and records support when configure succeeds', () => {
+    const context = fakeContext();
+    configureWebGpuCanvas(context, device, 'bgra8unorm');
+    expect(context.configure).toHaveBeenCalledTimes(1);
+    expect(context.configure.mock.calls[0][0].toneMapping).toEqual({ mode: 'standard' });
+    expect(getCanvasToneMappingSupport()).toBe(true);
+  });
+
+  it('feature-detects a silently dropped toneMapping via getConfiguration', () => {
+    // Chrome 131+ echoes the applied configuration; a dictionary member the UA
+    // does not know is absent there rather than throwing.
+    const context = fakeContext({
+      getConfiguration: () => ({ device, format: 'bgra8unorm' }) as GPUCanvasConfiguration,
+    } as Partial<GPUCanvasContext>);
+    configureWebGpuCanvas(context, device, 'bgra8unorm');
+    expect(getCanvasToneMappingSupport()).toBe(false);
+    // The probe alone must not cost a second configure.
+    expect(context.configure).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not throw on the common path once tone mapping is known unsupported', () => {
+    const throwing = fakeContext();
+    throwing.configure
+      .mockImplementationOnce(() => { throw new Error('toneMapping unsupported'); })
+      .mockImplementation(() => {});
+
+    configureWebGpuCanvas(throwing, device, 'bgra8unorm');
+    expect(throwing.configure).toHaveBeenCalledTimes(2);
+    expect(getCanvasToneMappingSupport()).toBe(false);
+
+    // Every later configure (resize, DPR change, Display-P3 toggle) reads the
+    // capability bit and never re-enters the catch.
+    const next = fakeContext();
+    configureWebGpuCanvas(next, device, 'bgra8unorm');
+    expect(next.configure).toHaveBeenCalledTimes(1);
+    expect(next.configure.mock.calls[0][0].toneMapping).toBeUndefined();
   });
 });
 

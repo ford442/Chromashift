@@ -4,7 +4,7 @@ import {
   bt709Luminance,
   classifyPixelBands,
 } from '../math/bandClassification';
-import { CLASSIFICATION_COMPUTE_SHADER, WGSL_IMAGE_ANALYSIS_HELPERS } from './wgslSnippets';
+import { CLASSIFICATION_COMPUTE_SHADER, WGSL_IMAGE_ANALYSIS_HELPERS } from './chores/kernels';
 
 /** Build a small synthetic RGBA image covering all luminance bands. */
 function buildGoldenRgba(width: number, height: number): Uint8ClampedArray<ArrayBuffer> {

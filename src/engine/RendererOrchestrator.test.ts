@@ -115,6 +115,10 @@ function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): Rend
       evictExcept: vi.fn(),
     }) as unknown as WebGLTextureManager),
     createGpuImageAnalysis: vi.fn(() => gpuImageAnalysis),
+    acquireGpuChoreSession: vi.fn(() => ({
+      backend: {} as never,
+      release: vi.fn(),
+    })),
     getRendererPreference: vi.fn(() => 'webgpu' as const),
     ...overrides,
   };

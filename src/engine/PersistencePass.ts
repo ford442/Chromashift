@@ -11,7 +11,8 @@ import {
   type TwoTextureBindGroupCacheEntry,
 } from './BindGroupCache';
 import type { WebGPUPipelines } from './WebGPUPipelines';
-import { WebGpuChoreBackend } from './compute/chores/webgpuBackend';
+import type { WebGpuChoreBackend } from './compute/chores/webgpuBackend';
+import { acquireGpuChoreSession, type GpuChoreLease } from './compute/GpuChoreSession';
 import { durationToDecay } from './math/decay';
 
 export interface PersistenceEncodeParams {
@@ -85,6 +86,7 @@ export class PersistencePass {
    * Feature-detected per frame; falls back to `encodeSingle()` below when the
    * device lacks compute storage-texture support (see `docs/wasm-engine.md`).
    */
+  private readonly coincidenceLease: GpuChoreLease;
   private readonly coincidenceBackend: WebGpuChoreBackend;
   private readonly compositePipeline: GPURenderPipeline;
   private readonly compositeBGL: GPUBindGroupLayout;
@@ -140,7 +142,9 @@ export class PersistencePass {
     this.belowBindGroupCache = createTexturePairCache(2);
     this.aboveBindGroupCache = createTexturePairCache(2);
 
-    this.coincidenceBackend = new WebGpuChoreBackend(device);
+    // Borrowed, not constructed: analysis and motion-field share this backend.
+    this.coincidenceLease = acquireGpuChoreSession(device);
+    this.coincidenceBackend = this.coincidenceLease.backend;
     this.compositeBGL = pipelines.persistCompositeBGL;
     this.compositePipeline = pipelines.createPersistCompositePipeline();
     this.belowCompositeUniformBuf = device.createBuffer({
@@ -352,7 +356,7 @@ export class PersistencePass {
     this.aboveCompositeUniformBuf.destroy();
     this.belowMotionUniformBuf.destroy();
     this.aboveMotionUniformBuf.destroy();
-    this.coincidenceBackend.destroy();
+    this.coincidenceLease.release();
   }
 
   private destroyTextures(): void {

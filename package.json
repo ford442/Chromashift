@@ -26,6 +26,9 @@
     "check:wasm": "make -C cpp check",
     "clean:wasm": "make -C cpp clean",
     "test:cpp": "make -C cpp test",
+    "test:cpp:werror": "make -C cpp test-werror",
+    "test:cpp:asan": "make -C cpp test-asan",
+    "compile-commands": "make -C cpp compile-commands",
     "bench:wasm": "node scripts/bench-wasm.mjs"
   },
   "dependencies": {

@@ -1,0 +1,20 @@
+# clangd configuration for the C++ engine.
+#
+# `compile_commands.json` in this directory describes the HOST (g++) test
+# compile. Generate it with `npm run compile-commands` (or
+# `make -C cpp compile-commands`); it is gitignored because it embeds an
+# absolute `directory` path.
+#
+# The SIMD kernels in chromashift_engine.cpp are guarded by `__wasm_simd128__`,
+# which the host target never defines — clangd greys those blocks out. That is
+# expected: the scalar bodies (classifyRgb, computeAverageLuminance, …) are what
+# the database is here to give diagnostics and jump-to-definition on.
+CompileFlags:
+  CompilationDatabase: .
+  Add:
+    - -std=c++17
+    - -Wall
+    - -Wextra
+
+Diagnostics:
+  UnusedIncludes: Strict

@@ -1,4 +1,5 @@
-import { WebGpuChoreBackend } from './compute/chores/webgpuBackend';
+import type { WebGpuChoreBackend } from './compute/chores/webgpuBackend';
+import { acquireGpuChoreSession, type GpuChoreLease } from './compute/GpuChoreSession';
 import {
   EMPTY_MOTION_FIELD_STATS,
   publishMotionFieldBreadcrumbs,
@@ -31,6 +32,7 @@ export interface MotionFieldEncodeOptions {
  * rather than per frame.
  */
 export class MotionFieldPass {
+  private readonly lease: GpuChoreLease;
   private readonly backend: WebGpuChoreBackend;
   private fieldTexture: GPUTexture | null = null;
   private lastStatsAt = 0;
@@ -39,7 +41,9 @@ export class MotionFieldPass {
   private lastReason: string | null = null;
 
   constructor(device: GPUDevice) {
-    this.backend = new WebGpuChoreBackend(device);
+    // Borrowed, not constructed: analysis and coincidence share this backend.
+    this.lease = acquireGpuChoreSession(device);
+    this.backend = this.lease.backend;
   }
 
   /** True when this device can run the motion lane at all. */
@@ -112,7 +116,7 @@ export class MotionFieldPass {
 
   destroy(): void {
     this.fieldTexture = null;
-    this.backend.destroy();
+    this.lease.release();
   }
 
   private publishDecline(reason: string): void {
