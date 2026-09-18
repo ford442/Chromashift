@@ -5,6 +5,8 @@ import {
   getOrCreateTwoTextureBindGroup,
   invalidateTexturePairCache,
   invalidateTwoTextureCache,
+  layerTextureEntries,
+  type LayerTextures,
   type TexturePairBindGroupCacheEntry,
   type TwoTextureBindGroupCacheEntry,
 } from './BindGroupCache';
@@ -251,7 +253,7 @@ export class PersistencePass {
 
   encode(
     enc: GPUCommandEncoder,
-    layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+    layerTextures: LayerTextures,
     params: PersistenceEncodeParams,
   ): void {
     if (params.paused) return;
@@ -422,7 +424,7 @@ export class PersistencePass {
 
   private encodeSingle(
     enc: GPUCommandEncoder,
-    layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+    layerTextures: LayerTextures,
     readIdx: 0 | 1,
     writeIdx: 0 | 1,
     duration: number,
@@ -450,11 +452,9 @@ export class PersistencePass {
       uniformBuf,
       [
         { binding: 0, resource: this.sampler },
-        { binding: 1, resource: layerTextures[0].createView() },
-        { binding: 2, resource: layerTextures[1].createView() },
-        { binding: 3, resource: layerTextures[2].createView() },
-        { binding: 4, resource: prevTexture.createView() },
-        { binding: 5, resource: { buffer: uniformBuf } },
+        ...layerTextureEntries(1, layerTextures),
+        { binding: layerTextures.length + 1, resource: prevTexture.createView() },
+        { binding: layerTextures.length + 2, resource: { buffer: uniformBuf } },
       ],
     );
 
@@ -483,7 +483,7 @@ export class PersistencePass {
   /** Fused coincidence + decay with the temporal term (no compute lane). */
   private encodeMotionSingle(
     enc: GPUCommandEncoder,
-    layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+    layerTextures: LayerTextures,
     readIdx: 0 | 1,
     writeIdx: 0 | 1,
     duration: number,
@@ -517,12 +517,10 @@ export class PersistencePass {
         layout: this.pipelines.persistMotionBGL,
         entries: [
           { binding: 0, resource: this.sampler },
-          { binding: 1, resource: layerTextures[0].createView() },
-          { binding: 2, resource: layerTextures[1].createView() },
-          { binding: 3, resource: layerTextures[2].createView() },
-          { binding: 4, resource: prevTexture.createView() },
-          { binding: 5, resource: { buffer: uniformBuf } },
-          { binding: 6, resource: motionTexture.createView() },
+          ...layerTextureEntries(1, layerTextures),
+          { binding: layerTextures.length + 1, resource: prevTexture.createView() },
+          { binding: layerTextures.length + 2, resource: { buffer: uniformBuf } },
+          { binding: layerTextures.length + 3, resource: motionTexture.createView() },
         ],
       });
       entry.prevTexture = prevTexture;

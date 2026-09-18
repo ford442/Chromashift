@@ -88,9 +88,7 @@ export class TracerInspectPass {
   private readonly heatmapF32 = new Float32Array(this.heatmapUniformData);
   private readonly heatmapBindGroupCache: LayerTextureBindGroupCacheEntry = {
     bindGroup: null,
-    layer0: null,
-    layer1: null,
-    layer2: null,
+    layers: null,
     uniformBuf: null,
     extraTexture: null,
   };
@@ -103,9 +101,7 @@ export class TracerInspectPass {
   private readonly compareU32 = new Uint32Array(this.compareUniformData);
   private readonly compareBindGroupCache: LayerTextureBindGroupCacheEntry = {
     bindGroup: null,
-    layer0: null,
-    layer1: null,
-    layer2: null,
+    layers: null,
     uniformBuf: null,
     extraTexture: null,
   };

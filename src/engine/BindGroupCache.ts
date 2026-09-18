@@ -5,20 +5,53 @@ export interface LayerBindGroupCacheEntry {
   profileLutTexture: GPUTexture | null;
 }
 
+/**
+ * Layer textures a cached bind group was built from.
+ *
+ * Stored as an array rather than `layer0`/`layer1`/`layer2` fields so a cache
+ * entry describes whatever layer count the session is running;
+ * {@link sameLayerTextures} compares length first, so a count change always
+ * misses and rebuilds.
+ */
+export type LayerTextures = readonly GPUTexture[];
+
+/**
+ * True when `cached` is the same set of textures, in the same order, as `next`.
+ *
+ * Identity, not contents: a texture is recreated on resize, and the whole point
+ * of the cache is to skip `createBindGroup` while the same objects come back
+ * frame after frame. A `null` cache (nothing stored yet) is never a match.
+ */
+export function sameLayerTextures(cached: LayerTextures | null, next: LayerTextures): boolean {
+  if (cached === null || cached.length !== next.length) return false;
+  for (let i = 0; i < next.length; i += 1) {
+    if (cached[i] !== next[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Bind-group entries for `layers`, occupying `layers.length` consecutive
+ * bindings from `first`.
+ *
+ * The counterpart of `textureEntries` in `WebGPUPipelines`: both walk the same
+ * binding run, so a pass never has to spell out one `binding:` per layer and
+ * the layout and the bind group stay in step at any count.
+ */
+export function layerTextureEntries(first: number, layers: LayerTextures): GPUBindGroupEntry[] {
+  return layers.map((texture, i) => ({ binding: first + i, resource: texture.createView() }));
+}
+
 export interface TexturePairBindGroupCacheEntry {
   bindGroup: GPUBindGroup | null;
-  layer0: GPUTexture | null;
-  layer1: GPUTexture | null;
-  layer2: GPUTexture | null;
+  layers: LayerTextures | null;
   textureA: object | null;
   textureB: object | null;
 }
 
 export interface LayerTextureBindGroupCacheEntry {
   bindGroup: GPUBindGroup | null;
-  layer0: GPUTexture | null;
-  layer1: GPUTexture | null;
-  layer2: GPUTexture | null;
+  layers: LayerTextures | null;
   uniformBuf: GPUBuffer | null;
   extraTexture: GPUTexture | null;
 }
@@ -47,9 +80,7 @@ export function createLayerBindGroupCache(count: number): LayerBindGroupCacheEnt
 export function createTexturePairCache(count: number): TexturePairBindGroupCacheEntry[] {
   return Array.from({ length: count }, () => ({
     bindGroup: null,
-    layer0: null,
-    layer1: null,
-    layer2: null,
+    layers: null,
     textureA: null,
     textureB: null,
   }));
@@ -67,9 +98,7 @@ export function invalidateLayerBindGroupCache(entries: LayerBindGroupCacheEntry[
 export function invalidateTexturePairCache(entries: TexturePairBindGroupCacheEntry[]): void {
   for (const entry of entries) {
     entry.bindGroup = null;
-    entry.layer0 = null;
-    entry.layer1 = null;
-    entry.layer2 = null;
+    entry.layers = null;
     entry.textureA = null;
     entry.textureB = null;
   }
@@ -77,9 +106,7 @@ export function invalidateTexturePairCache(entries: TexturePairBindGroupCacheEnt
 
 export function invalidateLayerTextureCache(entry: LayerTextureBindGroupCacheEntry): void {
   entry.bindGroup = null;
-  entry.layer0 = null;
-  entry.layer1 = null;
-  entry.layer2 = null;
+  entry.layers = null;
   entry.uniformBuf = null;
   entry.extraTexture = null;
 }
@@ -144,16 +171,14 @@ export function getOrCreateTexturePairBindGroup(
   device: GPUDevice,
   entry: TexturePairBindGroupCacheEntry,
   layout: GPUBindGroupLayout,
-  layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+  layerTextures: LayerTextures,
   textureA: GPUTexture,
   textureB: GPUTexture | GPUBuffer,
   entries: GPUBindGroupEntry[],
 ): GPUBindGroup {
   if (
     entry.bindGroup &&
-    entry.layer0 === layerTextures[0] &&
-    entry.layer1 === layerTextures[1] &&
-    entry.layer2 === layerTextures[2] &&
+    sameLayerTextures(entry.layers, layerTextures) &&
     entry.textureA === textureA &&
     entry.textureB === textureB
   ) {
@@ -162,9 +187,7 @@ export function getOrCreateTexturePairBindGroup(
 
   const bindGroup = device.createBindGroup({ layout, entries });
   entry.bindGroup = bindGroup;
-  entry.layer0 = layerTextures[0];
-  entry.layer1 = layerTextures[1];
-  entry.layer2 = layerTextures[2];
+  entry.layers = [...layerTextures];
   entry.textureA = textureA;
   entry.textureB = textureB;
   return bindGroup;
@@ -193,16 +216,14 @@ export function getOrCreateLayerTextureBindGroup(
   device: GPUDevice,
   entry: LayerTextureBindGroupCacheEntry,
   layout: GPUBindGroupLayout,
-  layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+  layerTextures: LayerTextures,
   uniformBuf: GPUBuffer,
   entries: GPUBindGroupEntry[],
   extraTexture: GPUTexture | null = null,
 ): GPUBindGroup {
   if (
     entry.bindGroup &&
-    entry.layer0 === layerTextures[0] &&
-    entry.layer1 === layerTextures[1] &&
-    entry.layer2 === layerTextures[2] &&
+    sameLayerTextures(entry.layers, layerTextures) &&
     entry.uniformBuf === uniformBuf &&
     entry.extraTexture === extraTexture
   ) {
@@ -211,9 +232,7 @@ export function getOrCreateLayerTextureBindGroup(
 
   const bindGroup = device.createBindGroup({ layout, entries });
   entry.bindGroup = bindGroup;
-  entry.layer0 = layerTextures[0];
-  entry.layer1 = layerTextures[1];
-  entry.layer2 = layerTextures[2];
+  entry.layers = [...layerTextures];
   entry.uniformBuf = uniformBuf;
   entry.extraTexture = extraTexture;
   return bindGroup;

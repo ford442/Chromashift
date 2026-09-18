@@ -1,11 +1,11 @@
 /**
  * Per-pixel tracer overlap ("coincidence") detection.
  *
- * Mirrors `COINCIDENCE_COMPUTE_SHADER` in `engine/compute/chores/kernels.ts`
- * and the fused overlap math that used to live inline in
- * `engine/shaders/persistence.ts`'s fragment shader (still the WGSL fallback
- * used when compute storage textures are unavailable). Both must stay in
- * lockstep with this function — see `coincidence.test.ts`.
+ * Mirrors the emitted compute kernel (`emitCoincidenceComputeWgsl`) and the
+ * fused fragment pass (`emitCoincidenceDecayWgsl`, still the WGSL fallback used
+ * when compute storage textures are unavailable). Both are generated from one
+ * template and both must stay in lockstep with this function at every layer
+ * count — see `coincidence.test.ts`.
  */
 
 export interface RgbaColor {
@@ -29,9 +29,9 @@ export interface CoincidenceResult {
   stamp: RgbaColor;
   /**
    * Diagnostic encoding for CPU readback / visualisation: r = dominant layer
-   * index / 2, g = 1.0 when all 3 layers overlap else 0.5, b = colour
-   * variance among active layers (scaled, clamped), a = 1.0 when a stamp was
-   * painted. The zero vector when nothing was painted.
+   * index / (layerCount - 1), g = 1.0 when *every* layer overlaps else 0.5,
+   * b = colour variance among active layers (scaled, clamped), a = 1.0 when a
+   * stamp was painted. The zero vector when nothing was painted.
    */
   diag: RgbaColor;
   /**
@@ -52,17 +52,23 @@ function luminance(c: RgbaColor): number {
   return c.r * LUMA_R + c.g * LUMA_G + c.b * LUMA_B;
 }
 
+/**
+ * Overlap test for one pixel across any number of layers.
+ *
+ * `layers` is the session's layers in order — its length, not a literal 3, is
+ * what "every layer overlaps" and the diagnostic red scale are measured
+ * against. A single-layer session can never produce a stamp (two are needed),
+ * which is the right answer rather than an error.
+ */
 export function computeCoincidence(
-  layers: readonly [RgbaColor, RgbaColor, RgbaColor],
+  layers: readonly RgbaColor[],
   params: CoincidenceParams,
 ): CoincidenceResult {
   const thresh = params.colorThresh;
-  const active: [boolean, boolean, boolean] = [
-    layers[0].a > thresh,
-    layers[1].a > thresh,
-    layers[2].a > thresh,
-  ];
-  const layerCount = (active[0] ? 1 : 0) + (active[1] ? 1 : 0) + (active[2] ? 1 : 0);
+  const total = layers.length;
+  const active = layers.map((layer) => layer.a > thresh);
+  let layerCount = 0;
+  for (const isActive of active) if (isActive) layerCount += 1;
 
   if (layerCount < 2) {
     return { stamp: ZERO, diag: ZERO, hadOverlap: false };
@@ -71,7 +77,7 @@ export function computeCoincidence(
   let sumR = 0;
   let sumG = 0;
   let sumB = 0;
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < total; i += 1) {
     if (active[i]) {
       sumR += layers[i].r;
       sumG += layers[i].g;
@@ -81,7 +87,7 @@ export function computeCoincidence(
   const combined: RgbaColor = { r: sumR / layerCount, g: sumG / layerCount, b: sumB / layerCount, a: 1 };
 
   let variance = 0;
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < total; i += 1) {
     if (active[i]) {
       const dr = layers[i].r - combined.r;
       const dg = layers[i].g - combined.g;
@@ -96,7 +102,7 @@ export function computeCoincidence(
 
   let dominantLayer = 0;
   let maxLum = 0;
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < total; i += 1) {
     if (active[i]) {
       const lum = luminance(layers[i]);
       if (lum > maxLum) {
@@ -120,8 +126,10 @@ export function computeCoincidence(
   }
 
   const diag: RgbaColor = {
-    r: dominantLayer / 2,
-    g: layerCount >= 3 ? 1.0 : 0.5,
+    // Normalised so the highest layer index maps to 1.0 whatever the count;
+    // the shaders emit `Math.max(1, layerCount - 1)` for the same reason.
+    r: dominantLayer / Math.max(1, total - 1),
+    g: layerCount >= total ? 1.0 : 0.5,
     b: Math.min(Math.max(variance * 10, 0), 1),
     a: 1.0,
   };

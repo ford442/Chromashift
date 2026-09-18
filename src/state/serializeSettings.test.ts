@@ -27,7 +27,7 @@ describe('serializeSettings', () => {
   it('always emits the current schema version', () => {
     const doc = serializeSettings(createInitialState());
     expect(doc.version).toBe(SETTINGS_SCHEMA_VERSION);
-    expect(SETTINGS_SCHEMA_VERSION).toBe(5);
+    expect(SETTINGS_SCHEMA_VERSION).toBe(7);
   });
 
   it('round-trips v2 field groups', () => {
@@ -296,5 +296,90 @@ describe('schema v4 display colour space', () => {
     expect(doc?.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(doc?.settings.viewport?.colorSpace).toBe('srgb');
     expect(doc?.settings.viewport?.quarterZoom).toBe(true);
+  });
+});
+
+describe('schema v7 — variable layer count', () => {
+  it('round-trips a non-default layer count', () => {
+    const state = chromashiftReducer(createInitialState(), { type: 'layers/setCount', count: 5 });
+    const json = settingsToJson(state);
+    const doc = deserializeSettings(json);
+
+    expect(doc?.version).toBe(7);
+    expect(doc?.settings.layers?.count).toBe(5);
+    expect(doc?.settings.layers?.angles).toHaveLength(5);
+
+    const restored = chromashiftReducer(createInitialState(), {
+      type: 'settings/apply', settings: doc!.settings,
+    });
+    expect(restored.layers.count).toBe(5);
+    expect(restored.layers.extensions).toEqual(state.layers.extensions);
+  });
+
+  it('loads a v5 document as three layers', () => {
+    const legacy = {
+      version: 5,
+      settings: {
+        layers: {
+          angles: [10, 20, 30],
+          extensions: [130, 230, 330],
+          opacity: 1,
+          opacities: [1, 1, 1],
+          scale: 1,
+          colorMode: 1,
+          sobelEnabled: false,
+          softCropEnabled: false,
+          colorProfileId: 'cr0p-classic',
+          colorProfile: null,
+        },
+      },
+    };
+    const doc = deserializeSettings(JSON.stringify(legacy));
+    expect(doc?.settings.layers?.count).toBe(3);
+
+    const state = chromashiftReducer(createInitialState(), {
+      type: 'settings/apply', settings: doc!.settings,
+    });
+    expect(state.layers.count).toBe(3);
+    expect(state.layers.angles).toEqual([10, 20, 30]);
+  });
+
+  it('ignores a count a pre-v7 document should not have carried', () => {
+    // A v6 file cannot mean anything by `count` — the field did not exist yet.
+    const doc = deserializeSettings(JSON.stringify({
+      version: 6,
+      settings: { layers: { count: 9, angles: [1, 2, 3] } },
+    }));
+    expect(doc?.settings.layers?.count).toBe(3);
+  });
+
+  it('clamps a hand-edited count instead of failing the load', () => {
+    const doc = deserializeSettings(JSON.stringify({
+      version: 7,
+      settings: { layers: { count: 99, angles: [1, 2, 3] } },
+    }));
+    expect(doc?.settings.layers?.count).toBe(10);
+
+    const state = chromashiftReducer(createInitialState(), {
+      type: 'settings/apply', settings: doc!.settings,
+    });
+    // The short array is padded out to the count it claims.
+    expect(state.layers.angles).toHaveLength(10);
+    expect(state.layers.angles.slice(0, 3)).toEqual([1, 2, 3]);
+  });
+
+  it('recovers the count from the angle array when a share URL omitted it', () => {
+    const state = createInitialState();
+    const compact = serializeSettings(state, { compactLayers: true });
+    expect(compact.settings.layers).not.toHaveProperty('count');
+
+    const doc = deserializeSettings(JSON.stringify(compact));
+    expect(doc?.settings.layers?.count).toBe(3);
+  });
+
+  it('keeps the count in a share URL for a non-default session', () => {
+    const state = chromashiftReducer(createInitialState(), { type: 'layers/setCount', count: 5 });
+    const compact = serializeSettings(state, { compactLayers: true });
+    expect(compact.settings.layers?.count).toBe(5);
   });
 });

@@ -23,6 +23,9 @@ import {
   MOTION_FIELD_COMPUTE_SHADER,
 } from './kernels';
 import { EMPTY_MOTION_FIELD_STATS, motionFieldSize, type MotionFieldStats } from './motionKernel';
+import { layerTextureEntries, sameLayerTextures, type LayerTextures } from '../../BindGroupCache';
+import { CANONICAL_LAYER_COUNT } from '../../graph/layerSpecs';
+import { emitCoincidenceComputeWgsl } from '../../graph/templates/wgsl';
 import type {
   ChoreBackendImpl,
   ChoreJob,
@@ -54,11 +57,19 @@ export interface CoincidenceEncodeParams {
 
 interface CoincidenceBindGroupCacheEntry {
   bindGroup: GPUBindGroup | null;
-  layer0: GPUTexture | null;
-  layer1: GPUTexture | null;
-  layer2: GPUTexture | null;
+  layers: LayerTextures | null;
   stampTexture: GPUTexture | null;
   diagTexture: GPUTexture | null;
+}
+
+/** Drop every cached bind group — the layout they were built against is gone. */
+function invalidateCoincidenceCache(entries: readonly CoincidenceBindGroupCacheEntry[]): void {
+  for (const entry of entries) {
+    entry.bindGroup = null;
+    entry.layers = null;
+    entry.stampTexture = null;
+    entry.diagTexture = null;
+  }
 }
 
 /** 2D image passes stay at 8×8; 64 invocations fits every conformant device. */
@@ -128,6 +139,8 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   private lastMotionStats: MotionFieldStats = EMPTY_MOTION_FIELD_STATS;
 
   private coincidencePipeline: GPUComputePipeline | null = null;
+  /** Layer count `coincidencePipeline` was emitted and laid out for. */
+  private coincidenceLayerCount = 0;
   private coincidenceBGL: GPUBindGroupLayout | null = null;
   private coincidenceUniformBuffer: GPUBuffer | null = null;
   private cachedStampTexture: GPUTexture | null = null;
@@ -141,8 +154,8 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
    * every single call. `cacheSlot` in `encodeCoincidenceInto()` selects which.
    */
   private readonly coincidenceBindGroupCache: [CoincidenceBindGroupCacheEntry, CoincidenceBindGroupCacheEntry] = [
-    { bindGroup: null, layer0: null, layer1: null, layer2: null, stampTexture: null, diagTexture: null },
-    { bindGroup: null, layer0: null, layer1: null, layer2: null, stampTexture: null, diagTexture: null },
+    { bindGroup: null, layers: null, stampTexture: null, diagTexture: null },
+    { bindGroup: null, layers: null, stampTexture: null, diagTexture: null },
   ];
 
   constructor(device: GPUDevice) {
@@ -204,7 +217,7 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   private async runCoincidence(job: CoincidenceJob): Promise<GpuCoincidenceOutput | null> {
     const layers = job.layers;
     if (!layers) return null;
-    this.ensureCoincidencePipeline();
+    this.ensureCoincidencePipeline(layers.length);
     const stampTexture = this.ensureCoincidenceTextures(job.width, job.height);
     const diagTexture = this.cachedDiagTexture!;
 
@@ -235,7 +248,7 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
    */
   encodeCoincidenceInto(
     enc: GPUCommandEncoder,
-    layers: readonly [GPUTexture, GPUTexture, GPUTexture],
+    layers: LayerTextures,
     stampTexture: GPUTexture,
     diagTexture: GPUTexture,
     width: number,
@@ -243,13 +256,13 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     params: CoincidenceEncodeParams,
     cacheSlot: 0 | 1 = 0,
   ): void {
-    this.ensureCoincidencePipeline();
+    this.ensureCoincidencePipeline(layers.length);
     this.dispatchCoincidence(enc, layers, stampTexture, diagTexture, width, height, params, cacheSlot);
   }
 
   private dispatchCoincidence(
     enc: GPUCommandEncoder,
-    layers: readonly [GPUTexture, GPUTexture, GPUTexture],
+    layers: LayerTextures,
     stampTexture: GPUTexture,
     diagTexture: GPUTexture,
     width: number,
@@ -269,9 +282,10 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
 
     const cache = this.coincidenceBindGroupCache[cacheSlot];
     let bindGroup: GPUBindGroup;
+    const n = layers.length;
     if (
       cache.bindGroup
-      && cache.layer0 === layers[0] && cache.layer1 === layers[1] && cache.layer2 === layers[2]
+      && sameLayerTextures(cache.layers, layers)
       && cache.stampTexture === stampTexture && cache.diagTexture === diagTexture
     ) {
       bindGroup = cache.bindGroup;
@@ -279,18 +293,14 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
       bindGroup = this.device.createBindGroup({
         layout: this.coincidenceBGL!,
         entries: [
-          { binding: 0, resource: layers[0].createView() },
-          { binding: 1, resource: layers[1].createView() },
-          { binding: 2, resource: layers[2].createView() },
-          { binding: 3, resource: stampTexture.createView() },
-          { binding: 4, resource: diagTexture.createView() },
-          { binding: 5, resource: { buffer: this.coincidenceUniformBuffer! } },
+          ...layerTextureEntries(0, layers),
+          { binding: n, resource: stampTexture.createView() },
+          { binding: n + 1, resource: diagTexture.createView() },
+          { binding: n + 2, resource: { buffer: this.coincidenceUniformBuffer! } },
         ],
       });
       cache.bindGroup = bindGroup;
-      cache.layer0 = layers[0];
-      cache.layer1 = layers[1];
-      cache.layer2 = layers[2];
+      cache.layers = [...layers];
       cache.stampTexture = stampTexture;
       cache.diagTexture = diagTexture;
     }
@@ -305,26 +315,43 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     pass.end();
   }
 
-  private ensureCoincidencePipeline(): void {
-    if (this.coincidencePipeline) return;
+  /**
+   * Build the coincidence pipeline for `layerCount` inputs.
+   *
+   * The kernel is emitted per layer count (the shipped three-layer text is the
+   * golden, not the implementation), so a session that changes its count gets a
+   * new module and layout rather than a layout that no longer matches its
+   * shader. The previous pipeline is simply dropped — this happens on a
+   * user-visible layer-count change, never per frame.
+   */
+  private ensureCoincidencePipeline(layerCount: number): void {
+    if (this.coincidencePipeline && this.coincidenceLayerCount === layerCount) return;
+    this.coincidenceLayerCount = layerCount;
+    invalidateCoincidenceCache(this.coincidenceBindGroupCache);
 
-    const module = this.device.createShaderModule({ code: COINCIDENCE_COMPUTE_SHADER });
+    const module = this.device.createShaderModule({
+      code: layerCount === CANONICAL_LAYER_COUNT
+        ? COINCIDENCE_COMPUTE_SHADER
+        : emitCoincidenceComputeWgsl(layerCount),
+    });
     this.coincidenceBGL = this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
-        { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
+        ...Array.from({ length: layerCount }, (_, i) => ({
+          binding: i,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: 'float' as const },
+        })),
         {
-          binding: 3,
+          binding: layerCount,
           visibility: GPUShaderStage.COMPUTE,
           storageTexture: { access: 'write-only', format: 'rgba32float', viewDimension: '2d' },
         },
         {
-          binding: 4,
+          binding: layerCount + 1,
           visibility: GPUShaderStage.COMPUTE,
           storageTexture: { access: 'write-only', format: 'rgba8unorm', viewDimension: '2d' },
         },
-        { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: layerCount + 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
       ],
     });
     this.coincidencePipeline = this.device.createComputePipeline({

@@ -399,6 +399,71 @@ fn motionDecayScale(magnitude: f32, bias: f32, enabled: bool) -> f32 {
 `;
 
 /**
+ * The layer-dependent halves of the overlap test, shared by the fragment
+ * (`emitCoincidenceDecayWgsl`) and compute (`emitCoincidenceComputeWgsl`)
+ * emitters.
+ *
+ * Both passes compute the same thing from the same `c0..cN` locals — the only
+ * difference between them is how those locals are read (sampled vs. loaded) and
+ * where the result is written. Emitting the arithmetic once is what makes
+ * `coincidence.test.ts`'s three-way agreement between the CPU oracle, the
+ * fragment path and the compute kernel a property of the code rather than of
+ * someone keeping three unrolled copies in step.
+ *
+ * `indent` is the leading whitespace of the *innermost* block (the dominant-layer
+ * search); the shallower fragments are derived from it so a caller only states
+ * one. `names` spells the three accumulator locals: the fragment pass shipped
+ * them camelCase and the compute kernel snake_case, and a golden that has to be
+ * read as "what shipped" is worth more than one naming convention.
+ */
+interface CoincidenceNames {
+  count: string;
+  maxLum: string;
+  dominant: string;
+}
+
+const CAMEL_NAMES: CoincidenceNames = {
+  count: 'layerCount',
+  maxLum: 'maxLum',
+  dominant: 'dominantLayer',
+};
+
+const SNAKE_NAMES: CoincidenceNames = {
+  count: 'layer_count',
+  maxLum: 'max_lum',
+  dominant: 'dominant_layer',
+};
+
+function coincidenceParts(layerCount: number, indent: string, names: CoincidenceNames): {
+  counts: string;
+  sums: string;
+  variances: string;
+  dominant: string;
+} {
+  const layers = layerList(layerCount);
+  const inner = `${indent}  `;
+  return {
+    counts: layers
+      .map((i) => `${indent}if (c${i}.a > thresh) { ${names.count} = ${names.count} + 1u; }`)
+      .join('\n'),
+    sums: layers
+      .map((i) => `${inner}if (c${i}.a > thresh) { sum = sum + c${i}.rgb; }`)
+      .join('\n'),
+    variances: layers
+      .map((i) => `${inner}if (c${i}.a > thresh) { variance = variance + length(c${i}.rgb - combined); }`)
+      .join('\n'),
+    dominant: layers
+      .map((i) => [
+        `${inner}  if (c${i}.a > thresh) {`,
+        `${inner}    let lum = dot(c${i}.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));`,
+        `${inner}    if (lum > ${names.maxLum}) { ${names.maxLum} = lum; ${names.dominant} = ${i}u; }`,
+        `${inner}  }`,
+      ].join('\n'))
+      .join('\n'),
+  };
+}
+
+/**
  * `coincidence` + `decay` fused into one pass — today's persistence shader.
  *
  * The overlap counter is unrolled over `layerCount` inputs instead of three
@@ -410,6 +475,7 @@ export function emitCoincidenceDecayWgsl(
   options: CoincidenceDecayOptions = {},
 ): string {
   const motion = options.motion === true;
+  const parts = coincidenceParts(layerCount, '  ', CAMEL_NAMES);
   const layers = layerList(layerCount);
   const bindings = layers
     .map((i) => `@group(0) @binding(${i + 1}) var layer${i}    : texture_2d<f32>;`)
@@ -417,23 +483,7 @@ export function emitCoincidenceDecayWgsl(
   const samples = layers
     .map((i) => `  let c${i} = textureSample(layer${i}, cSampler, uv);`)
     .join('\n');
-  const counts = layers
-    .map((i) => `  if (c${i}.a > thresh) { layerCount = layerCount + 1u; }`)
-    .join('\n');
-  const sums = layers
-    .map((i) => `    if (c${i}.a > thresh) { sum = sum + c${i}.rgb; }`)
-    .join('\n');
-  const variances = layers
-    .map((i) => `    if (c${i}.a > thresh) { variance = variance + length(c${i}.rgb - combined); }`)
-    .join('\n');
-  const dominant = layers
-    .map((i) => [
-      `      if (c${i}.a > thresh) {`,
-      `        let lum = dot(c${i}.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));`,
-      `        if (lum > maxLum) { maxLum = lum; dominantLayer = ${i}u; }`,
-      '      }',
-    ].join('\n'))
-    .join('\n');
+  const { counts, sums, variances, dominant } = parts;
   const prevBinding = layerCount + 1;
   const uniformBinding = layerCount + 2;
   const motionBinding = layerCount + 3;
@@ -559,6 +609,104 @@ ${motionTerm}
   out.persistence = outColor;
   out.stampDiagnostic = diag;
   return out;
+}
+`;
+}
+
+/**
+ * The overlap test as a standalone compute kernel.
+ *
+ * The WebGPU chore lane runs this once per frame into two storage textures, and
+ * the lighter composite fragment pass reads them for both the above and below
+ * decay draws — the fragment path in {@link emitCoincidenceDecayWgsl} otherwise
+ * recomputes identical overlap math twice per frame. The shared arithmetic
+ * comes from {@link coincidenceParts}, so the two can only agree.
+ *
+ * Bit-packing note: `stamp_tex.b` doubles as the "2+ layers overlapping" flag
+ * whenever `stamp_tex.a` is 0 (no fresh stamp was painted). This is safe because
+ * `stamp.rgb` is otherwise exactly (0,0,0) in that branch, and the composite
+ * pass never reads `stamp.rgb` unless `stamp.a` wins the decay/paint comparison.
+ */
+export function emitCoincidenceComputeWgsl(layerCount: number): string {
+  const layers = layerList(layerCount);
+  const { counts, sums, variances, dominant } = coincidenceParts(layerCount, '  ', SNAKE_NAMES);
+  const bindings = layers
+    .map((i) => `@group(0) @binding(${i}) var layer${i}    : texture_2d<f32>;`)
+    .join('\n');
+  const loads = layers
+    .map((i) => `  let c${i} = textureLoad(layer${i}, coord, 0);`)
+    .join('\n');
+  // Diagnostic red channel encodes the dominant layer normalised to [0,1] —
+  // the same scale the fragment path uses.
+  const dominantScale = Math.max(1, layerCount - 1).toFixed(1);
+
+  return /* wgsl */ `
+struct CoincidenceParams {
+  width        : u32,
+  height       : u32,
+  tracer_mode  : u32,
+  _pad0        : u32,
+  color_thresh : f32,
+  stamp_boost  : f32,
+  _pad1        : f32,
+  _pad2        : f32,
+};
+
+${bindings}
+@group(0) @binding(${layerCount}) var stamp_tex : texture_storage_2d<rgba32float, write>;
+@group(0) @binding(${layerCount + 1}) var diag_tex  : texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(${layerCount + 2}) var<uniform> params : CoincidenceParams;
+
+@compute @workgroup_size(8, 8)
+fn coincidence_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= params.width || gid.y >= params.height) {
+    return;
+  }
+  let coord = vec2<i32>(gid.xy);
+${loads}
+
+  let thresh = params.color_thresh;
+  var layer_count = 0u;
+${counts}
+
+  var new_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  var diag = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+
+  if (layer_count >= 2u) {
+    var sum = vec3<f32>(0.0);
+${sums}
+    let combined = sum / f32(layer_count);
+
+    var variance = 0.0;
+${variances}
+
+    if (variance > 0.01) {
+      var dominant_layer = 0u;
+      var max_lum = 0.0;
+${dominant}
+
+      if (params.tracer_mode == 1u) {
+        let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let boosted = min(lum * params.stamp_boost, 1.0);
+        new_color = vec4<f32>(vec3<f32>(boosted), 1.0);
+      } else {
+        let brightened = min(combined * params.stamp_boost, vec3<f32>(1.0));
+        new_color = vec4<f32>(brightened, 1.0);
+      }
+
+      diag.r = f32(dominant_layer) / ${dominantScale};
+      diag.g = select(0.5, 1.0, layer_count >= ${layerCount}u);
+      diag.b = clamp(variance * 10.0, 0.0, 1.0);
+      diag.a = 1.0;
+    } else {
+      // Overlap present but every active layer is the same colour: no fresh
+      // stamp, but the composite pass must still decay at the faster rate.
+      new_color.b = 1.0;
+    }
+  }
+
+  textureStore(stamp_tex, coord, new_color);
+  textureStore(diag_tex, coord, diag);
 }
 `;
 }
