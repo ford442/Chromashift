@@ -8,9 +8,9 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 
 ```json
 {
-  "version": 4,
+  "version": 7,
   "settings": {
-    "layers": { "colorProfileId": "cr0p-classic", "colorProfile": null, "…": "…" },
+    "layers": { "count": 3, "colorProfileId": "cr0p-classic", "colorProfile": null, "…": "…" },
     "tracers": { "…": "…" },
     "output": { "…": "…" },
     "engine": { "fps": 30, "paused": false, "engineMode": "ts", "avgLuminance": 128 },
@@ -39,7 +39,19 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 }
 ```
 
-`SETTINGS_SCHEMA_VERSION` is **4**. Runtime-only state (GPU handles, media corpus, export progress, mic/MIDI runtime errors, GPU timing sparklines) is never serialized.
+`SETTINGS_SCHEMA_VERSION` is **7**. Runtime-only state (GPU handles, media corpus, export progress, mic/MIDI runtime errors, GPU timing sparklines) is never serialized.
+
+### v7 field group
+
+| Key | Purpose |
+|-----|---------|
+| `layers.count` | Band layers in the session, 1–10 (one per canonical threshold in `shared/band.json`). `layers.angles`, `layers.extensions` and `layers.opacities` are exactly this long. |
+
+A v1–v6 document predates the field and loads as three layers with its existing
+triples in place. An absent or out-of-range count clamps rather than failing the
+load, so a hand-edited preset degrades to the default look instead of nothing.
+`?preset=` URLs omit the count at the default three — it is recoverable from
+`layers.angles.length` — so a default share link is the length it always was.
 
 ### v3 field groups
 
