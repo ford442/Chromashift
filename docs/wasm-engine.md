@@ -135,8 +135,21 @@ update this table if one is ever intentionally added.
 | C++ function | TS dispatcher | Description |
 |---|---|---|
 | `durationToDecay` | `durationToDecayWith` | Per-frame decay multiplier for tracer persistence timing |
-| `advanceLayerAngles` | `advanceAnglesBy` | Step 3 layer angles with 360° wrapping |
+| `advanceLayerAngles` | `advanceAnglesBy` | Step `count` layer angles with 360° wrapping |
+| `advanceLayerAngles3` | — | Deprecated three-wide wrapper; see below |
 | `simulateTracerDecay` | `simulateTracerDecayWith` | Apply per-frame decay to a Float32 RGBA buffer in-place (CPU-side tracer simulation) |
+
+`advanceLayerAngles` takes `(const float* angles, const float* steps, float* out,
+uint32_t count)` — a session runs 1–10 band layers, so the angle list is a heap
+array rather than a fixed argument list. `out` may alias `angles`.
+
+`advanceLayerAngles3` is the previous six-float signature, kept for one release
+so a not-yet-rebuilt `public/chromashift_engine.wasm` stays usable. It doubles as
+the ABI-generation marker: an older module exports `_advanceLayerAngles` with the
+*old* signature and no `_advanceLayerAngles3`, so `advanceAnglesBy()` requires
+both symbols before taking the WASM path and otherwise falls back to TypeScript.
+Rebuild the artifact (`npm run build:wasm`), then drop the wrapper and that gate
+together.
 
 ### Colour band classification logic
 

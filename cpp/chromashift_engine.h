@@ -196,16 +196,36 @@ void buildRotationMat3(float angleDeg, float* outMat3);
 float durationToDecay(float durationMs, float fps);
 
 /**
- * Advance three layer rotation angles by their per-frame step values,
+ * Advance `count` layer rotation angles by their per-frame step values,
  * keeping all results in [0, 360).
  *
- * @param a0,a1,a2  Current angles in degrees for layers 0, 1, 2.
- * @param s0,s1,s2  Step sizes in degrees for layers 0, 1, 2.
- * @param out       Caller-allocated array of 3 floats; receives the new angles.
+ * Takes pointers rather than a fixed argument list so a session with any layer
+ * count (1–10, one per canonical band) calls the same symbol; the TypeScript
+ * side already owns the angles as a heap array.
+ *
+ * @param angles  Pointer to `count` floats: current angles in degrees.
+ * @param steps   Pointer to `count` floats: per-frame step sizes in degrees.
+ * @param out     Caller-allocated array of `count` floats; receives the new
+ *                angles. May alias `angles`.
+ * @param count   Number of layers. Zero is a no-op.
  */
-void advanceLayerAngles(float a0, float a1, float a2,
-                        float s0, float s1, float s2,
-                        float* out);
+void advanceLayerAngles(const float* angles, const float* steps,
+                        float* out, uint32_t count);
+
+/**
+ * Three-wide form of {@link advanceLayerAngles}.
+ *
+ * @deprecated Kept for one release so the committed public/chromashift_engine.wasm
+ * stays loadable while it is rebuilt. Its presence is also what tells the
+ * TypeScript bridge that a module was built against the count-taking ABI: an
+ * older `.wasm` exports `_advanceLayerAngles` with the previous six-float
+ * signature and no `_advanceLayerAngles3`, so `advanceAnglesBy()` gates on this
+ * symbol and falls back to TypeScript rather than calling the old one with
+ * pointers. Remove both this and that gate once the artifact is rebuilt.
+ */
+void advanceLayerAngles3(float a0, float a1, float a2,
+                         float s0, float s1, float s2,
+                         float* out);
 
 /**
  * Apply per-frame decay to a flat RGBA float buffer in-place.

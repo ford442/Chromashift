@@ -39,10 +39,22 @@ export interface ChromashiftWasmModule {
   _computeColorBandCounts(inPtr: number, byteLen: number, avgLum: number, outPtr: number): void;
   /** Per-frame tracer decay multiplier. */
   _durationToDecay(durationMs: number, fps: number): number;
-  /** Advance 3 layer angles; result written to outPtr (3 float32 values). */
-  _advanceLayerAngles(a0: number, a1: number, a2: number,
-                      s0: number, s1: number, s2: number,
-                      outPtr: number): void;
+  /**
+   * Advance `count` layer angles. `anglesPtr` and `stepsPtr` each point at
+   * `count` float32 values; the result is written to `outPtr`, which may alias
+   * `anglesPtr`.
+   */
+  _advanceLayerAngles(anglesPtr: number, stepsPtr: number,
+                      outPtr: number, count: number): void;
+  /**
+   * Three-wide form of `_advanceLayerAngles`.
+   *
+   * @deprecated Present only in modules built against the count-taking ABI, which
+   * is what `advanceAnglesBy()` uses it to detect — see `dispatch/animation.ts`.
+   */
+  _advanceLayerAngles3(a0: number, a1: number, a2: number,
+                       s0: number, s1: number, s2: number,
+                       outPtr: number): void;
   /** Apply decay in-place to a float RGBA buffer on the WASM heap. */
   _simulateTracerDecay(bufPtr: number, pixelCount: number, decayFactor: number): void;
   /** Write a column-major 3×3 rotation matrix (9 floats) to outPtr. */
@@ -82,6 +94,7 @@ export const WASM_API_FUNCTIONS = [
   '_buildRotationMat3',
   '_durationToDecay',
   '_advanceLayerAngles',
+  '_advanceLayerAngles3',
   '_simulateTracerDecay',
 ] as const satisfies ReadonlyArray<keyof ChromashiftWasmModule>;
 

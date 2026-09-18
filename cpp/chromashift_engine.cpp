@@ -560,18 +560,34 @@ float durationToDecay(float durationMs, float fps)
 
 // ─── advanceLayerAngles ──────────────────────────────────────────────────────
 
-extern "C" EMSCRIPTEN_KEEPALIVE
-void advanceLayerAngles(float a0, float a1, float a2,
-                        float s0, float s1, float s2,
-                        float* out)
+namespace {
+inline float wrapAngle(float angle, float step)
 {
-    auto wrap = [](float angle, float step) -> float {
-        const float result = std::fmod(angle + step, 360.0f);
-        return result < 0.0f ? result + 360.0f : result;
-    };
-    out[0] = wrap(a0, s0);
-    out[1] = wrap(a1, s1);
-    out[2] = wrap(a2, s2);
+    const float result = std::fmod(angle + step, 360.0f);
+    return result < 0.0f ? result + 360.0f : result;
+}
+}  // namespace
+
+extern "C" EMSCRIPTEN_KEEPALIVE
+void advanceLayerAngles(const float* angles, const float* steps,
+                        float* out, uint32_t count)
+{
+    // Not a bulk kernel: `count` is at most ten, so there is nothing for SIMD
+    // to win here and the scalar loop keeps the aliasing rule (out may be
+    // angles) obvious.
+    for (uint32_t i = 0u; i < count; ++i) {
+        out[i] = wrapAngle(angles[i], steps[i]);
+    }
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE
+void advanceLayerAngles3(float a0, float a1, float a2,
+                         float s0, float s1, float s2,
+                         float* out)
+{
+    const float angles[3] = { a0, a1, a2 };
+    const float steps[3]  = { s0, s1, s2 };
+    advanceLayerAngles(angles, steps, out, 3u);
 }
 
 // ─── simulateTracerDecay ─────────────────────────────────────────────────────

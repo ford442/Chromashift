@@ -420,6 +420,87 @@ TEST(simulate_tracer_decay_scales_every_component)
     }
 }
 
+// ─── advanceLayerAngles ──────────────────────────────────────────────────────
+//
+// The pointer + count ABI replaced a six-float signature so a session with any
+// layer count (1-10, one per canonical band) calls one symbol. These cover the
+// counts the app can actually be in, plus the wrap and aliasing rules the
+// TypeScript fallback in src/engine/wasm/fallbacks/decay.ts mirrors.
+
+TEST(advance_layer_angles_wraps_at_every_supported_count)
+{
+    const uint32_t counts[] = { 1u, 3u, 5u, 8u };
+    for (const uint32_t count : counts) {
+        float angles[8];
+        float steps[8];
+        float out[8];
+        for (uint32_t i = 0u; i < count; ++i) {
+            angles[i] = 350.0f;
+            // Step past 360 for every layer, by a different amount each time.
+            steps[i]  = 20.0f + static_cast<float>(i);
+        }
+
+        advanceLayerAngles(angles, steps, out, count);
+
+        for (uint32_t i = 0u; i < count; ++i) {
+            EXPECT_NEAR(out[i], 10.0f + static_cast<float>(i), 1e-4);
+        }
+    }
+}
+
+TEST(advance_layer_angles_wraps_negative_steps_into_range)
+{
+    const float angles[5] = { 0.0f, 10.0f, 180.0f, 359.0f, 45.0f };
+    const float steps[5]  = { -30.0f, -20.0f, -720.0f, -359.0f, -405.0f };
+    float out[5] = { 0 };
+
+    advanceLayerAngles(angles, steps, out, 5u);
+
+    EXPECT_NEAR(out[0], 330.0f, 1e-4);
+    EXPECT_NEAR(out[1], 350.0f, 1e-4);
+    EXPECT_NEAR(out[2], 180.0f, 1e-4);
+    EXPECT_NEAR(out[3],   0.0f, 1e-4);
+    EXPECT_NEAR(out[4],   0.0f, 1e-4);
+}
+
+// The dispatcher writes the result over its input buffer on the WASM heap.
+TEST(advance_layer_angles_may_write_over_its_input)
+{
+    float angles[3] = { 10.0f, 20.0f, 30.0f };
+    const float steps[3] = { 5.0f, 5.0f, 5.0f };
+
+    advanceLayerAngles(angles, steps, angles, 3u);
+
+    EXPECT_NEAR(angles[0], 15.0f, 1e-4);
+    EXPECT_NEAR(angles[1], 25.0f, 1e-4);
+    EXPECT_NEAR(angles[2], 35.0f, 1e-4);
+}
+
+TEST(advance_layer_angles_zero_count_is_a_no_op)
+{
+    float out[1] = { 123.0f };
+    advanceLayerAngles(out, out, out, 0u);
+    EXPECT_NEAR(out[0], 123.0f, 1e-9);
+}
+
+// The deprecated three-wide wrapper must agree with the general form exactly —
+// it is what keeps a not-yet-rebuilt .wasm honest for one release.
+TEST(advance_layer_angles3_matches_the_general_form)
+{
+    const float angles[3] = { 359.5f, 0.0f, 123.25f };
+    const float steps[3]  = { 1.0f, -0.5f, 400.0f };
+    float general[3] = { 0 };
+    float legacy[3]  = { 0 };
+
+    advanceLayerAngles(angles, steps, general, 3u);
+    advanceLayerAngles3(angles[0], angles[1], angles[2],
+                        steps[0], steps[1], steps[2], legacy);
+
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_NEAR(legacy[i], general[i], 1e-9);
+    }
+}
+
 int main()
 {
     std::printf("Running chromashift_engine host tests...\n");

@@ -36,36 +36,50 @@ export function durationToDecayWith(
 }
 
 /**
- * Advance three layer rotation angles by per-frame step sizes,
+ * Advance a session's layer rotation angles by per-frame step sizes,
  * keeping all results in [0, 360).
+ *
+ * `angles.length` is the layer count — the C ABI takes a pointer and a count
+ * rather than a fixed argument list, so 1 layer and 10 go through one symbol.
  *
  * Callers that own FPS-independent rates should scale with
  * `extensionStepsForFps()` before passing steps here (live loop + video export).
  *
- * @param angles   Current angles in degrees for layers [0, 1, 2].
- * @param steps    Per-frame step sizes in degrees for layers [0, 1, 2].
+ * The WASM branch is gated on `_advanceLayerAngles3` as well as
+ * `_advanceLayerAngles`: a `.wasm` built before the ABI change exports the
+ * latter with the old six-float signature, and calling that with heap pointers
+ * would read them as angles. The deprecated three-wide wrapper exists only in
+ * modules built against the current header, so its absence means "fall back to
+ * TypeScript" rather than "produce garbage". Drop this gate when the wrapper goes.
+ *
+ * @param angles   Current angles in degrees, one per layer.
+ * @param steps    Per-frame step sizes in degrees, one per layer.
  * @param useWasm  Attempt to use the C++ WASM engine.
  * @returns        New angles in degrees, each in [0, 360).
  */
 export function advanceAnglesBy(
-  angles: number[],
-  steps: number[],
+  angles: readonly number[],
+  steps: readonly number[],
   useWasm: boolean,
 ): number[] {
-  if (canUseWasmFn('_advanceLayerAngles', useWasm)) {
+  const count = angles.length;
+  if (count > 0
+    && canUseWasmFn('_advanceLayerAngles', useWasm)
+    && canUseWasmFn('_advanceLayerAngles3', useWasm)) {
     const mod = getWasmModule()!;
-    const outPtr = mod._malloc(12); // 3 × float32
-    mod._advanceLayerAngles(
-      angles[0], angles[1], angles[2],
-      steps[0],  steps[1],  steps[2],
-      outPtr,
+    // One allocation for angles, steps and the result, in that order.
+    const bytes = count * 4;
+    const basePtr = mod._malloc(bytes * 3);
+    const base = basePtr >> 2;
+    mod.HEAPF32.set(angles, base);
+    mod.HEAPF32.set(steps, base + count);
+
+    mod._advanceLayerAngles(basePtr, basePtr + bytes, basePtr + bytes * 2, count);
+
+    const result = Array.from(
+      mod.HEAPF32.subarray(base + count * 2, base + count * 3),
     );
-    const result: number[] = [
-      mod.HEAPF32[(outPtr >> 2)],
-      mod.HEAPF32[(outPtr >> 2) + 1],
-      mod.HEAPF32[(outPtr >> 2) + 2],
-    ];
-    mod._free(outPtr);
+    mod._free(basePtr);
     return result;
   }
 
