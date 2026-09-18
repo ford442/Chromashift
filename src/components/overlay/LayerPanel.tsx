@@ -3,7 +3,7 @@ import { RotaryKnob } from '../RotaryKnob';
 import { CLASSIC_PROFILE_ID } from '../../engine/color/colorProfile';
 import { useLiveLayerAngle } from '../../engine/telemetryStore';
 import { layerColor, layerLabel } from './constants';
-import { MAX_LAYER_COUNT } from '../../engine/graph/layerSpecs';
+import { CANONICAL_LAYER_COUNT, MAX_LAYER_COUNT } from '../../engine/graph/layerSpecs';
 import type { LayerIndex, LayerPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
 
@@ -69,20 +69,28 @@ export const LayerPanel = memo(function LayerPanel({
 
   return (
     <div className="space-y-3">
-      <div className="panel-3d flex items-center gap-2">
-        <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
-          Layers: <span className="tabular-nums text-amber-300">{layerCount}</span>
-        </span>
-        <input
-          type="range"
-          min={1}
-          max={MAX_LAYER_COUNT}
-          step={1}
-          value={layerCount}
-          onChange={(e) => onLayerCountChange(Number(e.target.value))}
-          className="flex-1 h-1 accent-amber-400"
-          title={`Number of band layers (1–${MAX_LAYER_COUNT}). Each layer owns a contiguous run of the canonical bands.`}
-        />
+      <div className="panel-3d space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
+            Layers: <span className="tabular-nums text-amber-300">{layerCount}</span>
+          </span>
+          <input
+            type="range"
+            min={1}
+            max={MAX_LAYER_COUNT}
+            step={1}
+            value={layerCount}
+            onChange={(e) => onLayerCountChange(Number(e.target.value))}
+            className="flex-1 h-1 accent-amber-400"
+            title={`Band layers (1–${MAX_LAYER_COUNT}). Each owns a contiguous run of the canonical bands in shared/band.json.`}
+          />
+        </div>
+        {layerCount !== CANONICAL_LAYER_COUNT && (
+          <p className="text-[10px] text-amber-400/50 font-mono leading-snug">
+            Saved and shared at {layerCount} bands. The renderer still draws{' '}
+            {CANONICAL_LAYER_COUNT} until the pass-graph executor owns the band passes.
+          </p>
+        )}
       </div>
 
       <div className="space-y-3">
