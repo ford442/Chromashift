@@ -1,5 +1,4 @@
 import { useMemo, useRef } from 'react';
-import type { LayerTriple } from '../../state/types';
 import type { CompareRefs } from './types';
 
 export function useCompareRefs(): CompareRefs {
@@ -12,8 +11,8 @@ export function useCompareRefs(): CompareRefs {
     b: null,
     c: null,
   });
-  const animAnglesRef = useRef<LayerTriple<number>>([0, 0, 0]);
-  const animAnglesBRef = useRef<LayerTriple<number>>([0, 0, 0]);
+  const animAnglesRef = useRef<number[]>([0, 0, 0]);
+  const animAnglesBRef = useRef<number[]>([0, 0, 0]);
   const lastAngleSyncRef = useRef(0);
   const lastRenderMetricSyncRef = useRef(0);
   const refreshQuadCellsRef = useRef<(() => void) | null>(null);

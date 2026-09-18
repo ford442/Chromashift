@@ -1,7 +1,7 @@
 import { advanceAnglesBy } from '../WasmEngine';
 import { buildRendererState } from '../buildRendererState';
 import type { ChromashiftRenderer, ExportFrameResult } from '../types/RendererContracts';
-import type { ChromashiftState, LayerTriple } from '../../state/types';
+import type { ChromashiftState } from '../../state/types';
 import type { VideoExportRequest } from './VideoExporter';
 import {
   resolveStartAngles,
@@ -22,7 +22,7 @@ export interface ExportFrameYield {
 export async function* exportVideoFrameLoop(
   renderer: ChromashiftRenderer,
   state: ChromashiftState,
-  liveAngles: LayerTriple<number>,
+  liveAngles: number[],
   request: VideoExportRequest,
   dims: ExportDimensions,
 ): AsyncGenerator<ExportFrameYield> {

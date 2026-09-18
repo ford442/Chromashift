@@ -37,7 +37,11 @@ export function encodeSettingsParam(state: ChromashiftState): string {
   // Share URLs carry the colour-profile id only — the full band table would
   // bloat the query string. Recipients resolve built-ins directly and user
   // profiles from their own library; unknown ids fall back to Classic.
-  return toBase64Url(JSON.stringify(serializeSettings(state, { embedColorProfile: false })));
+  // `compactLayers` keeps a default three-layer share URL the same length it
+  // was before the count became a session parameter.
+  return toBase64Url(JSON.stringify(
+    serializeSettings(state, { embedColorProfile: false, compactLayers: true }),
+  ));
 }
 
 /** Decode a ?preset= parameter value. Returns null when malformed or wrong version. */

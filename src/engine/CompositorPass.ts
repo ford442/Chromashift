@@ -5,13 +5,14 @@ import {
   type TexturePairBindGroupCacheEntry,
 } from './BindGroupCache';
 import type { WebGPUPipelines } from './WebGPUPipelines';
+import { layerTextureEntries, type LayerTextures } from './BindGroupCache';
 
 export interface CompositorUniformParams {
   tracerAboveOp: number;
   tracerBelowOp: number;
   layerBlendMode: number;
   tracerBlendMode: number;
-  layerOpacities: [number, number, number];
+  layerOpacities: number[];
   diagnosticsOpacity: number;
   stampBoost: number;
   outputMode: number;
@@ -92,7 +93,7 @@ export class CompositorPass {
   encode(
     enc: GPUCommandEncoder,
     targetView: GPUTextureView,
-    layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+    layerTextures: LayerTextures,
     persistBelow: GPUTexture,
     persistAbove: GPUTexture,
     pingPong: 0 | 1,
@@ -122,7 +123,7 @@ export class CompositorPass {
   encodePreview(
     enc: GPUCommandEncoder,
     targetView: GPUTextureView,
-    layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+    layerTextures: LayerTextures,
     persistBelow: GPUTexture,
     persistAbove: GPUTexture,
     pingPong: 0 | 1,
@@ -156,7 +157,7 @@ export class CompositorPass {
 
   private getBindGroup(
     entry: TexturePairBindGroupCacheEntry,
-    layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+    layerTextures: LayerTextures,
     persistBelow: GPUTexture,
     persistAbove: GPUTexture,
     uniformBuf: GPUBuffer,
@@ -170,12 +171,10 @@ export class CompositorPass {
       persistAbove,
       [
         { binding: 0, resource: this.sampler },
-        { binding: 1, resource: layerTextures[0].createView() },
-        { binding: 2, resource: layerTextures[1].createView() },
-        { binding: 3, resource: layerTextures[2].createView() },
-        { binding: 4, resource: persistBelow.createView() },
-        { binding: 5, resource: persistAbove.createView() },
-        { binding: 6, resource: { buffer: uniformBuf } },
+        ...layerTextureEntries(1, layerTextures),
+        { binding: layerTextures.length + 1, resource: persistBelow.createView() },
+        { binding: layerTextures.length + 2, resource: persistAbove.createView() },
+        { binding: layerTextures.length + 3, resource: { buffer: uniformBuf } },
       ],
     );
   }

@@ -1,5 +1,5 @@
 import type { ChromashiftRenderer } from '../types/RendererContracts';
-import type { ChromashiftState, LayerTriple } from '../../state/types';
+import type { ChromashiftState } from '../../state/types';
 import { exportVideoFrameLoop } from './exportVideoFrameLoop';
 import {
   buildExportFilename,
@@ -31,7 +31,7 @@ function qualityBitrate(quality: VideoExportRequest['quality'], mediabunny: Medi
 export async function exportVideoWebCodecs(
   renderer: ChromashiftRenderer,
   state: ChromashiftState,
-  liveAngles: LayerTriple<number>,
+  liveAngles: number[],
   baseWidth: number,
   baseHeight: number,
   request: VideoExportRequest,

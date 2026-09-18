@@ -142,6 +142,20 @@ Two GLSL local variable names differ from the WGSL spelling (`border` versus
 five-input coincidence pass and a five-layer compositor on both backends, and
 `passGraph.test.ts` exercises 1, 2, 3, 5 and 8.
 
+The count is also a *session* parameter, not just a compile-time one:
+`layers.count` in app state (schema v7), sized 1–`MAX_LAYER_COUNT` by
+`assertLayerCount` / `clampLayerCount`, with the reducer keeping `angles`,
+`extensions` and `opacities` at exactly that length. `layerCount.test.ts` covers
+the state contract and checks the generated WebGPU bind-group layouts against
+the emitted shaders' binding numbers at 1, 2, 3, 5, 8 and 10 layers.
+
+The overlap test is emitted once and used twice: `emitCoincidenceDecayWgsl(n)`
+(the fused fragment pass) and `emitCoincidenceComputeWgsl(n)` (the chore lane's
+kernel) share their per-layer arms through `coincidenceParts`, and
+`coincidence.test.ts` holds both to the CPU oracle in `math/coincidence.ts` at
+n ∈ {2, 3, 5}. The kernel's three-layer emission is byte-identical to the
+hand-written shader it replaced — see `__golden__/coincidence-compute.wgsl`.
+
 ## The gate
 
 `?graph=1` (or a stored `chromashift.passGraph` preference) turns on compilation
@@ -296,13 +310,15 @@ encode-structure unit tests, which is strong but is not a GPU comparison.
 - **The WebGL executor.** The diagnostic / XR / screenshot backend still
   compiles only. It is second in line on purpose: it has no template for `warp`
   or `blur`, so the shapes worth executing are WebGPU's first.
-- **N-layer execution.** `buildDefaultGraph(5)` compiles and emits on both
-  backends today, and the executor's pool, plans and bind-group layouts are all
-  written against `layerCount` rather than a literal 3. What still assumes three
-  is everything *around* the graph: `RendererState.layers: [L, L, L]`, and the
-  fixed triples in `BindGroupCache.ts`, `TracerInspectPass.ts`,
-  `GpuReadback.ts`, `CompositorPass.ts` and the `coincidence` compute kernel.
-  Un-tupling `RendererState` is the next step.
+- **N-layer execution.** The *data* half is done: `layers.count` is a session
+  parameter (schema v7), `RendererState.layers` and `layerOpacities` are arrays,
+  `BindGroupCache` stores `layers: GPUTexture[]`, the WebGPU bind-group layouts
+  are generated from `layerCount`, the coincidence compute kernel is emitted by
+  `emitCoincidenceComputeWgsl(n)`, and the C ABI takes a pointer and a count.
+  What is left is *execution*: the WebGPU renderer still builds one layer
+  pipeline per entry in `layerFragmentSources`, so changing `layers.count`
+  resizes the state, the panel and the uniforms but not yet the number of band
+  passes drawn. The executor owning the layer passes is what closes that.
 - **A third tracer timescale.** `emitCompositorWgsl` binds exactly two tracer
   textures (`persistBelow`, `persistAbove`), so a graph with three `decay`
   nodes is refused rather than approximated. Generalising the compositor

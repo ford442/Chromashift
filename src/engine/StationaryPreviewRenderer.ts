@@ -4,7 +4,6 @@ import {
   getOrCreateLayerBindGroup,
   invalidateLayerBindGroupCache,
 } from './BindGroupCache';
-import { DEFAULT_LAYER_COUNT } from './graph';
 import { CompositorPass } from './CompositorPass';
 import { ProfileLutTexture } from './color/ProfileLutTexture';
 import { GpuReadback } from './GpuReadback';
@@ -19,6 +18,7 @@ import { TracerInspectPass } from './TracerInspectPass';
 import type { RendererState } from './types/RendererState';
 import { layerRotationUniforms } from './math/rotation';
 import type { WebGPUPipelines } from './WebGPUPipelines';
+import type { LayerTextures } from './BindGroupCache';
 
 /**
  * Isolated 128×128 GPU path for side-preview thumbnails at preset angles.
@@ -33,7 +33,7 @@ export class StationaryPreviewRenderer {
   private readonly compositor: CompositorPass;
   private readonly tracerInspect: TracerInspectPass;
   private readonly readback: GpuReadback;
-  private readonly layerBindGroupCache = createLayerBindGroupCache(DEFAULT_LAYER_COUNT);
+  private readonly layerBindGroupCache = createLayerBindGroupCache(layerFragmentSources.length);
   private readonly layerPipelines: ReturnType<WebGPUPipelines['createLayerPipeline']>[] = [];
   private layerTextures: GPUTexture[] = [];
   private outputTexture: GPUTexture | null = null;
@@ -117,12 +117,10 @@ export class StationaryPreviewRenderer {
     this.persistence.clear();
 
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
-    const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
-    const layerOpacities: [number, number, number] = [
-      globalLayerOpacity * sourceLayerOpacities[0],
-      globalLayerOpacity * sourceLayerOpacities[1],
-      globalLayerOpacity * sourceLayerOpacities[2],
-    ];
+    const sourceLayerOpacities = state.layerOpacities;
+    const layerOpacities: number[] = state.layers.map(
+      (_, i) => globalLayerOpacity * (sourceLayerOpacities?.[i] ?? 1),
+    );
 
     const separated = wantSeparated
       ? await this.renderSeparatedPass(state, layerOpacities, size)
@@ -144,7 +142,8 @@ export class StationaryPreviewRenderer {
   }
 
   private ensureResources(size: number): void {
-    if (this.layerTextures.length === 3
+    const layerCount = this.layerPipelines.length;
+    if (this.layerTextures.length === layerCount
       && this.layerTextures[0].width === size
       && this.outputTexture?.width === size) {
       return;
@@ -153,7 +152,7 @@ export class StationaryPreviewRenderer {
     for (const t of this.layerTextures) t.destroy();
     this.outputTexture?.destroy();
 
-    this.layerTextures = Array.from({ length: DEFAULT_LAYER_COUNT }, () => this.device.createTexture({
+    this.layerTextures = Array.from({ length: layerCount }, () => this.device.createTexture({
       size: [size, size, 1],
       format: this.internalFormat,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -173,7 +172,7 @@ export class StationaryPreviewRenderer {
   private encodeLayerPasses(
     enc: GPUCommandEncoder,
     state: RendererState,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
   ): void {
     const maskTexture = this.maskTexture ?? this.fallbackMaskTexture;
     const colorMode = state.colorMode ?? 1.0;
@@ -228,7 +227,7 @@ export class StationaryPreviewRenderer {
   }
 
   private encodePersistence(enc: GPUCommandEncoder, state: RendererState, fps: number): void {
-    this.persistence.encode(enc, this.getLayerTexturesTuple(), {
+    this.persistence.encode(enc, this.getLayerTextures(), {
       fps,
       colorThresh: state.tracerThreshold ?? 0.05,
       tracerMode: state.tracerMode ?? 0,
@@ -242,7 +241,7 @@ export class StationaryPreviewRenderer {
 
   private async renderSeparatedPass(
     state: RendererState,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
     size: number,
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const enc = this.device.createCommandEncoder();
@@ -269,7 +268,7 @@ export class StationaryPreviewRenderer {
     this.compositor.encode(
       enc,
       this.outputTexture!.createView(),
-      this.getLayerTexturesTuple(),
+      this.getLayerTextures(),
       emptyBelow,
       emptyAbove,
       this.persistence.pingPong,
@@ -282,7 +281,7 @@ export class StationaryPreviewRenderer {
 
   private async renderTracerPass(
     state: RendererState,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
     size: number,
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const enc = this.device.createCommandEncoder();
@@ -313,7 +312,7 @@ export class StationaryPreviewRenderer {
         layerOpacity2: layerOpacities[2],
       },
       {
-        layerTextures: this.getLayerTexturesTuple(),
+        layerTextures: this.getLayerTextures(),
         persistAbove: this.persistence.aboveTextures[this.persistence.pingPong]!,
         persistBelow: this.persistence.belowTextures[this.persistence.pingPong]!,
         pingPong: this.persistence.pingPong,
@@ -325,7 +324,7 @@ export class StationaryPreviewRenderer {
     return result?.data ?? null;
   }
 
-  private getLayerTexturesTuple(): [GPUTexture, GPUTexture, GPUTexture] {
-    return [this.layerTextures[0], this.layerTextures[1], this.layerTextures[2]];
+  private getLayerTextures(): LayerTextures {
+    return this.layerTextures;
   }
 }

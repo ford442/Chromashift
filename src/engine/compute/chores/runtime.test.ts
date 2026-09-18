@@ -13,7 +13,7 @@ import {
 
 const IMAGE = {} as HTMLImageElement;
 const TEXTURE = {} as GPUTexture;
-const LAYERS: readonly [GPUTexture, GPUTexture, GPUTexture] = [TEXTURE, TEXTURE, TEXTURE];
+const LAYERS: readonly GPUTexture[] = [TEXTURE, TEXTURE, TEXTURE];
 
 function job(overrides: Partial<ImageAnalysisJob> = {}): ImageAnalysisJob {
   return { op: 'image-analysis', width: 64, height: 64, ...overrides };

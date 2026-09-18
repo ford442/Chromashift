@@ -14,14 +14,14 @@ import { WebGLLayerPass } from './WebGLLayerPass';
 import { WebGLPersistencePass } from './WebGLPersistencePass';
 import { createTarget, destroyTarget, readTargetPixels, type RenderTarget } from './resources';
 
-function computeLayerOpacities(state: RendererState): [number, number, number] {
+/**
+ * Per-layer opacity, global multiplier folded in — one entry per layer the
+ * state actually carries, not a fixed three.
+ */
+function computeLayerOpacities(state: RendererState): number[] {
   const globalLayerOpacity = state.layerOpacity ?? 1.0;
-  const perLayer = state.layerOpacities ?? [1, 1, 1];
-  return [
-    globalLayerOpacity * perLayer[0],
-    globalLayerOpacity * perLayer[1],
-    globalLayerOpacity * perLayer[2],
-  ];
+  const perLayer = state.layerOpacities;
+  return state.layers.map((_, i) => globalLayerOpacity * (perLayer?.[i] ?? 1));
 }
 
 /** Isolated WebGL2 path for stationary side previews (does not touch main FBOs). */
@@ -122,7 +122,7 @@ export class WebGLStationaryPreviewRenderer {
   private renderSeparated(
     state: RendererState,
     size: number,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
   ): Uint8ClampedArray<ArrayBuffer> | null {
     this.layerPass.render(this.sourceTexture!.texture, state, 0, 1);
     const separatedState: RendererState = {
@@ -149,7 +149,7 @@ export class WebGLStationaryPreviewRenderer {
   private renderTracer(
     state: RendererState,
     size: number,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
   ): Uint8ClampedArray<ArrayBuffer> | null {
     const tracerState: RendererState = {
       ...state,

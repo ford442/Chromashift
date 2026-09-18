@@ -1,6 +1,6 @@
 import { extensionStepsForFps } from '../math/rotation';
 import type { ExportPassMode } from '../types/RendererContracts';
-import type { ChromashiftState, LayerTriple } from '../../state/types';
+import type { ChromashiftState } from '../../state/types';
 import { evenDimension } from './videoCodecs';
 import type { VideoExportRequest } from './VideoExporter';
 
@@ -17,13 +17,13 @@ export function resolvePassMode(includeTracers: boolean, passMode: ExportPassMod
 
 export function resolveStartAngles(
   state: ChromashiftState,
-  liveAngles: LayerTriple<number>,
+  liveAngles: number[],
   usePresetAngles: boolean,
-): LayerTriple<number> {
+): number[] {
   if (usePresetAngles) {
-    return [...state.layers.angles] as LayerTriple<number>;
+    return [...state.layers.angles] as number[];
   }
-  return [...liveAngles] as LayerTriple<number>;
+  return [...liveAngles] as number[];
 }
 
 export interface ExportDimensions {
@@ -34,7 +34,7 @@ export interface ExportDimensions {
   canvasWidth: number;
   canvasHeight: number;
   passMode: ExportPassMode;
-  frameSteps: LayerTriple<number>;
+  frameSteps: number[];
   useWasm: boolean;
 }
 

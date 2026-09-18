@@ -87,10 +87,11 @@ function CollisionStatsReadout() {
   return (
     <>
       <div className="text-[10px] font-mono text-cyan-200/80">
-        2+: {collisionStats.twoOverlapPixels} px | 3: {collisionStats.threeOverlapPixels} px
+        2+: {collisionStats.twoOverlapPixels} px | all: {collisionStats.threeOverlapPixels} px
       </div>
       <div className="text-[10px] font-mono text-cyan-200/65">
-        Wins R/V/G: {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]} | Hit {Math.round(collisionStats.averageCollision * 100)}%
+        {/* One win count per layer — the array is as long as the session, not always three. */}
+        Wins: {collisionStats.dominantLayerWins.join('/')} | Hit {Math.round(collisionStats.averageCollision * 100)}%
       </div>
     </>
   );

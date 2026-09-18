@@ -79,7 +79,7 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
         if (imageUrl) {
           void presenter.syncTexture(imageUrl);
         }
-        const angles: [number, number, number] = [
+        const angles: number[] = [
           animAnglesRef.current[0],
           animAnglesRef.current[1],
           animAnglesRef.current[2],

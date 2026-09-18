@@ -8,8 +8,9 @@ import {
   DEFAULT_MOTION_MODE,
   DEFAULT_MOTION_THRESHOLD,
 } from '../engine/motionModes';
+import { CANONICAL_LAYER_COUNT } from '../engine/graph/layerSpecs';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
-import type { ChromashiftState, LayerTriple } from './types';
+import type { ChromashiftState, PerLayer } from './types';
 
 export const DEFAULT_AUDIO_LEVELS = {
   bass: 0,
@@ -18,16 +19,50 @@ export const DEFAULT_AUDIO_LEVELS = {
   energy: 0,
 } as const;
 
-export const DEFAULT_ANGLES: LayerTriple<number> = [0, 0, 0];
+/** How many band layers a fresh session renders. */
+export const DEFAULT_LAYER_COUNT = CANONICAL_LAYER_COUNT;
+
+/**
+ * First spin rate and the step between consecutive layers, in degrees.
+ *
+ * The shipped three-layer session uses 130 / 230 / 330, so a fourth layer
+ * continues the same ladder wrapped back into `[0, 360)` rather than inventing
+ * a new spacing. gcd(100, 360) = 20 gives a period of 18, so all ten possible
+ * layers get distinct rates.
+ */
+const EXTENSION_BASE = 130;
+const EXTENSION_STEP = 100;
+
+/** Spin rate (°) for layer `index`, normalized to 30 FPS — wall-clock °/s = value × 30. */
+export function defaultExtensionForLayer(index: number): number {
+  return (EXTENSION_BASE + EXTENSION_STEP * index) % 360;
+}
+
+/** Starting angles (all zero) for a `count`-layer session. */
+export function defaultAngles(count: number = DEFAULT_LAYER_COUNT): PerLayer<number> {
+  return Array.from({ length: count }, () => 0);
+}
+
+/** Spin rates for a `count`-layer session; `count === 3` is exactly [130, 230, 330]. */
+export function defaultExtensions(count: number = DEFAULT_LAYER_COUNT): PerLayer<number> {
+  return Array.from({ length: count }, (_, i) => defaultExtensionForLayer(i));
+}
+
+/** Per-layer opacity multipliers (all opaque) for a `count`-layer session. */
+export function defaultOpacities(count: number = DEFAULT_LAYER_COUNT): PerLayer<number> {
+  return Array.from({ length: count }, () => 1);
+}
+
+export const DEFAULT_ANGLES: PerLayer<number> = defaultAngles();
 /** Spin rates (°), normalized to 30 FPS — wall-clock °/s = value × 30. */
-export const DEFAULT_EXTENSIONS: LayerTriple<number> = [130, 230, 330];
+export const DEFAULT_EXTENSIONS: PerLayer<number> = defaultExtensions();
 export const DEFAULT_FPS = 30;
 
 export const DEFAULT_COLLISION_STATS = {
   sampledPixels: 0,
   twoOverlapPixels: 0,
   threeOverlapPixels: 0,
-  dominantLayerWins: [0, 0, 0] as LayerTriple<number>,
+  dominantLayerWins: defaultAngles(),
   averageCollision: 0,
 };
 
@@ -65,10 +100,11 @@ export function createInitialState(): ChromashiftState {
       liveSource: { ...DEFAULT_LIVE_SOURCE },
     },
     layers: {
-      angles: [...DEFAULT_ANGLES],
-      extensions: [...DEFAULT_EXTENSIONS],
+      count: DEFAULT_LAYER_COUNT,
+      angles: defaultAngles(),
+      extensions: defaultExtensions(),
       opacity: 1,
-      opacities: [1, 1, 1],
+      opacities: defaultOpacities(),
       scale: 1,
       colorMode: 1,
       sobelEnabled: false,

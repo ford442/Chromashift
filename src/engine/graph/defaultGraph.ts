@@ -1,4 +1,4 @@
-import { CANONICAL_LAYER_COUNT } from './layerSpecs';
+import { CANONICAL_LAYER_COUNT, assertLayerCount } from './layerSpecs';
 import type { GraphNode, PassGraph } from './types';
 
 /** Stable node ids the renderers and tests refer to. */
@@ -28,9 +28,7 @@ export const DEFAULT_GRAPH_IDS = {
  * it; nothing downstream reads a literal 3.
  */
 export function buildDefaultGraph(layerCount: number = CANONICAL_LAYER_COUNT): PassGraph {
-  if (!Number.isInteger(layerCount) || layerCount < 1) {
-    throw new RangeError(`layerCount must be a positive integer, got ${layerCount}.`);
-  }
+  assertLayerCount(layerCount);
 
   const layerIds = Array.from({ length: layerCount }, (_, i) => DEFAULT_GRAPH_IDS.layer(i));
 

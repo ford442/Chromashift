@@ -24,6 +24,17 @@ export class WebGLLayerPass {
   private width = 0;
   private height = 0;
 
+  /**
+   * Band layers this pass renders.
+   *
+   * Still the default three: the WebGL diagnostic backend's compositor and
+   * persistence programs are the hand-written GLSL that binds `u_layer0..2`,
+   * so widening this alone would allocate targets nothing downstream reads.
+   * The GLSL templates (`emitCompositorGlsl`, `emitCoincidenceDecayGlsl`) are
+   * already parametric; wiring them up belongs to the graph-executor work.
+   */
+  private readonly layerCount = DEFAULT_LAYER_COUNT;
+
   constructor(gl: WebGL2RenderingContext, debugPasses: WebGLDebugPasses) {
     this.gl = gl;
     this.debugPasses = debugPasses;
@@ -36,12 +47,13 @@ export class WebGLLayerPass {
   }
 
   ensureTextures(width: number, height: number): void {
-    if (this.width === width && this.height === height && this.layerTargets.length === DEFAULT_LAYER_COUNT) return;
+    const layerCount = this.layerCount;
+    if (this.width === width && this.height === height && this.layerTargets.length === layerCount) return;
     for (const target of this.layerTargets) {
       destroyTarget(this.gl, target);
     }
     this.layerTargets = Array.from(
-      { length: DEFAULT_LAYER_COUNT },
+      { length: layerCount },
       () => createTarget(this.gl, width, height),
     );
     this.width = width;

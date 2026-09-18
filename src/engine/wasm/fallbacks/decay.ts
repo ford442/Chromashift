@@ -10,16 +10,13 @@
 
 export { durationToDecay } from '../../math/decay';
 
+/** Steps as many angles as `angles` carries — the layer count is its length. */
 export function tsAdvanceAngles(
-  angles: [number, number, number],
-  steps: [number, number, number],
-): [number, number, number] {
+  angles: readonly number[],
+  steps: readonly number[],
+): number[] {
   // ((a + s) % 360 + 360) % 360 handles negative steps.
-  return [
-    ((angles[0] + steps[0]) % 360 + 360) % 360,
-    ((angles[1] + steps[1]) % 360 + 360) % 360,
-    ((angles[2] + steps[2]) % 360 + 360) % 360,
-  ];
+  return angles.map((angle, i) => ((angle + steps[i]) % 360 + 360) % 360);
 }
 
 export function tsSimulateTracerDecay(buffer: Float32Array, decayFactor: number): void {

@@ -24,14 +24,14 @@ import type { WebGLRenderViewport } from './types';
 
 export type { WebGLRenderViewport } from './types';
 
-function computeLayerOpacities(state: RendererState): [number, number, number] {
+/**
+ * Per-layer opacity, global multiplier folded in — one entry per layer the
+ * state actually carries, not a fixed three.
+ */
+function computeLayerOpacities(state: RendererState): number[] {
   const globalLayerOpacity = state.layerOpacity ?? 1.0;
-  const perLayer = state.layerOpacities ?? [1, 1, 1];
-  return [
-    globalLayerOpacity * perLayer[0],
-    globalLayerOpacity * perLayer[1],
-    globalLayerOpacity * perLayer[2],
-  ];
+  const perLayer = state.layerOpacities;
+  return state.layers.map((_, i) => globalLayerOpacity * (perLayer?.[i] ?? 1));
 }
 
 /**

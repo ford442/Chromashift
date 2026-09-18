@@ -221,8 +221,11 @@ For shader-based effect work, prototype/inspect in `src/engine/webgl/` when brow
 1. `fetchCorpusManifest('./images.json')` (`src/engine/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
 2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
-   - 3 independent `GPURenderPipeline`s for the colour layers (each can use 4× MSAA).
-   - 1 persistence pipeline that reads the 3 layer textures + previous tracer texture.
+   - one independent `GPURenderPipeline` per colour layer (each can use 4× MSAA) — three in the
+     default session, and `layers.count` once the graph executor owns the band passes.
+   - 1 persistence pipeline that reads the layer textures + previous tracer texture. Its
+     bind-group layout is generated from the layer count, so the binding `prevTex` lives at
+     moves with it (see `docs/PASS_GRAPH.md`, "Layer counts").
    - 1 compositor pipeline that blends tracers + live layers and writes to the swap-chain.
 4. Each frame, `renderer.render(state)` receives the shared `RendererState`. WebGPU encodes all passes into a single command buffer; WebGL runs equivalent GLSL/FBO passes for debugging/reference output.
 
@@ -437,13 +440,13 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
   ~10 % brightness over the configured duration (`residualBrightness` in `shared/decay.json`).
   Pixels where **2 or more** layers overlap fade *faster*: the persistence passes raise that
   multiplier to `overlapDecayExponent` (1.5) rather than `idleDecayExponent` (1.0) — one
-  threshold at 2+, so 2- and 3-layer overlaps decay at the same rate (`layerCount >= 3u` only
-  affects the diagnostic output). Reference implementation: `effectiveDecay()` in
+  threshold at 2+, so a partial and a full overlap decay at the same rate (the full-overlap
+  test only affects the diagnostic output). Reference implementation: `effectiveDecay()` in
   `src/engine/math/decay.ts`.
 - **Modes**: `tracerMode` can be `0` (combined colours) or `1` (grey highlight).
 - **Blend modes**: Both the live layers and the tracers support independent blend modes — Alpha, Add, Subtract, Multiply, Screen.
 - **Temporal term (motion)**: everything above is purely *spatial and instantaneous* — the pass
-  samples three layer textures at one UV and knows nothing about what changed since the last
+  samples the layer textures at one UV and knows nothing about what changed since the last
   frame. `tracers.motionMode` adds that missing axis, driven by the `motion-field` chore:
   - `off` (default) — no temporal term at all.
   - `boost` — motion multiplies a fresh stamp by `1 + motionGain × magnitude`.

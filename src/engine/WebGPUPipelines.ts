@@ -13,6 +13,23 @@ import {
   persistDiagnosticBlitFragmentSource,
   stampDiagnosticViewFragmentSource,
 } from './shaders';
+import { DEFAULT_LAYER_COUNT, assertLayerCount } from './graph';
+
+/**
+ * `GPUShaderStage` is a runtime global, not a type — reading it at module scope
+ * would make importing this file throw wherever WebGPU is absent (Node, the
+ * WebGL-only path), so every use goes through this.
+ */
+const fragmentStage = (): number => GPUShaderStage.FRAGMENT;
+
+/** `n` consecutive sampled-texture entries starting at `first`. */
+function textureEntries(first: number, count: number): GPUBindGroupLayoutEntry[] {
+  return Array.from({ length: count }, (_, i) => ({
+    binding: first + i,
+    visibility: fragmentStage(),
+    texture: { sampleType: 'float' as const },
+  }));
+}
 
 export interface LayerPipeline {
   pipeline          : GPURenderPipeline;
@@ -28,6 +45,17 @@ export class WebGPUPipelines {
   public format: GPUTextureFormat;
   public internalFormat: GPUTextureFormat;
 
+  /**
+   * How many band-layer textures every layout below is sized for.
+   *
+   * The persist, compositor and tracer-view passes each bind one texture per
+   * layer, so their binding numbers shift with the count — which is why they
+   * are generated here rather than written out. The emitted WGSL uses the same
+   * arithmetic (`emitCoincidenceDecayWgsl`, `emitCompositorWgsl`), so a layout
+   * and its shader can never disagree about where `prevTex` lives.
+   */
+  public readonly layerCount: number;
+
   public persistBGL: GPUBindGroupLayout;
   public persistMotionBGL: GPUBindGroupLayout;
   public persistCompositeBGL: GPUBindGroupLayout;
@@ -40,10 +68,16 @@ export class WebGPUPipelines {
   public persistDiagnosticBlitBGL: GPUBindGroupLayout;
   public stampDiagnosticViewBGL: GPUBindGroupLayout;
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, internalFormat: GPUTextureFormat) {
+  constructor(
+    device: GPUDevice,
+    format: GPUTextureFormat,
+    internalFormat: GPUTextureFormat,
+    layerCount: number = DEFAULT_LAYER_COUNT,
+  ) {
     this.device = device;
     this.format = format;
     this.internalFormat = internalFormat;
+    this.layerCount = assertLayerCount(layerCount);
 
     this.persistBGL = this.createPersistBGL();
     this.persistMotionBGL = this.createPersistMotionBGL();
@@ -59,15 +93,14 @@ export class WebGPUPipelines {
   }
 
   public createPersistBGL(): GPUBindGroupLayout {
-
+    // 0 = sampler, 1..n = layers, n+1 = previous frame, n+2 = uniforms — the
+    // binding numbers `emitCoincidenceDecayWgsl(n)` emits.
+    const n = this.layerCount;
     return this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
+        ...textureEntries(1, n + 1),
+        { binding: n + 2, visibility: fragmentStage(), buffer: { type: 'uniform' } },
       ],
     });
   }
@@ -80,16 +113,13 @@ export class WebGPUPipelines {
    * with no motion texture in the frame at all.
    */
   public createPersistMotionBGL(): GPUBindGroupLayout {
-
+    const n = this.layerCount;
     return this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
+        ...textureEntries(1, n + 1),
+        { binding: n + 2, visibility: fragmentStage(), buffer: { type: 'uniform' } },
+        { binding: n + 3, visibility: fragmentStage(), texture: { sampleType: 'float' } },
       ],
     });
   }
@@ -121,31 +151,27 @@ export class WebGPUPipelines {
   }
 
   public createCompositorBGL(): GPUBindGroupLayout {
-
+    // 0 = sampler, 1..n = layers, n+1 = tracer below, n+2 = tracer above,
+    // n+3 = uniforms — matching `emitCompositorWgsl(n)`.
+    const n = this.layerCount;
     return this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // NEW: persistAbove
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },      // MOVED to 6
+        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
+        ...textureEntries(1, n + 2),
+        { binding: n + 3, visibility: fragmentStage(), buffer: { type: 'uniform' } },
       ],
     });
   }
 
   public createTracerViewBGL(): GPUBindGroupLayout {
-
+    // 0 = sampler, 1 = tracer above, 2 = tracer below, 3..n+2 = layers,
+    // n+3 = uniforms.
+    const n = this.layerCount;
     return this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // persistAbove
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // persistBelow
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer0
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer1
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } }, // layer2
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
+        ...textureEntries(1, n + 2),
+        { binding: n + 3, visibility: fragmentStage(), buffer: { type: 'uniform' } },
       ],
     });
   }
@@ -162,30 +188,26 @@ export class WebGPUPipelines {
   }
 
   public createHeatmapBGL(): GPUBindGroupLayout {
-
+    // 0 = sampler, 1..n = layers, n+1 = uniforms.
+    const n = this.layerCount;
     return this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
+        ...textureEntries(1, n),
+        { binding: n + 1, visibility: fragmentStage(), buffer: { type: 'uniform' } },
       ],
     });
   }
 
   public createCompareBGL(): GPUBindGroupLayout {
-
+    // 0 = sampler, 1 = source, 2..n+1 = layers, n+2 = tracer below,
+    // n+3 = tracer above, n+4 = uniforms.
+    const n = this.layerCount;
     return this.device.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 7, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
+        ...textureEntries(1, n + 3),
+        { binding: n + 4, visibility: fragmentStage(), buffer: { type: 'uniform' } },
       ],
     });
   }

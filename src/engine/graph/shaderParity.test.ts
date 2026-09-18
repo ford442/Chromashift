@@ -17,6 +17,7 @@ import {
   GLSL_BAND_COLOR_HELPERS,
   GLSL_GRADIENT_LAYER_BRANCH,
 } from '../webgl/shaders/bandGlsl';
+import { COINCIDENCE_COMPUTE_SHADER } from '../compute/chores/kernels';
 import { normaliseShaderSource } from './shaderText';
 
 /**
@@ -53,6 +54,10 @@ describe('default-graph WGSL matches the hand-written pipeline', () => {
 
   it('emits the compositor pass unchanged', () => {
     expectMatchesGolden(compositorFragmentSource, 'compositor.wgsl');
+  });
+
+  it('emits the coincidence compute kernel unchanged', () => {
+    expectMatchesGolden(COINCIDENCE_COMPUTE_SHADER, 'coincidence-compute.wgsl');
   });
 });
 

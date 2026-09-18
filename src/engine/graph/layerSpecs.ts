@@ -80,6 +80,42 @@ export interface LayerSpec {
 /** Mask index of the dark/grey band — one past the last threshold. */
 export const DARK_MASK_BAND = BAND_NAMES.length;
 
+/**
+ * Upper bound on a session's layer count.
+ *
+ * A layer owns a contiguous run of the canonical bands in shared/band.json, so
+ * there can never be more layers than there are bands — past ten, a layer would
+ * have to invent a threshold, which {@link buildLayerSpecs} refuses to do.
+ */
+export const MAX_LAYER_COUNT = BAND_NAMES.length;
+
+/**
+ * Throw unless `layerCount` is an integer in `[1, MAX_LAYER_COUNT]`.
+ *
+ * The single gate every layer-count entry point shares — `buildLayerSpecs`,
+ * `buildDefaultGraph`, and the reducer's `layers/setCount` — so an out-of-range
+ * count fails at the boundary instead of producing a half-built graph.
+ */
+export function assertLayerCount(layerCount: number): number {
+  if (!Number.isInteger(layerCount) || layerCount < 1) {
+    throw new RangeError(`layerCount must be a positive integer, got ${layerCount}.`);
+  }
+  if (layerCount > MAX_LAYER_COUNT) {
+    throw new RangeError(
+      `layerCount ${layerCount} exceeds the ${MAX_LAYER_COUNT} canonical bands in shared/band.json.`,
+    );
+  }
+  return layerCount;
+}
+
+/** Clamp an untrusted count (a preset file, a URL) into range instead of throwing. */
+export function clampLayerCount(layerCount: unknown): number {
+  const value = typeof layerCount === 'number' && Number.isFinite(layerCount)
+    ? Math.round(layerCount)
+    : CANONICAL_LAYER_COUNT;
+  return Math.min(Math.max(value, 1), MAX_LAYER_COUNT);
+}
+
 /** `rgb <= this` is the dark/grey tail (borderYellow + 1). */
 export const DARK_RGB_MAX = (BAND.borderYellow + 1).toFixed(1);
 
@@ -211,15 +247,8 @@ function rgbLiteral(h: number, s: number, l: number): string {
  * guarantee in bandTable.test.ts intact.
  */
 export function buildLayerSpecs(layerCount: number): readonly LayerSpec[] {
-  if (!Number.isInteger(layerCount) || layerCount < 1) {
-    throw new RangeError(`layerCount must be a positive integer, got ${layerCount}.`);
-  }
+  assertLayerCount(layerCount);
   if (layerCount === CANONICAL_LAYER_COUNT) return CANONICAL_LAYER_SPECS;
-  if (layerCount > BAND_NAMES.length) {
-    throw new RangeError(
-      `layerCount ${layerCount} exceeds the ${BAND_NAMES.length} canonical bands in shared/band.json.`,
-    );
-  }
 
   return partition(BAND_NAMES.length, layerCount).map((bandIndices, index) => {
     const hue = (360 * index) / layerCount;

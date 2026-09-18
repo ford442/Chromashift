@@ -48,7 +48,10 @@ export {
 export {
   CANONICAL_LAYER_COUNT,
   CANONICAL_LAYER_SPECS,
+  MAX_LAYER_COUNT,
+  assertLayerCount,
   buildLayerSpecs,
+  clampLayerCount,
   type LayerSpec,
 } from './layerSpecs';
 export {

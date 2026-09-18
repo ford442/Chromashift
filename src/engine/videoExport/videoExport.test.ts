@@ -104,8 +104,8 @@ describe('deterministic angle stepping', () => {
   const start: [number, number, number] = [0, 0, 0];
 
   it('produces identical sequences in TypeScript mode', () => {
-    let a = [...start] as [number, number, number];
-    let b = [...start] as [number, number, number];
+    let a = [...start];
+    let b = [...start];
     for (let i = 0; i < 150; i += 1) {
       a = advanceAnglesBy(a, extensions, false);
       b = advanceAnglesBy(b, extensions, false);

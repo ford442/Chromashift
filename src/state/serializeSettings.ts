@@ -1,4 +1,5 @@
 import { parseDisplayColorSpace } from '../engine/gpuOptions';
+import { CANONICAL_LAYER_COUNT, clampLayerCount } from '../engine/graph/layerSpecs';
 import { createInitialState } from './defaults';
 import type { ChromashiftSettingsInput } from './chromashiftReducer';
 import type { ChromashiftState } from './types';
@@ -15,8 +16,19 @@ import {
   parseMotionMode,
 } from '../engine/motionModes';
 
-export const SETTINGS_SCHEMA_VERSION = 5 as const;
-export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4, 5] as const;
+/**
+ * Current preset schema.
+ *
+ * v5 added the tracer motion term, v6 is reserved for the timeline work
+ * (issue #153), and v7 is the variable layer count. v6 is listed as supported
+ * so a document written by that branch still loads here: the layer migration
+ * below treats anything before v7 identically.
+ */
+export const SETTINGS_SCHEMA_VERSION = 7 as const;
+export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4, 5, 6, 7] as const;
+
+/** First schema version that carries `layers.count` and variable-length arrays. */
+export const LAYER_COUNT_SCHEMA_VERSION = 7;
 
 export interface ChromashiftSettingsDocument {
   version: typeof SETTINGS_SCHEMA_VERSION;
@@ -94,7 +106,29 @@ function migrateMotion(
   };
 }
 
-/** Normalize a v1–v5 raw document to the current schema. */
+/**
+ * v7 made the layer count a session parameter. A v1–v6 document predates it and
+ * was always three layers, so it migrates as `count: 3` with its existing
+ * triples carried over in place — the arrays are already the right length, they
+ * just had no count beside them.
+ *
+ * A v7 document states its own count; the arrays are trusted only as far as
+ * `normalizeLayersSlice` in the reducer, which resizes them to match. An absent
+ * or out-of-range count clamps to the canonical three rather than failing the
+ * load, so a hand-edited preset degrades to the default look instead of nothing.
+ */
+function migrateLayerCount(
+  layers: ChromashiftSettingsInput['layers'],
+  version: number,
+): ChromashiftSettingsInput['layers'] {
+  const count = version >= LAYER_COUNT_SCHEMA_VERSION
+    ? clampLayerCount(layers?.count ?? layers?.angles?.length)
+    : CANONICAL_LAYER_COUNT;
+
+  return { ...layers, count };
+}
+
+/** Normalize a v1–v7 raw document to the current schema. */
 export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDocument {
   const { settings } = doc;
   const output = settings.output ? { ...settings.output } : undefined;
@@ -131,7 +165,7 @@ export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDo
     version: SETTINGS_SCHEMA_VERSION,
     settings: {
       ...settings,
-      layers: migrateColorProfile(settings.layers),
+      layers: migrateLayerCount(migrateColorProfile(settings.layers), doc.version),
       tracers: migrateMotion(settings.tracers),
       output,
       reactive,
@@ -159,6 +193,13 @@ export interface SerializeSettingsOptions {
    * and carry the profile id alone to stay short (see docs/COLOR_PROFILES.md).
    */
   embedColorProfile?: boolean;
+  /**
+   * Drop `layers.count` when it is the canonical three, so a `?preset=` URL for
+   * a default session is no longer than it was before v7. The count is
+   * recoverable from `layers.angles.length`, which the v7 migration falls back
+   * to. Off by default — an exported file states its count outright.
+   */
+  compactLayers?: boolean;
 }
 
 export function serializeSettings(
@@ -167,6 +208,10 @@ export function serializeSettings(
 ): ChromashiftSettingsDocument {
   const { layers, tracers, output, engine, ui, reactive } = state;
   const embedColorProfile = options.embedColorProfile !== false;
+  const { count, ...layersWithoutCount } = layers;
+  const layersPreset = options.compactLayers === true && count === CANONICAL_LAYER_COUNT
+    ? layersWithoutCount
+    : layers;
   const {
     tracerInspect,
     tracerPreviewFrozen: _tracerPreviewFrozen,
@@ -183,7 +228,7 @@ export function serializeSettings(
     version: SETTINGS_SCHEMA_VERSION,
     settings: {
       layers: {
-        ...layers,
+        ...layersPreset,
         colorProfile: embedColorProfile && !isClassicProfile(layers.colorProfileId)
           ? layers.colorProfile
           : null,

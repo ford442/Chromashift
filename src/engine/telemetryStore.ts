@@ -16,7 +16,6 @@
  * `use*` hooks below.
  */
 import { useSyncExternalStore } from 'react';
-import type { LayerTriple } from '../state/types';
 import { DEFAULT_ANGLES, DEFAULT_COLLISION_STATS } from '../state/defaults';
 import { EMPTY_GPU_RENDER_TIMING } from './types/RendererContracts';
 import type { GpuRenderTiming } from './types/RendererContracts';
@@ -40,7 +39,7 @@ function createSlice<T>(initial: T) {
   };
 }
 
-const anglesSlice = createSlice<LayerTriple<number>>([...DEFAULT_ANGLES]);
+const anglesSlice = createSlice<number[]>([...DEFAULT_ANGLES]);
 const renderCpuTimingSlice = createSlice<{ last: number; avg: number }>({ last: 0, avg: 0 });
 const renderGpuTimingSlice = createSlice<GpuRenderTiming>(EMPTY_GPU_RENDER_TIMING);
 const frameTimeHistorySlice = createSlice<readonly number[]>([]);
@@ -57,9 +56,15 @@ export const renderTelemetry = {
   setCollisionStats: collisionStatsSlice.set,
 };
 
-/** Live per-layer rotation angle (deg). Only the rotary-knob readouts need this. */
-export function useLiveLayerAngle(layer: 0 | 1 | 2): number {
-  return useSyncExternalStore(anglesSlice.subscribe, () => anglesSlice.get()[layer]);
+/**
+ * Live per-layer rotation angle (deg). Only the rotary-knob readouts need this.
+ *
+ * Falls back to 0 for a layer the published array does not cover: the panel
+ * renders `layers.count` knobs, and for one commit after the count grows the
+ * telemetry store still holds the shorter array.
+ */
+export function useLiveLayerAngle(layer: number): number {
+  return useSyncExternalStore(anglesSlice.subscribe, () => anglesSlice.get()[layer] ?? 0);
 }
 
 export function useRenderCpuTiming(): { last: number; avg: number } {

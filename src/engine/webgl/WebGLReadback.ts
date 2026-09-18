@@ -35,7 +35,7 @@ export class WebGLReadback {
     layerTextures: readonly RenderTarget[],
     persistence: WebGLPersistencePass,
     state: RendererState,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
   ): void {
     if (this.previewQueued) {
       this.previewTarget ??= createTarget(this.gl, WebGLReadback.PREVIEW_SIZE, WebGLReadback.PREVIEW_SIZE);

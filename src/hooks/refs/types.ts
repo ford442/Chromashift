@@ -3,7 +3,7 @@ import type { ImageEntry } from '../../engine/TextureManager';
 import type { ChromashiftTextureHandle } from '../../engine/types/TextureHandle';
 import type { EngineKind } from '../../engine/WasmEngine';
 import type { ReactiveModulation } from '../../engine/reactive/types';
-import type { ChromashiftState, LayerTriple } from '../../state/types';
+import type { ChromashiftState } from '../../state/types';
 
 export interface DomRefs {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -48,8 +48,8 @@ export interface CompareRefs {
   canvasARef: RefObject<HTMLCanvasElement | null>;
   canvasCRef: RefObject<HTMLCanvasElement | null>;
   quadRenderersRef: MutableRefObject<Record<'a' | 'b' | 'c', import('../../engine/RendererTypes').ChromashiftRenderer | null>>;
-  animAnglesRef: MutableRefObject<LayerTriple<number>>;
-  animAnglesBRef: MutableRefObject<LayerTriple<number>>;
+  animAnglesRef: MutableRefObject<number[]>;
+  animAnglesBRef: MutableRefObject<number[]>;
   lastAngleSyncRef: MutableRefObject<number>;
   lastRenderMetricSyncRef: MutableRefObject<number>;
   /** Set by useQuadStationaryRefresh; invoked when quad GPU slots attach. */

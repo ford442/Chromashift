@@ -74,6 +74,8 @@ const RENDERER_KEYS = keysOf<RendererPanelProps>({
 });
 
 const LAYER_KEYS = keysOf<LayerPanelProps>({
+  layerCount: true,
+  onLayerCountChange: true,
   layerExtensions: true,
   frameRate: true,
   layerOpacity: true,

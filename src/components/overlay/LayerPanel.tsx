@@ -2,7 +2,8 @@ import { memo, useRef } from 'react';
 import { RotaryKnob } from '../RotaryKnob';
 import { CLASSIC_PROFILE_ID } from '../../engine/color/colorProfile';
 import { useLiveLayerAngle } from '../../engine/telemetryStore';
-import { LAYER_COLORS, LAYER_LABELS } from './constants';
+import { layerColor, layerLabel } from './constants';
+import { CANONICAL_LAYER_COUNT, MAX_LAYER_COUNT } from '../../engine/graph/layerSpecs';
 import type { LayerIndex, LayerPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
 
@@ -35,6 +36,8 @@ const LiveAngleKnob = memo(function LiveAngleKnob({
 });
 
 export const LayerPanel = memo(function LayerPanel({
+  layerCount,
+  onLayerCountChange,
   layerExtensions,
   frameRate,
   layerOpacity,
@@ -58,17 +61,43 @@ export const LayerPanel = memo(function LayerPanel({
 }: LayerPanelProps) {
   useRenderCount('LayerPanel');
   const profileFileInputRef = useRef<HTMLInputElement>(null);
+  // One row per layer, driven by the session's count rather than a literal 3.
+  const layerIndices = Array.from({ length: layerCount }, (_, i) => i);
   const isCustomProfileActive = colorProfiles.userProfiles.some(
     (profile) => profile.id === colorProfiles.activeProfileId,
   );
 
   return (
     <div className="space-y-3">
+      <div className="panel-3d space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-amber-400/80 font-mono whitespace-nowrap">
+            Layers: <span className="tabular-nums text-amber-300">{layerCount}</span>
+          </span>
+          <input
+            type="range"
+            min={1}
+            max={MAX_LAYER_COUNT}
+            step={1}
+            value={layerCount}
+            onChange={(e) => onLayerCountChange(Number(e.target.value))}
+            className="flex-1 h-1 accent-amber-400"
+            title={`Band layers (1–${MAX_LAYER_COUNT}). Each owns a contiguous run of the canonical bands in shared/band.json.`}
+          />
+        </div>
+        {layerCount !== CANONICAL_LAYER_COUNT && (
+          <p className="text-[10px] text-amber-400/50 font-mono leading-snug">
+            Saved and shared at {layerCount} bands. The renderer still draws{' '}
+            {CANONICAL_LAYER_COUNT} until the pass-graph executor owns the band passes.
+          </p>
+        )}
+      </div>
+
       <div className="space-y-3">
-        {([0, 1, 2] as const).map((i) => (
+        {layerIndices.map((i) => (
           <div key={i} className="layer-card">
-            <div className={`layer-card-title ${LAYER_COLORS[i]}`}>
-              Layer {i} — {LAYER_LABELS[i]}
+            <div className={`layer-card-title ${layerColor(i, layerCount)}`}>
+              Layer {i} — {layerLabel(i, layerCount)}
               {i === 0 && <span className="text-gray-500 ml-1 text-[10px]">(reverse)</span>}
             </div>
             <div className="knob-pair">
@@ -122,9 +151,9 @@ export const LayerPanel = memo(function LayerPanel({
         </div>
 
         <div className="space-y-2">
-          {([0, 1, 2] as const).map((layer) => (
+          {layerIndices.map((layer) => (
             <div key={layer} className="flex items-center gap-2">
-              <span className={`text-xs font-mono whitespace-nowrap ${LAYER_COLORS[layer]}`}>
+              <span className={`text-xs font-mono whitespace-nowrap ${layerColor(layer, layerCount)}`}>
                 L{layer}:{' '}
                 <span className="tabular-nums text-amber-200">{Math.round(layerOpacities[layer] * 100)}%</span>
               </span>
@@ -134,7 +163,7 @@ export const LayerPanel = memo(function LayerPanel({
                 max={1}
                 step={0.01}
                 value={layerOpacities[layer]}
-                onChange={(e) => onLayerOpacityPerLayerChange(layer as LayerIndex, Number(e.target.value))}
+                onChange={(e) => onLayerOpacityPerLayerChange(layer, Number(e.target.value))}
                 className="flex-1 h-1 accent-amber-400"
               />
             </div>

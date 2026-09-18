@@ -70,7 +70,7 @@ describe('chromashiftReducer no-op patches', () => {
 
   it('bails out when setTriple writes a layer its current value', () => {
     const same = chromashiftReducer(base, {
-      type: 'layers/setTriple',
+      type: 'layers/setPerLayer',
       field: 'angles',
       layer: 1,
       value: base.layers.angles[1],
@@ -78,7 +78,7 @@ describe('chromashiftReducer no-op patches', () => {
     expect(same).toBe(base);
 
     const changed = chromashiftReducer(base, {
-      type: 'layers/setTriple',
+      type: 'layers/setPerLayer',
       field: 'angles',
       layer: 1,
       value: base.layers.angles[1] + 5,

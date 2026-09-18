@@ -16,6 +16,7 @@ export function buildOverlayProps(
   stable: StableOverlayHandlers,
 ): Omit<OverlayProps, keyof RendererOverlayHandlers> {
   return {
+    layerCount: p.layerCount,
     layerExtensions: p.layerExtensions,
     frameRate: p.frameRate,
     layerOpacity: p.layerOpacity,
@@ -100,6 +101,7 @@ export function buildOverlayProps(
     viewportQuarterZoom: p.viewportQuarterZoom,
     viewportHalfOverlay: p.viewportHalfOverlay,
     onAngleChange: p.handleAngleChange,
+    onLayerCountChange: p.setLayerCount,
     onExtensionChange: p.handleExtensionChange,
     onFrameRateChange: p.setFrameRate,
     onLayerOpacityChange: p.setLayerOpacity,

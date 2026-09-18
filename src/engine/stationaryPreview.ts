@@ -1,5 +1,4 @@
 import type { ChromashiftState } from '../state/types';
-import type { LayerTriple } from '../state/types';
 import { buildRendererState } from './buildRendererState';
 import type { ChromashiftRenderer } from './RendererTypes';
 import type { RendererState } from './types/RendererState';
@@ -30,7 +29,7 @@ export function buildStationaryRendererState(
   state: ChromashiftState,
   overrides: Partial<RendererState> = {},
 ): RendererState {
-  const presetAngles = state.layers.angles as LayerTriple<number>;
+  const presetAngles = state.layers.angles as number[];
   return buildRendererState(state, presetAngles, {
     paused: true,
     mainViewMode: 0,

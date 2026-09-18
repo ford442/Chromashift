@@ -8,7 +8,14 @@ export type ReferenceBlendMode = 'hidden' | 'overlay' | 'split' | 'checker' | 'd
 /** Which image feeds the viewport blend overlay (when blend mode is not hidden). */
 export type OverlayImageSource = 'source' | 'reference' | 'previous' | 'separated';
 export type EngineMode = 'ts' | 'wasm';
-export type LayerIndex = 0 | 1 | 2;
+/**
+ * Index of a band layer, `0 … layers.count - 1`.
+ *
+ * A plain number rather than a `0 | 1 | 2` union: the panel renders as many
+ * rows as the session has layers, and the reducer — not the type — is what
+ * rejects an index outside the current count.
+ */
+export type LayerIndex = number;
 
 export type OverlaySectionId =
   | 'renderer'
@@ -57,10 +64,13 @@ export interface RendererPanelProps {
 }
 
 export interface LayerPanelProps {
-  layerExtensions: [number, number, number];
+  /** Band layers in this session, 1–`MAX_LAYER_COUNT`. Every array below is this long. */
+  layerCount: number;
+  onLayerCountChange: (count: number) => void;
+  layerExtensions: number[];
   frameRate: number;
   layerOpacity: number;
-  layerOpacities: [number, number, number];
+  layerOpacities: number[];
   layerScale: number;
   tracerScale: number;
   colorMode: number;
