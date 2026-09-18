@@ -11,7 +11,7 @@ import { deflateSync } from 'node:zlib';
  * constant is a no-op by definition, so a blur graph and the default graph
  * render byte-identically.
  *
- * This fixture has the two properties those comparisons need:
+ * This fixture has the properties those comparisons need:
  *
  * - **A full luminance sweep** across x, so different band layers are active in
  *   different places. Rotating the layers then brings different bands onto the
@@ -19,6 +19,18 @@ import { deflateSync } from 'node:zlib';
  * - **High-frequency detail** (a fine checker on top of the sweep), so a
  *   small-radius gaussian has somewhere to act. A smooth gradient alone is
  *   nearly unchanged by a 3-tap blur.
+ * - **sRGB pre-encoding**, so the sweep lands where the band table expects it.
+ *   Sources upload as `rgba8unorm-srgb`, so `textureSample` decodes to linear
+ *   and the layer shader takes BT.709 of the *linear* value times 255. Storing
+ *   a linear ramp therefore does not produce a linear ramp in shader units: a
+ *   stored 190 arrives as 132, and the whole active window (the band table
+ *   starts at 125) compresses into stored bytes 186-255. Encoding here cancels
+ *   that decode, so the shader sees the sweep this file describes.
+ *
+ *   This is what made the shipped 8x8 fixture useless for these comparisons and
+ *   not merely weak: its single colour (245, 158, 11) decodes to a shader
+ *   luminance of 111.9, below the lowest band's 125, so no band layer was ever
+ *   active and the composite was black everywhere.
  *
  * Deterministic by construction — no randomness, no time.
  */
@@ -46,9 +58,18 @@ function chunk(type: string, body: Buffer): Buffer {
   return Buffer.concat([length, typed, crc]);
 }
 
+/** sRGB OETF, so a value chosen in shader-luminance units survives the upload. */
+function encodeSrgbByte(luminance255: number): number {
+  const linear = Math.max(0, Math.min(1, luminance255 / 255));
+  const encoded = linear <= 0.0031308
+    ? 12.92 * linear
+    : 1.055 * linear ** (1 / 2.4) - 0.055;
+  return Math.max(0, Math.min(255, Math.round(encoded * 255)));
+}
+
 function buildPng(): Buffer {
-  // Greyscale, so BT.709 luminance is exactly the stored sample value and the
-  // band a pixel lands in is readable straight off this expression.
+  // Greyscale, so the shader's BT.709 of the decoded sample is exactly the
+  // luminance chosen below and the band a pixel lands in is readable off it.
   const raw = Buffer.alloc((SIZE + 1) * SIZE);
   let offset = 0;
   for (let y = 0; y < SIZE; y += 1) {
@@ -59,7 +80,7 @@ function buildPng(): Buffer {
       const checker = (Math.floor(x / CHECKER) + Math.floor(y / CHECKER)) % 2 === 0
         ? CHECKER_AMPLITUDE
         : -CHECKER_AMPLITUDE;
-      raw[offset] = Math.max(0, Math.min(255, Math.round(sweep + checker)));
+      raw[offset] = encodeSrgbByte(sweep + checker);
       offset += 1;
     }
   }

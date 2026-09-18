@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import { setE2eViewport, stubMinimalCorpus } from './helpers/mockCorpus';
 import { encodePresetParam } from './helpers/presetParam';
 import { waitForWebGPU } from './helpers/renderer';
+import { distinctColourCount } from './helpers/pngPixels';
 import { STRUCTURED_FIXTURE_PNG } from './helpers/structuredFixture';
 
 /**
@@ -122,12 +123,28 @@ test.describe('pass-graph executor', () => {
   });
 
   /**
-   * Guards every comparison below. If the tracers contribute nothing to the
-   * composite — a flat source, a failed fixture route, a stamp that never fires
-   * — then a graph that only changes the *tracer* inputs cannot change the
-   * frame, and "blur differs from default" would fail for a reason that has
-   * nothing to do with the executor. This is the test that tells the two apart.
+   * The two guards below stand in front of every comparison in this file.
+   *
+   * Every assertion here is of the form "these two frames differ" or "these two
+   * frames match", and both are satisfied trivially by a frame with no content.
+   * That is not hypothetical: the shipped 8x8 fixture is a single colour whose
+   * shader luminance (111.9, after the `rgba8unorm-srgb` decode) falls below
+   * the band table's lowest threshold of 125, so *no* band layer was ever
+   * active and the composite was black everywhere. Every comparison passed or
+   * failed for reasons that had nothing to do with the executor.
+   *
+   * So: assert the frame has content, then assert the tracer path contributes
+   * to it. A failure in either one localises the fault to the scene rather than
+   * the code under test.
    */
+  test('the default graph draws a frame with content', async ({ page }) => {
+    test.setTimeout(90_000);
+    const frame = await captureCanvas(page, '1');
+    // A black or flat canvas is 1. The structured fixture through the band
+    // layers and compositor is hundreds.
+    expect(distinctColourCount(frame)).toBeGreaterThan(64);
+  });
+
   test('the scene exercises the tracer path', async ({ page }) => {
     test.setTimeout(180_000);
     const withTracers = await captureCanvas(page, '1');
