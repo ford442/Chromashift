@@ -1,5 +1,4 @@
 import type { LayerState } from '../types/RendererState';
-import type { LayerTriple } from '../../state/types';
 
 /**
  * Reference FPS at which `layers.extensions` historically meant degrees per frame.
@@ -23,9 +22,9 @@ export function wrapAngleDeg(angle: number): number {
  * At {@link EXTENSION_REFERENCE_FPS}, the returned deltas equal the stored steps.
  */
 export function extensionStepsForFps(
-  extensions: readonly [number, number, number],
+  extensions: readonly number[],
   fps: number,
-): LayerTriple<number> {
+): number[] {
   const scale = EXTENSION_REFERENCE_FPS / Math.max(1e-6, fps);
   return [
     extensions[0] * scale,

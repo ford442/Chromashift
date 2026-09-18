@@ -5,10 +5,16 @@ export interface LayerState {
 }
 
 export interface RendererState {
-  layers               : [LayerState, LayerState, LayerState];
+  /**
+   * One entry per band layer, `layers.length` of them — never a fixed-width
+   * tuple. A renderer binds `layers.length` textures and a pass-graph schedule
+   * carries the same number; see docs/PASS_GRAPH.md.
+   */
+  layers               : LayerState[];
   avgLuminance         : number;
   layerOpacity?        : number;
-  layerOpacities?      : [number, number, number];
+  /** Per-layer opacity multiplier, parallel to {@link layers}. */
+  layerOpacities?      : number[];
   layerScale?          : number;
   tracerScale?         : number;
   tracerAboveIntensity?: number;
@@ -71,7 +77,12 @@ export interface RendererState {
 export interface CollisionStats {
   sampledPixels: number;
   twoOverlapPixels: number;
+  /**
+   * Pixels where *every* layer overlapped. Named for the default 3-layer
+   * session it was introduced for; at other counts it means "full overlap".
+   */
   threeOverlapPixels: number;
-  dominantLayerWins: [number, number, number];
+  /** Win count per layer, parallel to `RendererState.layers`. */
+  dominantLayerWins: number[];
   averageCollision: number;
 }

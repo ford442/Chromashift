@@ -385,7 +385,7 @@ export class WebGPURenderer {
     enc: GPUCommandEncoder,
     state: RendererState,
     canvasSize: TextureSize,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
   ): void {
     const maskTexture = this.classificationMaskTexture ?? this.fallbackMaskTexture;
     const colorMode = state.colorMode ?? 1.0;
@@ -603,7 +603,7 @@ export class WebGPURenderer {
     this.executorEncodedLastFrame = false;
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
     const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
-    const layerOpacities: [number, number, number] = [
+    const layerOpacities: number[] = [
       globalLayerOpacity * sourceLayerOpacities[0],
       globalLayerOpacity * sourceLayerOpacities[1],
       globalLayerOpacity * sourceLayerOpacities[2],

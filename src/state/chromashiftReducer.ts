@@ -1,17 +1,18 @@
 import type { ImageEntry } from '../engine/TextureManager';
 import { countLocalEntries } from '../engine/corpusIndex';
 import { parseDisplayColorSpace } from '../engine/gpuOptions';
+import { clampLayerCount } from '../engine/graph/layerSpecs';
 import {
-  DEFAULT_ANGLES,
-  DEFAULT_EXTENSIONS,
   DEFAULT_FPS,
+  defaultAngles,
+  defaultExtensionForLayer,
+  defaultExtensions,
   createInitialState,
 } from './defaults';
 import type {
   ChromashiftState,
   EngineSlice,
   LayersSlice,
-  LayerTriple,
   MediaSlice,
   OutputSlice,
   TracerInspectState,
@@ -21,13 +22,64 @@ import type {
 import type { CompareViewState } from '../engine/compareViews';
 import type { MidiBinding, ReactiveSettings } from '../engine/reactive/types';
 
+/** The `LayersSlice` fields that carry one value per layer. */
+export type PerLayerField = 'angles' | 'extensions' | 'opacities';
+
+const PER_LAYER_FIELDS: readonly PerLayerField[] = ['angles', 'extensions', 'opacities'];
+
+/** Value a newly added layer gets for each per-layer field. */
+const PER_LAYER_FILL: Record<PerLayerField, (index: number) => number> = {
+  angles: () => 0,
+  extensions: defaultExtensionForLayer,
+  opacities: () => 1,
+};
+
+/**
+ * Resize one per-layer array to `count`, keeping the values already there.
+ *
+ * Returns the original array when it is already the right length, so
+ * {@link patchSlice}'s identity bail-out still works and a no-op count change
+ * never re-renders the tree.
+ */
+function resizePerLayer(
+  values: readonly number[],
+  count: number,
+  fill: (index: number) => number,
+): number[] {
+  if (values.length === count) return values as number[];
+  return Array.from({ length: count }, (_, i) => (i < values.length ? values[i] : fill(i)));
+}
+
+/**
+ * Bring a `LayersSlice` into the shape its `count` claims.
+ *
+ * The count and the three per-layer arrays are one invariant, but they arrive
+ * from several directions — a preset file, a `?preset=` URL, a compare slot, the
+ * layer-count control — so every writer funnels through here rather than each
+ * one remembering to resize all three arrays.
+ */
+export function normalizeLayersSlice(layers: LayersSlice): LayersSlice {
+  const count = clampLayerCount(layers.count);
+  const resized = {} as Record<PerLayerField, number[]>;
+  let moved = count !== layers.count;
+
+  for (const field of PER_LAYER_FIELDS) {
+    const next = resizePerLayer(layers[field] ?? [], count, PER_LAYER_FILL[field]);
+    if (next !== layers[field]) moved = true;
+    resized[field] = next;
+  }
+
+  return moved ? { ...layers, count, ...resized } : layers;
+}
+
 export type ChromashiftAction =
   | { type: 'reset/renderDefaults' }
   | { type: 'media/patch'; patch: Partial<MediaSlice> }
   | { type: 'media/patchLiveSource'; patch: Partial<import('./types').LiveSourceState> }
   | { type: 'media/selectIndex'; index: number; previous?: ImageEntry | null }
   | { type: 'layers/patch'; patch: Partial<LayersSlice> }
-  | { type: 'layers/setTriple'; field: 'angles' | 'extensions' | 'opacities'; layer: 0 | 1 | 2; value: number }
+  | { type: 'layers/setCount'; count: number }
+  | { type: 'layers/setPerLayer'; field: PerLayerField; layer: number; value: number }
   | { type: 'tracers/patch'; patch: Partial<TracersSlice> }
   | { type: 'output/patch'; patch: Partial<OutputSlice> }
   | { type: 'output/patchInspect'; patch: Partial<TracerInspectState> }
@@ -109,8 +161,8 @@ export function chromashiftReducer(
         ...state,
         layers: {
           ...state.layers,
-          angles: [...DEFAULT_ANGLES],
-          extensions: [...DEFAULT_EXTENSIONS],
+          angles: defaultAngles(state.layers.count),
+          extensions: defaultExtensions(state.layers.count),
         },
         engine: { ...state.engine, fps: DEFAULT_FPS },
       };
@@ -137,11 +189,23 @@ export function chromashiftReducer(
       }));
 
     case 'layers/patch':
-      return withSlice(state, 'layers', patchSlice(state.layers, action.patch));
+      // A patch may carry a new `count`, new arrays, or both; normalizing after
+      // the merge is what keeps the two consistent however it arrived.
+      return withSlice(state, 'layers', normalizeLayersSlice(patchSlice(state.layers, action.patch)));
 
-    case 'layers/setTriple': {
+    case 'layers/setCount': {
+      const count = clampLayerCount(action.count);
+      if (count === state.layers.count) return state;
+      return withSlice(state, 'layers', normalizeLayersSlice({ ...state.layers, count }));
+    }
+
+    case 'layers/setPerLayer': {
+      // Out-of-range writes are dropped rather than growing the array behind
+      // `count`'s back — a stale MIDI binding for layer 5 in a 3-layer session
+      // must not resize the session.
+      if (action.layer < 0 || action.layer >= state.layers.count) return state;
       if (Object.is(state.layers[action.field][action.layer], action.value)) return state;
-      const next = [...state.layers[action.field]] as LayerTriple<number>;
+      const next = [...state.layers[action.field]];
       next[action.layer] = action.value;
       return withSlice(state, 'layers', { ...state.layers, [action.field]: next });
     }
@@ -321,7 +385,12 @@ export function applySettingsToState(
 ): ChromashiftState {
   let next: ChromashiftState = {
     ...state,
-    layers: settings.layers ? { ...state.layers, ...settings.layers } : state.layers,
+    // A preset may carry any layer count (or, from a v1–v6 document, none at
+    // all); normalizing here is what lets a 5-band preset load into a 3-band
+    // session — and a legacy one load as three — without either side checking.
+    layers: settings.layers
+      ? normalizeLayersSlice({ ...state.layers, ...settings.layers })
+      : state.layers,
     tracers: settings.tracers ? { ...state.tracers, ...settings.tracers } : state.tracers,
     output: settings.output
       ? {

@@ -2,7 +2,6 @@ import { useCallback } from 'react';
 import type { MutableRefObject } from 'react';
 import type { ImageEntry } from '../../engine/TextureManager';
 import type { ChromashiftDispatch } from '../../state/actions';
-import type { LayerTriple } from '../../state/types';
 
 export function ensureReferenceImage(list: ImageEntry[], preferredCurrentIndex: number): ImageEntry | null {
   if (list.length <= 1) return null;
@@ -29,16 +28,16 @@ export function useSelectSourceIndex(
 
 export function useHandleAngleChange(
   dispatch: ChromashiftDispatch,
-  animAnglesRef: MutableRefObject<LayerTriple<number>>,
+  animAnglesRef: MutableRefObject<number[]>,
 ) {
-  return useCallback((layer: 0 | 1 | 2, angle: number) => {
+  return useCallback((layer: number, angle: number) => {
     animAnglesRef.current[layer] = angle;
-    dispatch({ type: 'layers/setTriple', field: 'angles', layer, value: angle });
+    dispatch({ type: 'layers/setPerLayer', field: 'angles', layer, value: angle });
   }, [dispatch, animAnglesRef]);
 }
 
 export function useHandleExtensionChange(dispatch: ChromashiftDispatch) {
-  return useCallback((layer: 0 | 1 | 2, extension: number) => {
-    dispatch({ type: 'layers/setTriple', field: 'extensions', layer, value: extension });
+  return useCallback((layer: number, extension: number) => {
+    dispatch({ type: 'layers/setPerLayer', field: 'extensions', layer, value: extension });
   }, [dispatch]);
 }

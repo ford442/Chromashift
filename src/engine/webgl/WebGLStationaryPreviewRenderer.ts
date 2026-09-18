@@ -14,7 +14,7 @@ import { WebGLLayerPass } from './WebGLLayerPass';
 import { WebGLPersistencePass } from './WebGLPersistencePass';
 import { createTarget, destroyTarget, readTargetPixels, type RenderTarget } from './resources';
 
-function computeLayerOpacities(state: RendererState): [number, number, number] {
+function computeLayerOpacities(state: RendererState): number[] {
   const globalLayerOpacity = state.layerOpacity ?? 1.0;
   const perLayer = state.layerOpacities ?? [1, 1, 1];
   return [
@@ -122,7 +122,7 @@ export class WebGLStationaryPreviewRenderer {
   private renderSeparated(
     state: RendererState,
     size: number,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
   ): Uint8ClampedArray<ArrayBuffer> | null {
     this.layerPass.render(this.sourceTexture!.texture, state, 0, 1);
     const separatedState: RendererState = {
@@ -149,7 +149,7 @@ export class WebGLStationaryPreviewRenderer {
   private renderTracer(
     state: RendererState,
     size: number,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
   ): Uint8ClampedArray<ArrayBuffer> | null {
     const tracerState: RendererState = {
       ...state,

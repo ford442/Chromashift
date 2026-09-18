@@ -49,7 +49,7 @@ export interface MainViewEncodeParams {
   tracerBelowOp: number;
   layerBlendMode: number;
   tracerBlendMode: number;
-  layerOpacities: [number, number, number];
+  layerOpacities: number[];
   stampBoost: number;
   outputMode: number;
   tracerMode: number;

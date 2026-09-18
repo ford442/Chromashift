@@ -11,9 +11,9 @@
 export { durationToDecay } from '../../math/decay';
 
 export function tsAdvanceAngles(
-  angles: [number, number, number],
-  steps: [number, number, number],
-): [number, number, number] {
+  angles: number[],
+  steps: number[],
+): number[] {
   // ((a + s) % 360 + 360) % 360 handles negative steps.
   return [
     ((angles[0] + steps[0]) % 360 + 360) % 360,

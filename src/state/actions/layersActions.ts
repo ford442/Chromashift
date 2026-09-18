@@ -1,14 +1,13 @@
 import type { ColorProfile } from '../../engine/color/colorProfile';
-import type { LayerTriple } from '../types';
 import type { ChromashiftDispatch } from './types';
 
 export function createLayersActions(dispatch: ChromashiftDispatch) {
   return {
-    setLayerExtensions: (extensions: LayerTriple<number>) =>
+    setLayerExtensions: (extensions: number[]) =>
       dispatch({ type: 'layers/patch', patch: { extensions } }),
     setLayerOpacity: (opacity: number) =>
       dispatch({ type: 'layers/patch', patch: { opacity } }),
-    setLayerOpacities: (opacities: LayerTriple<number>) =>
+    setLayerOpacities: (opacities: number[]) =>
       dispatch({ type: 'layers/patch', patch: { opacities } }),
     setLayerScale: (scale: number) =>
       dispatch({ type: 'layers/patch', patch: { scale } }),

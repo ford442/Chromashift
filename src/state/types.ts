@@ -14,7 +14,15 @@ export type { MotionMode } from '../engine/motionModes';
 
 export type DisplayColorSpace = import('../engine/gpuOptions').DisplayColorSpace;
 
-export type LayerTriple<T> = [T, T, T];
+/**
+ * A value carried once per band layer.
+ *
+ * Deliberately a plain array and not a 3-tuple: a session's layer count is
+ * {@link LayersSlice.count} (1–`MAX_LAYER_COUNT`), and every consumer sizes
+ * itself from `.length` rather than from a type-level width. `layerArrays.test.ts`
+ * fails if a fixed-width tuple is reintroduced anywhere on this contract.
+ */
+export type PerLayer<T> = T[];
 
 export interface TracerInspectState {
   zoom: number;
@@ -60,14 +68,21 @@ export interface MediaSlice {
 }
 
 export interface LayersSlice {
-  angles: LayerTriple<number>;
+  /**
+   * How many band layers this session renders, 1–`MAX_LAYER_COUNT` (10 — one
+   * per canonical threshold in shared/band.json). Every `PerLayer` array in
+   * this slice is exactly this long; the reducer resizes them together so the
+   * invariant can never be broken by a partial patch.
+   */
+  count: number;
+  angles: PerLayer<number>;
   /**
    * Per-layer spin rate in degrees, normalized so wall-clock °/s = value × 30.
    * Changing FPS only changes sampling density, not angular speed.
    */
-  extensions: LayerTriple<number>;
+  extensions: PerLayer<number>;
   opacity: number;
-  opacities: LayerTriple<number>;
+  opacities: PerLayer<number>;
   scale: number;
   colorMode: number;
   sobelEnabled: boolean;

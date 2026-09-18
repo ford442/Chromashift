@@ -1,5 +1,5 @@
 import type { ChromashiftRenderer, ExportPassMode } from '../types/RendererContracts';
-import type { ChromashiftState, LayerTriple } from '../../state/types';
+import type { ChromashiftState } from '../../state/types';
 import { exportVideoMediaRecorder } from './exportVideoMediaRecorder';
 import { probeVideoExportCapabilities, type VideoExportContainer, type VideoExportQuality } from './videoCodecs';
 
@@ -34,7 +34,7 @@ export interface VideoExportResult {
 export async function exportVideo(
   renderer: ChromashiftRenderer,
   state: ChromashiftState,
-  liveAngles: LayerTriple<number>,
+  liveAngles: number[],
   baseWidth: number,
   baseHeight: number,
   request: VideoExportRequest,

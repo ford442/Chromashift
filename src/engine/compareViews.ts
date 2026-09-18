@@ -117,10 +117,10 @@ export function multiViewPerformanceNote(layout: CompareLayoutMode): string | nu
  * (see {@link extensionStepsForFps}); omit `fps` only for raw delta tests.
  */
 export function advanceAngles(
-  prev: readonly [number, number, number],
-  extensions: readonly [number, number, number],
+  prev: readonly number[],
+  extensions: readonly number[],
   fps?: number,
-): [number, number, number] {
+): number[] {
   const steps = fps === undefined ? extensions : extensionStepsForFps(extensions, fps);
   return [
     wrapAngleDeg(prev[0] + steps[0]),

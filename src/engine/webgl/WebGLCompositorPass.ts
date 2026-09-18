@@ -30,7 +30,7 @@ export class WebGLCompositorPass {
     layerTextures: readonly RenderTarget[],
     persistence: WebGLPersistencePass,
     state: RendererState,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
     viewport?: WebGLRenderViewport,
   ): void {
     const gl = this.gl;

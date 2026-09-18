@@ -11,7 +11,7 @@ import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { VideoCodecSupport } from '../engine/videoExport/videoCodecs';
 import type { BuiltinPreset } from '../state/presetGallery';
 import type { StoredPreset } from '../state/presetLibrary';
-import type { LayerTriple, LiveSourceState, VideoExportSettings } from '../state/types';
+import type { LiveSourceState, VideoExportSettings } from '../state/types';
 import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
 import type { AudioLevelSnapshot, MidiBinding, MidiParamId } from '../engine/reactive/types';
 import type {
@@ -225,14 +225,14 @@ export interface AppUIControlProps {
   onCompareWithBuiltin: (id: string) => void;
   onCompareWithSaved: (name: string) => void;
   handleAngleChange: (layer: LayerIndex, angle: number) => void;
-  layerExtensions: LayerTriple<number>;
+  layerExtensions: number[];
   handleExtensionChange: (layer: LayerIndex, extension: number) => void;
   frameRate: number;
   setFrameRate: (fps: number) => void;
   layerOpacity: number;
   setLayerOpacity: (opacity: number) => void;
-  layerOpacities: LayerTriple<number>;
-  setLayerOpacities: (opacities: LayerTriple<number>) => void;
+  layerOpacities: number[];
+  setLayerOpacities: (opacities: number[]) => void;
   layerScale: number;
   setLayerScale: (scale: number) => void;
   tracerScale: number;

@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '../../state/defaults';
 import type { ChromashiftRenderer, ExportFrameOptions } from '../types/RendererContracts';
 import type { RendererState } from '../types/RendererState';
-import type { LayerTriple } from '../../state/types';
 import { exportVideo, type VideoExportRequest } from './VideoExporter';
 import type { VideoExportCapabilities } from './videoCodecs';
 
@@ -164,7 +163,7 @@ function makeFakeCanvas(track?: FakeVideoTrack) {
 
 interface FakeRenderer {
   renderer: ChromashiftRenderer;
-  frameAngles: LayerTriple<number>[];
+  frameAngles: number[][];
   frameOptions: ExportFrameOptions[];
   frameStates: RendererState[];
   clearPersistence: ReturnType<typeof vi.fn>;
@@ -172,7 +171,7 @@ interface FakeRenderer {
 }
 
 function makeFakeRenderer(): FakeRenderer {
-  const frameAngles: LayerTriple<number>[] = [];
+  const frameAngles: number[][] = [];
   const frameOptions: ExportFrameOptions[] = [];
   const frameStates: RendererState[] = [];
   const clearPersistence = vi.fn();
@@ -184,7 +183,7 @@ function makeFakeRenderer(): FakeRenderer {
     restoreRenderSize,
     exportFrame: async (state: RendererState, options: ExportFrameOptions) => {
       frameAngles.push(
-        state.layers.map((layer) => layer.angleDeg) as LayerTriple<number>,
+        state.layers.map((layer) => layer.angleDeg) as number[],
       );
       frameOptions.push(options);
       frameStates.push(state);

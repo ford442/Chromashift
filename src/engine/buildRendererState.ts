@@ -9,12 +9,31 @@ function createLayerState(): LayerState {
   return { angleDeg: 0, flipX: false, flipY: false };
 }
 
-/** Blank {@link RendererState} with a stable `layers` tuple, ready to be mutated in place. */
+/** Blank {@link RendererState} with an empty `layers` array, ready to be mutated in place. */
 function createRendererState(): RendererState {
-  return {
-    layers: [createLayerState(), createLayerState(), createLayerState()],
-    avgLuminance: 0,
-  };
+  return { layers: [], avgLuminance: 0 };
+}
+
+/**
+ * Grow or shrink `layers` to `count` entries, reusing the `LayerState` objects
+ * that are already there.
+ *
+ * The per-frame path mutates one `RendererState` in place (see below), so a
+ * layer-count change must resize the array without replacing the entries a
+ * renderer may still be holding by identity.
+ */
+function resizeLayers(target: RendererState, count: number): void {
+  while (target.layers.length < count) target.layers.push(createLayerState());
+  if (target.layers.length > count) target.layers.length = count;
+}
+
+/**
+ * Layer 1 renders mirrored vertically — the one piece of per-layer geometry the
+ * shipped three-band look carries that is not in the band table. Generalised as
+ * "every odd layer flips", which reproduces the 3-layer default exactly.
+ */
+function flipYForLayer(index: number): boolean {
+  return index % 2 === 1;
 }
 
 /** One reused `RendererState` per renderer slot (main viewport, compare slot B, ...). */
@@ -34,7 +53,7 @@ function rendererStateForSlot(slot: string): RendererState {
  *
  * `useAnimationLoop` calls this every frame, once per active renderer slot (main
  * viewport, compare slot B). Pass a stable `slot` id to write into — and reuse —
- * the same `RendererState` object (and its `layers` tuple) across calls instead
+ * the same `RendererState` object (and its `layers` array) across calls instead
  * of allocating a fresh object graph every frame: the renderer consumes the
  * state synchronously inside `render()` and never retains it, so mutating it in
  * place is safe. Omit `slot` for one-off callers (tests, WebXR, offline video
@@ -42,7 +61,7 @@ function rendererStateForSlot(slot: string): RendererState {
  */
 export function buildRendererState(
   state: ChromashiftState,
-  angles: [number, number, number],
+  angles: number[],
   overrides: Partial<RendererState> = {},
   slot?: string,
 ): RendererState {
@@ -56,16 +75,15 @@ export function buildRendererState(
   const { profile } = resolveColorProfile(layers.colorProfileId, layers.colorProfile);
   const useProfileLut = !isClassicProfile(profile);
 
-  const [layer0, layer1, layer2] = target.layers;
-  layer0.angleDeg = angles[0];
-  layer0.flipX = false;
-  layer0.flipY = false;
-  layer1.angleDeg = angles[1];
-  layer1.flipX = false;
-  layer1.flipY = true;
-  layer2.angleDeg = angles[2];
-  layer2.flipX = false;
-  layer2.flipY = false;
+  // The angle array is the authority on how many layers this frame has: it is
+  // produced from `layers.angles`, which the reducer keeps at `layers.count`.
+  resizeLayers(target, angles.length);
+  for (let i = 0; i < angles.length; i += 1) {
+    const layer = target.layers[i];
+    layer.angleDeg = angles[i];
+    layer.flipX = false;
+    layer.flipY = flipYForLayer(i);
+  }
 
   target.avgLuminance = engine.avgLuminance;
   target.layerOpacity = layers.opacity;

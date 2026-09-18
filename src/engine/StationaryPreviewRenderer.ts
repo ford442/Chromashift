@@ -118,7 +118,7 @@ export class StationaryPreviewRenderer {
 
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
     const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
-    const layerOpacities: [number, number, number] = [
+    const layerOpacities: number[] = [
       globalLayerOpacity * sourceLayerOpacities[0],
       globalLayerOpacity * sourceLayerOpacities[1],
       globalLayerOpacity * sourceLayerOpacities[2],
@@ -173,7 +173,7 @@ export class StationaryPreviewRenderer {
   private encodeLayerPasses(
     enc: GPUCommandEncoder,
     state: RendererState,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
   ): void {
     const maskTexture = this.maskTexture ?? this.fallbackMaskTexture;
     const colorMode = state.colorMode ?? 1.0;
@@ -242,7 +242,7 @@ export class StationaryPreviewRenderer {
 
   private async renderSeparatedPass(
     state: RendererState,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
     size: number,
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const enc = this.device.createCommandEncoder();
@@ -282,7 +282,7 @@ export class StationaryPreviewRenderer {
 
   private async renderTracerPass(
     state: RendererState,
-    layerOpacities: [number, number, number],
+    layerOpacities: number[],
     size: number,
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const enc = this.device.createCommandEncoder();

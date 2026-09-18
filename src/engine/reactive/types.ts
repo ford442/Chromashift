@@ -1,4 +1,3 @@
-import type { LayerTriple } from '../../state/types';
 
 /** Parameters exposed to MIDI learn / bindings. */
 export type MidiParamId =
@@ -26,7 +25,7 @@ export interface AudioLevelSnapshot {
 
 /** Per-frame effective values after audio (and optional MIDI base) modulation. */
 export interface ReactiveModulation {
-  extensions: LayerTriple<number>;
+  extensions: number[];
   tracerAboveIntensity: number;
   tracerBelowIntensity: number;
   avgLuminance: number;

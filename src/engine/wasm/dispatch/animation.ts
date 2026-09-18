@@ -48,10 +48,10 @@ export function durationToDecayWith(
  * @returns        New angles in degrees, each in [0, 360).
  */
 export function advanceAnglesBy(
-  angles: [number, number, number],
-  steps: [number, number, number],
+  angles: number[],
+  steps: number[],
   useWasm: boolean,
-): [number, number, number] {
+): number[] {
   if (canUseWasmFn('_advanceLayerAngles', useWasm)) {
     const mod = getWasmModule()!;
     const outPtr = mod._malloc(12); // 3 × float32
@@ -60,7 +60,7 @@ export function advanceAnglesBy(
       steps[0],  steps[1],  steps[2],
       outPtr,
     );
-    const result: [number, number, number] = [
+    const result: number[] = [
       mod.HEAPF32[(outPtr >> 2)],
       mod.HEAPF32[(outPtr >> 2) + 1],
       mod.HEAPF32[(outPtr >> 2) + 2],

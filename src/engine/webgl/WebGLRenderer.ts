@@ -24,7 +24,7 @@ import type { WebGLRenderViewport } from './types';
 
 export type { WebGLRenderViewport } from './types';
 
-function computeLayerOpacities(state: RendererState): [number, number, number] {
+function computeLayerOpacities(state: RendererState): number[] {
   const globalLayerOpacity = state.layerOpacity ?? 1.0;
   const perLayer = state.layerOpacities ?? [1, 1, 1];
   return [

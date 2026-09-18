@@ -11,7 +11,7 @@ export interface CompositorUniformParams {
   tracerBelowOp: number;
   layerBlendMode: number;
   tracerBlendMode: number;
-  layerOpacities: [number, number, number];
+  layerOpacities: number[];
   diagnosticsOpacity: number;
   stampBoost: number;
   outputMode: number;
