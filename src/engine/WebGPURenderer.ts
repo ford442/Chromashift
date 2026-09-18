@@ -1,6 +1,6 @@
 import { layerFragmentSources } from './shaders';
 import { DEFAULT_LAYER_COUNT, publishGraphExecutorBreadcrumbs } from './graph';
-import { WebGpuGraphExecutor } from './graph/exec/WebGpuGraphExecutor';
+import { WebGpuGraphExecutor, type GraphRoleTextures } from './graph/exec/WebGpuGraphExecutor';
 import { PassGraphError } from './graph/errors';
 import type { GraphPresetName } from './graph/altGraphs';
 import type { CompiledGraph } from './graph/types';
@@ -89,6 +89,17 @@ export class WebGPURenderer {
    */
   private graphExecutor: WebGpuGraphExecutor | null = null;
   private graphName: GraphPresetName | null = null;
+  /**
+   * Whether the graph executor — rather than the hand encoder — encoded the
+   * most recent frame.
+   *
+   * Adopting a graph is not the same as drawing with it: a motion mode or a
+   * `tracers` / `layers` export falls back to the hand encoder, which writes
+   * *its* layer and persistence textures. The preview, readback and export
+   * helpers below have to follow whichever path actually ran, or they publish a
+   * stale frame from the other one's targets.
+   */
+  private executorEncodedLastFrame = false;
 
   constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = false) {
     this.device  = device;
@@ -332,6 +343,9 @@ export class WebGPURenderer {
 
   clearPersistence(): void {
     this.persistence.clear();
+    // The graph's pool owns the tracers while the executor draws, so clearing
+    // only the hand encoder's pass would leave the trails on screen.
+    this.graphExecutor?.clearAccumulators();
   }
 
   /**
@@ -341,14 +355,20 @@ export class WebGPURenderer {
    * the live preview and the collision-stats readback would sample the hand
    * encoder's now-untouched targets and report a black frame.
    */
+  /** Graph-owned textures, but only when the graph encoded the current frame. */
+  private lastFrameRoleTextures(): GraphRoleTextures | null {
+    if (!this.executorEncodedLastFrame) return null;
+    return this.graphExecutor?.roleTextures() ?? null;
+  }
+
   private getLayerTexturesTuple(): [GPUTexture, GPUTexture, GPUTexture] {
-    const roles = this.graphExecutor?.roleTextures();
+    const roles = this.lastFrameRoleTextures();
     if (roles) return [roles.layers[0], roles.layers[1], roles.layers[2]];
     return [this.layerTextures[0], this.layerTextures[1], this.layerTextures[2]];
   }
 
   private getTracerTextures(): { below: GPUTexture; above: GPUTexture } {
-    const roles = this.graphExecutor?.roleTextures();
+    const roles = this.lastFrameRoleTextures();
     if (roles) return { below: roles.tracerBelow, above: roles.tracerAbove };
     return {
       below: this.persistence.belowTextures[this.persistence.pingPong]!,
@@ -358,7 +378,7 @@ export class WebGPURenderer {
 
   /** Ping-pong index the bind-group caches key on, from whichever path drew. */
   private get activePingPong(): 0 | 1 {
-    return this.graphExecutor?.roleTextures()?.pingPong ?? this.persistence.pingPong;
+    return this.lastFrameRoleTextures()?.pingPong ?? this.persistence.pingPong;
   }
 
   private encodeLayerPasses(
@@ -486,7 +506,7 @@ export class WebGPURenderer {
 
   /** Stamp-diagnostic texture the collision-stats readback samples. */
   private diagnosticForReadback(paused: boolean): GPUTexture | null {
-    const roles = this.graphExecutor?.roleTextures();
+    const roles = this.lastFrameRoleTextures();
     if (roles) return roles.diagnostic;
     return this.persistence.getDiagnosticTextureForReadback(paused);
   }
@@ -552,6 +572,7 @@ export class WebGPURenderer {
     // the topology below, or a different shape entirely — and the hand-written
     // encode path is skipped whole rather than partly reused.
     if (this.executorDrawsFrame(state, passMode) && this.currentTexture) {
+      this.executorEncodedLastFrame = true;
       // The live-preview readback still runs through `CompositorPass`, so its
       // uniform block has to be written even though the graph drew the frame.
       this.compositor.writeUniforms(this.compositorUniformParams(state));
@@ -579,6 +600,7 @@ export class WebGPURenderer {
       return;
     }
 
+    this.executorEncodedLastFrame = false;
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
     const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
     const layerOpacities: [number, number, number] = [
@@ -760,7 +782,7 @@ export class WebGPURenderer {
   }
 
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
-    const roles = this.graphExecutor?.roleTextures();
+    const roles = this.lastFrameRoleTextures();
     const above = roles?.tracerAbove ?? this.persistence.aboveTextures[this.persistence.pingPong];
     const below = roles?.tracerBelow ?? this.persistence.belowTextures[this.persistence.pingPong];
     if (!above || !below) return null;

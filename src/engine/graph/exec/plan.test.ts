@@ -34,6 +34,9 @@ describe('encode plan — default graph', () => {
       if (decay.kind !== 'decay') throw new Error('unreachable');
       expect(decay.stampInputs).toEqual(['layer0', 'layer1', 'layer2']);
     }
+    // Roles come from the compositor's input order, not a node param, so a
+    // structural-cache hit on an earlier graph of the same shape cannot swap
+    // the two timescales.
     expect(decays.map((d) => (d.kind === 'decay' ? d.role : null))).toEqual(['below', 'above']);
   });
 
@@ -88,6 +91,42 @@ describe('encode plan — non-default shapes', () => {
     expect(shared[0].nodes).toEqual(['layer0-blur-x', 'layer1-blur-x', 'layer2-blur-x']);
   });
 
+  it('takes the tracer roles from the compositor\u2019s input order', () => {
+    // Swap which accumulator the compositor binds first and the timescales
+    // follow. Roles are topology-derived precisely so that a structural-cache
+    // hit — which returns the first graph compiled for a shape — cannot serve
+    // a stale role and swap the two tracers.
+    const base = buildDefaultGraph();
+    const swapped: PassGraph = {
+      ...base,
+      nodes: base.nodes.map((node) => (
+        node.id === DEFAULT_GRAPH_IDS.composite
+          ? {
+            ...node,
+            inputs: [
+              'layer0', 'layer1', 'layer2',
+              DEFAULT_GRAPH_IDS.tracerAbove, DEFAULT_GRAPH_IDS.tracerBelow,
+            ],
+          }
+          : node
+      )),
+    };
+    const plan = buildEncodePlan(compile(swapped));
+    // Asserted as a mapping, not a list: reordering the compositor's inputs
+    // also reorders the schedule, and it is the id → timescale pairing that
+    // matters here.
+    const roles = Object.fromEntries(
+      plan.steps
+        .filter((step) => step.kind === 'decay')
+        .map((step) => (step.kind === 'decay' ? [step.nodeId, step.role] : ['', ''])),
+    );
+    expect(roles).toEqual({
+      [DEFAULT_GRAPH_IDS.tracerAbove]: 'below',
+      [DEFAULT_GRAPH_IDS.tracerBelow]: 'above',
+    });
+    expect(plan.roles.tracerBelow).toBe(DEFAULT_GRAPH_IDS.tracerAbove);
+  });
+
   it('routes the warped layer into coincidence only', () => {
     const plan = buildEncodePlan(compile(buildWarpGraph()));
     const warp = plan.steps.find((step) => step.kind === 'warp');
@@ -117,8 +156,8 @@ describe('encode plan — refusals', () => {
           params: { layerIndex: i, layerCount: 3 },
         })),
         { id: 'coin', kind: 'coincidence', inputs: ['l0', 'l1', 'l2'], params: {} },
-        { id: 'd0', kind: 'decay', inputs: ['coin'], params: { role: 'below' } },
-        { id: 'd1', kind: 'decay', inputs: ['l0'], params: { role: 'above' } },
+        { id: 'd0', kind: 'decay', inputs: ['coin'], params: {} },
+        { id: 'd1', kind: 'decay', inputs: ['l0'], params: {} },
         {
           id: 'blend',
           kind: 'blend',

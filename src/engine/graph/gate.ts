@@ -135,5 +135,9 @@ function publish(
   window.passGraphSlots = compiled ? { ...compiled.allocation.slotsByResolution } : {};
   window.passGraphError = error;
   window.passGraphName = name;
-  if (!compiled) publishGraphExecutorBreadcrumbs(null, []);
+  // Cleared for *every* result, not just a refusal: a successful WebGL compile
+  // draws with the hand encoder, so leaving a previous WebGPU session's
+  // `passGraphExecuting` in place would claim an executor that is not running.
+  // `setPassGraph` republishes after a WebGPU renderer adopts the graph.
+  publishGraphExecutorBreadcrumbs(null, []);
 }

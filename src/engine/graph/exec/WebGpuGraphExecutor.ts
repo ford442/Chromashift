@@ -210,6 +210,27 @@ export class WebGpuGraphExecutor {
     if (!paused) this.pool.flip();
   }
 
+  /**
+   * Clear the tracer accumulators the pool owns.
+   *
+   * The graph's ping-pong pairs are the tracer state while the executor draws,
+   * so `WebGPURenderer.clearPersistence()` has to reach them — clearing only
+   * the hand encoder's `PersistencePass` would leave the next graph frame
+   * accumulating from the trails the user just asked to drop.
+   */
+  clearAccumulators(): void {
+    const textures = this.pool.accumulatorTextures();
+    if (textures.length === 0) return;
+
+    const enc = this.device.createCommandEncoder();
+    for (const texture of textures) {
+      enc.beginRenderPass({
+        colorAttachments: [clearAttachment(texture.createView())],
+      }).end();
+    }
+    this.device.queue.submit([enc.finish()]);
+  }
+
   destroy(): void {
     for (const node of this.nodePipelines.values()) destroyNodePipeline(node);
     this.nodePipelines.clear();

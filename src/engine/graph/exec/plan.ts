@@ -19,7 +19,15 @@ export type EncodeStep =
      * default graph byte-identical to the hand encoder.
      */
     stampInputs: string[];
-    /** Which tracer timescale this accumulator is — picks its state uniforms. */
+    /**
+     * Which tracer timescale this accumulator is — picks its state uniforms.
+     *
+     * Derived from the compositor's input order, never from a node param:
+     * `compileGraph` memoises on a structural hash and returns the *first*
+     * graph compiled for a topology, so any value param read here could be a
+     * stale one from an earlier graph of the same shape. Topology cannot be
+     * stale — it is what the hash covers.
+     */
     role: 'below' | 'above';
   }
   | {
@@ -93,9 +101,18 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
     .sort((a, b) => intParam(a, 'layerIndex', 0) - intParam(b, 'layerIndex', 0));
 
   const decayNodes = compiled.passes.filter((pass) => pass.kind === 'decay');
+
+  // The compositor binds its two tracer textures as (below, above), so its
+  // input order is what names the timescales. A graph whose accumulators do not
+  // reach a blend falls back to schedule order.
+  const blendPass = compiled.passes.find((pass) => pass.kind === 'blend');
+  const blendNode = blendPass ? byId.get(blendPass.nodeId) : undefined;
+  const tracerOrder = blendNode
+    ? blendPass!.inputs.slice(intParam(blendNode, 'layerInputs', compiled.layerCount))
+    : [];
   const roleOf = (nodeId: string, index: number): 'below' | 'above' => {
-    const declared = byId.get(nodeId)?.params.role;
-    if (declared === 'below' || declared === 'above') return declared;
+    const position = tracerOrder.indexOf(nodeId);
+    if (position >= 0) return position === 0 ? 'below' : 'above';
     return index === 0 ? 'below' : 'above';
   };
 
@@ -184,11 +201,8 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
     }
   }
 
-  const blendStep = steps.find((step) => step.kind === 'blend');
-  const tracerRole = (index: 0 | 1): string | null => {
-    if (blendStep?.kind === 'blend') return blendStep.tracerInputs[index] ?? null;
-    return decayNodes[index]?.nodeId ?? null;
-  };
+  const tracerRole = (index: 0 | 1): string | null =>
+    tracerOrder[index] ?? decayNodes[index]?.nodeId ?? null;
 
   return {
     steps,

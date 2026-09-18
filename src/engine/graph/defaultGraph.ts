@@ -54,16 +54,13 @@ export function buildDefaultGraph(layerCount: number = CANONICAL_LAYER_COUNT): P
       id: DEFAULT_GRAPH_IDS.tracerBelow,
       kind: 'decay',
       inputs: [DEFAULT_GRAPH_IDS.coincidence],
-      // `role` names which tracer timescale the executor feeds this
-      // accumulator from. It is a value param, not a structural one, so adding
-      // it leaves the structural hash — and the compile cache — untouched.
-      params: { durationMs: 0, role: 'below' },
+      params: { durationMs: 0 },
     },
     {
       id: DEFAULT_GRAPH_IDS.tracerAbove,
       kind: 'decay',
       inputs: [DEFAULT_GRAPH_IDS.coincidence],
-      params: { durationMs: 1000, role: 'above' },
+      params: { durationMs: 1000 },
     },
     {
       id: DEFAULT_GRAPH_IDS.composite,

@@ -210,6 +210,28 @@ describe('WebGpuGraphExecutor', () => {
     expect(gpu.fragments.some((source) => source.includes('@compute'))).toBe(false);
   });
 
+  it('clears the accumulators the pool owns', () => {
+    // `clearPersistence()` has to reach these: while the graph draws they *are*
+    // the tracer state, so clearing only the hand encoder's pass would leave
+    // the trails the user asked to drop.
+    executor.setGraph(compile());
+    encode(executor);
+    gpu.reset();
+    executor.clearAccumulators();
+
+    // Two ping-pong pairs plus their two diagnostic pairs: eight clears.
+    expect(gpu.passes).toHaveLength(8);
+    expect(gpu.passes.every((pass) => pass.attachments[0].endsWith('@clear'))).toBe(true);
+    expect(gpu.passes.every((pass) => pass.draws.length === 0)).toBe(true);
+  });
+
+  it('clears nothing before a graph has allocated anything', () => {
+    executor.setGraph(compile());
+    gpu.reset();
+    executor.clearAccumulators();
+    expect(gpu.passes).toHaveLength(0);
+  });
+
   it('releases every pooled texture on destroy', () => {
     executor.setGraph(compile());
     encode(executor);

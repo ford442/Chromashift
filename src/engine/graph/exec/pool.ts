@@ -160,6 +160,21 @@ export class GraphTexturePool {
    * encoder: one MSAA texture, resolved into the pooled layer target at the end
    * of each pass.
    */
+  /**
+   * Every accumulator texture the pool owns — both sides of each ping-pong
+   * pair and their diagnostic attachments.
+   *
+   * `clearPersistence()` has to reach these: when the executor draws, they are
+   * the tracer state, and clearing only the hand encoder's `PersistencePass`
+   * would leave the next graph frame accumulating from the old trails.
+   */
+  accumulatorTextures(): GPUTexture[] {
+    return [
+      ...[...this.pairs.values()].flat(),
+      ...[...this.diagnostics.values()].flat(),
+    ];
+  }
+
   msaaTarget(): GPUTexture | null {
     if (this.sampleCount <= 1) return null;
     this.msaa ??= this.create('layer', this.internalFormat, this.sampleCount);
