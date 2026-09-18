@@ -157,30 +157,51 @@ test.describe('pass-graph executor', () => {
   });
 
   /**
-   * Splits "the scene has no overlapping layers" from "the accumulators are not
-   * being filled", which the tracer test below cannot distinguish on its own.
+   * Splits the ways the tracer comparison below can fail, which it cannot do on
+   * its own: the scene may not overlap any layers, the accumulators may be
+   * empty, or the preset override may simply never have reached the renderer.
    *
-   * `outputMode: 3` is the compositor's own overlap stamp, computed inline from
-   * the layer textures with no accumulator involved: it answers whether the
-   * scene overlaps at all. `outputMode: 2` shows only the accumulators. A flat
-   * frame is one distinct colour, so which of the two is flat names the fault.
+   * Every assertion here compares two *different configurations* rather than
+   * testing one frame against an absolute threshold. That matters: a threshold
+   * like "more than one colour" is satisfied by a frame that ignored the
+   * override entirely and rendered the default composite, which is exactly how
+   * the earlier `shot.length > 0` check managed to assert nothing.
    */
-  test('the scene overlaps layers, and the accumulators hold the stamp', async ({ page }) => {
-    test.setTimeout(180_000);
+  test('the output-mode overrides reach the renderer and the stamp has content', async ({ page }) => {
+    test.setTimeout(240_000);
 
+    const base = await captureCanvas(page, '1');
     const stampOnly = await captureCanvas(page, '1', STAMP_ONLY);
+    const tracersOnly = await captureCanvas(page, '1', TRACERS_ONLY);
+
+    // 1. The overrides arrive at all. Stamp-only and tracer-only frames cannot
+    //    look like the full composite unless the preset was dropped.
+    expect(
+      stampOnly.equals(base),
+      'outputMode=3 rendered the same frame as the default composite, so the '
+      + 'preset override never reached the shader and the checks below would '
+      + 'have been measuring the default composite',
+    ).toBe(false);
+    expect(
+      tracersOnly.equals(base),
+      'outputMode=2 rendered the same frame as the default composite, so the '
+      + 'preset override never reached the shader',
+    ).toBe(false);
+
+    // 2. The scene overlaps. outputMode=3 is the compositor's own stamp,
+    //    computed inline from the layer textures with no accumulator read.
     expect(
       distinctColourCount(stampOnly),
-      'compositor stamp is flat: no pixel has 2+ band layers active, so the scene '
-      + 'never triggers coincidence (a fixture/angle problem, not an executor one)',
+      'compositor stamp is flat: no pixel has 2+ band layers active, so the '
+      + 'scene never triggers coincidence (a fixture/angle problem)',
     ).toBeGreaterThan(1);
 
-    const tracersOnly = await captureCanvas(page, '1', TRACERS_ONLY);
+    // 3. The accumulators hold it. outputMode=2 shows only them.
     expect(
       distinctColourCount(tracersOnly),
-      'the scene overlaps but the tracer accumulators are empty: the executor\u2019s '
-      + 'decay passes are not writing, or the compositor is bound to the wrong side '
-      + 'of the ping-pong pair',
+      'the scene overlaps but the tracer accumulators are empty: the '
+      + 'executor\u2019s decay passes are not writing, or the compositor is bound '
+      + 'to the wrong side of the ping-pong pair',
     ).toBeGreaterThan(1);
   });
 
