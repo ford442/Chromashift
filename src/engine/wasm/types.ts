@@ -57,6 +57,12 @@ export interface ChromashiftWasmModule {
                        outPtr: number): void;
   /** Apply decay in-place to a float RGBA buffer on the WASM heap. */
   _simulateTracerDecay(bufPtr: number, pixelCount: number, decayFactor: number): void;
+  /**
+   * Coarse-to-fine Lucas–Kanade flow over two `width * height` float luminance
+   * planes; writes `width * height * 2` interleaved `vx, vy` floats to outPtr.
+   */
+  _computeMotionFlow(curPtr: number, prevPtr: number,
+                     width: number, height: number, outPtr: number): void;
   /** Write a column-major 3×3 rotation matrix (9 floats) to outPtr. */
   _buildRotationMat3(angleDeg: number, outPtr: number): void;
   /** Allocate bytes on the WASM heap; returns a pointer. */
@@ -96,6 +102,7 @@ export const WASM_API_FUNCTIONS = [
   '_advanceLayerAngles',
   '_advanceLayerAngles3',
   '_simulateTracerDecay',
+  '_computeMotionFlow',
 ] as const satisfies ReadonlyArray<keyof ChromashiftWasmModule>;
 
 export type WasmApiFunction = (typeof WASM_API_FUNCTIONS)[number];

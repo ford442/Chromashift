@@ -13,7 +13,7 @@ import {
   type LayerTextures,
 } from './BindGroupCache';
 import { MotionFieldPass } from './MotionFieldPass';
-import { MOTION_FIELD_DIVISOR } from './motionModes';
+import { MOTION_FIELD_DIVISOR, MOTION_MODE_DIRECTION } from './motionModes';
 import { PersistencePass } from './PersistencePass';
 import { CompositorPass, type CompositorUniformParams } from './CompositorPass';
 import { TracerInspectPass } from './TracerInspectPass';
@@ -482,6 +482,7 @@ export class WebGPURenderer {
         readbackActive: state.livePreviewEnabled !== false,
         internalBytesPerPixel: internalColorFormatBytesPerPixel(this.internalFormat),
         motionActive: (state.motionMode ?? 0) !== 0,
+        motionFlowActive: (state.motionMode ?? 0) === MOTION_MODE_DIRECTION,
         motionDivisor: MOTION_FIELD_DIVISOR,
       });
     }
@@ -604,7 +605,11 @@ export class WebGPURenderer {
           height,
           fps,
           marks: {
-            layersEnd: () => { profiler?.markLayersEnd(enc); profiler?.markMotionEnd(enc); },
+            layersEnd: () => {
+              profiler?.markLayersEnd(enc);
+              profiler?.markMotionEnd(enc);
+              profiler?.markMotionFlowEnd(enc);
+            },
             stampEnd: () => profiler?.markPersistenceEnd(enc),
             compositorEnd: () => profiler?.markCompositorEnd(enc),
           },
@@ -651,6 +656,15 @@ export class WebGPURenderer {
       this.motionResetPending = false;
     }
     profiler?.markMotionEnd(enc);
+
+    // `direction` is the only mode that reads the flow vector, so it is the
+    // only one that pays for the two Lucas–Kanade dispatches. The combined
+    // texture replaces the frame-difference one; `boost`/`gate` keep binding
+    // exactly the texture they bound before Stage 2 existed.
+    if (motionTexture && motionMode === MOTION_MODE_DIRECTION) {
+      motionTexture = this.motionField.encodeFlow(enc) ?? motionTexture;
+    }
+    profiler?.markMotionFlowEnd(enc);
 
     this.persistence.encode(enc, layerTextures, {
       fps,

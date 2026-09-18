@@ -501,6 +501,141 @@ TEST(advance_layer_angles3_matches_the_general_form)
     }
 }
 
+// ─── computeMotionFlow ───────────────────────────────────────────────────────
+//
+// The fixture is a separable triangular ridge — a soft "bar" with real gradient
+// structure in both axes, so the 2x2 system is well conditioned and the answer
+// is the actual displacement rather than normal flow. Every constant is exactly
+// representable in binary floating point (the slope is 0.25, not 1/3), so the
+// TypeScript reference in src/engine/compute/chores/motionKernel.ts builds a
+// bit-identical fixture and the two can be compared directly.
+//
+// kMotionFlowEpsilon is not zero because the reference accumulates in
+// JavaScript doubles while this kernel and the WGSL pass accumulate in float32:
+// nine taps, five accumulators and a division apart, that is a few parts in a
+// million on a well-conditioned cell. Cells with little structure are clamped
+// rather than accurate and are deliberately not pinned.
+
+static const int kFlowSize = 16;
+static const float kMotionFlowEpsilon = 2e-3f;
+
+static float motionRidge(int v, int centre)
+{
+    const float t = 1.0f - std::fabs(static_cast<float>(v - centre)) * 0.25f;
+    return t < 0.0f ? 0.0f : t;
+}
+
+static void buildMotionPlane(float* lum, int centreX, int centreY)
+{
+    for (int y = 0; y < kFlowSize; ++y) {
+        for (int x = 0; x < kFlowSize; ++x) {
+            lum[y * kFlowSize + x] = motionRidge(x, centreX) * motionRidge(y, centreY);
+        }
+    }
+}
+
+TEST(motion_flow_is_zero_for_two_identical_planes)
+{
+    float plane[kFlowSize * kFlowSize];
+    float flow[kFlowSize * kFlowSize * 2];
+    buildMotionPlane(plane, 8, 8);
+
+    computeMotionFlow(plane, plane, kFlowSize, kFlowSize, flow);
+
+    for (int i = 0; i < kFlowSize * kFlowSize * 2; ++i) {
+        EXPECT_NEAR(flow[i], 0.0f, 1e-6);
+    }
+}
+
+TEST(motion_flow_recovers_the_translation_of_a_soft_bar)
+{
+    float previous[kFlowSize * kFlowSize];
+    float current[kFlowSize * kFlowSize];
+    float flow[kFlowSize * kFlowSize * 2];
+    // The ridge moves +2 cells in x and +1 in y between the two frames.
+    buildMotionPlane(previous, 6, 6);
+    buildMotionPlane(current, 8, 7);
+
+    computeMotionFlow(current, previous, kFlowSize, kFlowSize, flow);
+
+    // Pinned against the TypeScript reference on the same fixture. Only cells
+    // whose window straddles the moved ridge are listed: away from it the
+    // fixture is flat, the solve has nothing to lock onto, and the clamp — not
+    // the maths — decides the answer.
+    struct GoldenCell { int x; int y; float vx; float vy; };
+    static const GoldenCell golden[] = {
+        { 7, 7, 1.951104f, 0.978733f },
+        { 8, 7, 1.949691f, 0.954138f },
+        { 9, 7, 2.044808f, 0.928220f },
+        { 8, 6, 1.965647f, 0.850176f },
+        { 8, 8, 1.944985f, 1.144081f },
+        { 6, 6, 1.947979f, 1.010215f },
+        { 10, 9, 1.941304f, 0.998794f },
+    };
+
+    for (const GoldenCell& cell : golden) {
+        const int i = (cell.y * kFlowSize + cell.x) * 2;
+        EXPECT_NEAR(flow[i], cell.vx, kMotionFlowEpsilon);
+        EXPECT_NEAR(flow[i + 1], cell.vy, kMotionFlowEpsilon);
+        // The sign is the whole point of Stage 2: hue follows the angle, so a
+        // bar moving down-right must never read as moving up-left.
+        if (!(flow[i] > 0.0f && flow[i + 1] > 0.0f)) {
+            std::fprintf(stderr, "FAIL %s:%d: cell (%d,%d) flow (%.6f, %.6f) is not down-right\n",
+                         __FILE__, __LINE__, cell.x, cell.y, flow[i], flow[i + 1]);
+            ++failures;
+        }
+    }
+}
+
+TEST(motion_flow_reverses_sign_when_the_frames_swap)
+{
+    float a[kFlowSize * kFlowSize];
+    float b[kFlowSize * kFlowSize];
+    float forward[kFlowSize * kFlowSize * 2];
+    float backward[kFlowSize * kFlowSize * 2];
+    buildMotionPlane(a, 6, 6);
+    buildMotionPlane(b, 8, 7);
+
+    computeMotionFlow(b, a, kFlowSize, kFlowSize, forward);
+    computeMotionFlow(a, b, kFlowSize, kFlowSize, backward);
+
+    // Not symmetric to the last bit — the gradients come from whichever plane
+    // is "current" — but the direction must flip, or a comet tail would point
+    // the wrong way on a subject reversing course.
+    const int i = (7 * kFlowSize + 8) * 2;
+    if (!(forward[i] > 0.0f && backward[i] < 0.0f)) {
+        std::fprintf(stderr, "FAIL %s:%d: forward vx %.6f / backward vx %.6f did not flip\n",
+                     __FILE__, __LINE__, forward[i], backward[i]);
+        ++failures;
+    }
+}
+
+TEST(motion_flow_handles_an_odd_sized_plane)
+{
+    // 15 is odd in both axes, so the half-resolution pyramid level has a
+    // clipped trailing row and column — the case the box average has to divide
+    // by 2 rather than 4.
+    static const int size = 15;
+    float previous[size * size];
+    float current[size * size];
+    float flow[size * size * 2];
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            previous[y * size + x] = motionRidge(x, 6) * motionRidge(y, 6);
+            current[y * size + x] = motionRidge(x, 8) * motionRidge(y, 7);
+        }
+    }
+
+    computeMotionFlow(current, previous, size, size, flow);
+
+    const int i = (7 * size + 8) * 2;
+    if (!(flow[i] > 0.0f && flow[i + 1] > 0.0f)) {
+        std::fprintf(stderr, "FAIL %s:%d: odd-sized plane flow (%.6f, %.6f) is not down-right\n",
+                     __FILE__, __LINE__, flow[i], flow[i + 1]);
+        ++failures;
+    }
+}
+
 int main()
 {
     std::printf("Running chromashift_engine host tests...\n");

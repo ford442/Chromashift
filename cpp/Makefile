@@ -49,6 +49,7 @@ EXPORTED_FUNCS := \
   _computeClassificationMask,_computeClassificationMaskLut,\
   _computeLuminanceHistogram,_computeColorBandCounts,\
   _buildRotationMat3,_durationToDecay,_advanceLayerAngles,_advanceLayerAngles3,\
+  _computeMotionFlow,\
   _simulateTracerDecay
 
 # Shared Emscripten link flags (debug vs release differ only in -O / ASSERTIONS / -flto)

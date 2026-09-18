@@ -242,6 +242,39 @@ void advanceLayerAngles3(float a0, float a1, float a2,
 void simulateTracerDecay(float* tracerBuffer, uint32_t pixelCount,
                          float decayFactor);
 
+/**
+ * Coarse-to-fine Lucas-Kanade optical flow over two low-resolution luminance
+ * planes.
+ *
+ * This is the direction half of the `motion-field` chore (Stage 2). The
+ * magnitude half is a frame difference the caller already has; this answers the
+ * other question - not how much a cell changed, but which way it moved - which
+ * is what `motionMode: 'direction'` turns into hue.
+ *
+ * Mirrors `lucasKanadeFlow` in src/engine/compute/chores/motionKernel.ts and
+ * the WGSL `MOTION_FLOW_*_COMPUTE_SHADER` pair operation for operation: two
+ * pyramid levels, a 3x3 window, central-difference spatial gradients, a
+ * Tikhonov ridge in place of a singular-system branch, and the same clamps.
+ * The three lanes agree to float32 rounding on the fixture in
+ * cpp/tests/test_engine.cpp; see that file for the epsilon and why it is not
+ * zero.
+ *
+ * Both planes must be the same size. A caller with no previous frame should not
+ * call this at all - it has no history to difference, and the TypeScript side
+ * returns a zero field for that case before reaching the engine.
+ *
+ * @param current   Pointer to `width * height` floats: this frame's luminance
+ *                  plane, one entry per motion-field cell, each in [0,1].
+ * @param previous  Pointer to `width * height` floats: the previous frame's.
+ * @param width     Field width in cells.
+ * @param height    Field height in cells.
+ * @param out       Caller-allocated array of `width * height * 2` floats;
+ *                  receives interleaved vx, vy in cells per frame. Must not
+ *                  alias either input plane.
+ */
+void computeMotionFlow(const float* current, const float* previous,
+                       uint32_t width, uint32_t height, float* out);
+
 #ifdef __cplusplus
 }
 #endif

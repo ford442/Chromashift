@@ -213,3 +213,14 @@ fn motion_field_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   atomicAdd(&motion_stats.cells, 1u);
 }
 `;
+
+/**
+ * Stage 2 flow passes, re-exported so `kernels.ts` stays the one place the
+ * WebGPU lane imports shaders from. They live in their own module because they
+ * need none of the band-threshold machinery above — and because pulling that in
+ * would drag `shared/band.json` into every tool that only wants the flow WGSL.
+ */
+export {
+  MOTION_FLOW_COARSE_COMPUTE_SHADER,
+  MOTION_FLOW_REFINE_COMPUTE_SHADER,
+} from './motionFlowKernels';

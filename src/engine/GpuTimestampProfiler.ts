@@ -3,19 +3,25 @@ export interface GpuPassTimings {
   layersMs: number;
   /** Quarter-resolution motion field (`motion-field` chore); 0 when off. */
   motionMs: number;
+  /**
+   * Lucas–Kanade flow, the two extra dispatches `motionMode: 'direction'` adds
+   * on top of the frame difference; 0 in every other mode. Split out because
+   * "Motion" jumping when the mode changes is otherwise unattributable.
+   */
+  motionFlowMs: number;
   persistenceMs: number;
   compositorMs: number;
   readbackMs: number;
   totalGpuMs: number;
 }
 
-export const GPU_TIMESTAMP_MARKERS = 6;
+export const GPU_TIMESTAMP_MARKERS = 7;
 export const GPU_TIMING_HISTORY_SIZE = 120;
 
 const QUERIES_PER_FRAME = GPU_TIMESTAMP_MARKERS;
 const BYTES_PER_QUERY = 8;
 const RESOLVE_SLOTS = 2;
-/** Bytes a frame's markers actually occupy (6 × 8 = 48). */
+/** Bytes a frame's markers actually occupy (7 × 8 = 56). */
 const SLOT_PAYLOAD_BYTES = QUERIES_PER_FRAME * BYTES_PER_QUERY;
 /**
  * `resolveQuerySet`'s destination offset must be a multiple of 256, so the
@@ -44,6 +50,8 @@ export interface BandwidthEstimateInput {
   internalBytesPerPixel?: number;
   /** Motion field active this frame — adds a quarter-scale read/write pair. */
   motionActive?: boolean;
+  /** Lucas–Kanade flow active this frame — two more quarter-scale passes. */
+  motionFlowActive?: boolean;
   /** Field resolution divisor (4 = quarter scale). */
   motionDivisor?: number;
 }
@@ -74,8 +82,15 @@ export function estimatePassBandwidthMBps(
   const motionBytes = dims.motionActive
     ? canvasPixels * bytesPerPixel + motionCells * (8 + 4) * 2
     : 0;
+  // The coarse pass reads both history planes at 9 taps of a 2×2 average and
+  // writes a quarter of a field; the refine pass reads both planes plus the
+  // coarse seed and the magnitude, and writes a full field.
+  const motionFlowBytes = dims.motionActive && dims.motionFlowActive
+    ? motionCells * (4 * 9 * 2 / 4 + 8 / 4) + motionCells * (4 * 9 * 2 + 8 + 8 + 8)
+    : 0;
 
-  const totalBytes = layersBytes + persistBytes + compositorBytes + readbackBytes + motionBytes;
+  const totalBytes = layersBytes + persistBytes + compositorBytes + readbackBytes
+    + motionBytes + motionFlowBytes;
   const totalMs = Math.max(timings.totalGpuMs, 0.001);
   return (totalBytes / (1024 * 1024)) / (totalMs / 1000);
 }
@@ -90,10 +105,11 @@ export function parseTimestampMarkers(
   return {
     layersMs: toMs(stamps[0], stamps[1]),
     motionMs: toMs(stamps[1], stamps[2]),
-    persistenceMs: toMs(stamps[2], stamps[3]),
-    compositorMs: toMs(stamps[3], stamps[4]),
-    readbackMs: toMs(stamps[4], stamps[5]),
-    totalGpuMs: toMs(stamps[0], stamps[5]),
+    motionFlowMs: toMs(stamps[2], stamps[3]),
+    persistenceMs: toMs(stamps[3], stamps[4]),
+    compositorMs: toMs(stamps[4], stamps[5]),
+    readbackMs: toMs(stamps[5], stamps[6]),
+    totalGpuMs: toMs(stamps[0], stamps[6]),
   };
 }
 
@@ -217,28 +233,39 @@ export class GpuTimestampProfiler {
   }
 
   /**
-   * End of the motion-field compute dispatch. Always written, even when the
-   * pass did not run, so the marker indices stay fixed and a `motionMs` of 0
-   * reads as "no motion work this frame" rather than shifting every later row.
+   * End of the motion-field (frame-difference) compute dispatch. Always
+   * written, even when the pass did not run, so the marker indices stay fixed
+   * and a `motionMs` of 0 reads as "no motion work this frame" rather than
+   * shifting every later row.
    */
   markMotionEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 2);
   }
 
-  markPersistenceEnd(enc: GPUCommandEncoder): void {
+  /**
+   * End of the Lucas–Kanade flow dispatches. Written unconditionally for the
+   * same reason as {@link markMotionEnd}: with no flow pass this collapses onto
+   * the previous marker and `motionFlowMs` reads 0.
+   */
+  markMotionFlowEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 3);
   }
 
-  markCompositorEnd(enc: GPUCommandEncoder): void {
+  markPersistenceEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 4);
   }
 
-  finishFrame(enc: GPUCommandEncoder): void {
+  markCompositorEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     enc.writeTimestamp(this.querySet, 5);
+  }
+
+  finishFrame(enc: GPUCommandEncoder): void {
+    if (!this.enabled) return;
+    enc.writeTimestamp(this.querySet, 6);
     const slot = this.writeSlot;
     const offset = slot * SLOT_STRIDE_BYTES;
     enc.resolveQuerySet(

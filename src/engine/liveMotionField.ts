@@ -2,11 +2,19 @@ import {
   CpuChoreBackend,
   createChoresRuntime,
   publishMotionFieldEnergy,
+  publishMotionFieldFlow,
+  publishMotionFieldHasFlow,
+  summariseMotionFlow,
   type ChoresRuntime,
   type CpuChoreHost,
+  type CpuMotionFieldHost,
   type CpuMotionFieldOutput,
 } from './compute/chores';
+import { createMotionWorkerHost } from './compute/chores/motionWorkerHost';
 import { MOTION_FIELD_DIVISOR } from './motionModes';
+
+/** A motion kernel this sampler owns and must shut down with itself. */
+export type OwnedMotionKernelHost = CpuMotionFieldHost & { destroy(): void };
 
 /**
  * Motion field for the WebGL diagnostic backend (and anything else without a
@@ -31,14 +39,30 @@ export class LiveMotionSampler {
   private busy = false;
   private resetPending = true;
   private lastOutput: CpuMotionFieldOutput | null = null;
+  private readonly motionHost: OwnedMotionKernelHost | null;
 
-  constructor(host: CpuChoreHost) {
+  /**
+   * @param host       CPU-lane host for everything but the motion kernel.
+   * @param motionHost Where the kernel itself runs. Defaults to the motion
+   *                   worker: the Lucas–Kanade solve behind `direction` is
+   *                   millions of multiply-adds at 4K and must not land on the
+   *                   thread driving `requestAnimationFrame`. Pass `null` to
+   *                   run it in process (Vitest, parity tests).
+   */
+  constructor(
+    host: CpuChoreHost,
+    motionHost: OwnedMotionKernelHost | null = createMotionWorkerHost(host.isWasmReady),
+  ) {
+    this.motionHost = motionHost;
+    const laneHost: CpuChoreHost = motionHost
+      ? { ...host, motionField: motionHost.motionField.bind(motionHost) }
+      : host;
     // The CPU lanes hold the previous frame's luminance, so this runtime has to
     // outlive a single tick — hence one sampler per live source, not one per
     // call.
     this.runtime = createChoresRuntime([
-      new CpuChoreBackend('wasm', host),
-      new CpuChoreBackend('ts', host),
+      new CpuChoreBackend('wasm', laneHost),
+      new CpuChoreBackend('ts', laneHost),
     ]);
   }
 
@@ -58,7 +82,11 @@ export class LiveMotionSampler {
    * arrives while the previous sample is still running is dropped rather than
    * queued, so a slow frame cannot build a backlog.
    */
-  async sample(video: HTMLVideoElement, threshold: number): Promise<CpuMotionFieldOutput | null> {
+  async sample(
+    video: HTMLVideoElement,
+    threshold: number,
+    flow = false,
+  ): Promise<CpuMotionFieldOutput | null> {
     if (this.busy) return this.lastOutput;
     const sourceWidth = video.videoWidth;
     const sourceHeight = video.videoHeight;
@@ -83,16 +111,21 @@ export class LiveMotionSampler {
         divisor: 1,
         threshold,
         reset: this.resetPending,
+        flow,
       });
       this.resetPending = false;
 
       if (!result.ok || result.value.kind !== 'cpu-motion-field') {
         this.lastOutput = null;
         publishMotionFieldEnergy(0);
+        publishMotionFieldHasFlow(false);
+        publishMotionFieldFlow(null);
         return null;
       }
       this.lastOutput = result.value;
       publishMotionFieldEnergy(result.value.stats.meanMagnitude);
+      publishMotionFieldHasFlow(result.value.flow !== null);
+      publishMotionFieldFlow(summariseMotionFlow(result.value.flow));
       return result.value;
     } finally {
       this.busy = false;
@@ -101,6 +134,7 @@ export class LiveMotionSampler {
 
   destroy(): void {
     this.runtime.destroy();
+    this.motionHost?.destroy();
     this.canvas = null;
     this.context = null;
     this.lastOutput = null;
