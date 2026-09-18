@@ -110,6 +110,12 @@ export interface MotionFieldJob {
    * resize). The resulting field is all-zero, exactly like a first frame.
    */
   reset?: boolean;
+  /**
+   * Also solve for the per-cell flow *vector* (Lucas–Kanade), not just the
+   * magnitude. Off by default: `motionMode: boost | gate` reads magnitude
+   * alone, so they must not pay for a pass they cannot see.
+   */
+  flow?: boolean;
   prefer?: ChorePreference;
 }
 
@@ -171,13 +177,15 @@ export interface GpuCoincidenceOutput {
 export interface GpuMotionFieldOutput {
   kind: 'gpu-motion-field';
   /**
-   * `rgba16float`: r = magnitude in [0,1], gb = flow vector (zero for the
-   * frame-difference stage), a = 1. Owned and reused by the lane; callers
-   * must not destroy it.
+   * `rgba16float`: r = magnitude in [0,1], gb = flow vector (zero when the job
+   * did not ask for flow), a = 1. Owned and reused by the lane; callers must
+   * not destroy it.
    */
   fieldTexture: GPUTexture;
   width: number;
   height: number;
+  /** True when `gb` carries a solved velocity rather than the zero vector. */
+  hasFlow: boolean;
 }
 
 /**
@@ -188,6 +196,12 @@ export interface GpuMotionFieldOutput {
 export interface CpuMotionFieldOutput {
   kind: 'cpu-motion-field';
   field: Float32Array;
+  /**
+   * Interleaved `vx, vy` per cell in cells per frame, or `null` when the job
+   * did not ask for flow. Twice the length of `field`, and still small: a 1080p
+   * source at the default divisor is 480×270×2 floats, not a frame readback.
+   */
+  flow: Float32Array | null;
   width: number;
   height: number;
   stats: MotionFieldStats;
@@ -259,12 +273,18 @@ export interface CpuImageAnalysisResult {
 }
 
 /**
- * Optional WASM acceleration for the `motion-field` op.
+ * Optional host-supplied kernel for the `motion-field` op.
  *
  * A host that cannot supply it simply omits it: the `wasm` lane then declines
  * motion jobs with a recorded reason and `auto` slides to `ts`, which always
- * has the portable kernel. That is the same "decline, never pretend" rule the
- * WASM lane already follows for `image-analysis`.
+ * has the portable in-process kernel. That is the same "decline, never pretend"
+ * rule the WASM lane already follows for `image-analysis`.
+ *
+ * A host that *does* supply it serves both CPU lanes, with `useWasm` saying
+ * which kernel the lane asked for — that is how a worker-backed host moves the
+ * Lucas–Kanade solve off the animation thread without either lane changing
+ * meaning: `ts` is still the portable kernel, just executed elsewhere, which
+ * `mode` reports the same way `CpuImageAnalysisResult.mode` does.
  */
 export interface CpuMotionFieldHost {
   motionField(
@@ -272,14 +292,20 @@ export interface CpuMotionFieldHost {
     divisor: number,
     threshold: number,
     reset: boolean,
+    flow: boolean,
+    useWasm: boolean,
   ): Promise<CpuMotionFieldResult | null>;
 }
 
-/** Result of a host-supplied WASM motion-field call. */
+/** Result of a host-supplied motion-field call. */
 export interface CpuMotionFieldResult {
   field: Float32Array;
+  /** Interleaved `vx, vy` per cell, or `null` when flow was not requested. */
+  flow?: Float32Array | null;
   width: number;
   height: number;
+  /** Where it ran; surfaced only through `breadcrumbLabel()`. */
+  mode?: 'worker' | 'inline';
 }
 
 /**

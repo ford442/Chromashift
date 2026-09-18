@@ -53,17 +53,19 @@ describe('parseTimestampMarkers', () => {
     stamps[0] = 0n;
     stamps[1] = 1_000_000n;
     stamps[2] = 1_200_000n;
-    stamps[3] = 2_700_000n;
-    stamps[4] = 4_200_000n;
-    stamps[5] = 4_700_000n;
+    stamps[3] = 1_500_000n;
+    stamps[4] = 3_000_000n;
+    stamps[5] = 4_500_000n;
+    stamps[6] = 5_000_000n;
 
     const timings = parseTimestampMarkers(stamps, periodNs);
     expect(timings.layersMs).toBeCloseTo(1);
     expect(timings.motionMs).toBeCloseTo(0.2);
+    expect(timings.motionFlowMs).toBeCloseTo(0.3);
     expect(timings.persistenceMs).toBeCloseTo(1.5);
     expect(timings.compositorMs).toBeCloseTo(1.5);
     expect(timings.readbackMs).toBeCloseTo(0.5);
-    expect(timings.totalGpuMs).toBeCloseTo(4.7);
+    expect(timings.totalGpuMs).toBeCloseTo(5);
   });
 });
 
@@ -78,11 +80,41 @@ describe('estimatePassBandwidthMBps', () => {
       readbackActive: false,
     } as const;
     const timings = {
-      layersMs: 1, motionMs: 0.2, persistenceMs: 1, compositorMs: 1, readbackMs: 0, totalGpuMs: 3.2,
+      layersMs: 1,
+      motionMs: 0.2,
+      motionFlowMs: 0,
+      persistenceMs: 1,
+      compositorMs: 1,
+      readbackMs: 0,
+      totalGpuMs: 3.2,
     };
     const withMotion = estimatePassBandwidthMBps({ ...dims, motionActive: true }, timings);
     const withoutMotion = estimatePassBandwidthMBps({ ...dims, motionActive: false }, timings);
     expect(withMotion).toBeGreaterThan(withoutMotion);
+  });
+
+  it('adds the Lucas\u2013Kanade traffic only in direction mode', () => {
+    const dims = {
+      canvasW: 1920,
+      canvasH: 1080,
+      layerScale: 1,
+      tracerScale: 1,
+      sampleCount: 1,
+      readbackActive: false,
+      motionActive: true,
+    } as const;
+    const timings = {
+      layersMs: 1,
+      motionMs: 0.2,
+      motionFlowMs: 0.4,
+      persistenceMs: 1,
+      compositorMs: 1,
+      readbackMs: 0,
+      totalGpuMs: 3.6,
+    };
+    const withFlow = estimatePassBandwidthMBps({ ...dims, motionFlowActive: true }, timings);
+    const withoutFlow = estimatePassBandwidthMBps({ ...dims, motionFlowActive: false }, timings);
+    expect(withFlow).toBeGreaterThan(withoutFlow);
   });
 
   it('returns a positive rate for typical 1080p dimensions', () => {
@@ -98,6 +130,7 @@ describe('estimatePassBandwidthMBps', () => {
       {
         layersMs: 2,
         motionMs: 0.2,
+        motionFlowMs: 0,
         persistenceMs: 1,
         compositorMs: 1,
         readbackMs: 0.5,
@@ -117,7 +150,15 @@ describe('estimatePassBandwidthMBps', () => {
         sampleCount: 1,
         readbackActive: true,
       },
-      { layersMs: 1, motionMs: 0, persistenceMs: 1, compositorMs: 1, readbackMs: 0, totalGpuMs: 3 },
+      {
+        layersMs: 1,
+        motionMs: 0,
+        motionFlowMs: 0,
+        persistenceMs: 1,
+        compositorMs: 1,
+        readbackMs: 0,
+        totalGpuMs: 3,
+      },
     );
     const withoutReadback = estimatePassBandwidthMBps(
       {
@@ -128,7 +169,15 @@ describe('estimatePassBandwidthMBps', () => {
         sampleCount: 1,
         readbackActive: false,
       },
-      { layersMs: 1, motionMs: 0, persistenceMs: 1, compositorMs: 1, readbackMs: 0, totalGpuMs: 3 },
+      {
+        layersMs: 1,
+        motionMs: 0,
+        motionFlowMs: 0,
+        persistenceMs: 1,
+        compositorMs: 1,
+        readbackMs: 0,
+        totalGpuMs: 3,
+      },
     );
     expect(withReadback).toBeGreaterThan(withoutReadback);
   });

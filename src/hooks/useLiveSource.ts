@@ -3,7 +3,12 @@ import { computeVideoAverageLuminance, LiveSourceManager, type LiveSourceKind } 
 import { publishLiveSourceBreadcrumbs } from '../engine/liveSourceBreadcrumbs';
 import { LIVE_SOURCE_CACHE_KEY } from '../engine/liveSourceTexture';
 import { createChromashiftCpuHost } from '../engine/compute/chores/chromashiftHost';
-import { publishMotionFieldBreadcrumbs, publishMotionFieldEnergy } from '../engine/compute/chores';
+import {
+  publishMotionFieldBreadcrumbs,
+  publishMotionFieldEnergy,
+  publishMotionFieldFlow,
+  publishMotionFieldHasFlow,
+} from '../engine/compute/chores';
 import { LiveMotionSampler } from '../engine/liveMotionField';
 import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
@@ -157,6 +162,8 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
           renderer.setMotionField?.(null);
           publishMotionFieldBreadcrumbs(null, 'motionMode is off');
           publishMotionFieldEnergy(0);
+          publishMotionFieldHasFlow(false);
+          publishMotionFieldFlow(null);
         }
         return;
       }
@@ -167,9 +174,13 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
       motionSamplerRef.current ??= new LiveMotionSampler(
         createChromashiftCpuHost(() => engineModeRef.current === 'wasm'),
       );
-      void motionSamplerRef.current.sample(element, tracers.motionThreshold).then((output) => {
-        renderer.setMotionField?.(output);
-      });
+      // Only `direction` reads the vector, so it is the only mode that pays for
+      // the Lucas–Kanade solve behind it.
+      const wantFlow = tracers.motionMode === 'direction';
+      void motionSamplerRef.current.sample(element, tracers.motionThreshold, wantFlow)
+        .then((output) => {
+          renderer.setMotionField?.(output);
+        });
     };
 
     const tick = (now: number) => {
@@ -215,6 +226,8 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
       lastMotionAtRef.current = 0;
       publishMotionFieldBreadcrumbs(null, 'No live source');
       publishMotionFieldEnergy(0);
+      publishMotionFieldHasFlow(false);
+      publishMotionFieldFlow(null);
     };
   }, [
     liveSource.active, actions, liveSourceManagerRef, textureManagerRef,

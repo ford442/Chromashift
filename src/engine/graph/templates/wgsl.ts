@@ -1,4 +1,5 @@
 import { DECAY_WGSL } from '../../shaders/decayLiterals';
+import { MOTION_FLOW_MIN_SPEED } from '../../compute/chores/motionKernel';
 import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
 
 /**
@@ -11,6 +12,15 @@ import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
  */
 
 const indent = (depth: number) => '  '.repeat(depth);
+
+/**
+ * `MOTION_FLOW_MIN_SPEED` as a shader float literal.
+ *
+ * Emitted from the TS constant rather than typed out twice: the CPU kernel, the
+ * WGSL pass and this hue gate all have to agree on where "no direction yet"
+ * ends, and a hand-copied 0.05 is exactly the kind of thing that drifts.
+ */
+const MOTION_FLOW_MIN_SPEED_WGSL = MOTION_FLOW_MIN_SPEED.toFixed(3);
 
 /** `cropLayer<N>Color` — the CROP / CROP-NUNIF2 colour ramp for one layer. */
 export function emitCropHelperWgsl(spec: LayerSpec): string {
@@ -378,11 +388,16 @@ export interface CoincidenceDecayOptions {
  * into a `motion` node's template without untangling it from the decay maths.
  */
 export const WGSL_MOTION_HELPERS = /* wgsl */ `
-// Flow angle -> hue, magnitude -> intensity. The frame-difference stage of the
-// motion chore writes a zero flow vector, so \`atan2(0, 0)\` pins the hue and
-// the mode reads as a magnitude tint until a real flow stage fills gb in.
+// Flow angle -> hue, magnitude -> intensity.
+//
+// Below \`MOTION_FLOW_MIN_SPEED\` the solve has no direction worth showing, and
+// the hue is pinned to zero instead of spinning on noise. That is also exactly
+// what a Stage 1 field (a zero flow vector everywhere) renders, so a preset
+// saved against the frame-difference-only build keeps its magnitude tint.
 fn motionDirectionRgb(flow: vec2<f32>, magnitude: f32, gain: f32) -> vec3<f32> {
-  let hue = fract(atan2(flow.y, flow.x) / 6.2831853 + 1.0);
+  let speed = length(flow);
+  let angle = select(0.0, atan2(flow.y, flow.x), speed > ${MOTION_FLOW_MIN_SPEED_WGSL});
+  let hue = fract(angle / 6.2831853 + 1.0);
   let k = vec3<f32>(0.0, 8.0, 4.0) + hue * 12.0;
   let wedge = clamp(abs((k % 6.0) - 3.0) - 1.0, vec3<f32>(0.0), vec3<f32>(1.0));
   // hsl2rgb at s = 0.9, l = 0.5, scaled by the (gain-weighted) magnitude.

@@ -75,6 +75,11 @@ if (analysisWorkerChunks.length === 0) {
   fail('no dist/assets/analysis.worker-*.js chunk found — the gpu-chores CPU-lane worker must be its own lazy-loaded chunk');
 }
 
+const motionWorkerChunks = allFiles.filter((f) => /[/\\]motion\.worker-[^/\\]+\.js$/.test(f));
+if (motionWorkerChunks.length === 0) {
+  fail('no dist/assets/motion.worker-*.js chunk found — the motion-field CPU lane must be its own lazy-loaded chunk');
+}
+
 for (const chunk of [entryChunkPath]) {
   const text = await readFile(chunk, 'utf8');
   if (/ort-wasm/i.test(text)) {
@@ -89,6 +94,12 @@ for (const chunk of [entryChunkPath]) {
   if (/analysis\.worker:/.test(text)) {
     fail(`${chunk} inlines the analysis worker's own code — it must load lazily as a separate chunk`);
   }
+  if (/motion\.worker:/.test(text)) {
+    fail(`${chunk} inlines the motion worker's own code — it must load lazily as a separate chunk`);
+  }
 }
 
-console.log('check:dist — OK (no ort-wasm*.wasm in dist; main chunk clean; analysis worker is its own chunk)');
+console.log(
+  'check:dist — OK (no ort-wasm*.wasm in dist; main chunk clean; '
+  + 'analysis and motion workers are their own chunks)',
+);

@@ -24,6 +24,7 @@ for real-time rendering.
 |---|---|---|
 | **In scope (load-time)** | `computeAverageLuminanceWith`, `computeAverageLuminanceStridedWith`, `classifyImageMaskWith`, histogram/band helpers | Average luminance and classification masks when GPU compute analysis (#82) is unavailable; strided luminance for large (4K–8K) and upscaled buffers |
 | **In scope (export / offline)** | `advanceAnglesBy` | Video-export angle stepping when Engine = C++ WASM |
+| **In scope (per frame)** | `computeMotionFlowWith` | Optical flow behind `motionMode: 'direction'`, on backends with no compute lane (WebGL, `?no_gpu_compute`). The only per-frame WASM call, and it runs in `motion.worker.ts`, never on the animation thread |
 | **Out of scope (GPU)** | Layer rotation, persistence/compositing, tracer decay, tracer overlap detection | Handled by WGSL/GLSL shaders in `WebGPURenderer` / `WebGLRenderer`; the per-frame decay multiplier is the pure `durationToDecay()` in `math/decay.ts` (constants from `shared/decay.json`, see [Shared decay table](#shared-decay-table-shareddecayjson)), and the 3-layer overlap ("coincidence") detection is a `gpu-chores` compute pass (`op: 'coincidence'`, see `docs/gpu-bootstrap.md`) with a fragment-shader fallback — neither is ever dispatched through WASM |
 | **Test / benchmark only** | `durationToDecayWith`, `simulateTracerDecayWith`, `buildRotationMat3With`, `computeLuminanceHistogramWith`, `computeColorBandCountsWith`, bulk classify helpers | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
 
@@ -101,6 +102,7 @@ and the unit/C++ host tests — see "Test / benchmark only" above.
 | `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts` (both only on the mask-generation error path); also called by `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage`/`computeAverageLuminance` | Load-time |
 | `classifyImageMaskWith` | `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage` | Load-time (mask generation) |
 | `advanceAnglesBy` | `engine/videoExport/exportVideoFrameLoop.ts` | Video export |
+| `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
 
 No `*With()` dispatcher is called from a per-frame render or animation-loop path
 (`useAnimationLoop.ts`, `PersistencePass.ts`, `WebGPURenderer.ts` / `WebGLRenderer.ts`
@@ -138,6 +140,7 @@ update this table if one is ever intentionally added.
 | `advanceLayerAngles` | `advanceAnglesBy` | Step `count` layer angles with 360° wrapping |
 | `advanceLayerAngles3` | — | Deprecated three-wide wrapper; see below |
 | `simulateTracerDecay` | `simulateTracerDecayWith` | Apply per-frame decay to a Float32 RGBA buffer in-place (CPU-side tracer simulation) |
+| `computeMotionFlow` | `computeMotionFlowWith` | Coarse-to-fine Lucas–Kanade optical flow over two low-resolution luminance planes; mirrors `chores/motionKernel.ts` and the WGSL flow passes (see `docs/LIVE_SOURCE.md`) |
 
 `advanceLayerAngles` takes `(const float* angles, const float* steps, float* out,
 uint32_t count)` — a session runs 1–10 band layers, so the angle list is a heap

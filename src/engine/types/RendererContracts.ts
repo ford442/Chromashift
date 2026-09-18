@@ -14,6 +14,12 @@ export type RendererBackend = 'webgpu' | 'webgl';
  */
 export interface CpuMotionField {
   field: Float32Array;
+  /**
+   * Interleaved `vx, vy` per cell, in cells per frame — the Lucas–Kanade flow
+   * `motionMode: 'direction'` steers hue with. `null` in every other mode,
+   * where the vector is never sampled and solving for it would be waste.
+   */
+  flow?: Float32Array | null;
   width: number;
   height: number;
 }
@@ -22,6 +28,8 @@ export interface GpuPassTimings {
   layersMs: number;
   /** Quarter-resolution motion field (`motion-field` chore); 0 when off. */
   motionMs: number;
+  /** Lucas–Kanade flow dispatches; 0 outside `motionMode: 'direction'`. */
+  motionFlowMs: number;
   persistenceMs: number;
   compositorMs: number;
   readbackMs: number;

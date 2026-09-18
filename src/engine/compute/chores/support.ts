@@ -6,6 +6,8 @@
  * needed to tell a Chrome failure apart from an Edge failure after the fact.
  */
 
+import type { MotionFlowStats } from './motionKernel';
+
 export interface GpuComputeSupport {
   /** Compute shaders can run on this device. */
   available: boolean;
@@ -173,6 +175,33 @@ export function publishMotionFieldBreadcrumbs(
   };
   w.motionFieldBackend = backend;
   w.motionFieldReason = reason;
+}
+
+/**
+ * Whether the last motion field carried a solved flow vector (Stage 2) or only
+ * a magnitude (Stage 1).
+ *
+ * E2E needs to tell the two apart without inspecting pixels: `direction` mode
+ * renders a magnitude tint on a Stage 1 field and a real hue sweep on a Stage 2
+ * one, and only this flag says which is on screen.
+ */
+export function publishMotionFieldHasFlow(hasFlow: boolean): void {
+  if (typeof window === 'undefined') return;
+  (window as Window & { motionFieldHasFlow?: boolean }).motionFieldHasFlow = hasFlow;
+}
+
+/**
+ * Mean velocity over the last field's moving cells.
+ *
+ * This is the number that tells `direction` apart from a magnitude tint: Stage 1
+ * wrote a zero vector everywhere, so a non-zero mean here means the hue is being
+ * steered by a solved angle. Published by the CPU lanes only — on the WebGPU
+ * lane the field never leaves the GPU, and `motionFieldHasFlow` is the whole
+ * story automation gets.
+ */
+export function publishMotionFieldFlow(stats: MotionFlowStats | null): void {
+  if (typeof window === 'undefined') return;
+  (window as Window & { motionFieldFlow?: MotionFlowStats | null }).motionFieldFlow = stats;
 }
 
 /**

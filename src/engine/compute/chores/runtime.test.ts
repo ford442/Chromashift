@@ -319,6 +319,7 @@ describe('gpu-chores runtime — motion-field op', () => {
         fieldTexture: TEXTURE,
         width: 2,
         height: 2,
+        hasFlow: false,
       }),
       ...overrides,
     };
@@ -371,6 +372,45 @@ describe('gpu-chores runtime — motion-field op', () => {
     expect(motionField).toHaveBeenCalledTimes(1);
     expect(result.ok && result.value.kind === 'cpu-motion-field' && result.value.stats.movingFraction)
       .toBeCloseTo(0.25, 5);
+  });
+
+  it('leaves the flow vector unsolved unless the job asks for it', async () => {
+    // `boost` and `gate` read magnitude alone, so they must not pay for the
+    // Lucas-Kanade pyramid behind `direction`.
+    const runtime = createChoresRuntime([new CpuChoreBackend('ts', cpuHost())]);
+
+    const without = await runtime.runJob(motionJob({ pixels: frame(10) }));
+    const with_ = await runtime.runJob(motionJob({ pixels: frame(200), flow: true }));
+
+    expect(without.ok && without.value.kind === 'cpu-motion-field' && without.value.flow).toBeNull();
+    if (!with_.ok || with_.value.kind !== 'cpu-motion-field') throw new Error('expected a CPU field');
+    expect(with_.value.flow).not.toBeNull();
+    // Two floats per cell of the 2x2 field.
+    expect(with_.value.flow!.length).toBe(8);
+  });
+
+  it('threads the flow request and the lane\u2019s kernel choice to the host', async () => {
+    const motionField: CpuChoreHost['motionField'] = vi.fn(async () => ({
+      field: new Float32Array([0, 0.5, 0, 0]),
+      flow: new Float32Array(8),
+      width: 2,
+      height: 2,
+      mode: 'worker' as const,
+    }));
+    const runtime = createChoresRuntime([
+      new CpuChoreBackend('wasm', cpuHost({ motionField })),
+      new CpuChoreBackend('ts', cpuHost()),
+    ]);
+
+    const result = await runtime.runJob(motionJob({ pixels: frame(10), flow: true }));
+
+    expect(result.ok && result.backend).toBe('wasm');
+    // (frame, divisor, threshold, reset, flow, useWasm)
+    expect(motionField).toHaveBeenCalledWith(
+      expect.anything(), 2, 0.04, false, true, true,
+    );
+    // A worker-served job still reports its lane; only the label says where.
+    expect(result.ok && result.value.kind === 'cpu-motion-field' && result.value.flow).not.toBeNull();
   });
 
   it('returns a small array from the CPU lane, never a full-resolution readback', async () => {

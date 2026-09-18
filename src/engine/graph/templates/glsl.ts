@@ -1,4 +1,5 @@
 import { DECAY_GLSL } from '../../shaders/decayLiterals';
+import { MOTION_FLOW_MIN_SPEED } from '../../compute/chores/motionKernel';
 import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
 import type { CoincidenceDecayOptions } from './wgsl';
 
@@ -12,13 +13,20 @@ export type { CoincidenceDecayOptions } from './wgsl';
 
 const layerList = (count: number) => Array.from({ length: count }, (_, i) => i);
 
+/** `MOTION_FLOW_MIN_SPEED` as a GLSL float literal — see the WGSL emitter. */
+const MOTION_FLOW_MIN_SPEED_GLSL = MOTION_FLOW_MIN_SPEED.toFixed(3);
+
 /**
  * GLSL twin of `WGSL_MOTION_HELPERS` — same maths, same names, so the two
  * backends stay comparable by eye when a motion preset diverges.
  */
 export const GLSL_MOTION_HELPERS = `
 vec3 motionDirectionRgb(vec2 flow, float magnitude, float gain) {
-  float hue = fract(atan(flow.y, flow.x) / 6.2831853 + 1.0);
+  // See the WGSL twin: below the minimum speed there is no direction to show,
+  // so the hue pins to zero — which is what a Stage 1 zero vector already did.
+  float speed = length(flow);
+  float angle = speed > ${MOTION_FLOW_MIN_SPEED_GLSL} ? atan(flow.y, flow.x) : 0.0;
+  float hue = fract(angle / 6.2831853 + 1.0);
   vec3 k = vec3(0.0, 8.0, 4.0) + hue * 12.0;
   vec3 wedge = clamp(abs(mod(k, 6.0) - 3.0) - 1.0, vec3(0.0), vec3(1.0));
   vec3 rgb = 0.5 - 0.45 + 0.45 * wedge;

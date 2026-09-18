@@ -12,6 +12,7 @@
 
 import {
   downsampleLuminance,
+  lucasKanadeFlow,
   motionMagnitudeField,
   summariseMotionField,
   type LuminancePlane,
@@ -52,8 +53,9 @@ export class CpuChoreBackend implements ChoreBackendImpl {
   canRun(job: ChoreJob): boolean {
     if (job.op === 'motion-field') {
       if (!job.pixels) return false;
-      // The `ts` lane always has the portable kernel; the `wasm` lane needs
-      // both a loaded module and a host that actually supplies the kernel.
+      // The `ts` lane always has a kernel — the host's, or the portable one
+      // compiled into this file; the `wasm` lane needs both a loaded module and
+      // a host that actually supplies one.
       if (!this.useWasm) return true;
       return this.host.isWasmReady() && typeof this.host.motionField === 'function';
     }
@@ -101,42 +103,56 @@ export class CpuChoreBackend implements ChoreBackendImpl {
   }
 
   /**
-   * Frame-difference motion field over decoded pixels.
+   * Motion field over decoded pixels: the frame-difference magnitude always,
+   * plus the Lucas–Kanade flow vector when the job asked for one.
    *
-   * Returns a `Float32Array` of one magnitude per field cell — at the default
-   * quarter-scale divisor that is 1/16 of the frame, which is the "small array"
-   * the CPU contract allows, not a full-image readback.
+   * Returns `Float32Array`s sized to the field, not the frame — at the default
+   * quarter-scale divisor that is 1/16 of the frame for the magnitude and 1/8
+   * for the flow, which is the "small array" the CPU contract allows, not a
+   * full-image readback.
    */
   private async runMotionField(job: MotionFieldJob): Promise<CpuMotionFieldOutput | null> {
     const pixels = job.pixels;
     if (!pixels) return null;
     const divisor = Math.max(1, Math.floor(job.divisor ?? 4));
 
-    if (this.useWasm) {
-      const wasmResult = await this.host.motionField!(pixels, divisor, job.threshold, job.reset === true);
-      if (!wasmResult) return null;
-      // The WASM kernel owns its own history; the TS history stays dropped so
+    const wantFlow = job.flow === true;
+
+    // A host kernel serves either lane. That is what lets a worker-backed host
+    // keep the LK solve off the animation thread while `prefer: 'ts'` still
+    // means the portable kernel — see `CpuMotionFieldHost`.
+    if (typeof this.host.motionField === 'function') {
+      const hosted = await this.host.motionField(
+        pixels, divisor, job.threshold, job.reset === true, wantFlow, this.useWasm,
+      );
+      if (!hosted) return null;
+      // The host owns its own history; the in-process history stays dropped so
       // a later lane switch cannot difference against a stale frame.
       this.previousLuminance = null;
-      this.lastMode = 'inline';
+      this.lastMode = hosted.mode ?? 'inline';
       return {
         kind: 'cpu-motion-field',
-        field: wasmResult.field,
-        width: wasmResult.width,
-        height: wasmResult.height,
-        stats: summariseMotionField(wasmResult.field),
+        field: hosted.field,
+        flow: wantFlow ? (hosted.flow ?? null) : null,
+        width: hosted.width,
+        height: hosted.height,
+        stats: summariseMotionField(hosted.field),
       };
     }
 
     const current = downsampleLuminance(pixels, divisor);
     const previous = job.reset === true ? null : this.previousLuminance;
     const field = motionMagnitudeField(current, previous, job.threshold);
+    // Solved only when asked for: `boost`/`gate` read magnitude alone, and the
+    // LK pyramid is several times the cost of the difference that feeds it.
+    const flow = wantFlow ? lucasKanadeFlow(current, previous).flow : null;
     this.previousLuminance = current;
     this.lastMode = 'inline';
 
     return {
       kind: 'cpu-motion-field',
       field,
+      flow,
       width: current.width,
       height: current.height,
       stats: summariseMotionField(field),

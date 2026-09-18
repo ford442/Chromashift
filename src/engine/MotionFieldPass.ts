@@ -4,6 +4,7 @@ import {
   EMPTY_MOTION_FIELD_STATS,
   publishMotionFieldBreadcrumbs,
   publishMotionFieldEnergy,
+  publishMotionFieldHasFlow,
   type MotionFieldStats,
 } from './compute/chores';
 import { MOTION_FIELD_DIVISOR } from './motionModes';
@@ -84,12 +85,39 @@ export class MotionFieldPass {
     }
 
     this.fieldTexture = output.fieldTexture;
+    publishMotionFieldHasFlow(false);
     if (this.lastBackend !== 'webgpu' || this.lastReason !== null) {
       this.lastBackend = 'webgpu';
       this.lastReason = null;
       publishMotionFieldBreadcrumbs('webgpu', null);
     }
     return this.fieldTexture;
+  }
+
+  /**
+   * Encode the Lucas–Kanade dispatches on top of the field {@link encode} just
+   * produced and swap in the combined `(magnitude, vx, vy, 1)` texture.
+   *
+   * Only `motionMode: 'direction'` calls this, and only after `encode` returned
+   * a texture. A separate call rather than a flag on `encode` so the caller can
+   * drop a timestamp marker between the two halves — that is what splits the
+   * Perf HUD's `field` and `flow` numbers apart.
+   */
+  encodeFlow(enc: GPUCommandEncoder): GPUTexture | null {
+    if (!this.fieldTexture) return null;
+    const flowTexture = this.backend.encodeMotionFlowInto(enc);
+    if (!flowTexture) {
+      publishMotionFieldHasFlow(false);
+      return null;
+    }
+    this.fieldTexture = flowTexture;
+    publishMotionFieldHasFlow(true);
+    return flowTexture;
+  }
+
+  /** True when the last encoded frame carried a solved velocity in `gb`. */
+  hasFlowField(): boolean {
+    return this.backend.hasMotionFlow();
   }
 
   /**
@@ -121,6 +149,7 @@ export class MotionFieldPass {
 
   private publishDecline(reason: string): void {
     this.fieldTexture = null;
+    publishMotionFieldHasFlow(false);
     if (this.lastReason === reason && this.lastBackend === null) return;
     this.lastBackend = null;
     this.lastReason = reason;

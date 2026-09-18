@@ -21,6 +21,8 @@ import {
   COINCIDENCE_COMPUTE_SHADER,
   HISTOGRAM_COMPUTE_SHADER,
   MOTION_FIELD_COMPUTE_SHADER,
+  MOTION_FLOW_COARSE_COMPUTE_SHADER,
+  MOTION_FLOW_REFINE_COMPUTE_SHADER,
 } from './kernels';
 import { EMPTY_MOTION_FIELD_STATS, motionFieldSize, type MotionFieldStats } from './motionKernel';
 import { layerTextureEntries, sameLayerTextures, type LayerTextures } from '../../BindGroupCache';
@@ -137,6 +139,27 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   private motionBindGroupSource: GPUTexture | null = null;
   private motionStatsMapPending = false;
   private lastMotionStats: MotionFieldStats = EMPTY_MOTION_FIELD_STATS;
+
+  // ── Stage 2: Lucas–Kanade flow ─────────────────────────────────────────────
+  // Built on first use, so a session that never selects `motionMode:
+  // 'direction'` never compiles either pipeline or allocates either texture.
+  private motionFlowCoarsePipeline: GPUComputePipeline | null = null;
+  private motionFlowRefinePipeline: GPUComputePipeline | null = null;
+  private motionFlowCoarseBGL: GPUBindGroupLayout | null = null;
+  private motionFlowRefineBGL: GPUBindGroupLayout | null = null;
+  private motionFlowUniformBuffer: GPUBuffer | null = null;
+  /** Half-field-resolution seed the refine pass upsamples. */
+  private motionCoarseFlowTexture: GPUTexture | null = null;
+  /** Field resolution, `(magnitude, vx, vy, 1)` — what persistence binds. */
+  private motionFlowFieldTexture: GPUTexture | null = null;
+  private motionCoarseWidth = 0;
+  private motionCoarseHeight = 0;
+  /** Indexed by the luminance write slot, exactly like `motionBindGroups`. */
+  private motionFlowCoarseBindGroups: [GPUBindGroup | null, GPUBindGroup | null] = [null, null];
+  private motionFlowRefineBindGroups: [GPUBindGroup | null, GPUBindGroup | null] = [null, null];
+  /** Set by `encodeMotionFieldInto`, consumed by `encodeMotionFlowInto`. */
+  private motionFlowPending: { readSlot: 0 | 1; writeSlot: 0 | 1; reset: boolean } | null = null;
+  private motionHasFlow = false;
 
   private coincidencePipeline: GPUComputePipeline | null = null;
   /** Layer count `coincidencePipeline` was emitted and laid out for. */
@@ -548,11 +571,15 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     const source = job.source;
     if (!source) return null;
     const enc = this.device.createCommandEncoder();
-    const output = this.encodeMotionFieldInto(enc, source, job.width, job.height, {
+    let output = this.encodeMotionFieldInto(enc, source, job.width, job.height, {
       divisor: job.divisor ?? 4,
       threshold: job.threshold,
       reset: job.reset === true,
     });
+    if (output && job.flow === true) {
+      const flowTexture = this.encodeMotionFlowInto(enc);
+      if (flowTexture) output = { ...output, fieldTexture: flowTexture, hasFlow: true };
+    }
     this.device.queue.submit([enc.finish()]);
     return output;
   }
@@ -630,13 +657,109 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
 
     this.motionLumSlot = writeSlot;
     this.motionHistoryValid = true;
+    // The flow pass reads the same two history slots this dispatch just used,
+    // so it has to run before the next field encode flips them.
+    this.motionFlowPending = { readSlot, writeSlot, reset };
+    this.motionHasFlow = false;
 
     return {
       kind: 'gpu-motion-field',
       fieldTexture: this.motionFieldTexture!,
       width: this.motionFieldWidth,
       height: this.motionFieldHeight,
+      hasFlow: false,
     };
+  }
+
+  /**
+   * Encode the two Lucas–Kanade dispatches on top of the field this encoder's
+   * last {@link encodeMotionFieldInto} produced, and return the *combined*
+   * `(magnitude, vx, vy, 1)` texture the persistence pass should bind instead.
+   *
+   * Separate from the field encode on purpose: the two dispatches are the Perf
+   * HUD's `flow` half, so the caller needs somewhere to put a timestamp marker
+   * between them, and `motionMode: boost | gate` simply never calls this.
+   *
+   * Returns `null` when no field has been encoded into this encoder yet, which
+   * leaves the caller on the Stage 1 texture rather than a blank one.
+   */
+  encodeMotionFlowInto(enc: GPUCommandEncoder): GPUTexture | null {
+    const pending = this.motionFlowPending;
+    if (!pending || !this.motionFieldTexture) return null;
+    this.motionFlowPending = null;
+
+    this.ensureMotionFlowPipelines();
+    this.ensureMotionFlowTextures();
+
+    const uniformData = new Uint32Array(8);
+    uniformData[0] = this.motionFieldWidth;
+    uniformData[1] = this.motionFieldHeight;
+    uniformData[2] = this.motionCoarseWidth;
+    uniformData[3] = this.motionCoarseHeight;
+    uniformData[4] = pending.reset ? 1 : 0;
+    this.device.queue.writeBuffer(this.motionFlowUniformBuffer!, 0, uniformData);
+
+    const prevView = this.motionLumTextures[pending.readSlot]!.createView();
+    const curView = this.motionLumTextures[pending.writeSlot]!.createView();
+
+    let coarseBindGroup = this.motionFlowCoarseBindGroups[pending.writeSlot];
+    if (!coarseBindGroup) {
+      coarseBindGroup = this.device.createBindGroup({
+        layout: this.motionFlowCoarseBGL!,
+        entries: [
+          { binding: 0, resource: prevView },
+          { binding: 1, resource: curView },
+          { binding: 2, resource: this.motionCoarseFlowTexture!.createView() },
+          { binding: 3, resource: { buffer: this.motionFlowUniformBuffer! } },
+        ],
+      });
+      this.motionFlowCoarseBindGroups[pending.writeSlot] = coarseBindGroup;
+    }
+
+    let refineBindGroup = this.motionFlowRefineBindGroups[pending.writeSlot];
+    if (!refineBindGroup) {
+      refineBindGroup = this.device.createBindGroup({
+        layout: this.motionFlowRefineBGL!,
+        entries: [
+          { binding: 0, resource: prevView },
+          { binding: 1, resource: curView },
+          { binding: 2, resource: this.motionCoarseFlowTexture!.createView() },
+          { binding: 3, resource: this.motionFieldTexture.createView() },
+          { binding: 4, resource: this.motionFlowFieldTexture!.createView() },
+          { binding: 5, resource: { buffer: this.motionFlowUniformBuffer! } },
+        ],
+      });
+      this.motionFlowRefineBindGroups[pending.writeSlot] = refineBindGroup;
+    }
+
+    const coarsePass = enc.beginComputePass();
+    coarsePass.setPipeline(this.motionFlowCoarsePipeline!);
+    coarsePass.setBindGroup(0, coarseBindGroup);
+    coarsePass.dispatchWorkgroups(
+      Math.ceil(this.motionCoarseWidth / WORKGROUP_SIZE),
+      Math.ceil(this.motionCoarseHeight / WORKGROUP_SIZE),
+    );
+    coarsePass.end();
+
+    // A separate pass, not a second dispatch in the same one: the refine
+    // kernel reads every coarse cell its window touches, so it needs the
+    // coarse writes to be visible, which only a pass boundary guarantees.
+    const refinePass = enc.beginComputePass();
+    refinePass.setPipeline(this.motionFlowRefinePipeline!);
+    refinePass.setBindGroup(0, refineBindGroup);
+    refinePass.dispatchWorkgroups(
+      Math.ceil(this.motionFieldWidth / WORKGROUP_SIZE),
+      Math.ceil(this.motionFieldHeight / WORKGROUP_SIZE),
+    );
+    refinePass.end();
+
+    this.motionHasFlow = true;
+    return this.motionFlowFieldTexture;
+  }
+
+  /** True when the last encoded frame carried a solved velocity in `gb`. */
+  hasMotionFlow(): boolean {
+    return this.motionHasFlow;
   }
 
   /** The field texture the last `encodeMotionFieldInto` wrote, if any. */
@@ -757,12 +880,114 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     });
   }
 
+  /**
+   * Compile the two flow pipelines. Called only from `encodeMotionFlowInto`,
+   * so `motionMode: off | boost | gate` never pays for either shader module.
+   */
+  private ensureMotionFlowPipelines(): void {
+    if (this.motionFlowCoarsePipeline && this.motionFlowRefinePipeline) return;
+
+    // r32float is not filterable without an optional feature, so both history
+    // planes are declared unfilterable and every read is a `textureLoad` —
+    // which is what the CPU mirrors do too (a clamped fetch, not a sampler).
+    const lumEntry = (binding: number): GPUBindGroupLayoutEntry => ({
+      binding,
+      visibility: GPUShaderStage.COMPUTE,
+      texture: { sampleType: 'unfilterable-float' },
+    });
+
+    this.motionFlowCoarseBGL = this.device.createBindGroupLayout({
+      entries: [
+        lumEntry(0),
+        lumEntry(1),
+        {
+          binding: 2,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' },
+        },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.motionFlowCoarsePipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.motionFlowCoarseBGL] }),
+      compute: {
+        module: this.device.createShaderModule({ code: MOTION_FLOW_COARSE_COMPUTE_SHADER }),
+        entryPoint: 'motion_flow_coarse_main',
+      },
+    });
+
+    this.motionFlowRefineBGL = this.device.createBindGroupLayout({
+      entries: [
+        lumEntry(0),
+        lumEntry(1),
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
+        {
+          binding: 4,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: { access: 'write-only', format: 'rgba16float', viewDimension: '2d' },
+        },
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.motionFlowRefinePipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.motionFlowRefineBGL] }),
+      compute: {
+        module: this.device.createShaderModule({ code: MOTION_FLOW_REFINE_COMPUTE_SHADER }),
+        entryPoint: 'motion_flow_refine_main',
+      },
+    });
+
+    this.motionFlowUniformBuffer = this.device.createBuffer({
+      size: 32,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  /**
+   * (Re)allocate the coarse seed and the combined output at the current field
+   * geometry. `destroyMotionTextures` has already dropped both whenever the
+   * field resized, so this only ever allocates on the first flow frame after
+   * a geometry change.
+   *
+   * `rgba16float` for both, not `rg16float`: only the former is a core
+   * storage-texture format, and a feature request for the narrower one is not
+   * worth the extra failure mode on one quarter-scale texture.
+   */
+  private ensureMotionFlowTextures(): void {
+    if (this.motionCoarseFlowTexture && this.motionFlowFieldTexture) return;
+    this.motionCoarseWidth = Math.max(1, Math.ceil(this.motionFieldWidth / 2));
+    this.motionCoarseHeight = Math.max(1, Math.ceil(this.motionFieldHeight / 2));
+    this.motionCoarseFlowTexture = this.device.createTexture({
+      size: [this.motionCoarseWidth, this.motionCoarseHeight, 1],
+      format: 'rgba16float',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.motionFlowFieldTexture = this.device.createTexture({
+      size: [this.motionFieldWidth, this.motionFieldHeight, 1],
+      format: 'rgba16float',
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.motionFlowCoarseBindGroups = [null, null];
+    this.motionFlowRefineBindGroups = [null, null];
+  }
+
   private destroyMotionTextures(): void {
     this.motionFieldTexture?.destroy();
     this.motionLumTextures[0]?.destroy();
     this.motionLumTextures[1]?.destroy();
+    this.motionCoarseFlowTexture?.destroy();
+    this.motionFlowFieldTexture?.destroy();
     this.motionFieldTexture = null;
     this.motionLumTextures = [null, null];
+    this.motionCoarseFlowTexture = null;
+    this.motionFlowFieldTexture = null;
+    this.motionCoarseWidth = 0;
+    this.motionCoarseHeight = 0;
+    this.motionFlowCoarseBindGroups = [null, null];
+    this.motionFlowRefineBindGroups = [null, null];
+    this.motionFlowPending = null;
+    this.motionHasFlow = false;
     this.motionFieldWidth = 0;
     this.motionFieldHeight = 0;
     this.motionSourceWidth = 0;
@@ -799,6 +1024,8 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     this.motionUniformBuffer?.destroy();
     this.motionStatsBuffer?.destroy();
     this.motionStatsStagingBuffer?.destroy();
+    this.motionFlowUniformBuffer?.destroy();
+    this.motionFlowUniformBuffer = null;
     this.motionUniformBuffer = null;
     this.motionStatsBuffer = null;
     this.motionStatsStagingBuffer = null;

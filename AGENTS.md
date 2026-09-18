@@ -141,10 +141,15 @@ src/
     │   │   ├── runtime.ts           # runJob() — walks webgpu → wasm → ts
     │   │   ├── webgpuBackend.ts     # WebGPU compute lane (adopts renderer device)
     │   │   ├── cpuBackend.ts        # WASM + TypeScript lanes (injected host)
+    │   │   ├── motionKernel.ts      # Portable frame difference + Lucas–Kanade flow reference
+    │   │   ├── motionFlowKernels.ts # WGSL for the two Lucas–Kanade compute passes
+    │   │   ├── motionWorkerHost.ts  # Worker-backed motion kernel (CpuMotionFieldHost)
     │   │   ├── kernels.ts           # Shared WGSL threshold helpers (C++ parity)
     │   │   ├── support.ts           # Feature detection, kill switch, breadcrumbs
     │   │   ├── chromashiftHost.ts   # Binds the CPU lanes to WasmEngine (app-specific)
     │   │   └── index.ts             # Public entry — sibling apps import from here
+    │   ├── analysis.worker.ts    # Off-main-thread image-analysis CPU lane
+    │   ├── motion.worker.ts      # Off-main-thread motion-field CPU lane (the LK solve)
     │   ├── GpuImageAnalysis.ts   # Thin adapter over the chores WebGPU lane
     │   └── GpuChoreSession.ts    # One WebGpuChoreBackend per GPUDevice, ref-counted leases
     └── math/                 # Pure TS (bandClassification, rotation, decay) shared with tests/C++ parity
@@ -345,7 +350,7 @@ Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K
 
 **One backend per device.** All three ops share a single `WebGpuChoreBackend` per `GPUDevice`, handed out as ref-counted leases by `src/engine/compute/GpuChoreSession.ts`. `GpuImageAnalysis`, `PersistencePass` (coincidence), and `MotionFieldPass` each *borrow* it rather than constructing one, so the compute pipelines, staging buffers, and bind-group caches exist once instead of three times; `RendererOrchestrator` holds a session-lifetime lease, and the backend is destroyed only when the last holder releases. See `docs/gpu-bootstrap.md` § *gpu-chores*.
 
-The facade dispatches three ops: `image-analysis` (above), `coincidence` (the tracer overlap stamp — GPU-only, the CPU lanes decline it outright), and `motion-field` (the temporal tracer term — see **Persistence / Tracer System** below, and `docs/LIVE_SOURCE.md`). `motion-field` is the one op with a real implementation on *both* lane families: the `webgpu` lane keeps the field a `GPUTexture`, and the `wasm`/`ts` lanes return a small `Float32Array` so the WebGL diagnostic backend and headless CI exercise the same maths (`chores/motionKernel.ts` is the portable reference the WGSL kernel mirrors).
+The facade dispatches three ops: `image-analysis` (above), `coincidence` (the tracer overlap stamp — GPU-only, the CPU lanes decline it outright), and `motion-field` (the temporal tracer term — see **Persistence / Tracer System** below, and `docs/LIVE_SOURCE.md`). `motion-field` is the one op with a real implementation on *both* lane families: the `webgpu` lane keeps the field a `GPUTexture`, and the `wasm`/`ts` lanes return a small `Float32Array` so the WebGL diagnostic backend and headless CI exercise the same maths (`chores/motionKernel.ts` is the portable reference the WGSL kernel and the C++ `computeMotionFlow` both mirror). It is also the one op with a second, opt-in stage: `motionMode: 'direction'` sets `flow` on the job and the lane solves coarse-to-fine Lucas–Kanade on top of the frame difference. The CPU lanes run that solve in `motion.worker.ts` rather than on the animation thread — lane selection and the breadcrumbs stay on the main thread, only the arithmetic moves.
 
 **Selection order** — encoded once in `CHORE_BACKEND_ORDER` and walked by `runJob({ op: 'image-analysis', prefer: 'auto' })`; `useClassificationMask.ts` calls the facade rather than branching itself:
 
@@ -359,7 +364,7 @@ A pinned `prefer` (`'webgpu' | 'wasm' | 'ts'`) never slides to another lane — 
 
 **Device policy**: the WebGPU lane **adopts** the renderer-owned `GPUDevice` from `RendererOrchestrator`. It must never call `requestAdapter`/`requestDevice`. `useClassificationMask` registers the orchestrator's existing lane instance (`GpuImageAnalysis.backend`) rather than constructing a second one, so pipelines, staging buffers, and the reused mask texture stay shared — repeated image loads do not grow VRAM.
 
-**Breadcrumbs are per-op.** `window.gpuChoreBackend` / `window.gpuChoreReason` record the lane that served the last load-time analysis; `window.motionFieldBackend` / `window.motionFieldReason` do the same for `motion-field`, which runs on the render loop's cadence and would otherwise stamp over the analysis crumb dozens of times a second. `window.motionFieldEnergy` carries the field's mean magnitude — the only number that crosses back to the CPU on the WebGPU lane.
+**Breadcrumbs are per-op.** `window.gpuChoreBackend` / `window.gpuChoreReason` record the lane that served the last load-time analysis; `window.motionFieldBackend` / `window.motionFieldReason` do the same for `motion-field`, which runs on the render loop's cadence and would otherwise stamp over the analysis crumb dozens of times a second. `window.motionFieldEnergy` carries the field's mean magnitude — the only number that crosses back to the CPU on the WebGPU lane. `window.motionFieldHasFlow` says whether the field's `gb` channels carry a solved velocity (Stage 2) or the zero vector (Stage 1), and `window.motionFieldFlow` carries the mean velocity over moving cells on the CPU lanes.
 
 **CPU contract**: 256-bin histogram readback only. The mask stays a `GPUTexture` on the GPU lane; never add a full-image readback. The CPU lanes return a `Uint8Array` that the caller uploads into an `r8uint` texture.
 
@@ -393,9 +398,10 @@ Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, C
 
 1. **Layers** — three colour-band passes (MSAA resolve when enabled).
 2. **Motion** — the quarter-resolution motion field, when `tracers.motionMode` is not `off`. The marker is written every frame regardless, so the row reads `0.00 ms` when the pass did not run rather than shifting every row below it.
-3. **Persistence** — dual tracer ping-pong + diagnostic texture.
-4. **Compositor** — final blend or alternate main-view pass (tracer inspect, layer isolation, etc.).
-5. **Readback** — preview thumbnail + collision-stats blit/copy when queued.
+3. **Motion flow** — the two Lucas–Kanade dispatches, `motionMode: 'direction'` only. Split from **Motion** so switching into `direction` reads as new work rather than as the frame-difference pass regressing.
+4. **Persistence** — dual tracer ping-pong + diagnostic texture.
+5. **Compositor** — final blend or alternate main-view pass (tracer inspect, layer isolation, etc.).
+6. **Readback** — preview thumbnail + collision-stats blit/copy when queued.
 
 Timestamps resolve into a `QUERY_RESOLVE | COPY_SRC` buffer, then `copyBufferToBuffer` into a `MAP_READ | COPY_DST` readback (`MAP_READ` may only pair with `COPY_DST`). Results appear one frame later. If query/buffer allocation fails or the timestamp period is 0, GPU timing is skipped and the HUD uses CPU `performance.now()` — renderer init must not fail. The Diagnostics panel **Perf HUD** toggle (`output.performanceHudEnabled`) gates all query writes and resolves — when off, there is zero timestamp cost. The HUD shows CPU ms, per-pass GPU ms, an approximate bandwidth model, a 120-frame sparkline, budget warnings (`1000 / fps` ms), and optional auto-degrade (disable MSAA, tracer scale ×0.75, live preview readback off).
 

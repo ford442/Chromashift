@@ -52,7 +52,9 @@ if (typeof mod._computeClassificationMaskLut !== 'function') {
 }
 
 console.log(`bench:wasm — ${WIDTH}×${HEIGHT} golden image (${(BYTE_LENGTH / 1e6).toFixed(1)} MB RGBA)`);
-const { results, maskMismatches, avgLum } = runBenchmark(mod, { pixels: buildGoldenImage() });
+const { results, maskMismatches, flowMismatches, avgLum } = runBenchmark(
+  mod, { pixels: buildGoldenImage() },
+);
 
 let failed = false;
 
@@ -66,6 +68,12 @@ for (const [name, { ms, mpxps, floor, pass }] of Object.entries(results)) {
 
 console.log(`  avgLum ${avgLum.toFixed(6)} · mask vs maskLut mismatches: ${maskMismatches}`);
 if (maskMismatches !== 0) failed = true;
+
+// The motion-flow fixture is pinned against the TypeScript reference; a
+// mismatch means the SIMD128 coarse level and the scalar bodies have diverged,
+// which the host C++ tests cannot see.
+console.log(`  motion-flow fixture mismatches: ${flowMismatches}`);
+if (flowMismatches !== 0) failed = true;
 
 if (!assertFloors) {
   console.log('bench:wasm — report only (pass --assert to enforce the floors)');

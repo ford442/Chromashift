@@ -51,13 +51,27 @@ export { CpuChoreBackend } from './cpuBackend';
 export type { CoincidenceEncodeParams, MotionFieldEncodeParams } from './webgpuBackend';
 export { WebGpuChoreBackend, averageFromHistogram } from './webgpuBackend';
 
-export type { LuminancePlane, MotionFrame } from './motionKernel';
+export type { LuminancePlane, MotionFlowField, MotionFlowStats, MotionFrame } from './motionKernel';
 export {
   EMPTY_MOTION_FIELD_STATS,
+  EMPTY_MOTION_FLOW_STATS,
+  LK_EPSILON,
+  LK_MAX_FLOW,
+  LK_MAX_STEP,
+  LK_PYRAMID_LEVELS,
+  LK_REGULARIZATION,
+  LK_WINDOW_RADIUS,
+  MOTION_FLOW_MIN_SPEED,
   downsampleLuminance,
+  halveLuminancePlane,
+  lucasKanadeFlow,
+  lucasKanadeStep,
   motionFieldSize,
   motionMagnitudeField,
+  planeAt,
+  samplePlaneBilinear,
   summariseMotionField,
+  summariseMotionFlow,
 } from './motionKernel';
 
 export { ChoreRuntimeImpl, createChoresRuntime } from './runtime';
@@ -73,6 +87,8 @@ export {
   publishGpuComputeBreadcrumbs,
   publishMotionFieldBreadcrumbs,
   publishMotionFieldEnergy,
+  publishMotionFieldFlow,
+  publishMotionFieldHasFlow,
   readGpuComputeDiagnostics,
 } from './support';
 
@@ -81,6 +97,8 @@ export {
   COINCIDENCE_COMPUTE_SHADER,
   HISTOGRAM_COMPUTE_SHADER,
   MOTION_FIELD_COMPUTE_SHADER,
+  MOTION_FLOW_COARSE_COMPUTE_SHADER,
+  MOTION_FLOW_REFINE_COMPUTE_SHADER,
   WGSL_IMAGE_ANALYSIS_HELPERS,
 } from './kernels';
 

@@ -25,6 +25,13 @@ export function motionModeIndex(mode: MotionMode): number {
   return index < 0 ? 0 : index;
 }
 
+/**
+ * Shader-side index of `direction` — the one mode that reads the flow vector,
+ * and so the one mode that pays for the Lucas–Kanade pass. Named rather than
+ * spelled `3` at each call site so the renderers and the shaders cannot drift.
+ */
+export const MOTION_MODE_DIRECTION = MOTION_MODES.indexOf('direction');
+
 /** Narrow an untrusted value (preset document, URL param) to a known mode. */
 export function parseMotionMode(value: unknown): MotionMode {
   return typeof value === 'string' && (MOTION_MODES as readonly string[]).includes(value)

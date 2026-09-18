@@ -45,6 +45,13 @@ function PerfHudTelemetry({ frameRate, rendererBackend }: { frameRate: number; r
             <span className="text-right tabular-nums" data-testid="perf-hud-motion-ms">
               {formatPassMs(gpuPasses?.motionMs)} ms
             </span>
+            {/* Split from Motion above: the frame difference runs in every mode
+                but `off`, while the Lucas-Kanade pass is `direction` only, and
+                a single row would make that mode switch look like a regression. */}
+            <span>Motion flow</span>
+            <span className="text-right tabular-nums" data-testid="perf-hud-motion-flow-ms">
+              {formatPassMs(gpuPasses?.motionFlowMs)} ms
+            </span>
             <span>Persistence</span>
             <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.persistenceMs)} ms</span>
             <span>Compositor</span>

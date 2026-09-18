@@ -13,6 +13,7 @@ import { emitCoincidenceDecayWgsl } from '../graph/templates/wgsl';
 import { emitCoincidenceDecayGlsl } from '../graph/templates/glsl';
 import { CANONICAL_LAYER_COUNT } from '../graph/layerSpecs';
 import { normaliseShaderSource } from '../graph/shaderText';
+import { MOTION_FLOW_MIN_SPEED } from '../compute/chores/motionKernel';
 
 /**
  * `motionMode: 'off'` must be *the same program*, not a program that happens
@@ -74,6 +75,27 @@ describe('motion variants', () => {
     expect(persistenceCompositeMotionFragmentSource).toContain('pu.motionMode == 2u && motion <= 0.0');
     expect(persistenceCompositeMotionFragmentSource)
       .toContain('motionDecayScale(motion, pu.motionDecayBias, pu.motionMode != 0u)');
+  });
+
+  it('both backends gate the hue on the same minimum flow speed', () => {
+    // Below it the solve has no direction worth showing, so the hue pins to
+    // zero — which is exactly what a Stage 1 field (a zero flow vector
+    // everywhere) rendered, so a preset saved then keeps its magnitude tint.
+    const literal = MOTION_FLOW_MIN_SPEED.toFixed(3);
+    expect(persistenceMotionFragmentSource)
+      .toContain(`select(0.0, atan2(flow.y, flow.x), speed > ${literal})`);
+    expect(PERSISTENCE_MOTION_FRAGMENT_SOURCE)
+      .toContain(`speed > ${literal} ? atan(flow.y, flow.x) : 0.0`);
+  });
+
+  it('a zero flow vector still produces the Stage 1 magnitude tint', () => {
+    // The gate has to leave `atan2(0, 0)`'s hue in place rather than pick a
+    // different fallback: that is the byte-level meaning of "old presets do
+    // not shift". Both emitters spell the fallback as literal zero.
+    expect(persistenceMotionFragmentSource).toContain('let speed = length(flow);');
+    expect(persistenceMotionFragmentSource).toContain('fract(angle / 6.2831853 + 1.0)');
+    expect(PERSISTENCE_MOTION_FRAGMENT_SOURCE).toContain('float speed = length(flow);');
+    expect(PERSISTENCE_MOTION_FRAGMENT_SOURCE).toContain('fract(angle / 6.2831853 + 1.0)');
   });
 
   it('GLSL mirrors the WGSL uniforms and modes field for field', () => {

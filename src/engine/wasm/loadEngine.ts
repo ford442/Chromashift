@@ -145,7 +145,12 @@ export async function loadWasmEngine(): Promise<boolean> {
     // Build the URL at runtime so Rollup does not attempt to resolve or bundle it.
     // The Emscripten glue lives in /public/ and is served as a static asset; it is
     // not part of the Vite module graph.
-    const assetBaseUrl = new URL(import.meta.env.BASE_URL || './', window.location.href);
+    // `globalThis.location`, not `window.location`: this loader runs inside
+    // `analysis.worker.ts` and `motion.worker.ts` too, and a worker realm has
+    // no `window` — the ReferenceError used to be swallowed by the catch below
+    // and reported as "WASM assets not built", so both workers silently ran the
+    // TypeScript fallback forever.
+    const assetBaseUrl = new URL(import.meta.env.BASE_URL || './', globalThis.location.href);
     const engineUrl = new URL('chromashift_engine.js', assetBaseUrl).href;
     const glue = await import(/* @vite-ignore */ engineUrl) as GlueModule;
     wasmModule = await glue.default();
