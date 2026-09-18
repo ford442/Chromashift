@@ -1,5 +1,6 @@
-import { WebGpuChoreBackend } from './chores';
+import type { WebGpuChoreBackend } from './chores';
 import type { GpuComputeSupport } from './chores';
+import { acquireGpuChoreSession, type GpuChoreLease } from './GpuChoreSession';
 
 export interface GpuImageAnalysisResult {
   avgLuminance: number;
@@ -15,16 +16,19 @@ export interface GpuImageAnalysisResult {
  * call sites (`RendererOrchestrator`, `useClassificationMask`) unchanged.
  *
  * The `GPUDevice` is **adopted** from the renderer session — this never
- * requests a device of its own.
+ * requests a device of its own — and the chore backend behind it is the one
+ * shared per device (see `GpuChoreSession`), not a private instance.
  *
  * Fallbacks are handled by callers (WasmEngine / bandClassification.ts), or by
  * `runJob({ prefer: 'auto' })` when going through the facade directly.
  */
 export class GpuImageAnalysis {
+  private readonly lease: GpuChoreLease;
   private readonly gpu: WebGpuChoreBackend;
 
   constructor(device: GPUDevice) {
-    this.gpu = new WebGpuChoreBackend(device);
+    this.lease = acquireGpuChoreSession(device);
+    this.gpu = this.lease.backend;
   }
 
   /** The chores lane this adapter wraps, for callers that speak `runJob`. */
@@ -68,7 +72,12 @@ export class GpuImageAnalysis {
     };
   }
 
+  /**
+   * Release this adapter's lease. The shared backend is destroyed only when the
+   * last holder lets go — normally `RendererOrchestrator` at session teardown —
+   * so tearing down analysis does not pull coincidence or motion down with it.
+   */
   destroy(): void {
-    this.gpu.destroy();
+    this.lease.release();
   }
 }

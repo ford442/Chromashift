@@ -8,7 +8,7 @@ import {
   classifyPixelBands,
   type BandName,
 } from '../math/bandClassification';
-import { CLASSIFICATION_COMPUTE_SHADER } from '../compute/wgslSnippets';
+import { CLASSIFICATION_COMPUTE_SHADER } from '../compute/chores/kernels';
 import { LAYER_FRAGMENT_SOURCE } from '../webgl/shaders/layers';
 import { LAYER_ISOLATION_DEBUG_FRAGMENT } from '../webgl/shaders/debug';
 import {

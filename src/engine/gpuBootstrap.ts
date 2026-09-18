@@ -1,6 +1,7 @@
 import {
   CHROMASHIFT_OPTIONAL_FEATURES,
   CHROMASHIFT_TARGET_MAX_TEXTURE,
+  WEBGPU_POWER_PREFERENCE_ATTEMPTS,
   getWebGL2ContextAttributes,
   type RendererCanvasOptions,
 } from './gpuOptions';
@@ -170,9 +171,13 @@ export async function requestWebGpuAdapter(
   if (gpuDeviceGate.adapterPromise) return gpuDeviceGate.adapterPromise;
 
   gpuDeviceGate.adapterPromise = (async () => {
-    const attempts: GPUPowerPreference[] = powerPreference === 'high-performance'
-      ? ['high-performance', 'low-power']
-      : [powerPreference, 'high-performance'];
+    // Adapter attempts, documented beside the list in gpuOptions.ts. Distinct
+    // from the three requestDevice strategies below (MAX_DEVICE_REQUEST_STRATEGIES).
+    const attempts: GPUPowerPreference[] = WEBGPU_POWER_PREFERENCE_ATTEMPTS.includes(
+      powerPreference as (typeof WEBGPU_POWER_PREFERENCE_ATTEMPTS)[number],
+    )
+      ? [powerPreference, ...WEBGPU_POWER_PREFERENCE_ATTEMPTS.filter((p) => p !== powerPreference)]
+      : [powerPreference, ...WEBGPU_POWER_PREFERENCE_ATTEMPTS];
 
     for (const preference of attempts) {
       const adapter = await navigator.gpu!.requestAdapter({ powerPreference: preference });
@@ -420,21 +425,96 @@ export function buildWebGpuCanvasConfiguration(
   return config;
 }
 
+/**
+ * Page-lifetime capability bit for canvas tone mapping.
+ *
+ * `null` = not yet determined. Chromashift reconfigures the canvas on every
+ * resize, DPR change, and Display-P3 toggle, so the old catch-and-retry cost a
+ * thrown exception *per configure* on a browser without tone mapping. Both the
+ * probe and the cache exist so the common path — every configure after the
+ * first — decides from a boolean.
+ */
+let canvasToneMappingSupported: boolean | null = null;
+
+/** Test-only: forget the probed capability so cases do not leak into each other. */
+export function resetCanvasToneMappingSupportForTests(): void {
+  canvasToneMappingSupported = null;
+}
+
+/** What the probe concluded, or `null` before any canvas has been configured. */
+export function getCanvasToneMappingSupport(): boolean | null {
+  return canvasToneMappingSupported;
+}
+
+/**
+ * Feature-detect tone mapping without provoking an exception, where the browser
+ * lets us: `getConfiguration()` (Chrome 131+) echoes back the applied
+ * configuration, so a `toneMapping` that the UA dropped as an unknown
+ * dictionary member is visible as an absent key.
+ *
+ * Returns `null` when the browser gives us nothing to read, in which case the
+ * caller falls back to configure-and-catch — once.
+ */
+function probeToneMappingFromConfiguration(context: GPUCanvasContext): boolean | null {
+  const readConfiguration = (context as GPUCanvasContext & {
+    getConfiguration?: () => GPUCanvasConfiguration | null;
+  }).getConfiguration;
+  if (typeof readConfiguration !== 'function') return null;
+  try {
+    const applied = readConfiguration.call(context);
+    if (!applied) return null;
+    return applied.toneMapping?.mode === 'standard';
+  } catch {
+    return null;
+  }
+}
+
 export function configureWebGpuCanvas(
   context: GPUCanvasContext,
   device: GPUDevice,
   format: GPUTextureFormat,
   options?: WebGpuCanvasOptions,
 ): void {
-  try {
-    context.configure(buildWebGpuCanvasConfiguration(device, format, {
-      ...options,
-      toneMappingMode: options?.toneMappingMode ?? 'standard',
-    }));
-  } catch (error) {
-    console.warn('[Chromashift:GPU] Canvas configure with tone mapping failed, retrying without', error);
+  const requested: WebGpuCanvasOptions = {
+    ...options,
+    toneMappingMode: options?.toneMappingMode ?? 'standard',
+  };
+
+  // Known-unsupported: configure straight away, no tone mapping, no throw.
+  if (canvasToneMappingSupported === false) {
     context.configure(buildWebGpuCanvasConfiguration(device, format, options));
+    return;
   }
+
+  // Known-supported, or not yet probed. The try/catch below can only fire on
+  // the not-yet-probed pass, and its result is cached either way.
+  try {
+    context.configure(buildWebGpuCanvasConfiguration(device, format, requested));
+  } catch (error) {
+    canvasToneMappingSupported = false;
+    console.warn(
+      '[Chromashift:GPU] Canvas configure with tone mapping failed; '
+      + 'disabling it for this page and retrying without',
+      error,
+    );
+    context.configure(buildWebGpuCanvasConfiguration(device, format, options));
+    return;
+  }
+
+  if (canvasToneMappingSupported !== null) return;
+
+  const probed = probeToneMappingFromConfiguration(context);
+  if (probed === false) {
+    // The UA accepted the configure but silently dropped the member. Record it
+    // so later configures skip the key entirely; the current frame is already
+    // configured correctly (tone mapping simply is not applied).
+    canvasToneMappingSupported = false;
+    console.info('[Chromashift:GPU] Canvas tone mapping not supported; configuring without it');
+    return;
+  }
+  // `true`, or `null` when the browser exposes no getConfiguration — treat an
+  // un-thrown configure as support so the fast path is taken next time.
+  canvasToneMappingSupported = true;
 }
 
 export function attachDeviceDiagnostics(

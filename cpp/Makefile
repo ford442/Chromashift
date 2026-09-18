@@ -12,6 +12,12 @@
 #   npm run dev                         # Vite serves the .wasm from /public/
 
 EMCC     := emcc
+# Pinned Emscripten version. `.github/workflows/wasm.yml` reads this file and
+# installs exactly this emsdk, which is what makes "committed artifacts match a
+# clean rebuild" a meaningful check — closure output is only reproducible for a
+# pinned toolchain. `make check` warns when the active emcc disagrees.
+EMSDK_VERSION_FILE := emsdk.version
+EMSDK_VERSION := $(strip $(shell cat $(EMSDK_VERSION_FILE) 2>/dev/null))
 # Resolve node via the shell (skips directories). Raw PATH lookup after
 # `source emsdk_env.sh` can hit the `/…/emsdk/node` *directory* and fail with
 # EACCES when make execs it directly — common under emmake/Colab.
@@ -52,6 +58,10 @@ EXPORTED_FUNCS := \
 # C ABI, and dropping it also drops the -fno-rtti / UNBOUND_TYPE_NAMES workarounds
 # it needed.  `make verify-exports` is the single source of truth for the list.
 #
+# -Wall -Wextra match the host test compile below: the wasm and host builds see
+# the same sources, so a warning that fails `make test-werror` in CI must not be
+# silently absent from the shipped build.
+#
 # -msimd128 enables the hand-written wasm_simd128.h kernels in the engine
 # (guarded by __wasm_simd128__).  No -msse2: nothing includes the x86 headers.
 # ENVIRONMENT=web,worker + FILESYSTEM=0 drop the Node/shell and filesystem glue —
@@ -62,6 +72,8 @@ EXPORTED_FUNCS := \
 # traces and ASSERTIONS output stay readable.  Output is reproducible for a
 # pinned emsdk version, which the wasm-freshness workflow relies on.
 EMFLAGS_COMMON := \
+  -Wall \
+  -Wextra \
   -msimd128 \
   -fno-exceptions \
   -s MODULARIZE=1 \
@@ -81,10 +93,14 @@ EMFLAGS_DEBUG   := -O0 -g -s ASSERTIONS=1 $(EMFLAGS_COMMON)
 CXX      := g++
 TEST_BIN := tests/test_engine
 TEST_SRC := tests/test_engine.cpp
+TEST_ASAN_BIN := tests/test_engine_asan
+# Kept in sync with scripts/gen-compile-commands.mjs — the clangd database
+# spells out this exact invocation.
+TEST_CXXFLAGS := -std=c++17 -Wall -Wextra -I.
 
 # ─── Targets ─────────────────────────────────────────────────────────────────
-.PHONY: all release debug clean check test verify-exports codegen rebuild \
-        ensure-mode ensure-flags _build
+.PHONY: all release debug clean check check-emsdk-version test test-werror test-asan verify-exports \
+        codegen rebuild compile-commands ensure-mode ensure-flags _build
 
 all: release
 
@@ -167,18 +183,62 @@ $(OUT_JS) $(OUT_WASM) &: $(SRC) $(HEADER) $(GEN_HDRS) Makefile
 	@echo "     $(OUT_WASM)"
 
 clean:
-	rm -f $(OUT_JS) $(OUT_WASM) $(TEST_BIN) $(MODE_STAMP) $(FLAGS_STAMP) $(FLAGS_STAMP).new
+	rm -f $(OUT_JS) $(OUT_WASM) $(TEST_BIN) $(TEST_ASAN_BIN) compile_commands.json \
+	  $(MODE_STAMP) $(FLAGS_STAMP) $(FLAGS_STAMP).new
 
 check:
 	@command -v $(EMCC) >/dev/null 2>&1 || \
 	  (echo "❌  emcc not found — run: source /path/to/emsdk/emsdk_env.sh" && exit 1)
 	@echo "✅  emcc found: $$($(EMCC) --version | head -1)"
+	@$(MAKE) --no-print-directory check-emsdk-version
+
+# Compare the active emcc against cpp/emsdk.version. A warning, not an error:
+# a local mismatch is usually fine, but it explains a surprising artifact diff.
+check-emsdk-version:
+	@if [ -z "$(EMSDK_VERSION)" ]; then \
+	  echo "⚠️   $(EMSDK_VERSION_FILE) missing — cannot verify the emsdk pin"; \
+	  exit 0; \
+	fi; \
+	active=$$($(EMCC) -dumpversion 2>/dev/null); \
+	if [ "$$active" = "$(EMSDK_VERSION)" ]; then \
+	  echo "✅  emsdk matches the pin in $(EMSDK_VERSION_FILE): $(EMSDK_VERSION)"; \
+	else \
+	  echo "⚠️   emsdk $$active does not match the pin in $(EMSDK_VERSION_FILE) ($(EMSDK_VERSION))."; \
+	  echo "    Committed public/chromashift_engine.* are reproducible only for the pinned version."; \
+	fi
 
 $(TEST_BIN): $(SRC) $(TEST_SRC) $(HEADER) $(GEN_HDRS)
-	$(CXX) -std=c++17 -Wall -Wextra -I. $(SRC) $(TEST_SRC) -o $(TEST_BIN) -lm
+	$(CXX) $(TEST_CXXFLAGS) $(EXTRA_TEST_CXXFLAGS) $(SRC) $(TEST_SRC) -o $(TEST_BIN) -lm
 
 test: $(TEST_BIN)
 	./$(TEST_BIN)
+
+# Warning gate. CI's `wasm` job runs this instead of plain `test`, so a new
+# implicit conversion or unused parameter fails the build rather than scrolling
+# past. Rebuilds from scratch because -Werror only applies to recompiled TUs.
+test-werror:
+	@rm -f $(TEST_BIN)
+	@$(MAKE) --no-print-directory test EXTRA_TEST_CXXFLAGS="-Werror $(EXTRA_TEST_CXXFLAGS)"
+
+# Host-only sanitizers. Not part of the default PR gate (the instrumented binary
+# is several times slower) and never applied to the shipped .wasm — run it when
+# touching pointer arithmetic in the bulk/LUT kernels:
+#   make -C cpp test-asan
+$(TEST_ASAN_BIN): $(SRC) $(TEST_SRC) $(HEADER) $(GEN_HDRS)
+	$(CXX) $(TEST_CXXFLAGS) -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+	  $(SRC) $(TEST_SRC) -o $(TEST_ASAN_BIN) -lm
+
+test-asan: $(TEST_ASAN_BIN)
+	./$(TEST_ASAN_BIN)
+
+# Write compile_commands.json for the host compile so clangd resolves the
+# scalar engine bodies. Gitignored: it embeds an absolute directory path.
+compile-commands:
+	@if [ -z "$(NODE)" ]; then \
+	  echo "❌  node not found on PATH — cannot write compile_commands.json"; \
+	  exit 1; \
+	fi
+	@$(NODE) ../scripts/gen-compile-commands.mjs
 
 # Ensure EXPORTED_FUNCTIONS matches every EMSCRIPTEN_KEEPALIVE symbol in the header.
 verify-exports:

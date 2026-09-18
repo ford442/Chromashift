@@ -33,7 +33,7 @@ npm test          # Vitest unit tests (src/**/*.test.ts)
 npm run test:e2e  # Playwright E2E (all projects; install browsers first)
 npm run test:e2e:webgl   # Playwright chromium: explicit WebGL diagnostic backend
 npm run test:e2e:webgpu  # WebGPU smoke + compare layouts (chromium-webgpu project)
-npm run test:cpp  # C++ host tests (g++, no Emscripten)
+npm run test:cpp  # C++ host tests (g++, no Emscripten); :werror / :asan variants exist
 npm run bench:wasm # WASM kernel throughput (add -- --assert to enforce the CI floors)
 npm run preview   # Preview the production build locally
 ```
@@ -125,7 +125,7 @@ src/
     │   └── shaders/          # GLSL sources — layers/persistence/compositor emitted from graph/templates/glsl.ts
     ├── WebGPURenderer.ts     # 5-pass GPU renderer orchestration (delegates to the below)
     ├── motionModes.ts         # MotionMode enum + defaults for the temporal tracer term
-    ├── MotionFieldPass.ts     # WebGPU motion field (owns the chore kit's motion lane)
+    ├── MotionFieldPass.ts     # WebGPU motion field (borrows the shared chore backend)
     ├── liveMotionField.ts     # CPU-lane motion sampler for the WebGL diagnostic backend
     ├── WebGPUPipelines.ts, BindGroupCache.ts, PersistencePass.ts, CompositorPass.ts,
     │   TracerInspectPass.ts, GpuReadback.ts, GpuTimestampProfiler.ts  # pass/readback + WebGPU perf HUD
@@ -146,8 +146,7 @@ src/
     │   │   ├── chromashiftHost.ts   # Binds the CPU lanes to WasmEngine (app-specific)
     │   │   └── index.ts             # Public entry — sibling apps import from here
     │   ├── GpuImageAnalysis.ts   # Thin adapter over the chores WebGPU lane
-    │   ├── computeSupport.ts     # Re-export shim → chores/support
-    │   └── wgslSnippets.ts       # Re-export shim → chores/kernels
+    │   └── GpuChoreSession.ts    # One WebGpuChoreBackend per GPUDevice, ref-counted leases
     └── math/                 # Pure TS (bandClassification, rotation, decay) shared with tests/C++ parity
 ```
 
@@ -338,8 +337,10 @@ Full spec: **[docs/PREVIEW_VIEWS.md](docs/PREVIEW_VIEWS.md)**. Compare layouts:
 Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K) images. The kernels and device plumbing live behind the **`gpu-chores`** facade (`src/engine/compute/chores/`); Chromashift is its reference consumer, and sibling apps (`clip_stacker`, `image_video_effects`, `flac_player`, `mod-player`, `web_sequencer`) depend on the same shapes. `GpuImageAnalysis.ts` is now a thin adapter over the facade's WebGPU lane:
 
 1. **Histogram pass** — BT.709 luminance per pixel → 256-bin atomic histogram on GPU; average luminance derived from the histogram (256-entry readback only).
-2. **Classification pass** — writes an `r8uint` band-index mask texture (thresholds in `wgslSnippets.ts`, matching `chromashift_engine.cpp` / `bandClassification.ts`).
+2. **Classification pass** — writes an `r8uint` band-index mask texture (thresholds in `chores/kernels.ts`, matching `chromashift_engine.cpp` / `bandClassification.ts`).
 3. **Layer binding** — mask is fed into existing layer pipelines via `setClassificationMaskTexture()` when `colorMode === 0` (Original CR0P fixed).
+
+**One backend per device.** All three ops share a single `WebGpuChoreBackend` per `GPUDevice`, handed out as ref-counted leases by `src/engine/compute/GpuChoreSession.ts`. `GpuImageAnalysis`, `PersistencePass` (coincidence), and `MotionFieldPass` each *borrow* it rather than constructing one, so the compute pipelines, staging buffers, and bind-group caches exist once instead of three times; `RendererOrchestrator` holds a session-lifetime lease, and the backend is destroyed only when the last holder releases. See `docs/gpu-bootstrap.md` § *gpu-chores*.
 
 The facade dispatches three ops: `image-analysis` (above), `coincidence` (the tracer overlap stamp — GPU-only, the CPU lanes decline it outright), and `motion-field` (the temporal tracer term — see **Persistence / Tracer System** below, and `docs/LIVE_SOURCE.md`). `motion-field` is the one op with a real implementation on *both* lane families: the `webgpu` lane keeps the field a `GPUTexture`, and the `wasm`/`ts` lanes return a small `Float32Array` so the WebGL diagnostic backend and headless CI exercise the same maths (`chores/motionKernel.ts` is the portable reference the WGSL kernel mirrors).
 
@@ -514,7 +515,7 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | `unit` | `npm test` (Vitest) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu`) |
-| `wasm` | `npm run test:cpp` + `make -C cpp verify-exports` + `npm run build:wasm` + artifact check + `npm run bench:wasm -- --assert` |
+| `wasm` | `npm run test:cpp:werror` + emsdk pin check (`make -C cpp check`) + `make -C cpp verify-exports` + `npm run build:wasm` + artifact check + `npm run bench:wasm -- --assert` |
 
 WebGPU E2E runs in the `chromium-webgpu` Playwright project with
 `--enable-unsafe-webgpu` (see `playwright.config.ts`). For local WebGPU validation,

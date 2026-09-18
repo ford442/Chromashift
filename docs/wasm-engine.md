@@ -302,15 +302,17 @@ integer-sum rewrite applies to both.)
 
 ### Prerequisites
 
-1. Install the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html):
+1. Install the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html) at the **pinned version** in `cpp/emsdk.version`:
 
    ```bash
    git clone https://github.com/emscripten-core/emsdk.git
    cd emsdk
-   ./emsdk install latest
-   ./emsdk activate latest
+   ./emsdk install "$(cat /path/to/Chromashift/cpp/emsdk.version)"
+   ./emsdk activate "$(cat /path/to/Chromashift/cpp/emsdk.version)"
    source ./emsdk_env.sh   # add emcc to PATH
    ```
+
+   `cpp/emsdk.version` is the single source of truth: `.github/workflows/wasm.yml` reads it to install the same toolchain, and `make -C cpp check` warns when the active `emcc` disagrees. Closure output is only reproducible for a pinned version, which is what makes the "committed artifacts match a clean rebuild" check meaningful — building with a different emsdk will show `public/chromashift_engine.*` as spuriously stale.
 
 2. Verify the install:
 
@@ -362,8 +364,29 @@ The output lands in `public/` so Vite's dev server and production build both ser
 npm run check:wasm          # checks that emcc is on PATH
 make -C cpp verify-exports  # EXPORTED_FUNCTIONS matches chromashift_engine.h 1:1
 npm run test:cpp            # host-side g++ unit tests (band ladder, bulk kernels, durationToDecay)
+npm run test:cpp:werror     # same tests, -Werror — what CI's wasm job runs
 npm run bench:wasm -- --assert  # kernel throughput floors (the CI perf gate)
 ```
+
+### Warnings and sanitizers
+
+The host test compile and the `emcc` build both carry `-Wall -Wextra`, so a warning cannot be present in the shipped `.wasm` while being invisible to the test gate.
+
+| Command | What it does |
+|---|---|
+| `npm run test:cpp` | Host tests, warnings printed |
+| `npm run test:cpp:werror` | Host tests with `-Werror` — **the CI gate**; a new implicit conversion or unused parameter fails the `wasm` job |
+| `npm run test:cpp:asan` | Host tests under `-fsanitize=address,undefined`. Optional: the instrumented binary is several times slower, so it is **not** part of the per-PR gate. Run it when touching pointer arithmetic in the bulk/LUT kernels. Host-only — sanitizers are never applied to the shipped `.wasm`. |
+
+### Editor setup (clangd)
+
+```bash
+npm run compile-commands    # writes cpp/compile_commands.json
+```
+
+This emits a database for the **host** (`g++`) compile — the same invocation as `make -C cpp test` — so clangd gives diagnostics and jump-to-definition on the engine's scalar bodies (`classifyRgb`, `computeAverageLuminance`, …). It is gitignored because it embeds an absolute `directory` path; regenerate it per checkout. `cpp/.clangd` points clangd at it.
+
+The SIMD kernels are guarded by `__wasm_simd128__`, which a host target never defines, so clangd greys those blocks out. That is expected — they are built by `emcc -msimd128`, not by the host compiler, and there is no attempt to coax clangd onto a wasm32 target.
 
 ### Clean
 
@@ -409,6 +432,7 @@ build).
 | Flag | Verdict | Reasoning |
 |---|---|---|
 | `--bind` (embind) | **Removed** | Every binding was a `reinterpret_cast` passthrough over the C ABI the module already exported. The TS bridge now calls `mod._name(...)` directly — see "Export strategy" above. Dropping it also dropped `-fno-rtti` and `-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0`, which existed only to make embind compile. |
+| `-Wall -Wextra` | **Added** | Warning parity with the host test compile, which CI runs at `-Werror` (`npm run test:cpp:werror`). Both builds see the same sources, so a warning that fails the test gate must not be silently absent from the shipped build. |
 | `-msse2` | **Removed** | Nothing includes `<emmintrin.h>`; the SIMD kernels use `<wasm_simd128.h>` directly, which needs only `-msimd128`. |
 | `-s EXPORTED_FUNCTIONS=[...]` | **Keep — now the only ABI** | Produces `_malloc` / `_free` and every engine entry point. Guarded by `verify-exports`. |
 | `-msimd128` | **Keep — load-bearing** | Enables the hand-written `wasm_simd128.h` kernels (`__wasm_simd128__`). See "SIMD status" below. |

@@ -4,7 +4,7 @@ Chromashift centralizes renderer initialization in `src/engine/gpuBootstrap.ts` 
 
 ## Renderer orchestration
 
-`RendererOrchestrator` owns one shared GPU session and texture manager, and spawns or destroys N renderer instances bound to separate canvases:
+`RendererOrchestrator` (`src/engine/RendererOrchestrator.ts`) owns one shared GPU session, one `TextureManager`, and one `gpu-chores` backend, and binds N `ChromashiftRenderer` instances to independent canvases (compare dual/quad, kiosk monitors, future WebXR layers).
 
 ```ts
 import { RendererOrchestrator } from './RendererOrchestrator';
@@ -16,28 +16,39 @@ const { orchestrator, primarySlot, backend, fallbackReason } =
     onRuntimeError: (error) => { /* device.lost, uncaptured, … */ },
   });
 
-// Primary slot id defaults to "main"
-rendererRef.current = primarySlot.renderer;
+rendererRef.current = primarySlot.renderer;          // primary slot id is PRIMARY_SLOT_ID
 textureManagerRef.current = orchestrator.textureManagerRef();
 
-// Additional canvases (compare slot B, future quad cells)
-const slotB = orchestrator.createSlot('compare-b', canvasB);
+orchestrator.createSlot('compare-b', canvasB);       // extra WebGPU contexts, same device
+orchestrator.resizeAll();                            // after canvas resize / DPR change
 orchestrator.destroySlot('compare-b');
-
-orchestrator.resizeAll(); // after canvas resize / DPR change
-orchestrator.destroy();   // tears down all slots + device
+orchestrator.destroy();                              // tears down all slots + device
 ```
 
-| Concern | Behaviour |
+```
+RendererOrchestrator.bootstrap(primaryCanvas)
+├── preferred backend webgpu → WebGpuSession (device + primary context)
+│      └── one GpuChoreSession lease — the device's single WebGpuChoreBackend,
+│          borrowed by analysis, coincidence, and motion-field
+├── preferred backend webgl → WebGL2 context (no adapter/device request)
+│      └── no GpuImageAnalysis / no webgpu chore lane
+└── slot "primary" → ChromashiftRenderer on primary canvas
+```
+
+| Concern | Behaviour / owner |
 |---|---|
 | WebGPU bootstrap | First canvas creates `WebGpuSession` (device + primary context); extra slots call `configureWebGpuCanvas` on their own contexts |
 | WebGL diagnostic | Single slot only (primary canvas); compare/multi-view is WebGPU-only. Started only when `backend: 'webgl'` / `getRendererPreference()` is webgl — never after a WebGPU catch. |
+| Primary slot | `PRIMARY_SLOT_ID` (`'primary'`) — created during bootstrap |
+| Compare slot B | `COMPARE_SLOT_B_ID` (`'compare-b'`) via `useCompareSlotRenderer` |
+| Ref wiring from React | `useAppWebGPUInit` → `orchestratorRef` + legacy `rendererRef` / `deviceRef` |
+| Canvas resize | `useCanvasResize` → `resizeAll()`, which reconfigures the session context and every secondary slot context on the **existing** device. Canvas size must not `requestDevice`. |
+| Chore backend | One lease per orchestrator session (see *gpu-chores* below); slot teardown never destroys it |
 | `device.lost` | Orchestrator destroys all active slots; shared `onRuntimeError` surfaces the recoverable overlay |
 | In-app retry | **Retry GPU** (device-lost only) re-runs `RendererOrchestrator.bootstrap` without navigation. `E_OUTOFMEMORY` / exhausted strategies are **not** retryable — reload required. |
-| Resize | `resizeAll()` reconfigures the session context and every secondary slot context on the **existing** device. Canvas size must not `requestDevice`. |
 | Tests | `RendererOrchestrator.test.ts` mocks bootstrap/factories — no WebGPU adapter required in CI |
 
-`useAppWebGPUInit` bootstraps the orchestrator and wires refs (`orchestratorRef`, `rendererRef`, `textureManagerRef`, …). `useCompareSlotRenderer` calls `createSlot('compare-b')` / `destroySlot` when dual layout is active.
+`useAppWebGPUInit` delegates bootstrap and primary-slot creation to the orchestrator; image corpus loading stays in the hook. `useCompareSlotRenderer` calls `createSlot('compare-b')` / `destroySlot` when dual layout is active. Secondary slots must be created **after** bootstrap and destroyed **before** `orchestrator.destroy()` (the compare hook runs between init and unmount for this ordering).
 
 ## Options matrix
 
@@ -45,11 +56,19 @@ orchestrator.destroy();   // tears down all slots + device
 |---|---|---|
 | Alpha | `alphaMode: 'opaque'` on canvas configure | `alpha: false` |
 | Antialias | Layer-pass MSAA (`sampleCount` 1 or 4) | `antialias` from `RendererCanvasOptions` |
-| Preserve buffer | `usage` includes `COPY_SRC` on swapchain | `preserveDrawingBuffer: true` |
+| Preserve buffer | `usage` includes `COPY_SRC` on swapchain | `preserveDrawingBuffer: false` for a live session; `true` only for screenshot / readback callers (see below) |
 | Colour space | `colorSpace: 'srgb'` default; optional `display-p3` from Viewport control / `viewport.colorSpace` | Browser default sRGB framebuffer |
-| Tone mapping | `toneMapping.mode: 'standard'` when set; catch-and-retry without | N/A |
-| Power | `powerPreference: 'high-performance'` | N/A |
+| Tone mapping | `toneMapping.mode: 'standard'`, gated on a page-lifetime capability bit (see below) | N/A |
+| Power | `requestAdapter` walks `WEBGPU_POWER_PREFERENCE_ATTEMPTS` (`high-performance` → `low-power` → no preference) | N/A |
 | Texture headroom | At most three `requestDevice` strategies, then the live device is reused | `gl.MAX_TEXTURE_SIZE` |
+
+**`preserveDrawingBuffer` (WebGL2).** Off by default: the live diagnostic session never reads the canvas back, and preserving costs a copy per frame. It matches WebXR, which already passes `false` explicitly. `resolveWebGL2PreserveDrawingBuffer()` (`gpuOptions.ts`) turns it on for the paths that *do* read back — `canvas.toBlob` / `toDataURL` / `gl.readPixels` outside the draw call, and Playwright element screenshots — by checking, in order:
+
+1. `?preserve_drawing_buffer=1` / `=0`, an explicit override for reproducing a capture problem in a normal tab;
+2. `navigator.webdriver`, which covers the e2e suite without threading a flag through ~40 `page.goto` calls;
+3. otherwise off.
+
+**Canvas tone mapping.** `configureWebGpuCanvas` asks for `toneMapping.mode: 'standard'` but caches the answer in a page-lifetime capability bit, because Chromashift reconfigures on every resize, DPR change, and Display-P3 toggle — the old catch-and-retry cost a thrown exception *per configure* on a browser without it. The first configure feature-detects via `GPUCanvasContext.getConfiguration()` (Chrome 131+), which echoes the applied configuration so a silently dropped dictionary member is visible as an absent key; configure-and-catch remains only as the fallback for browsers that expose no `getConfiguration`, and it runs at most once. `getCanvasToneMappingSupport()` reports what was concluded (`null` before the first configure).
 
 ## Limits and features
 
@@ -62,46 +81,17 @@ orchestrator.destroy();   // tears down all slots + device
 - **Output transfer function**: the pipeline works in **linear light** end to end — source images upload as `rgba8unorm-srgb` (so sampling decodes), and the internal targets (`rg11b10ufloat` / `rgba8unorm`) are linear. `navigator.gpu.getPreferredCanvasFormat()` never returns an `-srgb` format, so every pass that renders to the **canvas format** applies the sRGB OETF itself via `encode_display` (`WGSL_OUTPUT_ENCODE`, emitted into the compositor, tracer view, display, heatmap and compare shaders). Omitting it let the display apply its EOTF twice and crushed every frame. The encode is an exact inverse of the upload decode — a passthrough frame round-trips to the bytes that were uploaded — and carries **no tone curve**; values above 1.0 clip at white. Colours authored in display space (letterbox fill, the compare divider) return *before* the encode, or are written as their linear equivalents.
 - **Probe vs renderer breadcrumbs**: `publishWebGpuProbe` writes `window.webgpuProbe` only. `window.usingWebGPU` / `window.rendererType` are set by `publishRendererBreadcrumbs` after device + swapchain exist. A successful adapter probe must not make `waitForWebGPU` return early.
 
-## Renderer orchestration
-
-Multi-canvas layouts (compare dual/quad, kiosk monitors, future WebXR layers) share **one** `GPUDevice` and `TextureManager` while binding separate `WebGPURenderer` instances to independent canvases. `RendererOrchestrator` (`src/engine/RendererOrchestrator.ts`) owns that lifecycle:
-
-```
-RendererOrchestrator.bootstrap(primaryCanvas)
-├── preferred backend webgpu → WebGpuSession (device + primary context)
-│      └── gpu-chores WebGPU lane — adopts this device, never requests one
-├── preferred backend webgl → WebGL2 context (no adapter/device request)
-│      └── no GpuImageAnalysis / no webgpu chore lane
-└── slot "primary" → ChromashiftRenderer on primary canvas
-
-orchestrator.createSlot('compare-b', canvasB)   // extra WebGPU contexts, same device
-orchestrator.resizeAll()                        // after canvas/DPR resize
-orchestrator.destroySlot('compare-b')
-orchestrator.destroy()                          // tears down all slots + device
-```
-
-| Concern | Owner |
-|---|---|
-| Bootstrap / explicit WebGL | `RendererOrchestrator.bootstrap()` — WebGL only when preference is webgl |
-| Primary slot | `PRIMARY_SLOT_ID` (`'primary'`) — created during bootstrap |
-| Compare slot B | `COMPARE_SLOT_B_ID` (`'compare-b'`) via `useCompareSlotRenderer` |
-| Ref wiring from React | `useAppWebGPUInit` → `orchestratorRef` + legacy `rendererRef` / `deviceRef` |
-| Canvas resize | `useCanvasResize` → `orchestrator.resizeAll()` |
-| `device.lost` | Session callback → `teardownAllSlots()`; recoverable overlay with **Retry GPU** |
-
-`useAppWebGPUInit` delegates bootstrap and primary-slot creation to the orchestrator; image corpus loading stays in the hook. Secondary slots must be created **after** bootstrap and destroyed **before** `orchestrator.destroy()` (compare hook runs between init and unmount for this ordering).
-
-Unit tests in `src/engine/RendererOrchestrator.test.ts` mock GPU factories so CI does not require WebGPU.
-
 ## gpu-chores: compute device adoption
 
 Load-time image analysis (BT.709 histogram + `r8uint` classification mask) runs behind the **`gpu-chores`** facade in `src/engine/compute/chores/`. Chromashift is the reference consumer; the sibling apps in the rollout (`clip_stacker`, `image_video_effects`, `flac_player`, `mod-player`, `web_sequencer`) depend on the same shapes, so treat `chores/index.ts` as the module boundary and keep app-specific wiring in `chromashiftHost.ts`.
 
-**One device, always adopted.** `bootstrapWebGpuSession()` constructs `GpuImageAnalysis` from `session.device`, and that instance owns the single `WebGpuChoreBackend`. `useClassificationMask` registers *that* lane (`GpuImageAnalysis.backend`) with its runtime rather than building a new one, so:
+**One device, always adopted — and one backend per device.** `bootstrapWebGpuSession()` takes a lease on the device's single `WebGpuChoreBackend` through `acquireGpuChoreSession()` (`src/engine/compute/GpuChoreSession.ts`), then builds `GpuImageAnalysis` from `session.device`. The three compute lanes — `GpuImageAnalysis` (histogram + mask), `PersistencePass` (op `coincidence`), and `MotionFieldPass` (op `motion-field`) — each take their **own lease on that same instance** rather than constructing one. `useClassificationMask` registers *that* lane (`GpuImageAnalysis.backend`) with its runtime rather than building a new one, so:
 
 - there is never a second `requestAdapter`/`requestDevice`;
-- pipelines, the histogram staging buffer, and the reused `r8uint` mask texture are shared, so repeated image loads do not grow VRAM;
+- pipelines, staging buffers, bind-group caches, and the reused `r8uint` mask texture exist once per device rather than three times, so neither repeated image loads nor an N-layer coincidence graph grows VRAM per lane;
 - on a **WebGL** backend there is no device, no `GpuImageAnalysis`, and therefore no `webgpu` lane registered at all — a GL context and a compute device are structurally unable to be live for the same analysis.
+
+Lifecycle stays **ref-counted, not single-owner**: each holder releases its lease in `destroy()`, and the backend is destroyed only when the last one lets go. Tearing down `PersistencePass` therefore cannot pull compute state out from under analysis or motion. The orchestrator's own lease outlives every lane, so a slot teardown or an analysis rebuild never destroys the backend mid-session. The op-level caches inside the backend are keyed per op, so analysis at source resolution and coincidence at tracer resolution do not contend. Breadcrumbs are unaffected — they are published per op (`gpuChoreBackend` vs `motionFieldBackend`), not per instance. `GpuChoreSession.test.ts` asserts the single construct and the ref-counted teardown.
 
 **Fallback order** is fixed in `CHORE_BACKEND_ORDER` and walked by `runJob({ prefer: 'auto' })`:
 
@@ -127,7 +117,7 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 
 **Break-even**: the GPU lane wins on 4K–8K images, where the two compute passes dwarf pipeline setup plus the single 1 KiB histogram map. Small stills are dominated by that fixed cost and by `mapAsync` latency; they still take the GPU lane when a source texture already exists, because the alternative is a CPU decode of an image the GPU already holds. Add a resolution floor only with a microbench to justify it.
 
-**Second op: `coincidence` (per-frame, no CPU lane).** `PersistencePass` uses the same `WebGpuChoreBackend` class for a second, GPU-only op: detecting tracer layer overlaps once per frame instead of the fragment shader recomputing the same 3-layer overlap math twice (once per above/below decay pass — see `docs/wasm-engine.md` and issue [#145](https://github.com/ford442/Chromashift/issues/145)). Unlike image analysis, `PersistencePass` constructs its **own** `WebGpuChoreBackend(device)` rather than reusing `GpuImageAnalysis`'s instance — this still adopts the shared device (never a second `requestDevice`), it just means the persistence pipeline's lazily-built compute/render pipelines are not shared with the image-analysis lane's. That is a deliberate, small duplication (a handful of pipeline/buffer objects) in exchange for not coupling the render hot path's lifecycle to the load-time analysis instance's. The `wasm`/`ts` chore lanes always decline a `coincidence` job outright — there is no CPU implementation, by design (see the job's doc comment in `chores/types.ts`). Compute persistence is feature-detected per frame (`WebGpuChoreBackend.isSupported()` + `canAnalyze()`); the original fused fragment shader in `engine/shaders/persistence.ts` remains the fallback when compute storage textures are unavailable.
+**Second op: `coincidence` (per-frame, no CPU lane).** `PersistencePass` uses the same `WebGpuChoreBackend` class for a second, GPU-only op: detecting tracer layer overlaps once per frame instead of the fragment shader recomputing the same 3-layer overlap math twice (once per above/below decay pass — see `docs/wasm-engine.md` and issue [#145](https://github.com/ford442/Chromashift/issues/145)). `PersistencePass` **borrows** the device's shared `WebGpuChoreBackend` through `acquireGpuChoreSession()` rather than constructing one, so its lazily-built compute pipelines are shared with the image-analysis and motion-field lanes. The render hot path's lifecycle still is not coupled to the load-time analysis instance's — that decoupling now comes from the ref-counted lease (`PersistencePass.destroy()` releases; the backend survives) instead of from a duplicate backend. The `wasm`/`ts` chore lanes always decline a `coincidence` job outright — there is no CPU implementation, by design (see the job's doc comment in `chores/types.ts`). Compute persistence is feature-detected per frame (`WebGpuChoreBackend.isSupported()` + `canAnalyze()`); the original fused fragment shader in `engine/shaders/persistence.ts` remains the fallback when compute storage textures are unavailable.
 
 ## Device loss and errors
 
