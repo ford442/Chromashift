@@ -243,21 +243,53 @@ same target back out instead of sizing 2N of them.
 - **A graph-driven executor.** `WebGpuGraphExecutor` encodes `compiled.passes`
   on WebGPU, binding the allocator's pool, with MSAA resolve and ping-pong
   handled per node kind.
-- **Default-graph identity.** `shaderParity.test.ts` still pins every emitted
-  shader against the pre-refactor goldens, and
-  `e2e/graph-executor.spec.ts` asserts default-graph-via-executor ≡ hand encoder
-  as a canvas screenshot comparison. That comparison is deterministic because
-  the fixture is a still image: where layers overlap the fused pass writes the
-  fresh stamp every frame, and where they do not the tracer starts at zero and
-  stays there, so there is no frame-count-dependent state to disagree about.
-- **Different-shape graphs that draw.** `?graph=blur` and `?graph=warp` compile,
-  schedule, allocate **and** reach the canvas with no edit to
-  `WebGPUPipelines.ts` or `PersistencePass.ts`. Both run emitters
-  (`emitBlurWgsl`, `emitWarpWgsl`) that had no runtime at all before.
+- **Default-graph identity, at the source level.** `shaderParity.test.ts` pins
+  every emitted shader against the pre-refactor goldens, and the executor's unit
+  tests pin the encode structure — pass count, order, targets, bindings and
+  ping-pong phase — against a recording fake `GPUDevice`. See *Pixel parity is
+  not proven by CI* below for what that does and does not establish.
+- **Different-shape graphs that execute.** `?graph=blur` and `?graph=warp`
+  compile, schedule, allocate **and** get their extra passes encoded, with no
+  edit to `WebGPUPipelines.ts` or `PersistencePass.ts`. Both run emitters
+  (`emitBlurWgsl`, `emitWarpWgsl`) that had no runtime at all before. The unit
+  tests assert the encoded passes and their shader sources; the E2E breadcrumbs
+  assert the same on a real device. That they change the *pixels* is subject to
+  the caveat below.
 - **Refusals stay refusals.** `?graph=warp` on the WebGL backend is still a
   `PassGraphError` with `code: 'unsupported-node'` naming the node, published as
   `window.passGraphError`; a graph the executor cannot encode is refused with
   the node named and the renderer stays on the hand encoder.
+
+### Pixel parity is not proven by CI
+
+`e2e/graph-executor.spec.ts` contains a screenshot comparison of
+default-graph-via-executor against the hand encoder, but **no CI runner has yet
+executed it meaningfully**, and the spec is written to say so rather than to
+pass regardless.
+
+Two things get in the way, both found by running the spec against a browser:
+
+- **An element screenshot is not a canvas readback.** Playwright captures the
+  element's *region of the page*, so overlay chrome painted over the canvas
+  lands in the buffer. Measured here, the main canvas reads 1867 distinct
+  colours with the UI up and exactly 1 — pure black — with it hidden. A
+  comparison built on the first number compares the UI to itself and passes
+  whatever the renderer does. `hideEverythingButTheCanvas()` is why the capture
+  is trustworthy now.
+- **Software WebGPU renders this scene blank.** `WebGpuChoreBackend` cannot
+  create its compute pipelines on such a runner, and the canvas comes back pure
+  black — on the hand encoder and the graph executor alike, with identical
+  console error sets for `?graph=0` and `?graph=1`. Two blank frames satisfy
+  "these match" and can never satisfy "these differ".
+
+So the pixel comparisons skip, with the reason stated, when
+`renderedSomething()` says the canvas is blank. The breadcrumb assertions —
+which pass everywhere — still prove the blur and warp graphs compile, schedule,
+allocate and encode their extra passes.
+
+Closing this needs a runner with working WebGPU compute, or a headed GPU. Until
+then "the executor draws the same pixels" rests on the shader goldens plus the
+encode-structure unit tests, which is strong but is not a GPU comparison.
 
 ## Phase 3 — what is not done yet
 
