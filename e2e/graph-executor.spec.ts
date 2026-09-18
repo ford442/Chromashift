@@ -90,9 +90,38 @@ async function openScene(page: Page, graph: string, preset: string = FROZEN_SCEN
   await page.waitForTimeout(SETTLE_MS);
 }
 
+/**
+ * Screenshot the canvas once the frame has stopped changing.
+ *
+ * A fixed settle delay is not enough: the corpus fetch, the texture upload and
+ * the classification-mask pass all land asynchronously, and an image load calls
+ * `clearPersistence()` — so a capture can catch the tracers just after they were
+ * cleared and before they have re-accumulated. That is a race, and it showed up
+ * as a test that failed and then passed on retry.
+ *
+ * Polling until two consecutive captures are byte-identical waits for the real
+ * condition instead of guessing a duration. A scene that never settles (layer
+ * spin still running, say) exhausts the attempts and fails loudly, which is the
+ * outcome we want rather than a coin-flip comparison.
+ */
+async function captureStable(page: Page, attempts = 12, gapMs = 400): Promise<Buffer> {
+  const canvas = page.locator('canvas').first();
+  let previous = await canvas.screenshot({ animations: 'disabled' });
+  for (let i = 0; i < attempts; i += 1) {
+    await page.waitForTimeout(gapMs);
+    const next = await canvas.screenshot({ animations: 'disabled' });
+    if (next.equals(previous)) return next;
+    previous = next;
+  }
+  throw new Error(
+    `Canvas never settled: ${attempts} captures ${gapMs}ms apart all differed. `
+    + 'The scene is still animating, so no frame comparison in this file is meaningful.',
+  );
+}
+
 async function captureCanvas(page: Page, graph: string, preset: string = FROZEN_SCENE): Promise<Buffer> {
   await openScene(page, graph, preset);
-  return page.locator('canvas').first().screenshot({ animations: 'disabled' });
+  return captureStable(page);
 }
 
 test.describe('pass-graph executor', () => {
@@ -191,35 +220,32 @@ test.describe('pass-graph executor', () => {
     const stampOnly = await captureCanvas(page, '1', STAMP_ONLY);
     const tracersOnly = await captureCanvas(page, '1', TRACERS_ONLY);
 
-    // 1. The overrides arrive at all. Stamp-only and tracer-only frames cannot
-    //    look like the full composite unless the preset was dropped.
-    expect(
-      stampOnly.equals(base),
-      'outputMode=3 rendered the same frame as the default composite, so the '
-      + 'preset override never reached the shader and the checks below would '
-      + 'have been measuring the default composite',
-    ).toBe(false);
-    expect(
-      tracersOnly.equals(base),
-      'outputMode=2 rendered the same frame as the default composite, so the '
-      + 'preset override never reached the shader',
-    ).toBe(false);
+    // Asserted as one object so a failure's diff reports every signal at once.
+    // Sequential assertions mask each other: an earlier throw meant the
+    // outputMode=2 result was never measured, which cost a whole CI round.
+    const counts = {
+      base: distinctColourCount(base),
+      stampOnly: distinctColourCount(stampOnly),
+      tracersOnly: distinctColourCount(tracersOnly),
+    };
+    console.log('distinct colour counts:', JSON.stringify(counts));
 
-    // 2. The scene overlaps. outputMode=3 is the compositor's own stamp,
-    //    computed inline from the layer textures with no accumulator read.
-    expect(
-      distinctColourCount(stampOnly),
-      'compositor stamp is flat: no pixel has 2+ band layers active, so the '
-      + 'scene never triggers coincidence (a fixture/angle problem)',
-    ).toBeGreaterThan(1);
-
-    // 3. The accumulators hold it. outputMode=2 shows only them.
-    expect(
-      distinctColourCount(tracersOnly),
-      'the scene overlaps but the tracer accumulators are empty: the '
-      + 'executor\u2019s decay passes are not writing, or the compositor is bound '
-      + 'to the wrong side of the ping-pong pair',
-    ).toBeGreaterThan(1);
+    expect({
+      // The overrides arrive at all: neither a stamp-only nor a tracer-only
+      // frame can equal the full composite unless the preset was dropped.
+      stampOverrideApplied: !stampOnly.equals(base),
+      tracerOverrideApplied: !tracersOnly.equals(base),
+      // The scene overlaps: outputMode=3 is the compositor's own stamp, taken
+      // from the layer textures with no accumulator read.
+      stampHasContent: counts.stampOnly > 1,
+      // The accumulators hold it: outputMode=2 shows only them.
+      tracersHaveContent: counts.tracersOnly > 1,
+    }).toEqual({
+      stampOverrideApplied: true,
+      tracerOverrideApplied: true,
+      stampHasContent: true,
+      tracersHaveContent: true,
+    });
   });
 
   test('the scene exercises the tracer path', async ({ page }) => {
