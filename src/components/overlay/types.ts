@@ -64,6 +64,9 @@ export interface RendererPanelProps {
 }
 
 export interface LayerPanelProps {
+  /** Band layers in this session, 1–`MAX_LAYER_COUNT`. Every array below is this long. */
+  layerCount: number;
+  onLayerCountChange: (count: number) => void;
   layerExtensions: number[];
   frameRate: number;
   layerOpacity: number;

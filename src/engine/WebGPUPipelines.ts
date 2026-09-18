@@ -200,8 +200,8 @@ export class WebGPUPipelines {
   }
 
   public createCompareBGL(): GPUBindGroupLayout {
-    // 0 = sampler, 1 = tracer below, 2 = tracer above, 3..n+2 = layers,
-    // n+3 = second composite, n+4 = uniforms.
+    // 0 = sampler, 1 = source, 2..n+1 = layers, n+2 = tracer below,
+    // n+3 = tracer above, n+4 = uniforms.
     const n = this.layerCount;
     return this.device.createBindGroupLayout({
       entries: [

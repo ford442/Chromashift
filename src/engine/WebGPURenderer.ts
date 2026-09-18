@@ -1,5 +1,5 @@
 import { layerFragmentSources } from './shaders';
-import { DEFAULT_LAYER_COUNT, publishGraphExecutorBreadcrumbs } from './graph';
+import { publishGraphExecutorBreadcrumbs } from './graph';
 import { WebGpuGraphExecutor, type GraphRoleTextures } from './graph/exec/WebGpuGraphExecutor';
 import { PassGraphError } from './graph/errors';
 import type { GraphPresetName } from './graph/altGraphs';
@@ -10,6 +10,7 @@ import {
   createLayerBindGroupCache,
   getOrCreateLayerBindGroup,
   invalidateLayerBindGroupCache,
+  type LayerTextures,
 } from './BindGroupCache';
 import { MotionFieldPass } from './MotionFieldPass';
 import { MOTION_FIELD_DIVISOR } from './motionModes';
@@ -77,7 +78,12 @@ export class WebGPURenderer {
   private readonly gpuProfiler: GpuTimestampProfiler | null;
   private readonly compositorSampler: GPUSampler;
   private readonly stationaryPreview: StationaryPreviewRenderer;
-  private readonly layerBindGroupCache = createLayerBindGroupCache(DEFAULT_LAYER_COUNT);
+  /**
+   * One entry per band layer. Sized from the pipelines this renderer built —
+   * `layerFragmentSources.length` today, whatever the graph executor schedules
+   * once it owns the layer passes.
+   */
+  private readonly layerBindGroupCache = createLayerBindGroupCache(layerFragmentSources.length);
 
   private lastRenderCpuMs = 0;
   private averageRenderCpuMs = 0;
@@ -178,10 +184,11 @@ export class WebGPURenderer {
   }
 
   private ensureTextures(w: number, h: number): void {
+    const layerCount = this.layerPipelines.length;
     if (this.texW === w && this.texH === h &&
         this.currentLayerScale === this.layerScale &&
         this.currentTracerScale === this.tracerScale &&
-        this.layerTextures.length === DEFAULT_LAYER_COUNT) return;
+        this.layerTextures.length === layerCount) return;
 
     this.currentLayerScale = this.layerScale;
     this.currentTracerScale = this.tracerScale;
@@ -194,7 +201,7 @@ export class WebGPURenderer {
     const tracerW = Math.max(1, Math.round(w * this.tracerScale));
     const tracerH = Math.max(1, Math.round(h * this.tracerScale));
 
-    this.layerTextures = Array.from({ length: DEFAULT_LAYER_COUNT }, () => this.device.createTexture({
+    this.layerTextures = Array.from({ length: layerCount }, () => this.device.createTexture({
       size: [layerW, layerH, 1],
       format: this.internalFormat,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -338,7 +345,7 @@ export class WebGPURenderer {
   }
 
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean {
-    return this.readback.requestCollisionStats(callback);
+    return this.readback.requestCollisionStats(callback, this.getLayerTextures().length);
   }
 
   clearPersistence(): void {
@@ -361,10 +368,16 @@ export class WebGPURenderer {
     return this.graphExecutor?.roleTextures() ?? null;
   }
 
-  private getLayerTexturesTuple(): [GPUTexture, GPUTexture, GPUTexture] {
+  /**
+   * This frame's band-layer textures, in layer order.
+   *
+   * Length, not a literal three: the graph executor owns as many as its
+   * schedule allocated, and the fallback owns as many as `ensureTextures`
+   * created. Every pass downstream binds `layers.length` of them.
+   */
+  private getLayerTextures(): LayerTextures {
     const roles = this.lastFrameRoleTextures();
-    if (roles) return [roles.layers[0], roles.layers[1], roles.layers[2]];
-    return [this.layerTextures[0], this.layerTextures[1], this.layerTextures[2]];
+    return roles ? roles.layers : this.layerTextures;
   }
 
   private getTracerTextures(): { below: GPUTexture; above: GPUTexture } {
@@ -481,7 +494,7 @@ export class WebGPURenderer {
         this.compositor.encodePreview(
           enc,
           previewView,
-          this.getLayerTexturesTuple(),
+          this.getLayerTextures(),
           this.getTracerTextures().below,
           this.getTracerTextures().above,
           this.activePingPong,
@@ -602,15 +615,13 @@ export class WebGPURenderer {
 
     this.executorEncodedLastFrame = false;
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
-    const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
-    const layerOpacities: number[] = [
-      globalLayerOpacity * sourceLayerOpacities[0],
-      globalLayerOpacity * sourceLayerOpacities[1],
-      globalLayerOpacity * sourceLayerOpacities[2],
-    ];
+    const sourceLayerOpacities = state.layerOpacities;
+    const layerOpacities: number[] = state.layers.map(
+      (_, i) => globalLayerOpacity * (sourceLayerOpacities?.[i] ?? 1.0),
+    );
     const stampBoost = state.stampBoost ?? 1.8;
     const tracerMode = state.tracerMode ?? 0.0;
-    const layerTextures = this.getLayerTexturesTuple();
+    const layerTextures = this.getLayerTextures();
     const { below: persistBelow, above: persistAbove } = this.getTracerTextures();
     const canvasSize: TextureSize = { width, height };
 
@@ -786,14 +797,14 @@ export class WebGPURenderer {
     const above = roles?.tracerAbove ?? this.persistence.aboveTextures[this.persistence.pingPong];
     const below = roles?.tracerBelow ?? this.persistence.belowTextures[this.persistence.pingPong];
     if (!above || !below) return null;
-    if (!roles && this.layerTextures.length < DEFAULT_LAYER_COUNT) return null;
+    if (!roles && this.layerTextures.length < this.layerPipelines.length) return null;
 
     return this.readback.exportTracerView(
       this.tracerInspect,
       {
         persistAbove: above,
         persistBelow: below,
-        layerTextures: this.getLayerTexturesTuple(),
+        layerTextures: this.getLayerTextures(),
         pingPong: this.activePingPong,
       },
       options,

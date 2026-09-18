@@ -26,11 +26,7 @@ export function extensionStepsForFps(
   fps: number,
 ): number[] {
   const scale = EXTENSION_REFERENCE_FPS / Math.max(1e-6, fps);
-  return [
-    extensions[0] * scale,
-    extensions[1] * scale,
-    extensions[2] * scale,
-  ];
+  return extensions.map((extension) => extension * scale);
 }
 
 /**

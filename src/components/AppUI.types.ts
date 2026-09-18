@@ -225,6 +225,8 @@ export interface AppUIControlProps {
   onCompareWithBuiltin: (id: string) => void;
   onCompareWithSaved: (name: string) => void;
   handleAngleChange: (layer: LayerIndex, angle: number) => void;
+  layerCount: number;
+  setLayerCount: (count: number) => void;
   layerExtensions: number[];
   handleExtensionChange: (layer: LayerIndex, extension: number) => void;
   frameRate: number;

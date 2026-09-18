@@ -7,6 +7,7 @@ import type { CollisionStats } from './types/RendererState';
 import type { ExportTracerOptions, ExportTracerResult } from './types/RendererContracts';
 import type { TracerInspectPass } from './TracerInspectPass';
 import type { WebGPUPipelines } from './WebGPUPipelines';
+import type { LayerTextures } from './BindGroupCache';
 
 export class GpuReadback {
   static readonly PREVIEW_SIZE = 128;
@@ -59,9 +60,18 @@ export class GpuReadback {
     return true;
   }
 
-  requestCollisionStats(callback: (stats: CollisionStats) => void): boolean {
+  /**
+   * @param layerCount  Layers the frame being sampled was rendered with — the
+   *   diagnostic red channel encodes the dominant layer as `index / (n - 1)`,
+   *   so decoding it back to an index needs the same `n`.
+   */
+  requestCollisionStats(
+    callback: (stats: CollisionStats) => void,
+    layerCount: number,
+  ): boolean {
     if (this.diagnosticReadPending || this.diagnosticCaptureQueued || this.diagnosticReadCallback) return false;
     this.diagnosticReadCallback = callback;
+    this.diagnosticLayerCount = Math.max(1, layerCount);
     this.diagnosticCaptureQueued = true;
     return true;
   }
@@ -159,7 +169,7 @@ export class GpuReadback {
     ctx: {
       persistAbove: GPUTexture;
       persistBelow: GPUTexture;
-      layerTextures: [GPUTexture, GPUTexture, GPUTexture];
+      layerTextures: LayerTextures;
       pingPong: 0 | 1;
     },
     options: ExportTracerOptions,
@@ -314,6 +324,9 @@ export class GpuReadback {
     });
   }
 
+  /** Layer count the queued diagnostic frame was rendered with. */
+  private diagnosticLayerCount = 3;
+
   private beginDiagnosticReadback(): void {
     if (!this.diagnosticStagingBuffer || !this.diagnosticReadCallback || this.diagnosticReadPending) return;
     const callback = this.diagnosticReadCallback;
@@ -321,13 +334,18 @@ export class GpuReadback {
     this.diagnosticReadPending = true;
     this.diagnosticStagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
       const mapped = new Uint8Array(this.diagnosticStagingBuffer!.getMappedRange());
+      const layerCount = this.diagnosticLayerCount;
       const stats: CollisionStats = {
         sampledPixels: GpuReadback.DIAGNOSTIC_SIZE * GpuReadback.DIAGNOSTIC_SIZE,
         twoOverlapPixels: 0,
         threeOverlapPixels: 0,
-        dominantLayerWins: [0, 0, 0],
+        dominantLayerWins: Array.from({ length: layerCount }, () => 0),
         averageCollision: 0,
       };
+      // The shader writes `dominantLayer / (layerCount - 1)`; invert it. At the
+      // default three this puts the same pixels in the same buckets as the
+      // 0.33 / 0.66 thresholds this replaced.
+      const dominantScale = Math.max(1, layerCount - 1);
       let collisionSum = 0;
       for (let i = 0; i < mapped.length; i += 4) {
         const r = mapped[i] / 255;
@@ -340,13 +358,8 @@ export class GpuReadback {
           } else {
             stats.twoOverlapPixels += 1;
           }
-          if (r < 0.33) {
-            stats.dominantLayerWins[0] += 1;
-          } else if (r < 0.66) {
-            stats.dominantLayerWins[1] += 1;
-          } else {
-            stats.dominantLayerWins[2] += 1;
-          }
+          const dominant = Math.min(Math.round(r * dominantScale), layerCount - 1);
+          stats.dominantLayerWins[dominant] += 1;
         }
       }
       stats.averageCollision = collisionSum / stats.sampledPixels;

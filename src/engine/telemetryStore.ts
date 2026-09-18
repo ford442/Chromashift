@@ -56,9 +56,15 @@ export const renderTelemetry = {
   setCollisionStats: collisionStatsSlice.set,
 };
 
-/** Live per-layer rotation angle (deg). Only the rotary-knob readouts need this. */
+/**
+ * Live per-layer rotation angle (deg). Only the rotary-knob readouts need this.
+ *
+ * Falls back to 0 for a layer the published array does not cover: the panel
+ * renders `layers.count` knobs, and for one commit after the count grows the
+ * telemetry store still holds the shorter array.
+ */
 export function useLiveLayerAngle(layer: number): number {
-  return useSyncExternalStore(anglesSlice.subscribe, () => anglesSlice.get()[layer]);
+  return useSyncExternalStore(anglesSlice.subscribe, () => anglesSlice.get()[layer] ?? 0);
 }
 
 export function useRenderCpuTiming(): { last: number; avg: number } {

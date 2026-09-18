@@ -11,6 +11,7 @@
  */
 
 import type { MotionFieldStats } from './motionKernel';
+import type { LayerTextures } from '../../BindGroupCache';
 
 export type { MotionFieldStats } from './motionKernel';
 
@@ -68,7 +69,7 @@ export interface ImageAnalysisJob {
 export interface CoincidenceJob {
   op: 'coincidence';
   /** Three GPU-resident layer textures, all the same size. Required. */
-  layers?: readonly [GPUTexture, GPUTexture, GPUTexture] | null;
+  layers?: LayerTextures | null;
   width: number;
   height: number;
   /** Minimum alpha to consider a layer "visible" at a pixel. */

@@ -25,12 +25,12 @@ function TelemetryBadge({ performanceHudEnabled }: { performanceHudEnabled: bool
       </span>
       {!performanceHudEnabled && (
         <span className="text-[10px] font-mono text-cyan-300/80">
-          2+ {collisionStats.twoOverlapPixels} | 3 {collisionStats.threeOverlapPixels}
+          2+ {collisionStats.twoOverlapPixels} | all {collisionStats.threeOverlapPixels}
         </span>
       )}
       {!performanceHudEnabled && (
         <span className="text-[10px] font-mono text-cyan-200/70">
-          Win {collisionStats.dominantLayerWins[0]}/{collisionStats.dominantLayerWins[1]}/{collisionStats.dominantLayerWins[2]}
+          Win {collisionStats.dominantLayerWins.join('/')}
         </span>
       )}
     </>

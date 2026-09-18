@@ -3,6 +3,9 @@ import type { ChromashiftDispatch } from './types';
 
 export function createLayersActions(dispatch: ChromashiftDispatch) {
   return {
+    /** Change how many band layers the session renders (1–`MAX_LAYER_COUNT`). */
+    setLayerCount: (count: number) =>
+      dispatch({ type: 'layers/setCount', count }),
     setLayerExtensions: (extensions: number[]) =>
       dispatch({ type: 'layers/patch', patch: { extensions } }),
     setLayerOpacity: (opacity: number) =>

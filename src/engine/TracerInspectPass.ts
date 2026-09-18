@@ -12,6 +12,7 @@ import {
   type TexturePairBindGroupCacheEntry,
 } from './BindGroupCache';
 import type { WebGPUPipelines } from './WebGPUPipelines';
+import { layerTextureEntries, type LayerTextures } from './BindGroupCache';
 
 export interface TracerViewEncodeParams {
   canvasWidth: number;
@@ -39,7 +40,7 @@ export interface MainViewEncodeParams {
   canvasHeight: number;
   sourceTexture: GPUTexture;
   sourceSampler: GPUSampler;
-  layerTextures: [GPUTexture, GPUTexture, GPUTexture];
+  layerTextures: LayerTextures;
   persistBelow: GPUTexture;
   persistAbove: GPUTexture;
   persistDiagnostic: GPUTexture | null;
@@ -290,10 +291,8 @@ export class TracerInspectPass {
         { binding: 0, resource: this.tracerViewSampler },
         { binding: 1, resource: ctx.persistAbove.createView() },
         { binding: 2, resource: ctx.persistBelow.createView() },
-        { binding: 3, resource: ctx.layerTextures[0].createView() },
-        { binding: 4, resource: ctx.layerTextures[1].createView() },
-        { binding: 5, resource: ctx.layerTextures[2].createView() },
-        { binding: 6, resource: { buffer: this.tracerViewUniformBuf } },
+        ...layerTextureEntries(3, ctx.layerTextures),
+        { binding: ctx.layerTextures.length + 3, resource: { buffer: this.tracerViewUniformBuf } },
       ],
     );
 
@@ -362,7 +361,7 @@ export class TracerInspectPass {
   private encodeHeatmap(
     enc: GPUCommandEncoder,
     targetView: GPUTextureView,
-    layerTextures: [GPUTexture, GPUTexture, GPUTexture],
+    layerTextures: LayerTextures,
     colorThresh: number,
   ): void {
     this.heatmapF32[0] = colorThresh;
@@ -379,10 +378,8 @@ export class TracerInspectPass {
       this.heatmapUniformBuf,
       [
         { binding: 0, resource: this.compositorSampler },
-        { binding: 1, resource: layerTextures[0].createView() },
-        { binding: 2, resource: layerTextures[1].createView() },
-        { binding: 3, resource: layerTextures[2].createView() },
-        { binding: 4, resource: { buffer: this.heatmapUniformBuf } },
+        ...layerTextureEntries(1, layerTextures),
+        { binding: layerTextures.length + 1, resource: { buffer: this.heatmapUniformBuf } },
       ],
     );
 
@@ -424,12 +421,10 @@ export class TracerInspectPass {
       [
         { binding: 0, resource: params.sourceSampler },
         { binding: 1, resource: params.sourceTexture.createView() },
-        { binding: 2, resource: params.layerTextures[0].createView() },
-        { binding: 3, resource: params.layerTextures[1].createView() },
-        { binding: 4, resource: params.layerTextures[2].createView() },
-        { binding: 5, resource: params.persistBelow.createView() },
-        { binding: 6, resource: params.persistAbove.createView() },
-        { binding: 7, resource: { buffer: this.compareUniformBuf } },
+        ...layerTextureEntries(2, params.layerTextures),
+        { binding: params.layerTextures.length + 2, resource: params.persistBelow.createView() },
+        { binding: params.layerTextures.length + 3, resource: params.persistAbove.createView() },
+        { binding: params.layerTextures.length + 4, resource: { buffer: this.compareUniformBuf } },
       ],
       params.persistAbove,
     );

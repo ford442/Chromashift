@@ -81,6 +81,8 @@ export function buildControlProps(
     onCompareWithBuiltin: handlers.handleCompareWithBuiltin,
     onCompareWithSaved: handlers.handleCompareWithSaved,
     handleAngleChange: handlers.handleAngleChange,
+    layerCount: layers.count,
+    setLayerCount: actions.setLayerCount,
     layerExtensions: layers.extensions,
     handleExtensionChange: handlers.handleExtensionChange,
     frameRate: engine.fps,

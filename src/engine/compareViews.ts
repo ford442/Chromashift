@@ -115,6 +115,10 @@ export function multiViewPerformanceNote(layout: CompareLayoutMode): string | nu
  * Advance an animation angle clock by per-layer extension steps (mod 360).
  * When `fps` is supplied, steps are scaled so wall-clock °/s stays constant
  * (see {@link extensionStepsForFps}); omit `fps` only for raw delta tests.
+ *
+ * `extensions` is the authority on the layer count — the clock in `prev` may be
+ * a frame behind a count change (a preset load, the layer-count control), and a
+ * layer it does not cover starts from zero rather than `NaN`.
  */
 export function advanceAngles(
   prev: readonly number[],
@@ -122,11 +126,7 @@ export function advanceAngles(
   fps?: number,
 ): number[] {
   const steps = fps === undefined ? extensions : extensionStepsForFps(extensions, fps);
-  return [
-    wrapAngleDeg(prev[0] + steps[0]),
-    wrapAngleDeg(prev[1] + steps[1]),
-    wrapAngleDeg(prev[2] + steps[2]),
-  ];
+  return steps.map((step, i) => wrapAngleDeg((prev[i] ?? 0) + step));
 }
 
 export function defaultCompareSlot(
