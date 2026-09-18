@@ -61,6 +61,7 @@ describe('WebGpuGraphExecutor', () => {
     source = gpu.device.createTexture({
       size: [CANVAS.width, CANVAS.height, 1],
       format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING,
     });
     executor = build();
   });
