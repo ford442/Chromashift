@@ -637,11 +637,18 @@ export class WebGPURenderer {
     // persistence pass that consumes it. Encoded only when a mode is selected:
     // `motionMode: 'off'` leaves the frame exactly as it was before the
     // temporal term existed, down to the command buffer.
+    //
+    // `encodeAndSubmit` records into (and submits) its own command buffer
+    // rather than this frame's `enc` — a validation failure in the
+    // frame-difference dispatch or, in `direction` mode, the two Lucas–Kanade
+    // dispatches on top of it, must not poison the composite this same `enc`
+    // draws below. The markers still bracket this call so an unaffected frame
+    // reads the same `motionMs`/`motionFlowMs` split as before; a declined or
+    // failed lane just collapses both to ~0, same as `motionMode: 'off'`.
     const motionMode = state.motionMode ?? 0;
     let motionTexture: GPUTexture | null = null;
     if (motionMode !== 0 && this.currentTexture) {
-      motionTexture = this.motionField.encode(
-        enc,
+      motionTexture = this.motionField.encodeAndSubmit(
         this.currentTexture,
         this.currentTexture.width,
         this.currentTexture.height,
@@ -652,18 +659,11 @@ export class WebGPURenderer {
           // after unpausing from stamping a whole-screen "change".
           reset: this.motionResetPending || state.paused === true,
         },
+        motionMode === MOTION_MODE_DIRECTION,
       );
       this.motionResetPending = false;
     }
     profiler?.markMotionEnd(enc);
-
-    // `direction` is the only mode that reads the flow vector, so it is the
-    // only one that pays for the two Lucas–Kanade dispatches. The combined
-    // texture replaces the frame-difference one; `boost`/`gate` keep binding
-    // exactly the texture they bound before Stage 2 existed.
-    if (motionTexture && motionMode === MOTION_MODE_DIRECTION) {
-      motionTexture = this.motionField.encodeFlow(enc) ?? motionTexture;
-    }
     profiler?.markMotionFlowEnd(enc);
 
     this.persistence.encode(enc, layerTextures, {

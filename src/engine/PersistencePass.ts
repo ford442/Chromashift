@@ -255,6 +255,45 @@ export class PersistencePass {
       && this.coincidenceBackend.canAnalyze(this.tracerWidth, this.tracerHeight);
   }
 
+  /**
+   * Encode the coincidence compute dispatch into its own command buffer and
+   * submit it immediately, rather than into the caller's frame `enc`.
+   *
+   * A `GPUValidationError` here doesn't throw in JS — it silently poisons the
+   * *whole command buffer* it was recorded into at `submit()`. `enc` also
+   * carries the layer, compositor, and (when compute persistence is active)
+   * the composite render passes below, so a broken coincidence dispatch would
+   * otherwise take the entire visible frame down with it, not just the
+   * tracer. Isolating it here means a failure costs only this frame's stamp:
+   * `stampTexture`/`diagnosticTextures[writeIdx]` simply keep whatever
+   * content they already had (last frame's stamp, or a zero-initialized
+   * texture on the very first one) rather than being left in a state that
+   * makes the render passes reading them invalid — reading stale-but-valid
+   * data is not a validation error. The `try`/`catch` covers a synchronous
+   * throw for the same reason.
+   */
+  private encodeCoincidence(
+    layerTextures: LayerTextures,
+    writeIdx: 0 | 1,
+    params: PersistenceEncodeParams,
+  ): void {
+    try {
+      const enc = this.device.createCommandEncoder();
+      this.coincidenceBackend.encodeCoincidenceInto(
+        enc, layerTextures, this.stampTexture!, this.diagnosticTextures[writeIdx]!,
+        this.tracerWidth, this.tracerHeight,
+        { colorThresh: params.colorThresh, stampBoost: params.stampBoost, tracerMode: params.tracerMode },
+        writeIdx,
+      );
+      this.device.queue.submit([enc.finish()]);
+    } catch (error) {
+      console.warn(
+        '[PersistencePass] coincidence compute failed; tracer holds the last frame’s stamp:',
+        error,
+      );
+    }
+  }
+
   encode(
     enc: GPUCommandEncoder,
     layerTextures: LayerTextures,
@@ -271,12 +310,7 @@ export class PersistencePass {
     const motion = (params.motionMode ?? 0) !== 0 && Boolean(params.motionTexture);
 
     if (this.useComputePersistence()) {
-      this.coincidenceBackend.encodeCoincidenceInto(
-        enc, layerTextures, this.stampTexture!, this.diagnosticTextures[writeIdx]!,
-        this.tracerWidth, this.tracerHeight,
-        { colorThresh: params.colorThresh, stampBoost: params.stampBoost, tracerMode: params.tracerMode },
-        writeIdx,
-      );
+      this.encodeCoincidence(layerTextures, writeIdx, params);
       if (motion) {
         this.encodeMotionCompositeSingle(
           enc, readIdx, writeIdx,
