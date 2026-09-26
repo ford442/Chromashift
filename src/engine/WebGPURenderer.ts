@@ -233,6 +233,11 @@ export class WebGPURenderer {
    * number of stamp inputs, a `blend` with three tracers — is refused here with
    * the node named, and the renderer stays on the hand encoder rather than
    * drawing an approximation of what was asked for.
+   *
+   * Nor does an adopted graph draw straight away: the hand encoder keeps the
+   * canvas until the device has validated the graph's pipelines (see
+   * `verifyGraphPipelines`), so emitted WGSL the device rejects is a refusal
+   * too, rather than a black canvas.
    */
   setPassGraph(compiled: CompiledGraph | null, name: GraphPresetName | null = null): void {
     if (!compiled) {
@@ -255,19 +260,58 @@ export class WebGPURenderer {
       this.graphExecutor.setGraph(compiled);
       this.graphExecutor.setSampleCount(this.sampleCount);
     } catch (error) {
-      const message = error instanceof PassGraphError
+      this.refuseGraph(error instanceof PassGraphError
         ? `${error.code}: ${error.message}`
-        : String(error);
-      console.warn('[Chromashift:PassGraph] executor refused the graph —', message);
-      this.graphExecutor.destroy();
-      this.graphExecutor = null;
-      this.graphName = null;
-      if (typeof window !== 'undefined') window.passGraphError = message;
-      publishGraphExecutorBreadcrumbs(null, []);
+        : String(error));
       return;
     }
     this.graphName = name;
-    publishGraphExecutorBreadcrumbs(name, this.graphExecutor.encodedPasses());
+    this.verifyGraphPipelines();
+  }
+
+  /**
+   * Build the executor's pipelines and let it draw only once the device has
+   * accepted all of them.
+   *
+   * Invalid WGSL is not an exception in WebGPU: it produces an invalid
+   * pipeline, and the first frame that binds it is a command buffer the queue
+   * drops whole. `?graph=warp` shipped exactly that way — its emitted shader
+   * failed uniformity analysis and the canvas went black, while every
+   * breadcrumb said it was drawing. Waiting for the error scope turns that
+   * into a named refusal, with the hand encoder still on screen.
+   */
+  private verifyGraphPipelines(): void {
+    const executor = this.graphExecutor;
+    if (!executor) return;
+    let verdict: Promise<string | null>;
+    try {
+      verdict = executor.prepare();
+    } catch (error) {
+      this.refuseGraph(`invalid-pipeline: ${String(error)}`);
+      return;
+    }
+    // The breadcrumb says what is drawing, and until the device answers that
+    // is the hand encoder.
+    if (!executor.ready) publishGraphExecutorBreadcrumbs(null, []);
+    void verdict.then((error) => {
+      // Superseded by another graph, or torn down, while the device answered.
+      if (executor !== this.graphExecutor) return;
+      if (error !== null) {
+        this.refuseGraph(`invalid-pipeline: ${error}`);
+        return;
+      }
+      if (executor.ready) publishGraphExecutorBreadcrumbs(this.graphName, executor.encodedPasses());
+    });
+  }
+
+  /** Drop the executor, name the refusal, and leave the hand encoder drawing. */
+  private refuseGraph(message: string): void {
+    console.warn('[Chromashift:PassGraph] executor refused the graph —', message);
+    this.graphExecutor?.destroy();
+    this.graphExecutor = null;
+    this.graphName = null;
+    if (typeof window !== 'undefined') window.passGraphError = message;
+    publishGraphExecutorBreadcrumbs(null, []);
   }
 
   /** Name of the graph shape the executor is drawing, or `null`. */
@@ -283,7 +327,7 @@ export class WebGPURenderer {
    */
   private executorDrawsFrame(state: RendererState, passMode: ExportPassMode): boolean {
     return this.graphExecutor !== null
-      && this.graphExecutor.active
+      && this.graphExecutor.ready
       && passMode === 'composite'
       && (state.motionMode ?? 0) === 0;
   }
@@ -325,6 +369,9 @@ export class WebGPURenderer {
     this.msaaTexture = null;
     this.persistence.resetTextures();
     this.graphExecutor?.setSampleCount(this.sampleCount);
+    // The band-layer pipelines are rebuilt at the new sample count, and the
+    // hand encoder draws until the device has validated them.
+    this.verifyGraphPipelines();
     this.texW = 0;
     this.texH = 0;
     this.layerScale = 1.0;

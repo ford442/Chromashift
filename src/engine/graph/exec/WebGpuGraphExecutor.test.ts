@@ -232,6 +232,57 @@ describe('WebGpuGraphExecutor', () => {
     expect(gpu.passes).toHaveLength(0);
   });
 
+  describe('device verdict on the pipelines', () => {
+    it('is not ready to draw until the device has accepted its pipelines', async () => {
+      executor.setGraph(compile());
+      expect(executor.active).toBe(true);
+      expect(executor.ready).toBe(false);
+      await expect(executor.prepare()).resolves.toBeNull();
+      expect(executor.ready).toBe(true);
+    });
+
+    it('never becomes ready when the device rejects an emitted shader', async () => {
+      // How a real device reports WGSL it will not compile: not a throw, but an
+      // error in the enclosing scope and an invalid pipeline that would drop
+      // every frame's command buffer.
+      gpu.rejectShadersContaining('WarpUniforms', 'textureSample must only be called from uniform control flow');
+      executor.setGraph(compile(buildWarpGraph()));
+      await expect(executor.prepare()).resolves.toMatch(/uniform control flow/);
+      expect(executor.ready).toBe(false);
+    });
+
+    it('answers a superseded build with the verdict on the current one', async () => {
+      gpu.rejectShadersContaining('WarpUniforms', 'rejected');
+      executor.setGraph(compile(buildWarpGraph()));
+      const stale = executor.prepare();
+      executor.setGraph(compile());
+      const current = executor.prepare();
+      // The warp graph's rejection must not refuse the default graph that
+      // replaced it before the device answered.
+      await expect(stale).resolves.toBeNull();
+      await expect(current).resolves.toBeNull();
+      expect(executor.ready).toBe(true);
+    });
+
+    it('re-verifies after a sample-count change, and the hand encoder draws meanwhile', async () => {
+      executor.setGraph(compile());
+      await executor.prepare();
+      executor.setSampleCount(4);
+      expect(executor.ready).toBe(false);
+      await executor.prepare();
+      expect(executor.ready).toBe(true);
+    });
+
+    it('verifying builds nothing that encoding would not have built', async () => {
+      executor.setGraph(compile());
+      await executor.prepare();
+      const built = executor.pipelineBuildCount;
+      await executor.prepare();
+      encode(executor);
+      expect(executor.pipelineBuildCount).toBe(built);
+    });
+  });
+
   it('releases every pooled texture on destroy', () => {
     executor.setGraph(compile());
     encode(executor);
