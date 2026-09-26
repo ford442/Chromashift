@@ -1,7 +1,23 @@
 import { defineConfig, devices } from '@playwright/test';
 
-/** Headless Chromium needs this flag for WebGPU in CI (see e2e/webgpu-smoke.spec.ts). */
-const WEBGPU_LAUNCH_ARGS = ['--enable-unsafe-webgpu'];
+/**
+ * Headless Chromium needs `--enable-unsafe-webgpu` for WebGPU in CI (see
+ * e2e/webgpu-smoke.spec.ts).
+ *
+ * The other three keep the device alive. Without them, on a GPU-less runner
+ * the GPU process cannot allocate the canvas swap-chain image
+ * (`Could not find SharedImageBackingFactory … WebgpuSwapChainTexture`) and
+ * Dawn destroys the device a few frames in — so every WebGPU frame, hand
+ * encoder and graph executor alike, came back black and no pixel comparison
+ * could run. Only all three together avoid it. See
+ * e2e/helpers/gpuCanvasReadback.ts for how the specs then read the frame.
+ */
+const WEBGPU_LAUNCH_ARGS = [
+  '--enable-unsafe-webgpu',
+  '--enable-features=Vulkan',
+  '--use-vulkan=swiftshader',
+  '--use-angle=swiftshader',
+];
 
 export default defineConfig({
   testDir: './e2e',
