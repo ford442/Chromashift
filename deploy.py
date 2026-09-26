@@ -101,7 +101,7 @@ def resolve_credentials() -> tuple[str, list[paramiko.PKey], str | None]:
     Refuses placeholder values; password is optional when keys are available.
     """
     username = os.environ.get("DEPLOY_USER", "CHANGEME")
-    password = os.environ.get("DEPLOY_PASS")
+    password = os.environ.get("DEPLOY_TOKEN") or os.environ.get("DEPLOY_PASS")
     key_path = os.environ.get("DEPLOY_KEY")
 
     if username in ("", "CHANGEME"):
