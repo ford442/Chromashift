@@ -65,6 +65,9 @@ export const CHROMASHIFT_TARGET_MAX_TEXTURE = 8192;
  * - `timestamp-query` → `GpuTimestampProfiler` (Diagnostics Perf HUD)
  * - `rg11b10ufloat-renderable` → HDR layer/tracer/compositor targets
  *   (`selectInternalColorFormat`); additive tracers otherwise clip in rgba8
+ * - `texture-formats-tier1` → `r8uint` storage textures, which the GPU
+ *   image-analysis lane writes its classification mask into
+ *   (`supportsR8uintStorage`); the WASM/TS lanes produce it otherwise
  *
  * `float32-filterable` is not requested: we never sample r32float/rgba32float.
  * `rgba16float` / `rg11b10ufloat` filtering is core WebGPU.
@@ -72,6 +75,10 @@ export const CHROMASHIFT_TARGET_MAX_TEXTURE = 8192;
 export const CHROMASHIFT_OPTIONAL_FEATURES = [
   'timestamp-query',
   'rg11b10ufloat-renderable',
+  // Cast: `@tensorflow/tfjs-core` pins `@webgpu/types` 0.1.38, which predates
+  // this feature, and with two copies in the program the older global
+  // `GPUFeatureName` is the one TypeScript resolves.
+  'texture-formats-tier1' as GPUFeatureName,
 ] as const satisfies readonly GPUFeatureName[];
 
 /** 8-bit LDR internal targets — default when HDR renderables are not granted. */

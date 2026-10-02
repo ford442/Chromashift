@@ -16,6 +16,7 @@ import {
   supportedNodeKinds,
   validateGraph,
 } from './index';
+import { emitBlurWgsl, emitWarpWgsl } from './templates/wgsl';
 import type { GraphNode, PassGraph, ResolutionClass } from './types';
 
 const node = (
@@ -386,5 +387,32 @@ describe('arbitrary layer counts', () => {
     expect(stamp.textureBindings).toEqual([
       'layer0', 'layer1', 'layer2', 'layer3', 'layer4', 'previous',
     ]);
+  });
+});
+
+/**
+ * WGSL's uniformity rule: `textureSample` computes implicit derivatives, so it
+ * must be reached by every invocation in a quad — never from behind a branch
+ * on a per-fragment value. Nothing in Node can run the WGSL validator, and a
+ * violation is not a thrown error on a device either: it is an invalid pipeline
+ * that drops the whole frame. `?graph=warp` shipped behind such a branch and
+ * drew black, so the emitters are held to "no branch in a sampling pass".
+ */
+describe('emitted sampling passes stay in uniform control flow', () => {
+  const cases: [string, string][] = [
+    ['warp (affine)', emitWarpWgsl('affine')],
+    ['warp (feedback)', emitWarpWgsl('feedback')],
+    ['blur', emitBlurWgsl(3)],
+  ];
+
+  for (const [name, source] of cases) {
+    it(`${name} samples without branching`, () => {
+      expect(source).toContain('textureSample(');
+      expect(source).not.toMatch(/\bif\s*\(/);
+    });
+  }
+
+  it('warp still returns transparent black outside the warped image', () => {
+    expect(emitWarpWgsl('affine')).toMatch(/select\(sampled, vec4<f32>\(0\.0\), outside\)/);
   });
 });

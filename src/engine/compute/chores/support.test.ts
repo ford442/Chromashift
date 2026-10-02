@@ -5,6 +5,7 @@ import {
   isSrgbTextureFormat,
   publishGpuComputeBreadcrumbs,
   readGpuComputeDiagnostics,
+  supportsR8uintStorage,
 } from './support';
 
 function mockDevice(limits: Partial<GPUSupportedLimits> = {}): GPUDevice {
@@ -83,5 +84,27 @@ describe('gpu-chores support detection', () => {
     expect(w.gpuComputeAvailable).toBe(true);
     expect(w.gpuComputeReason).toBeNull();
     expect(w.gpuComputeDiagnostics).toBeTruthy();
+  });
+});
+
+describe('supportsR8uintStorage', () => {
+  it('is false without texture-formats-tier1 — r8uint is not a core storage format', () => {
+    expect(supportsR8uintStorage(mockDevice())).toBe(false);
+  });
+
+  it('is true when the device was granted texture-formats-tier1', () => {
+    expect(supportsR8uintStorage({
+      features: new Set(['texture-formats-tier1']),
+    } as unknown as GPUDevice)).toBe(true);
+  });
+
+  it('reads a device without a features set as unsupported rather than throwing', () => {
+    expect(supportsR8uintStorage({} as GPUDevice)).toBe(false);
+    const throwing = {
+      get features(): GPUSupportedFeatures {
+        throw new Error('features unavailable');
+      },
+    } as unknown as GPUDevice;
+    expect(supportsR8uintStorage(throwing)).toBe(false);
   });
 });

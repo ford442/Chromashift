@@ -85,6 +85,22 @@ export function canAnalyzeTexture(
   return w <= support.maxTextureDimension2D && h <= support.maxTextureDimension2D;
 }
 
+/**
+ * Can this device create a write-only `r8uint` storage texture — the
+ * classification mask the image-analysis kernel writes?
+ *
+ * Not core WebGPU: `r8uint` gains the storage capability only with
+ * `texture-formats-tier1`, which `CHROMASHIFT_OPTIONAL_FEATURES` requests when
+ * the adapter offers it. Read defensively, like the diagnostics below.
+ */
+export function supportsR8uintStorage(device: GPUDevice): boolean {
+  try {
+    return device.features?.has('texture-formats-tier1') === true;
+  } catch {
+    return false;
+  }
+}
+
 export function isSrgbTextureFormat(format: GPUTextureFormat): boolean {
   return format === 'rgba8unorm-srgb' || format === 'bgra8unorm-srgb';
 }

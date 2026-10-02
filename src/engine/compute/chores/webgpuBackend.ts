@@ -14,6 +14,7 @@ import {
   canAnalyzeTexture,
   detectGpuComputeSupport,
   isSrgbTextureFormat,
+  supportsR8uintStorage,
   type GpuComputeSupport,
 } from './support';
 import {
@@ -105,6 +106,17 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
 
   private readonly device: GPUDevice;
   readonly support: GpuComputeSupport;
+  /**
+   * The classification kernel writes a `texture_storage_2d<r8uint, write>`,
+   * and `r8uint` is only a storage format under `texture-formats-tier1`.
+   * Without it every object in the chain is invalid — but invalid objects are
+   * not exceptions, so `analyze()` used to "succeed" with an invalid mask
+   * texture that the renderer then bound into every layer pass, dropping each
+   * frame's command buffer and leaving the canvas black. Declining here lets
+   * the runtime fall through to the WASM/TS lanes, whose mask is uploaded with
+   * `writeTexture` (sampling `r8uint` is core).
+   */
+  private readonly maskStorageSupported: boolean;
 
   private histogramPipeline: GPUComputePipeline | null = null;
   private classificationPipeline: GPUComputePipeline | null = null;
@@ -184,6 +196,7 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   constructor(device: GPUDevice) {
     this.device = device;
     this.support = detectGpuComputeSupport(device);
+    this.maskStorageSupported = supportsR8uintStorage(device);
   }
 
   isSupported(): boolean {
@@ -199,11 +212,15 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
       return Boolean(job.layers) && this.canAnalyze(job.width, job.height);
     }
     if (!job.source) return false;
+    if (job.op === 'image-analysis' && !this.maskStorageSupported) return false;
     return this.canAnalyze(job.width, job.height);
   }
 
   declineReason(job: ChoreJob): string {
     if (!this.support.available) return this.support.reason ?? 'WebGPU compute unavailable';
+    if (job.op === 'image-analysis' && !this.maskStorageSupported) {
+      return 'r8uint storage textures need texture-formats-tier1, which this device was not granted';
+    }
     if (job.op === 'coincidence') {
       if (!job.layers) return 'No GPU-resident layer textures';
       return `Coincidence buffer ${job.width}×${job.height} exceeds maxTextureDimension2D `
@@ -456,7 +473,7 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     height: number,
     avgLumHint?: number,
   ): Promise<GpuImageAnalysisOutput | null> {
-    if (!this.canAnalyze(width, height)) return null;
+    if (!this.maskStorageSupported || !this.canAnalyze(width, height)) return null;
 
     let result: GpuImageAnalysisOutput | null = null;
     const run = this.analyzeChain.then(() => this.analyzeOnce(source, width, height, avgLumHint));

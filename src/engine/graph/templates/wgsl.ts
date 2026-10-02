@@ -1004,10 +1004,13 @@ ${displace}
   let p = (uv - vec2<f32>(0.5)) * aspectCorrection / max(wu.scale, 0.0001);
   let rotated = vec2<f32>(p.x * c - p.y * s, p.x * s + p.y * c);
   let warped = rotated / aspectCorrection + vec2<f32>(0.5);
-  if (warped.x < 0.0 || warped.x > 1.0 || warped.y < 0.0 || warped.y > 1.0) {
-    return vec4<f32>(0.0);
-  }
-  return textureSample(tex, texSampler, warped);
+  // Sampled before the bounds test, not behind it: textureSample must be
+  // called from uniform control flow, and a branch on the fragment's own UV
+  // is not uniform. Behind the branch the module fails validation, and the
+  // invalid pipeline drops every frame's command buffer (a black canvas).
+  let sampled = textureSample(tex, texSampler, warped);
+  let outside = warped.x < 0.0 || warped.x > 1.0 || warped.y < 0.0 || warped.y > 1.0;
+  return select(sampled, vec4<f32>(0.0), outside);
 }
 `;
 }

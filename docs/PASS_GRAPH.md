@@ -5,10 +5,12 @@ pipeline they hard-code.
 
 > **Status: Phase 2 — the graph *executes* on WebGPU behind `?graph=1`.**
 > `WebGpuGraphExecutor` walks `compiled.passes`, binds the allocator's pool and
-> encodes the frame. The default graph is byte-for-byte the shipped topology, so
-> `?graph=1` changes the encode path and not the pixels; `?graph=blur` and
-> `?graph=warp` are different *shapes* that draw without a renderer edit. The
-> WebGL diagnostic backend still compiles only.
+> encodes the frame. On a GPU the default graph's frame is byte-identical to the
+> hand encoder's fused-fragment persistence path, and within ±1 on a handful of
+> pixels of its compute-fed one (see [Pixel parity](#pixel-parity-on-a-device));
+> `?graph=blur` and `?graph=warp` are different *shapes* that draw without a
+> renderer edit. The WebGL diagnostic backend compiles only, and refuses the
+> shapes it has no template for by name.
 > See [Phase 2](#phase-2--shipped) for what landed and what is left.
 
 ---
@@ -159,8 +161,9 @@ hand-written shader it replaced — see `__golden__/coincidence-compute.wgsl`.
 ## The gate
 
 `?graph=1` (or a stored `chromashift.passGraph` preference) turns on compilation
-and the breadcrumbs. Because the default graph is the pipeline the renderer
-already runs, the gate changes what is *observable*, not what is drawn.
+and the breadcrumbs, and on WebGPU hands the compiled graph to the executor.
+For the default graph that changes the encode path, not the look: see
+[Pixel parity](#pixel-parity-on-a-device) for how close "not the look" is.
 
 | Breadcrumb | Meaning |
 |---|---|
@@ -168,9 +171,9 @@ already runs, the gate changes what is *observable*, not what is drawn.
 | `window.passGraphCompileCount` | compilations so far — must not move on a parameter change |
 | `window.passGraphPasses` | scheduled pass order, as node ids |
 | `window.passGraphSlots` | pool slot count per resolution class |
-| `window.passGraphError` | a refusal, naming the node, or `null` |
+| `window.passGraphError` | a refusal, or `null`: `unsupported-node: …` names a node the backend has no template for; `invalid-pipeline: …` carries the device's own error for an emitted shader it rejected |
 | `window.passGraphName` | which named shape the gate selected |
-| `window.passGraphExecuting` | the shape a GPU executor is **drawing**, or `null` |
+| `window.passGraphExecuting` | the shape a GPU executor is **drawing**, or `null` — published only once the device has validated its pipelines |
 | `window.passGraphExecutedPasses` | node ids the executor encodes, in order |
 
 `passGraphActive` says the compiler ran; `passGraphExecuting` says something is
@@ -217,6 +220,29 @@ Every `decay` pass runs the **fragment** fused shader — precisely the fallback
 compute `coincidence` kernel is an optimisation of the hand-encoded path, not a
 requirement of the graph, so a device without it runs the graph unchanged.
 
+### The device validates the pipelines before the graph draws
+
+Invalid WGSL is not an exception in WebGPU. `createShaderModule` hands back an
+invalid module, the pipeline built from it is invalid, and the first command
+buffer that binds it is dropped by the queue *whole* — every pass in the frame,
+not just the broken one. So an emitted shader the device rejects does not look
+like a missing pass; it looks like a black canvas, with every breadcrumb still
+saying the graph is drawing. `?graph=warp` shipped exactly that way: its bounds
+test put `textureSample` behind a branch on the fragment's UV, which fails WGSL
+uniformity analysis.
+
+The executor therefore builds its pipelines inside `validation` and `internal`
+error scopes (`prepare()`), and `WebGPURenderer` lets it draw only once that
+verdict comes back clean (`executor.ready`). Until then — a few milliseconds
+after boot, or after an antialiasing toggle rebuilds the band layers — the hand
+encoder keeps the canvas. A rejection is a refusal like any other: the executor
+is dropped, `window.passGraphError` carries `invalid-pipeline:` and the device's
+message, and the hand encoder stays on screen.
+
+Node cannot run the WGSL validator, so this is the only place such a bug can be
+caught *before* a user sees it. `passGraph.test.ts` additionally holds every
+sampling emitter to "no branch around `textureSample`".
+
 ### Pipelines are cached on the structural hash
 
 `compileGraph` memoises on the structural hash and the executor keys its
@@ -257,56 +283,85 @@ same target back out instead of sizing 2N of them.
 - **A graph-driven executor.** `WebGpuGraphExecutor` encodes `compiled.passes`
   on WebGPU, binding the allocator's pool, with MSAA resolve and ping-pong
   handled per node kind.
-- **Default-graph identity, at the source level.** `shaderParity.test.ts` pins
-  every emitted shader against the pre-refactor goldens, and the executor's unit
-  tests pin the encode structure — pass count, order, targets, bindings and
-  ping-pong phase — against a recording fake `GPUDevice`. See *Pixel parity is
-  not proven by CI* below for what that does and does not establish.
+- **Default-graph identity, at the source level and on a device.**
+  `shaderParity.test.ts` pins every emitted shader against the pre-refactor
+  goldens; the executor's unit tests pin the encode structure — pass count,
+  order, targets, bindings and ping-pong phase — against a recording fake
+  `GPUDevice`; and `e2e/graph-executor.spec.ts` reads both encoders' frames back
+  from the GPU and compares them. See [Pixel parity](#pixel-parity-on-a-device).
 - **Different-shape graphs that execute.** `?graph=blur` and `?graph=warp`
-  compile, schedule, allocate **and** get their extra passes encoded, with no
-  edit to `WebGPUPipelines.ts` or `PersistencePass.ts`. Both run emitters
-  (`emitBlurWgsl`, `emitWarpWgsl`) that had no runtime at all before. The unit
-  tests assert the encoded passes and their shader sources; the E2E breadcrumbs
-  assert the same on a real device. That they change the *pixels* is subject to
-  the caveat below.
-- **Refusals stay refusals.** `?graph=warp` on the WebGL backend is still a
+  compile, schedule, allocate, encode their extra passes **and** change the
+  pixels, with no edit to `WebGPUPipelines.ts` or `PersistencePass.ts`. Both
+  run emitters (`emitBlurWgsl`, `emitWarpWgsl`) that had no runtime at all
+  before. The E2E spec asserts content, a difference from the default graph,
+  and no uncaptured GPU error.
+- **Refusals stay refusals.** On WebGL, `?graph=warp` and `?graph=blur` are a
   `PassGraphError` with `code: 'unsupported-node'` naming the node, published as
-  `window.passGraphError`; a graph the executor cannot encode is refused with
-  the node named and the renderer stays on the hand encoder.
+  `window.passGraphError`, and the canvas keeps drawing the default look
+  (`e2e/pass-graph.spec.ts`). On WebGPU, a graph the executor cannot encode is
+  refused with the node named, and one whose pipelines the device rejects is
+  refused with the device's error — either way the hand encoder stays on
+  screen.
 
-### Pixel parity is not proven by CI
+### Pixel parity, on a device
 
-`e2e/graph-executor.spec.ts` contains a screenshot comparison of
-default-graph-via-executor against the hand encoder, but **no CI runner has yet
-executed it meaningfully**, and the spec is written to say so rather than to
-pass regardless.
+`e2e/graph-executor.spec.ts` compares frames the GPU actually drew. It reads
+the swap-chain texture back with `copyTextureToBuffer`
+(`e2e/helpers/gpuCanvasReadback.ts`) rather than screenshotting the page, so
+no overlay chrome can land in the buffer, and every comparison **fails** on a
+single-colour frame instead of skipping.
 
-Two things get in the way, both found by running the spec against a browser:
+What it establishes, on headless Chromium's SwiftShader adapter:
 
-- **An element screenshot is not a canvas readback.** Playwright captures the
-  element's *region of the page*, so overlay chrome painted over the canvas
-  lands in the buffer. Measured here, the main canvas reads 1867 distinct
-  colours with the UI up and exactly 1 — pure black — with it hidden. A
-  comparison built on the first number compares the UI to itself and passes
-  whatever the renderer does. `hideEverythingButTheCanvas()` is why the capture
-  is trustworthy now.
-- **Software WebGPU renders this scene blank.** `WebGpuChoreBackend` cannot
-  create its compute pipelines on such a runner, and the canvas comes back pure
-  black — on the hand encoder and the graph executor alike, with identical
-  console error sets for `?graph=0` and `?graph=1`. Two blank frames satisfy
-  "these match" and can never satisfy "these differ".
+| Comparison | Result |
+|---|---|
+| hand encoder vs itself, across sessions | byte-identical |
+| default graph vs hand encoder, both on fused-fragment persistence (`?no_gpu_compute`) | **byte-identical** |
+| default graph vs hand encoder on its compute-fed persistence | ±1 on 3 of 731k pixels |
+| `?graph=blur` / `?graph=warp` vs default graph | differ (~400k pixels for blur) |
 
-So the pixel comparisons skip, with the reason stated, when
-`renderedSomething()` says the canvas is blank. The breadcrumb assertions —
-which pass everywhere — still prove the blur and warp graphs compile, schedule,
-allocate and encode their extra passes.
+The ±1 is not the executor. With compute available, `PersistencePass` stamps
+overlaps in a compute kernel and decays against that stamp; the graph always
+runs the fused fragment pass, which never quantises the stamp. Same maths,
+different rounding. The spec bounds it (≤ 1 per channel, ≤ 0.05 % of pixels)
+rather than hiding it, since a wrong pass, binding or uniform moves far more.
 
-Closing this needs a runner with working WebGPU compute, or a headed GPU. Until
-then "the executor draws the same pixels" rests on the shader goldens plus the
-encode-structure unit tests, which is strong but is not a GPU comparison.
+The scene has zero tracer durations on purpose. The image, its mask and its
+average luminance arrive asynchronously, so for a few frames the stamp
+describes a scene that is still loading; with any decay, those frames leave
+residue that settles at an 8-bit fixed point, and how much depends on frame
+pacing (±1 on 5–43 pixels between two runs of the *same* encoder). A
+multiplier of 0 leaves no history to disagree about. The decay multiplier
+itself is covered by the executor's unit tests, not by pixels.
+
+Two things used to make every WebGPU frame in CI black — on the hand encoder
+and the executor alike, which is why this section once said parity could not
+be observed:
+
+- **Headless Chromium destroyed the device.** On a GPU-less runner the GPU
+  process could not allocate the canvas swap-chain image
+  (`Could not find SharedImageBackingFactory … WebgpuSwapChainTexture`), and
+  Dawn destroyed the device a few frames in. `playwright.config.ts` now launches
+  the `chromium-webgpu` project with SwiftShader Vulkan, which keeps it alive.
+- **The GPU image-analysis lane poisoned every frame.** Its classification
+  kernel writes an `r8uint` storage texture, which WebGPU allows only under
+  `texture-formats-tier1`. Without it the mask texture was invalid — but invalid
+  objects are not exceptions, so the lane "succeeded", and the renderer bound
+  that texture into every band-layer pass, dropping each frame's command
+  buffer. The lane now declines `image-analysis` unless the device was granted
+  the feature (requested when the adapter offers it), and the WASM/TS lanes
+  supply the mask. This one was not a CI artefact: it applies to any device
+  without that feature.
 
 ## Phase 3 — what is not done yet
 
+- **The executor as the default path.** The gate is still off by default, so
+  two topologies are live: the executor behind `?graph=1` and the hand encoder
+  everywhere else. The hand encoder cannot simply be deleted yet — it is also
+  what draws a motion mode, the `layers`/`tracers` export passes, the compare
+  slots and the stationary previews — but it can become the fallback for those
+  cases once the graph is on by default. The parity above is the evidence for
+  flipping it; the cost is the compute-fed stamp, which the graph does not use.
 - **The WebGL executor.** The diagnostic / XR / screenshot backend still
   compiles only. It is second in line on purpose: it has no template for `warp`
   or `blur`, so the shapes worth executing are WebGPU's first.

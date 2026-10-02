@@ -216,7 +216,7 @@ WebGL-only debug helpers are in the Renderer panel:
 
 The WGSL and GLSL sources for the band layers, the coincidence/decay (persistence) pass and the compositor are **emitted** from the node templates in `src/engine/graph/templates/` rather than hand-written — one template plus a band table (`graph/layerSpecs.ts`) instead of three copies per backend. `src/engine/graph/shaderParity.test.ts` pins the emitted output against `graph/__golden__/`, the pre-refactor sources, so a template change that alters the rendered result fails loudly on both backends.
 
-On WebGPU the graph is also **executed**: `?graph=1` hands the compiled graph to `WebGpuGraphExecutor`, which walks `compiled.passes` and binds the allocator's pool instead of running the hand-written five-pass encode in `WebGPURenderer`. The default graph is byte-for-byte that topology; `?graph=blur` and `?graph=warp` are different shapes that draw with no renderer edit. The WebGL diagnostic backend compiles only. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
+On WebGPU the graph is also **executed**: `?graph=1` hands the compiled graph to `WebGpuGraphExecutor`, which walks `compiled.passes` and binds the allocator's pool instead of running the hand-written five-pass encode in `WebGPURenderer`. The default graph is that topology, and its frame is byte-identical to the hand encoder's on a GPU (±1 on a few pixels against the compute-fed stamp — see PASS_GRAPH.md § *Pixel parity*); `?graph=blur` and `?graph=warp` are different shapes that draw with no renderer edit. The executor draws only once the device has validated its pipelines, so an emitted shader the device rejects is an `invalid-pipeline` refusal, not a black canvas. The WebGL diagnostic backend compiles only. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
 
 For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. The tracer-decay constants follow the same rule: the `DECAY` table in `src/engine/math/decay.ts` (from `shared/decay.json`) via `DECAY_WGSL` / `DECAY_GLSL` in `decayLiterals.ts`, guarded by `src/engine/shaders/decayTable.test.ts` — see [docs/wasm-engine.md](docs/wasm-engine.md#shared-decay-table-shareddecayjson). Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
@@ -354,7 +354,7 @@ The facade dispatches three ops: `image-analysis` (above), `coincidence` (the tr
 
 **Selection order** — encoded once in `CHORE_BACKEND_ORDER` and walked by `runJob({ op: 'image-analysis', prefer: 'auto' })`; `useClassificationMask.ts` calls the facade rather than branching itself:
 
-1. **WebGPU compute** — primary. Requires `renderer.backend === 'webgpu'` and a GPU-resident source texture.
+1. **WebGPU compute** — primary. Requires `renderer.backend === 'webgpu'`, a GPU-resident source texture, and `texture-formats-tier1` on the device: the mask is an `r8uint` *storage* texture, which core WebGPU does not allow. Without the feature the lane declines rather than returning an invalid texture — invalid objects are not exceptions, and binding one drops every frame.
 2. **WASM** `computeClassificationMask` — default fallback (CI / headless / flaky Edge or Chrome). Declines unless Engine mode = WASM *and* the module is loaded.
 3. **TypeScript** `classifyImageMaskWith` — terminal fallback.
 
@@ -392,7 +392,7 @@ MSAA pipelines must match the render-pass attachment `sampleCount`. A 4× pipeli
 
 ### GPU Performance Instrumentation (WebGPU only)
 
-Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, Chromashift requests every adapter-supported entry in `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`): `timestamp-query` and `rg11b10ufloat-renderable`. Missing features skip the corresponding path (CPU-only HUD, rgba8 internal targets). Breadcrumbs: `window.gpuTimestampAvailable`, `window.gpuTimestampReason`.
+Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, Chromashift requests every adapter-supported entry in `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`): `timestamp-query`, `rg11b10ufloat-renderable` and `texture-formats-tier1`. Missing features skip the corresponding path (CPU-only HUD, rgba8 internal targets, CPU classification mask). Breadcrumbs: `window.gpuTimestampAvailable`, `window.gpuTimestampReason`.
 
 `GpuTimestampProfiler` (`src/engine/GpuTimestampProfiler.ts`) wraps the live render path in `WebGPURenderer`:
 
@@ -523,11 +523,15 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | `web` | `npm run lint`, `npx tsc -b`, `npm run build` |
 | `unit` | `npm test` (Vitest) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
-| `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu`) |
+| `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu` + SwiftShader Vulkan) |
 | `wasm` | `npm run test:cpp:werror` + emsdk pin check (`make -C cpp check`) + `make -C cpp verify-exports` + `npm run build:wasm` + artifact check + `npm run bench:wasm -- --assert` |
 
 WebGPU E2E runs in the `chromium-webgpu` Playwright project with
-`--enable-unsafe-webgpu` (see `playwright.config.ts`). For local WebGPU validation,
+`--enable-unsafe-webgpu` plus the SwiftShader Vulkan flags (see
+`playwright.config.ts`): without them headless Chromium cannot allocate the canvas
+swap chain on a GPU-less runner and destroys the device, so every frame is black.
+Compare WebGPU frames with `e2e/helpers/gpuCanvasReadback.ts`, which reads the
+swap-chain texture back, not with a page screenshot. For local WebGPU validation,
 use Chrome with `?renderer=webgpu`. The WebGL project is the named diagnostic
 lane (`?renderer=webgl`) when WebGPU is unavailable in a headless environment.
 
@@ -581,8 +585,8 @@ Frontend-only project — no backend/database/services to run. Standard commands
   `docs/webgl-fallback.md`). Use `http://localhost:5173/?renderer=webgl` for a diagnostic
   session. Read `window.webgpuProbe` in the console to confirm the failure stage.
   Playwright's `chromium` project is first-class (`npm run test:e2e:webgl`) and must
-  **not** skip. The `chromium-webgpu` project (`--enable-unsafe-webgpu`) may still fail
-  in this VM.
+  **not** skip. The `chromium-webgpu` project does render here, on SwiftShader, with
+  the launch flags in `playwright.config.ts`.
 - **Playwright browsers must be installed once per fresh VM** before `npm run test:e2e`:
   `npx playwright install --with-deps chromium`. This is intentionally not in the update
   script (heavy, network-dependent). The `opacity-test.spec.ts` spec is skipped by default.

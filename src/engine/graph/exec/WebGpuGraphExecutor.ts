@@ -93,6 +93,10 @@ export class WebGpuGraphExecutor {
   private builtForHash: string | null = null;
   private builtForSampleCount = 1;
   private sampleCount = 1;
+  /** Bumped per pipeline build, so a superseded build's verdict is not taken as the current one's. */
+  private buildGeneration = 0;
+  private pipelinesValid = false;
+  private verdict: Promise<string | null> = Promise.resolve(null);
 
   /** Pipelines created since construction — the "no churn" probe for tests. */
   pipelineBuildCount = 0;
@@ -129,6 +133,37 @@ export class WebGpuGraphExecutor {
 
   get active(): boolean {
     return this.compiled !== null && this.plan !== null;
+  }
+
+  /**
+   * True once the device has accepted every pipeline this graph encodes with,
+   * at the current sample count.
+   *
+   * `active` is not enough to draw with. WGSL the device rejects does not
+   * throw: it yields an invalid shader module, an invalid pipeline, and a
+   * command buffer the queue drops whole — every pass in the frame, not just
+   * the broken one, so the canvas goes black. Until `prepare()` has heard
+   * back, the renderer keeps drawing with the hand encoder.
+   */
+  get ready(): boolean {
+    return this.active
+      && this.pipelinesValid
+      && this.builtForHash === this.compiled!.hash
+      && this.builtForSampleCount === this.sampleCount;
+  }
+
+  /**
+   * Build the pipelines now and resolve with the device's verdict on them:
+   * `null` when every one validated, otherwise the device's first error.
+   *
+   * Idempotent for an unchanged graph and sample count. When a later build
+   * supersedes this one (the sample count changed mid-flight), the promise
+   * answers for the current build rather than the stale one.
+   */
+  prepare(): Promise<string | null> {
+    if (!this.compiled || !this.plan) return Promise.resolve(null);
+    this.ensurePipelines(this.compiled);
+    return this.verdict;
   }
 
   get graphHash(): string | null {
@@ -235,6 +270,11 @@ export class WebGpuGraphExecutor {
     for (const node of this.nodePipelines.values()) destroyNodePipeline(node);
     this.nodePipelines.clear();
     this.builtForHash = null;
+    this.pipelinesValid = false;
+    // A build still awaiting its verdict now answers with this one, so it
+    // never resolves to itself.
+    this.buildGeneration += 1;
+    this.verdict = Promise.resolve(null);
     this.pool.release();
   }
 
@@ -246,6 +286,8 @@ export class WebGpuGraphExecutor {
     }
     for (const node of this.nodePipelines.values()) destroyNodePipeline(node);
     this.nodePipelines = new Map();
+    this.pipelinesValid = false;
+    const generation = ++this.buildGeneration;
 
     const ctx: NodePipelineContext = {
       device: this.device,
@@ -259,11 +301,27 @@ export class WebGpuGraphExecutor {
       compiled.emitted.map((pass) => [pass.nodeId, pass]),
     );
 
-    for (const step of this.plan!.steps) {
-      const emitted = emittedById.get(step.nodeId);
-      if (!emitted || emitted.fragment === '') continue;
-      this.nodePipelines.set(step.nodeId, createNodePipeline(ctx, emitted));
-      this.pipelineBuildCount += 1;
+    // Every object the build creates is created inside these scopes, and
+    // nothing else runs between the push and the pops, so an error they catch
+    // belongs to this graph's pipelines.
+    this.device.pushErrorScope('internal');
+    this.device.pushErrorScope('validation');
+    try {
+      for (const step of this.plan!.steps) {
+        const emitted = emittedById.get(step.nodeId);
+        if (!emitted || emitted.fragment === '') continue;
+        this.nodePipelines.set(step.nodeId, createNodePipeline(ctx, emitted));
+        this.pipelineBuildCount += 1;
+      }
+    } finally {
+      const validation = this.device.popErrorScope();
+      const internal = this.device.popErrorScope();
+      this.verdict = Promise.all([validation, internal]).then(([invalid, failed]) => {
+        if (generation !== this.buildGeneration) return this.verdict;
+        const error = invalid ?? failed;
+        this.pipelinesValid = error === null;
+        return error ? error.message : null;
+      });
     }
     this.builtForHash = compiled.hash;
     this.builtForSampleCount = this.sampleCount;

@@ -40,6 +40,12 @@ export interface FakeGpu {
   bufferWrites: { buffer: string; bytes: number }[];
   /** Fragment source each created pipeline was built from, in creation order. */
   fragments: string[];
+  /**
+   * Make every shader module whose source contains `marker` a validation
+   * error, the way a real device reports WGSL it rejects: not a throw, but an
+   * error delivered to the innermost matching `pushErrorScope`.
+   */
+  rejectShadersContaining(marker: string, message: string): void;
   reset(): void;
 }
 
@@ -67,6 +73,15 @@ export function createFakeGpu(): FakeGpu {
   };
   let ids = 0;
   const nextId = (prefix: string) => `${prefix}#${(ids += 1)}`;
+  const rejected: { marker: string; message: string }[] = [];
+  const scopes: { filter: GPUErrorFilter; error: GPUError | null }[] = [];
+  const raise = (filter: GPUErrorFilter, message: string) => {
+    for (let i = scopes.length - 1; i >= 0; i -= 1) {
+      if (scopes[i].filter !== filter) continue;
+      scopes[i].error ??= { message } as GPUError;
+      return;
+    }
+  };
 
   const device = {
     features: new Set<string>(),
@@ -97,7 +112,17 @@ export function createFakeGpu(): FakeGpu {
     },
     createSampler: () => ({ __sampler: nextId('smp') }) as unknown as GPUSampler,
     createShaderModule(descriptor: GPUShaderModuleDescriptor) {
+      const rejection = rejected.find(({ marker }) => descriptor.code.includes(marker));
+      if (rejection) raise('validation', rejection.message);
       return { __code: descriptor.code } as unknown as GPUShaderModule;
+    },
+    pushErrorScope(filter: GPUErrorFilter) {
+      scopes.push({ filter, error: null });
+    },
+    popErrorScope() {
+      const scope = scopes.pop();
+      if (!scope) return Promise.reject(new Error('popErrorScope with no scope pushed'));
+      return Promise.resolve(scope.error);
     },
     createBindGroupLayout(descriptor: GPUBindGroupLayoutDescriptor) {
       return { __entries: descriptor.entries, label: nextId('bgl') } as unknown as GPUBindGroupLayout;
@@ -166,6 +191,9 @@ export function createFakeGpu(): FakeGpu {
     get bindGroupCount() { return state.bindGroupCount; },
     get bufferWrites() { return state.bufferWrites; },
     get fragments() { return state.fragments; },
+    rejectShadersContaining(marker: string, message: string) {
+      rejected.push({ marker, message });
+    },
     reset() {
       state.passes.length = 0;
       state.bufferWrites.length = 0;

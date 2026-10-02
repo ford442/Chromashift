@@ -82,14 +82,15 @@ layers that do not currently scale.
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
 | P1 | Automation timeline (schema v6) | [#153](https://github.com/ford442/Chromashift/issues/153) | Feature | L | Presets are poses, not performances; unblocks authored exports and kiosk attract. Depends on #149. (Was planned as v5; #155's tracer motion took that version first.) |
-| P2 | Pass-graph IR + compiler | [#154](https://github.com/ford442/Chromashift/issues/154) | Architecture | XL | 🚧 Phase 1 shipped behind `?graph=1` — IR, validator, scheduler, transient texture pool, structural-hash cache, and WGSL/GLSL templates that now *emit* the layer, persistence and compositor shaders (pinned pixel-identical against pre-refactor goldens). Phase 2 is the graph-driven executor; see [PASS_GRAPH.md](PASS_GRAPH.md) |
+| P2 | Pass-graph IR + compiler + executor | [#154](https://github.com/ford442/Chromashift/issues/154) | Architecture | XL | 🚧 Phases 1–2 shipped behind `?graph=1` — the compiler (IR, validator, scheduler, transient pool, structural-hash cache, WGSL/GLSL templates pinned to the pre-refactor goldens) and a WebGPU `GraphExecutor` that draws it. The default graph is byte-identical to the hand encoder on a GPU (±1 on a few pixels against its compute-fed stamp); `?graph=blur` / `?graph=warp` draw new shapes with no renderer edit; pipelines the device rejects are refused by name, never drawn black. Left: the executor as the default path, the WebGL executor, N-layer execution, a third tracer. See [PASS_GRAPH.md](PASS_GRAPH.md) |
 | P2 | Motion-aware tracers | [#155](https://github.com/ford442/Chromashift/issues/155) | Feature | L | ✅ Shipped — a `gpu-chores` `op: 'motion-field'` (quarter-res frame difference, GPU + WASM/TS lanes) feeding a `motionMode` / `motionGain` / `motionDecayBias` / `motionThreshold` term on both persistence backends, preset schema v5, and its own Perf HUD row. `off` is the default and binds the pre-motion shader variant unchanged. **Stage 2** adds coarse-to-fine Lucas–Kanade optical flow behind `direction`: two WGSL compute passes, a C++/SIMD128 `computeMotionFlow`, and the portable TS reference, all pinned to one fixture; the CPU solve runs in `motion.worker.ts`. Lifts naturally into #154 as a `motion` node. See [LIVE_SOURCE.md](LIVE_SOURCE.md#optical-flow-stage-2) |
 
 **Reading the split:** #149 and #150 are the two that make everything else cheaper,
 and neither changes a pixel. #153 is the highest-value *product* addition — it is
 what makes video export and kiosk mode worth using. #154 is the one that removes
-the ceiling, and it is deliberately gated (`?graph=1`) so it can ship dark — Phase 1
-is in tree; the renderers still encode the fixed topology themselves.
+the ceiling, and it is deliberately gated (`?graph=1`) so it can ship dark — the
+compiler and the WebGPU executor are in tree, and the gate is still off by default,
+so outside `?graph=1` the renderers encode the fixed topology themselves.
 
 ## Research
 

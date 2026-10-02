@@ -120,6 +120,7 @@ describe('listAvailableOptionalFeatures', () => {
     expect([...CHROMASHIFT_OPTIONAL_FEATURES]).toEqual([
       'timestamp-query',
       'rg11b10ufloat-renderable',
+      'texture-formats-tier1',
     ]);
   });
 });
