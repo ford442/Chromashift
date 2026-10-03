@@ -15,8 +15,10 @@ the application always works.
 
 ## Runtime scope
 
-The C++ WASM engine is a **load-time analysis accelerator**, not a replacement for the GPU
-render loop. Toggling **C++ WASM** in the Engine panel routes specific CPU-side work through
+The C++ WASM engine is mostly a **load-time analysis accelerator**, not a replacement for the
+GPU render loop. The one per-frame exception is `computeMotionFlow`, which serves `direction`
+motion on lanes without GPU compute and runs in `motion.worker.ts`, never on the animation
+thread. Toggling **C++ WASM** in the Engine panel routes specific CPU-side work through
 the compiled module when it is available; the WebGPU/WGSL pipeline remains the source of truth
 for real-time rendering.
 
@@ -257,12 +259,17 @@ Every bulk kernel has a hand-written `wasm_simd128.h` path guarded by `__wasm_si
 | `computeLuminanceHistogram` | Vectorised luminance + `trunc_sat`; the bucket increment is a scatter, so lanes are drained scalar |
 | `computeColorBandCounts` | Vectorised ladder, scalar tally |
 | `simulateTracerDecay` | Straight `f32x4` multiply |
+| `computeMotionFlow` | 2×2 `halvePlane` deinterleaves even/odd lanes with `wasm_i32x4_shuffle`; the coarse LK level solves 4 interior cells per lane (`pmin`/`pmax` clamps keep the scalar NaN behaviour). The fine level stays scalar: its warped bilinear fetch is a per-cell gather |
 
 Output is bit-identical to the scalar path. The luminance step issues its three multiplies
 and two adds in the same order as the scalar code and f32 lanes round exactly like scalar
 f32, and the ladder is the same comparison set. The average-luminance kernels changed
 formulation — integer channel sums weighted once, instead of a running `double` sum — which
 removes accumulated rounding error rather than adding any, and returns the same `float`.
+
+`computeMotionFlow` is the exception to that claim: its lanes are pinned to one shared fixture
+within `2e-3` instead (TypeScript solves in doubles; C++ and WGSL in f32). `npm run bench:wasm`
+is the only place its SIMD128 body runs, because the host `g++` build compiles the scalar one.
 
 The scalar bodies are still compiled and are what the host `g++` build runs, so
 `cpp/tests/test_engine.cpp` keeps checking them against a verbatim copy of the original

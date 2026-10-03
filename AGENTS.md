@@ -459,8 +459,10 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
   - `boost` — motion multiplies a fresh stamp by `1 + motionGain × magnitude`.
   - `gate` — a stamp survives *only* where the frame changed, which isolates a live subject
     from its background with no segmentation model.
-  - `direction` — flow angle drives hue. The frame-difference stage writes a zero flow vector,
-    so this reads as a magnitude tint until a block-matching / Lucas–Kanade stage fills it in.
+  - `direction` — flow angle drives hue. The velocity comes from coarse-to-fine Lucas–Kanade
+    (Stage 2, solved only in this mode); below `MOTION_FLOW_MIN_SPEED` the hue is pinned to
+    angle 0, so still regions keep the Stage 1 magnitude tint. See
+    [LIVE_SOURCE.md](docs/LIVE_SOURCE.md#optical-flow-stage-2).
 
   In every non-`off` mode `motionDecayBias` also *slows* decay locally
   (`decayMod × (1 − bias × magnitude)`), so a moving region holds its trail while a static one

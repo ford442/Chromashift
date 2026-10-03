@@ -242,15 +242,28 @@ compile-commands:
 	fi
 	@$(NODE) ../scripts/gen-compile-commands.mjs
 
-# Ensure EXPORTED_FUNCTIONS matches every EMSCRIPTEN_KEEPALIVE symbol in the header.
+# Ensure EXPORTED_FUNCS and the header's prototypes match exactly, both ways.
+# Prototypes are `<return type> <name>(` lines at column 0. An empty parse is a
+# failure, not a pass, so restyling the header cannot make this check vacuous
+# again (the old column-0-name regex matched none of them and always passed).
 verify-exports:
-	@missing=$$(grep -E '^[a-zA-Z_][a-zA-Z0-9_]*\(' $(HEADER) \
-	  | sed 's/(.*//' \
-	  | grep -vE '^(extern|ifdef|endif)$$' \
-	  | while read -r fn; do \
-	      echo "$(EXPORTED_FUNCS)" | grep -q "_$$fn" || echo "$$fn"; \
-	    done); \
-	if [ -n "$$missing" ]; then \
-	  echo "❌  EXPORTED_FUNCTIONS missing:"; echo "$$missing"; exit 1; \
-	fi
-	@echo "✅  EXPORTED_FUNCTIONS matches $(HEADER)"
+	@header=$$(sed -nE 's/^[A-Za-z_][A-Za-z0-9_ ]*[ *]+([A-Za-z_][A-Za-z0-9_]*)\(.*/\1/p' $(HEADER)); \
+	if [ -z "$$header" ]; then \
+	  echo "❌  no prototypes parsed from $(HEADER) — verify-exports would be vacuous"; exit 1; \
+	fi; \
+	exports=",$$(echo '$(EXPORTED_FUNCS)' | tr -d ' '),"; \
+	missing=""; \
+	for fn in $$header; do \
+	  case "$$exports" in *",_$$fn,"*) ;; *) missing="$$missing $$fn" ;; esac; \
+	done; \
+	extra=""; \
+	for sym in $$(echo "$$exports" | tr ',' ' '); do \
+	  case "$$sym" in _malloc|_free) continue ;; esac; \
+	  echo "$$header" | grep -qx "$${sym#_}" || extra="$$extra $$sym"; \
+	done; \
+	if [ -n "$$missing$$extra" ]; then \
+	  [ -z "$$missing" ] || echo "❌  in $(HEADER) but not EXPORTED_FUNCS:$$missing"; \
+	  [ -z "$$extra" ] || echo "❌  in EXPORTED_FUNCS but not $(HEADER):$$extra"; \
+	  exit 1; \
+	fi; \
+	echo "✅  $$(echo "$$header" | wc -l | tr -d ' ') exports match $(HEADER)"
