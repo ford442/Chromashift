@@ -202,9 +202,10 @@ fn motion_field_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
   }
 
-  // gb are reserved for the flow vector a block-matching / Lucas-Kanade stage
-  // would write; the frame-difference stage leaves them zero, which the
-  // persistence shader's \`direction\` mode reads as "no direction known yet".
+  // gb stay zero in this pass. When the job asks for flow (\`direction\` only),
+  // the Stage 2 Lucas-Kanade passes in motionFlowKernels.ts write a separate
+  // rgba16float texture — this r copied through unchanged, velocity in gb — and
+  // PersistencePass binds that one instead, so boost/gate never see flow.
   textureStore(field_tex, cell, vec4<f32>(magnitude, 0.0, 0.0, 1.0));
   textureStore(next_lum_tex, cell, vec4<f32>(lum, 0.0, 0.0, 1.0));
 
