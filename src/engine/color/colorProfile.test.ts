@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import bandTable from '../../../shared/band.json';
 import {
   BUILTIN_COLOR_PROFILES,
   CLASSIC_COLOR_PROFILE,
   CLASSIC_PROFILE_ID,
-  PROFILE_LUT_BYTES,
+  PROFILE_LUT_MIN_ROWS,
   PROFILE_LUT_WIDTH,
   buildColorProfileLut,
   colorProfileLookupValue,
@@ -13,11 +14,14 @@ import {
   isClassicProfile,
   parseColorProfile,
   parseColorProfileJson,
+  profileLutBytes,
+  profileLutRows,
   sampleColorProfile,
   type ColorProfile,
 } from './colorProfile';
 import { fragmentShaderRedOrange } from '../shaders';
 import { LAYER_FRAGMENT_SOURCE } from '../webgl/shaders';
+import { MAX_LAYER_COUNT } from '../graph/layerSpecs';
 
 const BAND = bandTable.bands;
 
@@ -90,7 +94,7 @@ describe('profile validation', () => {
 
   it('rejects a bad id, layer count, band range and rgb tuple', () => {
     expect(parseColorProfile({ ...valid(), id: 'not a valid id!' }).error).toMatch(/id/);
-    expect(parseColorProfile({ ...valid(), layers: [] }).error).toMatch(/3 layers/);
+    expect(parseColorProfile({ ...valid(), layers: [] }).error).toMatch(/1–10 layers/);
 
     const badRange = valid();
     badRange.layers[0].bands[0].max = badRange.layers[0].bands[0].min;
@@ -120,9 +124,10 @@ describe('lookup value', () => {
 });
 
 describe('LUT baking', () => {
-  it('produces a 256×3 RGBA table', () => {
+  it('produces a 256×3 RGBA table by default', () => {
     const lut = buildColorProfileLut(CLASSIC_COLOR_PROFILE, 128);
-    expect(lut.length).toBe(PROFILE_LUT_BYTES);
+    expect(lut.length).toBe(profileLutBytes(PROFILE_LUT_MIN_ROWS));
+    expect(lut.length).toBe(256 * 3 * 4);
   });
 
   it('places diagnostic band steps on the canonical boundaries', () => {
@@ -176,6 +181,91 @@ describe('LUT baking', () => {
     // Sub-bucket jitter must not churn the GPU upload.
     expect(getColorProfileLut(profile, 128.1)).toBe(first);
     expect(getColorProfileLut(profile, 200)).not.toBe(first);
+  });
+});
+
+describe('variable layer count', () => {
+  const valid = () => JSON.parse(JSON.stringify(getBuiltinColorProfile('diagnostic-grey')));
+
+  /** A profile whose layers are distinguishable by colour: layer i is grey i*20. */
+  function stripedProfile(layerCount: number): ColorProfile {
+    const doc = valid();
+    doc.id = `striped-${layerCount}`;
+    doc.layers = Array.from({ length: layerCount }, (_, i) => ({
+      name: `stripe${i}`,
+      bands: [{ name: 'all', min: -1, max: 255, rgb: [i * 20, i * 20, i * 20] }],
+    }));
+    const { profile, error } = parseColorProfile(doc);
+    if (!profile) throw new Error(error);
+    return profile;
+  }
+
+  function lutRow(lut: Uint8Array, row: number): Uint8Array {
+    return lut.subarray(row * PROFILE_LUT_WIDTH * 4, (row + 1) * PROFILE_LUT_WIDTH * 4);
+  }
+
+  // SHA-256 of `buildColorProfileLut(profile, avgLum)` recorded before the LUT
+  // learned about layer counts: the three-row bake must stay byte-identical.
+  it.each([
+    ['cr0p-classic', 40, '18680521b2ec3ca501345dcb572d5edced85ab0b450daf9557e277e7d050e678'],
+    ['cr0p-classic', 128, 'eb6c7e427ebde29a608102f0e3748968b6534aba74a6c48c1228112790e2b4b0'],
+    ['cr0p-classic', 210, '99c72eed28cce7446e68588b886e69b3566c94c61e1e17ad368643be8c424130'],
+    ['cr0p-soft-gradient', 128, 'fb0b42194f1009c1834b92310a0182335249602f548d017a923387931081fb7f'],
+    ['diagnostic-grey', 128, 'dd603a69653bd0e532d9a7091430abd300499b705227b61305b743078c3eb719'],
+  ])('keeps the 3-row %s LUT at avgLum %i byte-identical', (id, avgLum, sha) => {
+    const profile = getBuiltinColorProfile(id)!;
+    const hash = (lut: Uint8Array) => createHash('sha256').update(lut).digest('hex');
+    expect(hash(buildColorProfileLut(profile, avgLum))).toBe(sha);
+    expect(hash(getColorProfileLut(profile, avgLum, 3))).toBe(sha);
+  });
+
+  it.each([1, 2, 5, MAX_LAYER_COUNT])('accepts a %i-layer profile', (layerCount) => {
+    expect(stripedProfile(layerCount).layers).toHaveLength(layerCount);
+  });
+
+  it('rejects zero layers and more than the band table holds', () => {
+    expect(parseColorProfile({ ...valid(), layers: [] }).error).toMatch(/1–10 layers/);
+    const tooMany = valid();
+    tooMany.layers = Array.from({ length: MAX_LAYER_COUNT + 1 }, () => tooMany.layers[0]);
+    expect(parseColorProfile(tooMany).error).toMatch(/1–10 layers/);
+  });
+
+  it.each([
+    [1, 3],
+    [2, 3],
+    [3, 3],
+    [5, 5],
+    [MAX_LAYER_COUNT, MAX_LAYER_COUNT],
+  ])('bakes %i session layers into %i rows', (layerCount, rows) => {
+    expect(profileLutRows(layerCount)).toBe(rows);
+    const lut = getColorProfileLut(stripedProfile(3), 128, layerCount);
+    expect(lut.length).toBe(profileLutBytes(rows));
+  });
+
+  it('wraps session layers onto profile layers (row r = profile layer r % M)', () => {
+    const profile = stripedProfile(3);
+    const lut = buildColorProfileLut(profile, 128, 7);
+    for (let row = 0; row < 7; row += 1) {
+      const grey = (row % 3) * 20;
+      expect(lutPixel(lut, row, 200)).toEqual([grey, grey, grey, 255]);
+      expect(lutRow(lut, row)).toEqual(lutRow(lut, row % 3));
+    }
+  });
+
+  it('uses only the rows it needs from a profile with more layers than the session', () => {
+    const lut = buildColorProfileLut(stripedProfile(5), 128, 3);
+    expect(lut.length).toBe(profileLutBytes(3));
+    expect(lutPixel(lut, 2, 200)).toEqual([40, 40, 40, 255]);
+  });
+
+  it('memoizes per row count', () => {
+    const profile = getBuiltinColorProfile('diagnostic-grey')!;
+    const three = getColorProfileLut(profile, 128, 3);
+    // Counts below three share the three-row LUT, so the texture never resizes.
+    expect(getColorProfileLut(profile, 128, 1)).toBe(three);
+    const five = getColorProfileLut(profile, 128, 5);
+    expect(five).not.toBe(three);
+    expect(getColorProfileLut(profile, 128, 5)).toBe(five);
   });
 });
 

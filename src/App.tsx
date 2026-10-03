@@ -50,6 +50,7 @@ export default function App() {
     mainCanvasRef: refs.mainCanvasRef,
     antialiasEnabled: output.antialiasEnabled,
     displayColorSpace: output.displayColorSpace,
+    canvasHdr: output.canvasHdr,
     setGpuError: actions.setGpuError,
     orchestratorRef: refs.orchestratorRef,
     deviceRef: refs.deviceRef,

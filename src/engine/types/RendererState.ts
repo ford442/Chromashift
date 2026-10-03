@@ -37,7 +37,8 @@ export interface RendererState {
   motionThreshold?     : number;
   colorMode?           : number;
   /**
-   * Baked colour-profile LUT (256×3 RGBA8, see `buildColorProfileLut`). Present
+   * Baked colour-profile LUT (256 × `profileLutRows(layers.length)` RGBA8, see
+   * `buildColorProfileLut`; the row count is `length / 1024`). Present
    * only when a non-classic profile is active; renderers upload it when the
    * array identity changes. `null`/absent keeps the classic branchy path.
    */

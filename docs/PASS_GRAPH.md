@@ -369,11 +369,14 @@ be observed:
   parameter (schema v7), `RendererState.layers` and `layerOpacities` are arrays,
   `BindGroupCache` stores `layers: GPUTexture[]`, the WebGPU bind-group layouts
   are generated from `layerCount`, the coincidence compute kernel is emitted by
-  `emitCoincidenceComputeWgsl(n)`, and the C ABI takes a pointer and a count.
+  `emitCoincidenceComputeWgsl(n)`, the C ABI takes a pointer and a count, and
+  colour profiles take 1–10 layers baked into a 256 × max(n, 3) LUT.
   What is left is *execution*: the WebGPU renderer still builds one layer
   pipeline per entry in `layerFragmentSources`, so changing `layers.count`
   resizes the state, the panel and the uniforms but not yet the number of band
-  passes drawn. The executor owning the layer passes is what closes that.
+  passes drawn. Until then the hand encoders draw the first `min(n, 3)` of the
+  three canonical passes and clear the rest (`drawnLayerCount` /
+  `encodeLayerClear`). The executor owning the layer passes is what closes that.
 - **A third tracer timescale.** `emitCompositorWgsl` binds exactly two tracer
   textures (`persistBelow`, `persistAbove`), so a graph with three `decay`
   nodes is refused rather than approximated. Generalising the compositor

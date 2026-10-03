@@ -205,9 +205,7 @@ export class GpuReadback {
         applyTonemap: options.applyTonemap,
         showLayers: options.showLayers,
         layerBlendMode: options.layerBlendMode,
-        layerOpacity0: options.layerOpacity0,
-        layerOpacity1: options.layerOpacity1,
-        layerOpacity2: options.layerOpacity2,
+        layerOpacities: options.layerOpacities,
       },
       {
         layerTextures: ctx.layerTextures,

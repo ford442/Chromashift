@@ -71,9 +71,8 @@ export interface ExportTracerOptions {
   applyTonemap?: boolean;
   showLayers?: boolean;
   layerBlendMode?: number;
-  layerOpacity0?: number;
-  layerOpacity1?: number;
-  layerOpacity2?: number;
+  /** Per-layer opacity, one entry per session layer; a missing entry is 1. */
+  layerOpacities?: readonly number[];
 }
 
 export interface ExportTracerResult {

@@ -28,9 +28,8 @@ export interface TracerViewEncodeParams {
   applyTonemap?: boolean;
   showLayers?: boolean;
   layerBlendMode?: number;
-  layerOpacity0?: number;
-  layerOpacity1?: number;
-  layerOpacity2?: number;
+  /** Per-layer opacity, one entry per session layer; a missing entry is 1. */
+  layerOpacities?: readonly number[];
 }
 
 export interface MainViewEncodeParams {
@@ -54,7 +53,7 @@ export interface MainViewEncodeParams {
   stampBoost: number;
   outputMode: number;
   tracerMode: number;
-  tracerInspect?: Omit<TracerViewEncodeParams, 'canvasWidth' | 'canvasHeight' | 'tracerAboveOpacity' | 'tracerBelowOpacity' | 'tracerBlendMode' | 'layerBlendMode' | 'layerOpacity0' | 'layerOpacity1' | 'layerOpacity2'>;
+  tracerInspect?: Omit<TracerViewEncodeParams, 'canvasWidth' | 'canvasHeight' | 'tracerAboveOpacity' | 'tracerBelowOpacity' | 'tracerBlendMode' | 'layerBlendMode' | 'layerOpacities'>;
 }
 
 export class TracerInspectPass {
@@ -199,9 +198,7 @@ export class TracerInspectPass {
         tracerBelowOpacity: tracerBelowOp,
         tracerBlendMode,
         layerBlendMode,
-        layerOpacity0: layerOpacities[0],
-        layerOpacity1: layerOpacities[1],
-        layerOpacity2: layerOpacities[2],
+        layerOpacities,
         ...params.tracerInspect,
       }, params);
       return true;
@@ -275,9 +272,10 @@ export class TracerInspectPass {
     this.tracerViewU32[11] = (options.applyTonemap ?? true) ? 1 : 0;
     this.tracerViewU32[12] = (options.showLayers ?? false) ? 1 : 0;
     this.tracerViewU32[13] = options.layerBlendMode ?? 0;
-    this.tracerViewF32[14] = options.layerOpacity0 ?? 1;
-    this.tracerViewF32[15] = options.layerOpacity1 ?? 1;
-    this.tracerViewF32[16] = options.layerOpacity2 ?? 1;
+    // The tracer-view shader still reads the three canonical layers.
+    this.tracerViewF32[14] = options.layerOpacities?.[0] ?? 1;
+    this.tracerViewF32[15] = options.layerOpacities?.[1] ?? 1;
+    this.tracerViewF32[16] = options.layerOpacities?.[2] ?? 1;
     this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniformData);
 
     const bg = getOrCreateTexturePairBindGroup(
@@ -403,9 +401,9 @@ export class TracerInspectPass {
     this.compareF32[2] = params.tracerBelowOp;
     this.compareU32[3] = params.layerBlendMode;
     this.compareU32[4] = params.tracerBlendMode;
-    this.compareF32[5] = params.layerOpacities[0];
-    this.compareF32[6] = params.layerOpacities[1];
-    this.compareF32[7] = params.layerOpacities[2];
+    this.compareF32[5] = params.layerOpacities[0] ?? 1;
+    this.compareF32[6] = params.layerOpacities[1] ?? 1;
+    this.compareF32[7] = params.layerOpacities[2] ?? 1;
     this.compareF32[8] = params.stampBoost;
     this.compareF32[9] = 0.004;
     this.compareU32[10] = params.outputMode;

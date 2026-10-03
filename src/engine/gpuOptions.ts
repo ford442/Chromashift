@@ -86,6 +86,16 @@ export const INTERNAL_COLOR_FORMAT_LDR: GPUTextureFormat = 'rgba8unorm';
 /** Packed HDR internal targets — used only when `rg11b10ufloat-renderable` is granted. */
 export const INTERNAL_COLOR_FORMAT_HDR: GPUTextureFormat = 'rg11b10ufloat';
 
+/**
+ * Swap-chain format for `hdr-extended` presentation. The 8-bit preferred
+ * formats cannot carry values above 1.0, so extended tone mapping only has
+ * headroom to show on a float canvas.
+ */
+export const HDR_CANVAS_FORMAT: GPUTextureFormat = 'rgba16float';
+
+/** `sdr` = today's clamped sRGB present; `hdr-extended` = opt-in Canvas HDR. */
+export type CanvasPresentation = 'sdr' | 'hdr-extended';
+
 export type DisplayColorSpace = Extract<PredefinedColorSpace, 'srgb' | 'display-p3'>;
 
 export function isDisplayColorSpace(value: unknown): value is DisplayColorSpace {
@@ -105,6 +115,19 @@ export function selectInternalColorFormat(device: Pick<GPUDevice, 'features'>): 
     return INTERNAL_COLOR_FORMAT_HDR;
   }
   return INTERNAL_COLOR_FORMAT_LDR;
+}
+
+/**
+ * Diagnostics note for an HDR canvas over 8-bit internal targets: the frame
+ * already clipped before it reached the extended present, so HDR buys nothing.
+ * Deliberately not fixed by requesting `rgba16float`/`float32-filterable`.
+ */
+export function canvasHdrInternalNote(
+  presentingHdr: boolean,
+  internalFormat: GPUTextureFormat,
+): string | null {
+  if (!presentingHdr || internalFormat === INTERNAL_COLOR_FORMAT_HDR) return null;
+  return `canvas HDR requested, internal targets are ${internalFormat} — highlights still clip`;
 }
 
 export function internalColorFormatBytesPerPixel(format: GPUTextureFormat): number {
@@ -136,7 +159,7 @@ export const RENDERER_CANVAS_OPTIONS_MATRIX = {
     alphaMode: 'opaque' as GPUCanvasAlphaMode,
     colorSpace: 'srgb' as PredefinedColorSpace,
     usage: 'RENDER_ATTACHMENT | COPY_SRC',
-    toneMapping: 'standard (when supported by configure)',
+    toneMapping: 'standard (when supported by configure); extended + rgba16float under Canvas HDR',
     msaa: 'layer pass sampleCount 1 or 4 (renderer toggle)',
   },
   webgl2: {

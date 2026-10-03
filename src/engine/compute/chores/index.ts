@@ -7,7 +7,8 @@
  *
  * Usage:
  * ```ts
- * const chores = createImageAnalysisRuntime({ device, cpuHost });
+ * const gpuBackend = device ? new WebGpuChoreBackend(device) : null; // one per device
+ * const chores = createImageAnalysisRuntime({ gpuBackend, cpuHost });
  * const result = await chores.runJob({
  *   op: 'image-analysis', source, image, width, height, prefer: 'auto',
  * });
@@ -104,25 +105,18 @@ export {
 
 import { CpuChoreBackend, type CpuChoreHost } from './cpuBackend';
 import { createChoresRuntime } from './runtime';
-import { WebGpuChoreBackend } from './webgpuBackend';
 import type { ChoreBackendImpl, ChoresRuntime } from './types';
 
 export interface ImageAnalysisRuntimeOptions {
   /**
-   * Renderer-owned device. Pass `null` on a WebGL backend (or when compute is
-   * killed) and no `webgpu` lane is registered at all — that is what keeps a
-   * GL context and a compute device from ever being live for one analysis.
+   * The host's WebGPU lane, constructed once per device and shared. Pass
+   * `null` on a WebGL backend (or when compute is killed) and no `webgpu` lane
+   * is registered at all — that is what keeps a GL context and a compute
+   * device from ever being live for one analysis.
    *
-   * The runtime adopts this device; it never requests its own.
-   */
-  device?: GPUDevice | null;
-  /**
-   * An already-constructed WebGPU lane to register instead of building one
-   * from `device`. Hosts that already own a lane (Chromashift's
-   * `RendererOrchestrator` does) pass it here so pipelines, staging buffers,
-   * and the reused mask texture stay shared rather than duplicated.
-   *
-   * Takes precedence over `device`.
+   * The runtime never builds a lane itself: a second `WebGpuChoreBackend` on
+   * the same device would duplicate pipelines and staging buffers (Chromashift
+   * hands out its single instance via `acquireGpuChoreSession()`).
    */
   gpuBackend?: ChoreBackendImpl | null;
   /** CPU implementations backing the `wasm` and `ts` lanes. */
@@ -135,7 +129,6 @@ export function createImageAnalysisRuntime(
 ): ChoresRuntime {
   const backends: ChoreBackendImpl[] = [];
   if (options.gpuBackend) backends.push(options.gpuBackend);
-  else if (options.device) backends.push(new WebGpuChoreBackend(options.device));
   if (options.cpuHost) {
     backends.push(new CpuChoreBackend('wasm', options.cpuHost));
     backends.push(new CpuChoreBackend('ts', options.cpuHost));

@@ -27,7 +27,7 @@ describe('serializeSettings', () => {
   it('always emits the current schema version', () => {
     const doc = serializeSettings(createInitialState());
     expect(doc.version).toBe(SETTINGS_SCHEMA_VERSION);
-    expect(SETTINGS_SCHEMA_VERSION).toBe(7);
+    expect(SETTINGS_SCHEMA_VERSION).toBe(8);
   });
 
   it('round-trips v2 field groups', () => {
@@ -305,7 +305,7 @@ describe('schema v7 — variable layer count', () => {
     const json = settingsToJson(state);
     const doc = deserializeSettings(json);
 
-    expect(doc?.version).toBe(7);
+    expect(doc?.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(doc?.settings.layers?.count).toBe(5);
     expect(doc?.settings.layers?.angles).toHaveLength(5);
 
@@ -381,5 +381,37 @@ describe('schema v7 — variable layer count', () => {
     const state = chromashiftReducer(createInitialState(), { type: 'layers/setCount', count: 5 });
     const compact = serializeSettings(state, { compactLayers: true });
     expect(compact.settings.layers?.count).toBe(5);
+  });
+});
+
+describe('schema v8 — Canvas HDR', () => {
+  it('defaults off and serializes as viewport.canvasHdr', () => {
+    const doc = serializeSettings(createInitialState());
+    expect(doc.settings.viewport?.canvasHdr).toBe(false);
+    expect(doc.settings.output).not.toHaveProperty('canvasHdr');
+  });
+
+  it('round-trips an enabled flag', () => {
+    const state = chromashiftReducer(createInitialState(), {
+      type: 'output/patch', patch: { canvasHdr: true },
+    });
+    const doc = deserializeSettings(settingsToJson(state));
+    expect(doc?.settings.viewport?.canvasHdr).toBe(true);
+    const restored = applySettingsToState(createInitialState(), doc!.settings);
+    expect(restored.output.canvasHdr).toBe(true);
+  });
+
+  it.each([1, 2, 3, 4, 5, 6, 7])('migrates a v%i document to SDR', (version) => {
+    const doc = deserializeSettings(JSON.stringify({
+      version,
+      settings: { viewport: { canvasHdr: true } },
+    }));
+    expect(doc?.version).toBe(8);
+    expect(doc?.settings.viewport?.canvasHdr).toBe(false);
+  });
+
+  it('does not enable HDR for a v8 preset that omits the flag', () => {
+    const doc = deserializeSettings(JSON.stringify({ version: 8, settings: {} }));
+    expect(doc?.settings.viewport?.canvasHdr).toBe(false);
   });
 });

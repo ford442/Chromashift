@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildRendererState } from './buildRendererState';
 import { createInitialState } from '../state/defaults';
 import { chromashiftReducer } from '../state/chromashiftReducer';
-import { PROFILE_LUT_BYTES } from './color/colorProfile';
+import { profileLutBytes } from './color/colorProfile';
 
 const ANGLES: [number, number, number] = [0, 0, 0];
 
@@ -20,8 +20,17 @@ describe('buildRendererState colour profiles', () => {
     });
     const state = buildRendererState(app, ANGLES);
     expect(state.colorProfileMode).toBe(1);
-    expect(state.colorProfileLut).toHaveLength(PROFILE_LUT_BYTES);
+    expect(state.colorProfileLut).toHaveLength(profileLutBytes(3));
     expect(state.colorProfileLightDark).toBe(1);
+  });
+
+  it('bakes one LUT row per layer above three, and three rows below', () => {
+    const app = chromashiftReducer(createInitialState(), {
+      type: 'layers/patch',
+      patch: { colorProfileId: 'diagnostic-grey' },
+    });
+    expect(buildRendererState(app, [0, 0, 0, 0, 0]).colorProfileLut).toHaveLength(profileLutBytes(5));
+    expect(buildRendererState(app, [0]).colorProfileLut).toHaveLength(profileLutBytes(3));
   });
 
   it('reports the raw lookup mode for profiles that skip the lightDark lift', () => {

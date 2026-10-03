@@ -185,6 +185,41 @@ fn encode_display(c: vec3<f32>) -> vec3<f32> {
 }
 `;
 
+/**
+ * Extended-range OETF for `hdr-extended` presentation (an `rgba16float` canvas
+ * configured with `toneMapping: { mode: 'extended' }`). The canvas reads its
+ * values as extended sRGB: the same transfer curve, mirrored for negatives and
+ * continued above 1.0. So scene values over white survive as encoded values
+ * over 1.0 and the UA maps them into the display's HDR headroom. Below 1.0 it
+ * matches `encode_display` exactly.
+ *
+ * It replaces `WGSL_OUTPUT_ENCODE` text-for-text (see `toHdrPresentWgsl`), so
+ * the SDR sources and their goldens stay byte-identical.
+ */
+export const WGSL_OUTPUT_ENCODE_EXTENDED = /* wgsl */ `
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+  let lin = abs(c);
+  let lo = lin * 12.92;
+  let hi = 1.055 * pow(lin, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+  return sign(c) * select(hi, lo, lin <= vec3<f32>(0.0031308));
+}
+
+/** Linear scene colour -> extended-sRGB values for an rgba16float HDR canvas. */
+fn encode_display(c: vec3<f32>) -> vec3<f32> {
+  return linear_to_srgb(c);
+}
+`;
+
+/**
+ * The `hdr-extended` variant of a canvas-target fragment shader: the same
+ * program with the clamping OETF swapped for the extended one. A source that
+ * does not include the encode block (it writes display-referred values only)
+ * comes back unchanged.
+ */
+export function toHdrPresentWgsl(source: string): string {
+  return source.split(WGSL_OUTPUT_ENCODE).join(WGSL_OUTPUT_ENCODE_EXTENDED);
+}
+
 /** The full colour-helper block: shared maths plus one crop ramp per layer. */
 export function emitColorHelpersWgsl(specs: readonly LayerSpec[]): string {
   return `${WGSL_COLOR_HELPER_PRELUDE}${emitCropHelpersWgsl(specs)}\n`;

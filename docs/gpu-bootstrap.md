@@ -70,6 +70,21 @@ RendererOrchestrator.bootstrap(primaryCanvas)
 
 **Canvas tone mapping.** `configureWebGpuCanvas` asks for `toneMapping.mode: 'standard'` but caches the answer in a page-lifetime capability bit, because Chromashift reconfigures on every resize, DPR change, and Display-P3 toggle — the old catch-and-retry cost a thrown exception *per configure* on a browser without it. The first configure feature-detects via `GPUCanvasContext.getConfiguration()` (Chrome 131+), which echoes the applied configuration so a silently dropped dictionary member is visible as an absent key; configure-and-catch remains only as the fallback for browsers that expose no `getConfiguration`, and it runs at most once. `getCanvasToneMappingSupport()` reports what was concluded (`null` before the first configure).
 
+**Canvas presentation (Canvas HDR).** The swap chain has two presentation modes. `sdr` is the default, and the Viewport **Canvas HDR** toggle (`viewport.canvasHdr`, schema v8) opts into `hdr-extended`:
+
+| Mode | Canvas configure | Canvas-target encode | For |
+|---|---|---|---|
+| `sdr` (default) | preferred format (`bgra8unorm` / `rgba8unorm`), `toneMapping: 'standard'` when supported | `encode_display` (sRGB OETF, clip at 1.0) | every existing preset, e2e, SDR galleries — pixel-identical to before |
+| `hdr-extended` | `rgba16float`, `toneMapping: 'extended'` | extended-sRGB OETF (`WGSL_OUTPUT_ENCODE_EXTENDED`: same curve, sign-mirrored, unclamped) | HDR monitors, installations, screen-share capture |
+
+- **Why `rgba16float`.** The 8-bit preferred formats cannot store values above 1.0, so `'extended'` only has headroom to show on a float canvas.
+- **Probe.** `probeCanvasHdr` runs one HDR configure at bootstrap, verified through `getConfiguration()` where the browser has it. It publishes `window.canvasHdrAvailable` / `window.canvasHdrReason`. The reason also reports `(dynamic-range: high)`, since an SDR display still clips.
+- **Fallback.** `configureWebGpuCanvas` caches the answer per page, like `'standard'`. A UA that throws or drops the format or tone mapping gets an SDR configure in the same call, so the canvas is never left black. `configureWebGpuCanvas` returns the presentation it actually applied.
+- **Which passes change.** Each `WebGPURenderer` chooses its present passes from the canvas texture's format. On an `rgba16float` canvas it lazily builds a second `CompositorPass` / `TracerInspectPass` against `rgba16float`, using `toHdrPresentWgsl` sources. The SDR passes keep serving live-preview readback, export and the pass-graph executor. While the canvas is HDR the executor steps aside for the hand encoder, because its canvas pipelines are SDR-only.
+- **Export stays SDR.** `exportFrame` (WebM / WebCodecs / PNG sequence) always renders to the SDR pipelines' format through `encode_display`. The tracer PNG renders offscreen. Upscale captures the canvas via a 2D `drawImage`, which converts to the 2D canvas's SDR space. WebGL has no extended canvas tone mapping, so the toggle is hidden there.
+- **Internal targets.** Canvas HDR does not request new device features. If `rg11b10ufloat-renderable` was not granted, the frame has already clipped in `rgba8unorm`. Diagnostics then shows `window.canvasHdrNote`: "canvas HDR requested, internal targets are rgba8unorm — highlights still clip".
+- **Manual HDR-display check.** Use Chrome on an HDR monitor with OS HDR on. Load a bright image, raise *Tracer above* intensity and stamp boost until trails saturate, then toggle **Canvas HDR**. With it on, overlapping additive trails should glow brighter than the UI's white. With it off, they should match it. Toggling back off must look identical to a fresh session.
+
 ## Limits and features
 
 - **Limits / device lease**: one `GPUAdapter` and at most one live `GPUDevice` per page. `requestWebGpuDevice` walks **at most three** strategies — `default-limits` (omit `requiredLimits`) → `canvas-limits` (longest canvas edge, floored at 256 so a 150px layout glitch cannot reshape the request) → `no-optional-features` — then **stops**. A live device is reused; canvas resize reconfigures the context / recreates textures on that device. Queue-create / `E_OUTOFMEMORY` sets `gpuFatal` and never calls `requestDevice` again until reload. React effect re-runs, rAF, and ResizeObserver must not reset `attempt` to 1 (#157 / #158).

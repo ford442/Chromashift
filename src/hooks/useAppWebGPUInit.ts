@@ -27,6 +27,7 @@ export interface UseAppWebGPUInitProps {
   mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
   antialiasEnabled: boolean;
   displayColorSpace: import('../engine/gpuOptions').DisplayColorSpace;
+  canvasHdr: boolean;
   setGpuError: (err: GpuRuntimeError | null) => void;
   orchestratorRef: MutableRefObject<RendererOrchestrator | null>;
   deviceRef: MutableRefObject<GPUDevice | null>;
@@ -153,6 +154,7 @@ export function useAppWebGPUInit({
   mainCanvasRef,
   antialiasEnabled,
   displayColorSpace,
+  canvasHdr,
   setGpuError,
   orchestratorRef,
   deviceRef,
@@ -183,6 +185,8 @@ export function useAppWebGPUInit({
   const displayColorSpaceRef = useRef(displayColorSpace);
   antialiasEnabledRef.current = antialiasEnabled;
   displayColorSpaceRef.current = displayColorSpace;
+  const canvasHdrRef = useRef(canvasHdr);
+  canvasHdrRef.current = canvasHdr;
   const [isGpuRetrying, setIsGpuRetrying] = useState(false);
 
   const destroyActiveOrchestrator = useCallback(() => {
@@ -273,6 +277,9 @@ export function useAppWebGPUInit({
       // only re-runs when `displayColorSpace` changes, so a preset URL that
       // selects display-p3 before boot would otherwise never reach the canvas.
       bootstrapped.orchestrator.setCanvasColorSpace(displayColorSpaceRef.current);
+      // Same reason for Canvas HDR. A UA without extended tone mapping keeps
+      // presenting SDR (configureWebGpuCanvas never leaves a black canvas).
+      if (canvasHdrRef.current) bootstrapped.orchestrator.setCanvasPresentation('hdr-extended');
       return true;
     };
 
@@ -608,6 +615,10 @@ export function useAppWebGPUInit({
   useEffect(() => {
     orchestratorRef.current?.setCanvasColorSpace(displayColorSpace);
   }, [displayColorSpace, orchestratorRef]);
+
+  useEffect(() => {
+    orchestratorRef.current?.setCanvasPresentation(canvasHdr ? 'hdr-extended' : 'sdr');
+  }, [canvasHdr, orchestratorRef]);
 
   return { retryGpuBootstrap, isGpuRetrying };
 }

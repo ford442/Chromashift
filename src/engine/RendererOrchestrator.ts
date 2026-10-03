@@ -4,7 +4,7 @@ import { TextureManager } from './TextureManager';
 import { WebGLTextureManager } from './WebGLTextureManager';
 import { GpuImageAnalysis } from './compute/GpuImageAnalysis';
 import { publishGpuComputeBreadcrumbs, readGpuComputeDiagnostics } from './compute/chores/support';
-import { resolveWebGL2PreserveDrawingBuffer } from './gpuOptions';
+import { resolveWebGL2PreserveDrawingBuffer, type CanvasPresentation } from './gpuOptions';
 import { acquireGpuChoreSession, type GpuChoreLease } from './compute/GpuChoreSession';
 import { getRendererPreference } from './rendererMode';
 import {
@@ -256,6 +256,18 @@ export class RendererOrchestrator {
    */
   setCanvasColorSpace(colorSpace: PredefinedColorSpace): void {
     this.canvasOptions = { ...this.canvasOptions, colorSpace };
+    this.session?.setCanvasOptions(this.canvasOptions);
+    this.resizeAll();
+  }
+
+  /**
+   * `hdr-extended` or `sdr` presentation for every WebGPU canvas — the Canvas
+   * HDR toggle. Same pending-reconfigure path as the colour space; a UA that
+   * refuses HDR keeps presenting SDR (see `configureWebGpuCanvas`). Each
+   * renderer picks its present passes from the canvas texture's format.
+   */
+  setCanvasPresentation(presentation: CanvasPresentation): void {
+    this.canvasOptions = { ...this.canvasOptions, presentation };
     this.session?.setCanvasOptions(this.canvasOptions);
     this.resizeAll();
   }

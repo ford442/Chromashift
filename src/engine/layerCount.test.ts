@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { WebGPUPipelines } from './WebGPUPipelines';
+import { WebGPUPipelines, drawnLayerCount, encodeLayerClear } from './WebGPUPipelines';
 import { buildRendererState } from './buildRendererState';
 import { MAX_LAYER_COUNT, assertLayerCount, clampLayerCount } from './graph/layerSpecs';
 import {
@@ -222,5 +222,47 @@ describe('WebGPU bind-group layouts are generated from the layer count', () => {
 
   it('rejects a layer count the band table cannot describe', () => {
     expect(() => new WebGPUPipelines(device, 'bgra8unorm', 'rgba16float', 11)).toThrow(RangeError);
+  });
+});
+
+/**
+ * The hand-written encode path still compiles the three canonical band passes.
+ * A session with fewer layers must not hand `undefined` to the per-layer
+ * uniforms (it used to throw in `layerRotationUniforms`), so it draws the
+ * first `count` and clears the rest; a session with more draws three.
+ */
+describe('band passes drawn by the hand-written encode path', () => {
+  it.each([
+    [1, 1],
+    [2, 2],
+    [3, 3],
+    [5, 3],
+    [MAX_LAYER_COUNT, 3],
+  ])('draws %i layers as %i of three passes', (layerCount, drawn) => {
+    expect(drawnLayerCount(3, layerCount)).toBe(drawn);
+    const state = buildRendererState(
+      chromashiftReducer(createInitialState(), { type: 'layers/setCount', count: layerCount }),
+      Array.from({ length: layerCount }, () => 0),
+    );
+    for (let i = 0; i < drawnLayerCount(3, state.layers.length); i += 1) {
+      expect(state.layers[i]).toBeDefined();
+    }
+  });
+
+  it('clears a skipped layer target to transparent and stores it', () => {
+    const end = vi.fn();
+    const beginRenderPass = vi.fn(() => ({ end }));
+    const view = {};
+    const texture = { createView: () => view } as unknown as GPUTexture;
+    encodeLayerClear({ beginRenderPass } as unknown as GPUCommandEncoder, texture);
+    expect(beginRenderPass).toHaveBeenCalledWith({
+      colorAttachments: [{
+        view,
+        loadOp: 'clear',
+        storeOp: 'store',
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
+      }],
+    });
+    expect(end).toHaveBeenCalledTimes(1);
   });
 });

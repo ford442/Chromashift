@@ -17,7 +17,7 @@ import {
 import { TracerInspectPass } from './TracerInspectPass';
 import type { RendererState } from './types/RendererState';
 import { layerRotationUniforms } from './math/rotation';
-import type { WebGPUPipelines } from './WebGPUPipelines';
+import { drawnLayerCount, encodeLayerClear, type WebGPUPipelines } from './WebGPUPipelines';
 import type { LayerTextures } from './BindGroupCache';
 
 /**
@@ -185,7 +185,12 @@ export class StationaryPreviewRenderer {
     const softCropEnabled = state.softCropEnabled ? 1 : 0;
     const aspect = 1;
 
+    const drawn = drawnLayerCount(this.layerPipelines.length, state.layers.length);
     for (let i = 0; i < this.layerPipelines.length; i++) {
+      if (i >= drawn) {
+        encodeLayerClear(enc, this.layerTextures[i]);
+        continue;
+      }
       const lp = this.layerPipelines[i];
       const layer = state.layers[i];
 
@@ -307,9 +312,7 @@ export class StationaryPreviewRenderer {
         applyTonemap: false,
         showLayers: false,
         layerBlendMode,
-        layerOpacity0: layerOpacities[0],
-        layerOpacity1: layerOpacities[1],
-        layerOpacity2: layerOpacities[2],
+        layerOpacities,
       },
       {
         layerTextures: this.getLayerTextures(),

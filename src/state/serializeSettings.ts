@@ -20,15 +20,19 @@ import {
  * Current preset schema.
  *
  * v5 added the tracer motion term, v6 is reserved for the timeline work
- * (issue #153), and v7 is the variable layer count. v6 is listed as supported
- * so a document written by that branch still loads here: the layer migration
- * below treats anything before v7 identically.
+ * (issue #153), v7 is the variable layer count, and v8 the opt-in Canvas HDR
+ * flag (`viewport.canvasHdr`). v6 is listed as supported so a document written
+ * by that branch still loads here: the layer migration below treats anything
+ * before v7 identically.
  */
-export const SETTINGS_SCHEMA_VERSION = 7 as const;
-export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4, 5, 6, 7] as const;
+export const SETTINGS_SCHEMA_VERSION = 8 as const;
+export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 /** First schema version that carries `layers.count` and variable-length arrays. */
 export const LAYER_COUNT_SCHEMA_VERSION = 7;
+
+/** First schema version that carries `viewport.canvasHdr`. */
+export const CANVAS_HDR_SCHEMA_VERSION = 8;
 
 export interface ChromashiftSettingsDocument {
   version: typeof SETTINGS_SCHEMA_VERSION;
@@ -128,7 +132,19 @@ function migrateLayerCount(
   return { ...layers, count };
 }
 
-/** Normalize a v1–v7 raw document to the current schema. */
+/**
+ * v8 added Canvas HDR. Anything older predates it and presents SDR; a v8
+ * document enables it only with an explicit `true`, so a preset that omits
+ * the flag never switches a viewer's canvas to HDR.
+ */
+function migrateCanvasHdr(
+  viewport: ChromashiftSettingsInput['viewport'],
+  version: number,
+): boolean {
+  return version >= CANVAS_HDR_SCHEMA_VERSION && viewport?.canvasHdr === true;
+}
+
+/** Normalize a v1–v8 raw document to the current schema. */
 export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDocument {
   const { settings } = doc;
   const output = settings.output ? { ...settings.output } : undefined;
@@ -173,6 +189,7 @@ export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDo
         quarterZoom: viewportQuarterZoom,
         halfOverlay: viewportHalfOverlay,
         colorSpace: viewportColorSpace,
+        canvasHdr: migrateCanvasHdr(settings.viewport, doc.version),
       },
       compare: settings.compare
         ? cloneCompareView(settings.compare)
@@ -219,6 +236,7 @@ export function serializeSettings(
     viewportQuarterZoom,
     viewportHalfOverlay,
     displayColorSpace,
+    canvasHdr,
     ...outputPreset
   } = output;
   void _tracerPreviewFrozen;
@@ -263,6 +281,7 @@ export function serializeSettings(
         quarterZoom: viewportQuarterZoom,
         halfOverlay: viewportHalfOverlay,
         colorSpace: displayColorSpace,
+        canvasHdr,
       },
       compare: cloneCompareView(ui.compareView),
       kiosk: {

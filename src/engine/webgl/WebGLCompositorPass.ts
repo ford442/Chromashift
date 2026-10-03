@@ -46,9 +46,10 @@ export class WebGLCompositorPass {
     bindTexture(gl, this.program, 'u_layer2', 2, layerTextures[2].texture);
     bindTexture(gl, this.program, 'u_tracerBelow', 3, persistence.tracerBelow[persistence.pingPong]!.texture);
     bindTexture(gl, this.program, 'u_tracerAbove', 4, persistence.tracerAbove[persistence.pingPong]!.texture);
-    uniform1f(gl, this.program, 'u_layerOpacity0', layerOpacities[0]);
-    uniform1f(gl, this.program, 'u_layerOpacity1', layerOpacities[1]);
-    uniform1f(gl, this.program, 'u_layerOpacity2', layerOpacities[2]);
+    // The compositor still blends the three canonical band targets.
+    uniform1f(gl, this.program, 'u_layerOpacity0', layerOpacities[0] ?? 1);
+    uniform1f(gl, this.program, 'u_layerOpacity1', layerOpacities[1] ?? 1);
+    uniform1f(gl, this.program, 'u_layerOpacity2', layerOpacities[2] ?? 1);
     uniform1f(gl, this.program, 'u_tracerBelowOpacity', state.tracerBelowIntensity ?? 0.3);
     uniform1f(gl, this.program, 'u_tracerAboveOpacity', state.tracerAboveIntensity ?? 0.85);
     uniform1i(gl, this.program, 'u_layerBlendMode', state.layerBlendMode ?? 0);

@@ -104,6 +104,22 @@ function CollisionStatsReadout() {
   );
 }
 
+/**
+ * Capability note for Canvas HDR over 8-bit internal targets. The renderer
+ * publishes it as a breadcrumb (`window.canvasHdrNote`); subscribing to the
+ * render-timing store is only the re-render tick that picks up a change.
+ */
+function CanvasHdrNote() {
+  useRenderCpuTiming();
+  const note = typeof window === 'undefined' ? null : window.canvasHdrNote;
+  if (!note) return null;
+  return (
+    <div className="text-[10px] font-mono text-amber-300/90" role="note">
+      {note}
+    </div>
+  );
+}
+
 export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   diagnosticsMode,
   diagnosticsOpacity,
@@ -140,6 +156,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   useRenderCount('DiagnosticsPanel');
   return (
     <div className="space-y-3">
+      {rendererBackend === 'webgpu' && <CanvasHdrNote />}
       <div className="panel-3d space-y-2">
         <div className="grid grid-cols-2 gap-1">
           <button

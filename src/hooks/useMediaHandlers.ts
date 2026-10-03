@@ -417,9 +417,7 @@ export function useTracerExport(
         applyTonemap: inspect.tonemap,
         showLayers: inspect.showLayers,
         layerBlendMode: tracers.layerBlendMode,
-        layerOpacity0: layers.opacities[0],
-        layerOpacity1: layers.opacities[1],
-        layerOpacity2: layers.opacities[2],
+        layerOpacities: layers.opacities,
       });
       if (!result) return;
 

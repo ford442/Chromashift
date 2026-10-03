@@ -4,7 +4,7 @@ import { WebGpuGraphExecutor, type GraphRoleTextures } from './graph/exec/WebGpu
 import { PassGraphError } from './graph/errors';
 import type { GraphPresetName } from './graph/altGraphs';
 import type { CompiledGraph } from './graph/types';
-import { WebGPUPipelines, type LayerPipeline } from './WebGPUPipelines';
+import { WebGPUPipelines, drawnLayerCount, encodeLayerClear, type LayerPipeline } from './WebGPUPipelines';
 import { MAIN_VIEW_MODES } from './viewModes';
 import {
   createLayerBindGroupCache,
@@ -27,7 +27,12 @@ import type { CollisionStats, RendererState } from './types/RendererState';
 import type { ChromashiftTextureHandle } from './types/TextureHandle';
 import { layerRotationUniforms } from './math/rotation';
 import { ProfileLutTexture } from './color/ProfileLutTexture';
-import { internalColorFormatBytesPerPixel, selectInternalColorFormat } from './gpuOptions';
+import {
+  HDR_CANVAS_FORMAT,
+  canvasHdrInternalNote,
+  internalColorFormatBytesPerPixel,
+  selectInternalColorFormat,
+} from './gpuOptions';
 
 /**
  * WebGPURenderer — thin orchestrator over the 5-pass GPU pipeline.
@@ -74,6 +79,19 @@ export class WebGPURenderer {
   private motionResetPending = true;
   private readonly compositor: CompositorPass;
   private readonly tracerInspect: TracerInspectPass;
+  /**
+   * Canvas-target passes for `hdr-extended` presentation: built lazily, the
+   * first frame the canvas comes back `rgba16float`, against that format and
+   * the unclamped OETF. Export, preview readback and the graph executor keep
+   * using the SDR passes above, so only what lands on the HDR canvas changes.
+   */
+  private hdrPresent: {
+    pipelines: WebGPUPipelines;
+    compositor: CompositorPass;
+    tracerInspect: TracerInspectPass;
+  } | null = null;
+  /** Whether the last frame presented HDR, so the breadcrumb only moves on a change. */
+  private presentedHdr = false;
   private readonly readback: GpuReadback;
   private readonly gpuProfiler: GpuTimestampProfiler | null;
   private readonly compositorSampler: GPUSampler;
@@ -180,7 +198,28 @@ export class WebGPURenderer {
     this.persistence.invalidateCaches();
     this.compositor.invalidateCaches();
     this.tracerInspect.invalidateCaches();
+    this.hdrPresent?.compositor.invalidateCaches();
+    this.hdrPresent?.tracerInspect.invalidateCaches();
     this.readback.invalidateCaches();
+  }
+
+  /** The HDR canvas passes, created on first use. */
+  private hdrPresentPasses(): { compositor: CompositorPass; tracerInspect: TracerInspectPass } {
+    if (!this.hdrPresent) {
+      const pipelines = new WebGPUPipelines(
+        this.device,
+        HDR_CANVAS_FORMAT,
+        this.internalFormat,
+        this.pipelines.layerCount,
+        'hdr-extended',
+      );
+      this.hdrPresent = {
+        pipelines,
+        compositor: new CompositorPass(this.device, pipelines, this.compositorSampler),
+        tracerInspect: new TracerInspectPass(this.device, pipelines, this.compositorSampler),
+      };
+    }
+    return this.hdrPresent;
   }
 
   private ensureTextures(w: number, h: number): void {
@@ -458,7 +497,12 @@ export class WebGPURenderer {
     const softCropEnabled = state.softCropEnabled ? 1 : 0;
     const aspect = canvasSize.width / canvasSize.height;
 
+    const drawn = drawnLayerCount(this.layerPipelines.length, state.layers.length);
     for (let i = 0; i < this.layerPipelines.length; i++) {
+      if (i >= drawn) {
+        encodeLayerClear(enc, this.layerTextures[i]);
+        continue;
+      }
       const lp = this.layerPipelines[i];
       const layer = state.layers[i];
 
@@ -516,6 +560,14 @@ export class WebGPURenderer {
     this.tracerScale = state.tracerScale ?? 1.0;
     this.ensureTextures(canvasTex.width, canvasTex.height);
 
+    const hdrCanvas = canvasTex.format === HDR_CANVAS_FORMAT;
+    if (hdrCanvas !== this.presentedHdr) {
+      this.presentedHdr = hdrCanvas;
+      if (typeof window !== 'undefined') {
+        window.canvasHdrNote = canvasHdrInternalNote(hdrCanvas, this.internalFormat);
+      }
+    }
+
     const enc = this.device.createCommandEncoder();
     const profiling = state.profilePerformance === true && this.gpuProfiler !== null;
     this.gpuProfiler?.setEnabled(profiling);
@@ -534,7 +586,17 @@ export class WebGPURenderer {
       });
     }
 
-    this.encodeFrameCore(enc, state, canvasTex.createView(), canvasTex.width, canvasTex.height, fps, 'composite', this.gpuProfiler);
+    this.encodeFrameCore(
+      enc,
+      state,
+      canvasTex.createView(),
+      canvasTex.width,
+      canvasTex.height,
+      fps,
+      'composite',
+      this.gpuProfiler,
+      hdrCanvas,
+    );
 
     const readbackFlags = this.readback.encodeQueuedReadbacks(
       enc,
@@ -591,9 +653,11 @@ export class WebGPURenderer {
     this.tracerScale = state.tracerScale ?? 1.0;
     this.ensureTextures(width, height);
 
+    // Always the SDR pipelines' format, never the live canvas's: export stays
+    // SDR (`encode_display` + clip) even while the canvas presents HDR.
     const output = this.device.createTexture({
       size: [width, height, 1],
-      format: this.format,
+      format: this.pipelines.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
 
@@ -625,6 +689,7 @@ export class WebGPURenderer {
     fps: number,
     passMode: ExportPassMode,
     profiler: GpuTimestampProfiler | null = null,
+    hdrCanvas = false,
   ): void {
     profiler?.beginFrame(enc);
 
@@ -632,7 +697,9 @@ export class WebGPURenderer {
     // is adopted it encodes `compiled.passes` — the default graph byte-for-byte
     // the topology below, or a different shape entirely — and the hand-written
     // encode path is skipped whole rather than partly reused.
-    if (this.executorDrawsFrame(state, passMode) && this.currentTexture) {
+    // The graph executor's canvas pipelines are SDR-only; an HDR canvas frame
+    // takes the hand encoder, which has the HDR present variants.
+    if (!hdrCanvas && this.executorDrawsFrame(state, passMode) && this.currentTexture) {
       this.executorEncodedLastFrame = true;
       // The live-preview readback still runs through `CompositorPass`, so its
       // uniform block has to be written even though the graph drew the frame.
@@ -734,10 +801,17 @@ export class WebGPURenderer {
     const layerBlendMode = state.layerBlendMode ?? 0;
     const tracerBlendMode = state.tracerBlendMode ?? 0;
 
-    this.compositor.writeUniforms(this.compositorUniformParams(state));
+    const compositorParams = this.compositorUniformParams(state);
+    // The SDR compositor's uniforms are written either way: the live-preview
+    // readback draws through it.
+    this.compositor.writeUniforms(compositorParams);
+    const present = hdrCanvas
+      ? this.hdrPresentPasses()
+      : { compositor: this.compositor, tracerInspect: this.tracerInspect };
+    if (hdrCanvas) present.compositor.writeUniforms(compositorParams);
 
     if (passMode === 'tracers') {
-      this.tracerInspect.encodeTracerView(
+      present.tracerInspect.encodeTracerView(
         enc,
         outputView,
         {
@@ -754,9 +828,7 @@ export class WebGPURenderer {
           applyTonemap: state.tracerInspectTonemap,
           showLayers: state.tracerInspectShowLayers,
           layerBlendMode,
-          layerOpacity0: layerOpacities[0],
-          layerOpacity1: layerOpacities[1],
-          layerOpacity2: layerOpacities[2],
+          layerOpacities,
         },
         {
           layerTextures,
@@ -773,7 +845,7 @@ export class WebGPURenderer {
       ? MAIN_VIEW_MODES.PROCESSED_COMPOSITE
       : (state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
 
-    const handledAlternateView = this.tracerInspect.encodeMainView(enc, {
+    const handledAlternateView = present.tracerInspect.encodeMainView(enc, {
       mainViewMode,
       canvasView: outputView,
       canvasWidth: width,
@@ -806,7 +878,7 @@ export class WebGPURenderer {
     });
 
     if (!handledAlternateView) {
-      this.compositor.encode(
+      present.compositor.encode(
         enc,
         outputView,
         layerTextures,
@@ -821,17 +893,15 @@ export class WebGPURenderer {
   /** Compositor uniform block for one frame, shared by both encode paths. */
   private compositorUniformParams(state: RendererState): CompositorUniformParams {
     const globalLayerOpacity = state.layerOpacity ?? 1.0;
-    const sourceLayerOpacities = state.layerOpacities ?? [1.0, 1.0, 1.0];
+    const sourceLayerOpacities = state.layerOpacities ?? [];
     return {
       tracerAboveOp: state.tracerAboveIntensity ?? 0.85,
       tracerBelowOp: state.tracerBelowIntensity ?? 0.30,
       layerBlendMode: state.layerBlendMode ?? 0,
       tracerBlendMode: state.tracerBlendMode ?? 0,
-      layerOpacities: [
-        globalLayerOpacity * sourceLayerOpacities[0],
-        globalLayerOpacity * sourceLayerOpacities[1],
-        globalLayerOpacity * sourceLayerOpacities[2],
-      ],
+      layerOpacities: this.layerPipelines.map(
+        (_, i) => globalLayerOpacity * (sourceLayerOpacities[i] ?? 1.0),
+      ),
       diagnosticsOpacity: state.diagnosticsOpacity ?? 0.55,
       stampBoost: state.stampBoost ?? 1.8,
       outputMode: state.outputMode ?? 0,
@@ -847,10 +917,6 @@ export class WebGPURenderer {
   private updatedProfileLut(state: RendererState): GPUTexture {
     this.profileLut.update(state.colorProfileLut);
     return this.profileLut.texture;
-  }
-
-  private get format(): GPUTextureFormat {
-    return this.context.getCurrentTexture().format;
   }
 
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
@@ -885,6 +951,8 @@ export class WebGPURenderer {
     this.motionField.destroy();
     this.compositor.destroy();
     this.tracerInspect.destroy();
+    this.hdrPresent?.compositor.destroy();
+    this.hdrPresent?.tracerInspect.destroy();
     this.readback.destroy();
     this.stationaryPreview.destroy();
     this.gpuProfiler?.destroy();

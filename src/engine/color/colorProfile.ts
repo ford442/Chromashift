@@ -1,4 +1,5 @@
 import builtinProfileTable from '../../../shared/colorProfiles.json';
+import { CANONICAL_LAYER_COUNT, MAX_LAYER_COUNT, clampLayerCount } from '../graph/layerSpecs';
 
 /**
  * Named colour profiles — see docs/COLOR_PROFILES.md.
@@ -60,16 +61,33 @@ export interface ColorProfile {
   builtin?: boolean;
   description?: string;
   preprocess: ColorProfilePreprocess;
-  /** Exactly three layers, matching the three colour-separation passes. */
-  layers: [ColorProfileLayer, ColorProfileLayer, ColorProfileLayer];
+  /**
+   * 1–`MAX_LAYER_COUNT` layers. Session layer `r` uses `layers[r % layers.length]`,
+   * so a profile authored for one layer count still colours every other count.
+   */
+  layers: ColorProfileLayer[];
 }
 
 export const CLASSIC_PROFILE_ID = 'cr0p-classic';
 
-/** LUT geometry — 256 luminance buckets × 3 layer rows, RGBA8. */
+/**
+ * LUT geometry — 256 luminance buckets × one row per session layer, RGBA8.
+ * Never fewer than {@link PROFILE_LUT_MIN_ROWS} rows: the renderers (and the
+ * pass-graph executor) still compile the three canonical band passes, which
+ * read rows 0–2 whatever the session's layer count is.
+ */
 export const PROFILE_LUT_WIDTH = 256;
-export const PROFILE_LUT_HEIGHT = 3;
-export const PROFILE_LUT_BYTES = PROFILE_LUT_WIDTH * PROFILE_LUT_HEIGHT * 4;
+export const PROFILE_LUT_MIN_ROWS = CANONICAL_LAYER_COUNT;
+
+/** LUT rows for a session of `layerCount` layers. */
+export function profileLutRows(layerCount: number): number {
+  return Math.max(clampLayerCount(layerCount), PROFILE_LUT_MIN_ROWS);
+}
+
+/** Byte length of a LUT with `rows` rows. */
+export function profileLutBytes(rows: number): number {
+  return PROFILE_LUT_WIDTH * rows * 4;
+}
 
 export type ColorProfileParseResult =
   | { profile: ColorProfile; error: null }
@@ -162,12 +180,12 @@ export function parseColorProfile(raw: unknown): ColorProfileParseResult {
     return { profile: null, error: 'preprocess.diffScale must be a number' };
   }
 
-  if (!Array.isArray(doc.layers) || doc.layers.length !== 3) {
-    return { profile: null, error: 'Profile must have exactly 3 layers' };
+  if (!Array.isArray(doc.layers) || doc.layers.length < 1 || doc.layers.length > MAX_LAYER_COUNT) {
+    return { profile: null, error: `Profile must have 1–${MAX_LAYER_COUNT} layers` };
   }
 
   const layers: ColorProfileLayer[] = [];
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < doc.layers.length; i += 1) {
     const layerRaw = doc.layers[i] as Record<string, unknown> | null;
     if (typeof layerRaw !== 'object' || layerRaw === null) {
       return { profile: null, error: `layers[${i}] must be an object` };
@@ -195,7 +213,7 @@ export function parseColorProfile(raw: unknown): ColorProfileParseResult {
       builtin: doc.builtin === true,
       description: typeof doc.description === 'string' ? doc.description : undefined,
       preprocess: { diffScale, lightDarkMode },
-      layers: layers as ColorProfile['layers'],
+      layers,
     },
     error: null,
   };
@@ -308,14 +326,20 @@ export function sampleColorProfile(
 }
 
 /**
- * Bake a profile into a 256×3 RGBA8 LUT. Column = lookup value bucket
- * (0–255), row = layer index. Shaders index it with the same rounded value.
+ * Bake a profile into a 256×`rows` RGBA8 LUT. Column = lookup value bucket
+ * (0–255), row = session layer index. Shaders index it with the same rounded
+ * value. Row `r` samples profile layer `r % profile.layers.length`.
  */
-export function buildColorProfileLut(profile: ColorProfile, avgLum: number): Uint8Array {
-  const lut = new Uint8Array(PROFILE_LUT_BYTES);
-  for (let layer = 0; layer < PROFILE_LUT_HEIGHT; layer += 1) {
+export function buildColorProfileLut(
+  profile: ColorProfile,
+  avgLum: number,
+  rows: number = PROFILE_LUT_MIN_ROWS,
+): Uint8Array {
+  const lut = new Uint8Array(profileLutBytes(rows));
+  for (let layer = 0; layer < rows; layer += 1) {
+    const profileLayer = layer % profile.layers.length;
     for (let value = 0; value < PROFILE_LUT_WIDTH; value += 1) {
-      const [r, g, b, a] = sampleColorProfile(profile, layer, value, avgLum);
+      const [r, g, b, a] = sampleColorProfile(profile, profileLayer, value, avgLum);
       const offset = (layer * PROFILE_LUT_WIDTH + value) * 4;
       lut[offset] = Math.round(r * 255);
       lut[offset + 1] = Math.round(g * 255);
@@ -339,14 +363,19 @@ const lutCache: LutCacheEntry[] = [];
  * frame, so the array identity stays stable until the profile or average
  * luminance actually changes — renderers upload only on identity change.
  */
-export function getColorProfileLut(profile: ColorProfile, avgLum: number): Uint8Array {
+export function getColorProfileLut(
+  profile: ColorProfile,
+  avgLum: number,
+  layerCount: number = CANONICAL_LAYER_COUNT,
+): Uint8Array {
   // Quantize avgLum: a LUT bucket can't resolve finer than half a unit anyway.
   const quantized = Math.round(avgLum * 2) / 2;
-  const key = `${profile.id}@${profile.version}:${quantized}`;
+  const rows = profileLutRows(layerCount);
+  const key = `${profile.id}@${profile.version}:${rows}:${quantized}`;
   const hit = lutCache.find((entry) => entry.key === key);
   if (hit) return hit.lut;
 
-  const lut = buildColorProfileLut(profile, quantized);
+  const lut = buildColorProfileLut(profile, quantized, rows);
   lutCache.unshift({ key, lut });
   if (lutCache.length > LUT_CACHE_LIMIT) lutCache.length = LUT_CACHE_LIMIT;
   return lut;

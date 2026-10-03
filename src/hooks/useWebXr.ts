@@ -79,11 +79,7 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
         if (imageUrl) {
           void presenter.syncTexture(imageUrl);
         }
-        const angles: number[] = [
-          animAnglesRef.current[0],
-          animAnglesRef.current[1],
-          animAnglesRef.current[2],
-        ];
+        const angles = animAnglesRef.current.slice();
         const built = buildRendererState(live, angles);
         renderer.render({ ...built, ...xrRendererStateOverrides(built) }, fps, viewport);
       }, current.engine.fps);

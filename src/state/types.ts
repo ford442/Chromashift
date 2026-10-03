@@ -19,7 +19,7 @@ export type DisplayColorSpace = import('../engine/gpuOptions').DisplayColorSpace
  *
  * Deliberately a plain array and not a 3-tuple: a session's layer count is
  * {@link LayersSlice.count} (1–`MAX_LAYER_COUNT`), and every consumer sizes
- * itself from `.length` rather than from a type-level width. `layerArrays.test.ts`
+ * itself from `.length` rather than from a type-level width. `engine/layerCount.test.ts`
  * fails if a fixed-width tuple is reintroduced anywhere on this contract.
  */
 export type PerLayer<T> = T[];
@@ -137,6 +137,11 @@ export interface OutputSlice {
   antialiasEnabled: boolean;
   /** Canvas presentation colour space (WebGPU `GPUCanvasConfiguration.colorSpace`). LUTs stay sRGB. */
   displayColorSpace: DisplayColorSpace;
+  /**
+   * Opt-in Canvas HDR: `hdr-extended` presentation (rgba16float + extended tone
+   * mapping) where the UA supports it. Export stays SDR either way.
+   */
+  canvasHdr: boolean;
   tracerInspect: TracerInspectState;
   tracerPreviewFrozen: boolean;
   livePreviewEnabled: boolean;

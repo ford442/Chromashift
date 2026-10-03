@@ -6,6 +6,7 @@ export const ViewportPanel = memo(function ViewportPanel({
   squareCanvas,
   antialiasEnabled,
   displayColorSpace,
+  canvasHdr,
   viewportQuarterZoom,
   viewportHalfOverlay,
   isViewingTracer,
@@ -13,6 +14,7 @@ export const ViewportPanel = memo(function ViewportPanel({
   onSquareCanvasToggle,
   onAntialiasToggle,
   onDisplayColorSpaceChange,
+  onCanvasHdrToggle,
   onViewportQuarterZoomToggle,
   onViewportHalfOverlayToggle,
   compareLayout,
@@ -168,6 +170,23 @@ export const ViewportPanel = memo(function ViewportPanel({
       >
         {displayColorSpace === 'display-p3' ? '◐ Display P3' : '◐ sRGB canvas'}
       </button>
+
+      {/* Probed once at WebGPU bootstrap; undefined on the WebGL backend. */}
+      {typeof window !== 'undefined' && window.canvasHdrAvailable !== undefined && (
+        <button
+          type="button"
+          onClick={() => onCanvasHdrToggle(!canvasHdr)}
+          disabled={!window.canvasHdrAvailable && !canvasHdr}
+          className={`w-full text-xs px-2 py-0.5 rounded transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+            canvasHdr
+              ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
+              : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
+          }`}
+          title={`Extended-range canvas so additive highlights can exceed SDR white on an HDR display. Exports stay SDR. (${window.canvasHdrReason ?? ''})`}
+        >
+          {canvasHdr ? '☀ Canvas HDR' : '☀ SDR canvas'}
+        </button>
+      )}
     </div>
   );
 });

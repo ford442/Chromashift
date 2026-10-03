@@ -184,6 +184,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
     if (!this.currentTexture) return null;
     const target = createTarget(this.gl, options.width, options.height);
+    const layerOpacities = this.layerPass.targets.map((_, i) => options.layerOpacities?.[i] ?? 1);
     const state: RendererState = {
       layers: [
         { angleDeg: 0 },
@@ -196,11 +197,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
       tracerBelowIntensity: options.tracerBelowOpacity,
       tracerBlendMode: options.tracerBlendMode,
       layerBlendMode: options.layerBlendMode,
-      layerOpacities: [
-        options.layerOpacity0 ?? 1,
-        options.layerOpacity1 ?? 1,
-        options.layerOpacity2 ?? 1,
-      ],
+      layerOpacities,
     };
     this.compositorPass.render(
       target,
@@ -209,7 +206,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
       this.layerPass.targets,
       this.persistencePass,
       state,
-      state.layerOpacities ?? [1, 1, 1],
+      layerOpacities,
     );
     const pixels = this.readback.readTexturePixels(target, options.width, options.height);
     destroyTarget(this.gl, target);

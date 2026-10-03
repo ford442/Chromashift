@@ -87,8 +87,9 @@ export const LayerPanel = memo(function LayerPanel({
         </div>
         {layerCount !== CANONICAL_LAYER_COUNT && (
           <p className="text-[10px] text-amber-400/50 font-mono leading-snug">
-            Saved and shared at {layerCount} bands. The renderer still draws{' '}
-            {CANONICAL_LAYER_COUNT} until the pass-graph executor owns the band passes.
+            Saved and shared at {layerCount} bands. The renderer draws the first{' '}
+            {Math.min(layerCount, CANONICAL_LAYER_COUNT)} until the pass-graph executor owns
+            the band passes.
           </p>
         )}
       </div>

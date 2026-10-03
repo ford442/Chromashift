@@ -2,7 +2,9 @@ import {
   CHROMASHIFT_OPTIONAL_FEATURES,
   CHROMASHIFT_TARGET_MAX_TEXTURE,
   WEBGPU_POWER_PREFERENCE_ATTEMPTS,
+  HDR_CANVAS_FORMAT,
   getWebGL2ContextAttributes,
+  type CanvasPresentation,
   type RendererCanvasOptions,
 } from './gpuOptions';
 
@@ -39,6 +41,12 @@ export interface WebGpuCapabilityReport {
 export interface WebGpuCanvasOptions {
   colorSpace?: PredefinedColorSpace;
   toneMappingMode?: GPUCanvasToneMappingMode;
+  /**
+   * `hdr-extended` configures an `rgba16float` canvas with extended tone
+   * mapping; `sdr` (the default) is the preferred format clipped at white.
+   * Falls back to `sdr` wherever the UA cannot honour it.
+   */
+  presentation?: CanvasPresentation;
 }
 
 export interface WebGpuBootstrapOptions extends RendererCanvasOptions {
@@ -58,6 +66,10 @@ export interface WebGpuSession {
   capabilities: WebGpuCapabilityReport;
   /** True when `timestamp-query` was requested and granted on the device. */
   timestampQueryAvailable: boolean;
+  /** Whether the UA accepts `hdr-extended` presentation (probed once at bootstrap). */
+  canvasHdrAvailable: boolean;
+  /** Why — mirrored to `window.canvasHdrReason`. */
+  canvasHdrReason: string;
   reconfigure: () => void;
   setCanvasOptions: (options: WebGpuCanvasOptions) => void;
   detach: () => void;
@@ -410,15 +422,20 @@ export function buildWebGpuCanvasConfiguration(
   format: GPUTextureFormat,
   options?: WebGpuCanvasOptions,
 ): GPUCanvasConfiguration {
+  const hdr = options?.presentation === 'hdr-extended';
   const config: GPUCanvasConfiguration = {
     device,
-    format,
+    format: hdr ? HDR_CANVAS_FORMAT : format,
     alphaMode: 'opaque',
+    // COPY_SRC in both modes: preview thumbnails and the collision-stats blit
+    // copy out of the swap chain.
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     colorSpace: options?.colorSpace ?? 'srgb',
   };
 
-  if (options?.toneMappingMode) {
+  if (hdr) {
+    config.toneMapping = { mode: 'extended' };
+  } else if (options?.toneMappingMode) {
     config.toneMapping = { mode: options.toneMappingMode };
   }
 
@@ -436,9 +453,22 @@ export function buildWebGpuCanvasConfiguration(
  */
 let canvasToneMappingSupported: boolean | null = null;
 
+/**
+ * The same page-lifetime bit for `hdr-extended` (an `rgba16float` canvas with
+ * `toneMapping: 'extended'`), so a refused HDR configure is not retried on
+ * every resize either.
+ */
+let canvasHdrSupported: boolean | null = null;
+
 /** Test-only: forget the probed capability so cases do not leak into each other. */
 export function resetCanvasToneMappingSupportForTests(): void {
   canvasToneMappingSupported = null;
+  canvasHdrSupported = null;
+}
+
+/** What the HDR probe concluded, or `null` before one ran. */
+export function getCanvasHdrSupport(): boolean | null {
+  return canvasHdrSupported;
 }
 
 /** What the probe concluded, or `null` before any canvas has been configured. */
@@ -455,7 +485,11 @@ export function getCanvasToneMappingSupport(): boolean | null {
  * Returns `null` when the browser gives us nothing to read, in which case the
  * caller falls back to configure-and-catch — once.
  */
-function probeToneMappingFromConfiguration(context: GPUCanvasContext): boolean | null {
+function probeToneMappingFromConfiguration(
+  context: GPUCanvasContext,
+  mode: GPUCanvasToneMappingMode = 'standard',
+  format?: GPUTextureFormat,
+): boolean | null {
   const readConfiguration = (context as GPUCanvasContext & {
     getConfiguration?: () => GPUCanvasConfiguration | null;
   }).getConfiguration;
@@ -463,17 +497,67 @@ function probeToneMappingFromConfiguration(context: GPUCanvasContext): boolean |
   try {
     const applied = readConfiguration.call(context);
     if (!applied) return null;
-    return applied.toneMapping?.mode === 'standard';
+    return applied.toneMapping?.mode === mode && (format === undefined || applied.format === format);
   } catch {
     return null;
   }
 }
 
+/**
+ * Configure for `hdr-extended`. Returns false (leaving the canvas unconfigured
+ * for the caller's SDR configure) when the UA throws or silently drops the
+ * format or tone mapping. The result is cached either way.
+ */
+function tryConfigureHdrCanvas(
+  context: GPUCanvasContext,
+  device: GPUDevice,
+  format: GPUTextureFormat,
+  options: WebGpuCanvasOptions,
+): boolean {
+  if (canvasHdrSupported === false) return false;
+  try {
+    context.configure(buildWebGpuCanvasConfiguration(device, format, options));
+  } catch (error) {
+    canvasHdrSupported = false;
+    console.warn('[Chromashift:GPU] Canvas HDR configure failed; presenting SDR', error);
+    return false;
+  }
+  if (canvasHdrSupported === null) {
+    // `null` (no getConfiguration) counts as support, same as tone mapping.
+    canvasHdrSupported = probeToneMappingFromConfiguration(context, 'extended', HDR_CANVAS_FORMAT) !== false;
+    if (!canvasHdrSupported) {
+      console.info('[Chromashift:GPU] Canvas HDR not supported; presenting SDR');
+    }
+  }
+  return canvasHdrSupported;
+}
+
+/**
+ * Configure a canvas. `presentation: 'hdr-extended'` is honoured when the UA
+ * accepts it; otherwise — and always for `sdr` — the preferred format with
+ * `'standard'` tone mapping. Never throws for an unsupported option, and never
+ * leaves the canvas unconfigured (a black canvas). Returns the presentation
+ * actually applied.
+ */
 export function configureWebGpuCanvas(
   context: GPUCanvasContext,
   device: GPUDevice,
   format: GPUTextureFormat,
   options?: WebGpuCanvasOptions,
+): CanvasPresentation {
+  if (options?.presentation === 'hdr-extended'
+    && tryConfigureHdrCanvas(context, device, format, options)) {
+    return 'hdr-extended';
+  }
+  configureSdrCanvas(context, device, format, { ...options, presentation: 'sdr' });
+  return 'sdr';
+}
+
+function configureSdrCanvas(
+  context: GPUCanvasContext,
+  device: GPUDevice,
+  format: GPUTextureFormat,
+  options: WebGpuCanvasOptions,
 ): void {
   const requested: WebGpuCanvasOptions = {
     ...options,
@@ -603,6 +687,47 @@ export function uncapturedRuntimeError(error: GPUError): GpuRuntimeError {
   };
 }
 
+/**
+ * One `hdr-extended` configure at bootstrap, so the Viewport toggle can be
+ * offered (or greyed out) before anyone asks for it. Leaves the canvas
+ * configured for whatever the caller configures next; never throws.
+ */
+export function probeCanvasHdr(
+  context: GPUCanvasContext,
+  device: GPUDevice,
+  format: GPUTextureFormat,
+): { available: boolean; reason: string } {
+  const available = tryConfigureHdrCanvas(context, device, format, { presentation: 'hdr-extended' });
+  if (!available) {
+    return { available, reason: 'canvas toneMapping "extended" / rgba16float not supported by this browser' };
+  }
+  const hdrDisplay = typeof matchMedia === 'function'
+    && matchMedia('(dynamic-range: high)').matches;
+  return {
+    available,
+    reason: hdrDisplay
+      ? 'extended tone mapping supported; display reports high dynamic range'
+      : 'extended tone mapping supported; display reports standard dynamic range (highlights will still clip)',
+  };
+}
+
+declare global {
+  interface Window {
+    /** Whether `hdr-extended` canvas presentation is available this session. */
+    canvasHdrAvailable?: boolean;
+    /** Why (or why not), for diagnostics and E2E. */
+    canvasHdrReason?: string;
+    /** Set while HDR presents over 8-bit internal targets (see `canvasHdrInternalNote`). */
+    canvasHdrNote?: string | null;
+  }
+}
+
+export function publishCanvasHdrBreadcrumbs(available: boolean, reason: string): void {
+  if (typeof window === 'undefined') return;
+  window.canvasHdrAvailable = available;
+  window.canvasHdrReason = reason;
+}
+
 export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<WebGpuSession> {
   const fatal = getGpuFatalError();
   if (fatal) {
@@ -647,6 +772,8 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
 
   const format = navigator.gpu.getPreferredCanvasFormat();
   let canvasOptions: WebGpuCanvasOptions = { ...options.canvasOptions };
+  const canvasHdr = probeCanvasHdr(context, device, format);
+  publishCanvasHdrBreadcrumbs(canvasHdr.available, canvasHdr.reason);
   configureWebGpuCanvas(context, device, format, canvasOptions);
 
   const reconfigure = () => {
@@ -676,6 +803,8 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
     adapterReport,
     capabilities,
     timestampQueryAvailable,
+    canvasHdrAvailable: canvasHdr.available,
+    canvasHdrReason: canvasHdr.reason,
     reconfigure,
     setCanvasOptions,
     detach,

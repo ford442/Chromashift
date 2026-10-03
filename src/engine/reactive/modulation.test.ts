@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialState } from '../../state/defaults';
+import { chromashiftReducer } from '../../state/chromashiftReducer';
 import {
   computeAudioModulation,
   extractEnergy,
@@ -43,6 +44,32 @@ describe('computeAudioModulation', () => {
     expect(mod.extensions[0]).toBe(baseExt0);
     expect(mod.extensions[1]).toBeGreaterThan(state.layers.extensions[1]);
     expect(mod.tracerAboveIntensity).toBeGreaterThan(baseAbove);
+  });
+});
+
+describe('computeAudioModulation at any layer count', () => {
+  const levels = { bass: 0.5, mid: 0.25, high: 1, energy: 0.8 };
+
+  it.each([1, 2, 5, 10])('returns one finite rate per layer at %i layers', (count) => {
+    const state = chromashiftReducer(createInitialState(), { type: 'layers/setCount', count });
+    const mod = computeAudioModulation(state, levels);
+    expect(mod.extensions).toHaveLength(count);
+    for (const ext of mod.extensions) expect(Number.isFinite(ext)).toBe(true);
+  });
+
+  it('cycles mid / high / bass past the canonical three', () => {
+    const state = chromashiftReducer(createInitialState(), { type: 'layers/setCount', count: 5 });
+    const s = state.reactive.audioSensitivity;
+    const mod = computeAudioModulation(state, levels);
+    const ext = state.layers.extensions;
+    const expected = [
+      ext[0] * (1 + levels.mid * 0.6 * s),
+      ext[1] * (1 + levels.high * 0.6 * s),
+      ext[2] * (1 + levels.bass * 0.4 * s),
+      ext[3] * (1 + levels.mid * 0.6 * s),
+      ext[4] * (1 + levels.high * 0.6 * s),
+    ].map((v) => Math.min(Math.max(v, 0), 360));
+    expect(mod.extensions).toEqual(expected);
   });
 });
 

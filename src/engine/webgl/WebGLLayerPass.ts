@@ -71,12 +71,16 @@ export class WebGLLayerPass {
     this.profileLut.update(state.colorProfileLut);
     const profileMode = state.colorProfileLut && state.colorProfileMode ? 1 : 0;
 
+    // Still the canonical three targets: a session with fewer layers draws the
+    // first `layers.length` and leaves the rest cleared (see `drawnLayerCount`).
+    const drawn = Math.min(this.layerTargets.length, state.layers.length);
     for (let layerIndex = 0; layerIndex < this.layerTargets.length; layerIndex += 1) {
       const target = this.layerTargets[layerIndex];
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
       gl.viewport(0, 0, target.width, target.height);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
+      if (layerIndex >= drawn) continue;
 
       if (debugMode !== 0) {
         this.debugPasses.renderLayer(debugMode, sourceTexture, state, layerIndex, canvasAspect);

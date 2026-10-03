@@ -59,6 +59,8 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
     device,
     context: primaryContext,
     format: 'bgra8unorm' as GPUTextureFormat,
+    canvasHdrAvailable: false,
+    canvasHdrReason: 'test',
     adapterReport: {
       vendor: 'test',
       architecture: 'test',

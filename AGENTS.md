@@ -134,7 +134,7 @@ src/
     ├── color/               # Named colour profiles — schema, validation, LUT baking
     │   ├── colorProfile.ts      # Types, built-ins (shared/colorProfiles.json), buildColorProfileLut
     │   ├── colorProfileLibrary.ts  # localStorage user profiles + resolution order
-    │   └── ProfileLutTexture.ts    # 256×3 RGBA LUT texture bound to every layer pipeline
+    │   └── ProfileLutTexture.ts    # 256×max(count,3) RGBA LUT texture bound to every layer pipeline
     ├── compute/
     │   ├── chores/              # gpu-chores facade — the shared kit boundary
     │   │   ├── types.ts             # Kit API shapes (ChoreJob/ChoreResult/backend order)
@@ -225,8 +225,10 @@ For shader-based effect work, prototype/inspect in `src/engine/webgl/` when brow
 1. `fetchCorpusManifest('./images.json')` (`src/engine/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
 2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
-   - one independent `GPURenderPipeline` per colour layer (each can use 4× MSAA) — three in the
-     default session, and `layers.count` once the graph executor owns the band passes.
+   - one independent `GPURenderPipeline` per colour layer (each can use 4× MSAA) — the three
+     canonical passes today, and `layers.count` once the graph executor owns the band passes.
+     A session with fewer layers draws the first `layers.count` and clears the rest
+     (`drawnLayerCount` / `encodeLayerClear` in `WebGPUPipelines.ts`; `WebGLLayerPass` mirrors it).
    - 1 persistence pipeline that reads the layer textures + previous tracer texture. Its
      bind-group layout is generated from the layer count, so the binding `prevTex` lives at
      moves with it (see `docs/PASS_GRAPH.md`, "Layer counts").
@@ -243,8 +245,9 @@ State: `layers.colorProfileId` + optional embedded `layers.colorProfile`; UI: th
 **Colour profile** control in the Layers panel.
 
 Rendering is **hybrid**: `cr0p-classic` keeps the existing branchy WGSL/GLSL band
-branches, so the default look is unchanged; every other profile is baked into a 256×3
-RGBA8 LUT (column = preprocessed luminance, row = layer) sampled with
+branches, so the default look is unchanged; every other profile is baked into a
+256×max(`layers.count`, 3) RGBA8 LUT (column = preprocessed luminance, row = layer, profile
+layer `r % M` for an M-layer profile) sampled with
 `textureLoad(profileLut, …)` (WebGPU binding 5) / `texelFetch(u_profileLut, …)` (WebGL).
 `buildRendererState` resolves the profile and memoizes the LUT per profile + average
 luminance, so renderers re-upload only when it actually changes. While a non-classic
@@ -254,7 +257,7 @@ indices only. Band bounds for `cr0p-classic` must stay in sync with `shared/band
 
 ### Presets & Shareable URLs
 
-Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 4`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. Schema v3 adds `layers.colorProfileId` (+ an embedded table in file exports only — share URLs carry the id alone); v4 adds `viewport.colorSpace` (`srgb` / `display-p3`). v1/v2 documents migrate to the classic profile and sRGB canvas. See `docs/PRESETS.md`.
+Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 8`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. Schema v3 adds `layers.colorProfileId` (+ an embedded table in file exports only — share URLs carry the id alone); v4 adds `viewport.colorSpace` (`srgb` / `display-p3`); v7 adds `layers.count`; v8 adds `viewport.canvasHdr` (opt-in `hdr-extended` canvas presentation, see `docs/gpu-bootstrap.md`). v1/v2 documents migrate to the classic profile and sRGB canvas. See `docs/PRESETS.md`.
 
 ### Kiosk / gallery installation
 

@@ -69,9 +69,9 @@ export class CompositorPass {
     this.uniformF32[1] = params.tracerBelowOp;
     this.uniformU32[2] = params.layerBlendMode;
     this.uniformU32[3] = params.tracerBlendMode;
-    this.uniformF32[4] = params.layerOpacities[0];
-    this.uniformF32[5] = params.layerOpacities[1];
-    this.uniformF32[6] = params.layerOpacities[2];
+    this.uniformF32[4] = params.layerOpacities[0] ?? 1;
+    this.uniformF32[5] = params.layerOpacities[1] ?? 1;
+    this.uniformF32[6] = params.layerOpacities[2] ?? 1;
     this.uniformF32[7] = params.diagnosticsOpacity;
     this.uniformF32[8] = params.stampBoost;
     this.uniformU32[9] = params.outputMode;

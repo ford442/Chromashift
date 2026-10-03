@@ -39,7 +39,16 @@ Chromashift render settings (layers, tracers, blend/output modes, engine tuning,
 }
 ```
 
-`SETTINGS_SCHEMA_VERSION` is **7**. Runtime-only state (GPU handles, media corpus, export progress, mic/MIDI runtime errors, GPU timing sparklines) is never serialized.
+`SETTINGS_SCHEMA_VERSION` is **8**. Runtime-only state (GPU handles, media corpus, export progress, mic/MIDI runtime errors, GPU timing sparklines) is never serialized.
+
+### v8 field group
+
+| Key | Purpose |
+|-----|---------|
+| `viewport.canvasHdr` | Opt-in Canvas HDR (`hdr-extended` presentation, see [gpu-bootstrap.md](gpu-bootstrap.md)). Browsers without extended canvas tone mapping stay SDR. Exports are SDR regardless. |
+
+v1–v7 documents load with `canvasHdr: false`. A v8 document enables HDR only
+with an explicit `true`, so a preset URL that omits the flag never turns it on.
 
 ### v7 field group
 
@@ -66,16 +75,18 @@ load, so a hand-edited preset degrades to the default look instead of nothing.
 | `layers.colorProfileId` | Active named colour profile (v3) — see [COLOR_PROFILES.md](COLOR_PROFILES.md) |
 | `layers.colorProfile` | Full profile table, embedded for user profiles in file exports; `null` for built-ins and in share URLs |
 
-## Migration from v1 / v2
+## Migration from older versions
 
-- **Reading:** `deserializeSettings()` accepts `version: 1`–`4` documents and normalizes them to v4 (`migrateToLatest`). Older URLs and saved files continue to work.
-- **Writing:** All new exports (share URL, JSON file, localStorage save) emit `version: 4`.
+- **Reading:** `deserializeSettings()` accepts `version: 1`–`8` documents and normalizes them to v8 (`migrateToLatest`). Older URLs and saved files continue to work. v6 is reserved for the automation timeline (#153) and is read as a pre-count document.
+- **Writing:** All new exports (share URL, JSON file, localStorage save) emit `version: 8`.
+- **v7 and earlier → v8 Canvas HDR:** `viewport.canvasHdr` is `false`.
+- **v6 and earlier → v7 layer count:** documents hydrate as `layers.count: 3` with their angles / rates / opacities unchanged (see the v7 section above).
 - **v3 → v4 canvas colour space:** missing `viewport.colorSpace` defaults to `srgb`. Display P3 is opt-in.
 - **v2 → v3 colour profiles:** documents that predate profiles migrate to `cr0p-classic`, the look they were saved with. An embedded profile table is re-validated on read and dropped when invalid or when its `id` doesn't match `colorProfileId`. Share URLs omit the table and carry the id alone to stay short.
 - **v1 → v2 defaults:** Missing reactive toggles default to `false`. Missing `viewport` is hoisted from legacy `output.viewportQuarterZoom` / `viewportHalfOverlay` when present. Missing `compare` and `kiosk` default to the app's initial single-view / non-kiosk state.
 - **Kiosk precedence:** When both a preset and `?kiosk=1` are present, the URL installation bootstrap wins (hides chrome, forces autoplay, etc.).
 
-Built-in gallery entries in `src/state/presetGallery.ts` remain partial `ChromashiftSettingsInput` patches (no document version) and work with both schema versions.
+Built-in gallery entries in `src/state/presetGallery.ts` remain partial `ChromashiftSettingsInput` patches (no document version) and work with every schema version.
 
 ## URL sharing
 
@@ -93,7 +104,7 @@ Built-in gallery entries in `src/state/presetGallery.ts` remain partial `Chromas
 
 ## Tests
 
-`src/state/serializeSettings.test.ts` and `src/state/presetUrl.test.ts` cover v2 round-trip for all new field groups, v1 backward compatibility, schema version enforcement, invalid-preset fallback, kiosk URL precedence, and gallery preset URL round-trip.
+`src/state/serializeSettings.test.ts` and `src/state/presetUrl.test.ts` cover round-trip for every field group (including the v7 layer count), v1–v6 backward compatibility, schema version enforcement, invalid-preset fallback, kiosk URL precedence, and gallery preset URL round-trip.
 
 ## Future
 

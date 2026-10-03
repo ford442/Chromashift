@@ -18,6 +18,9 @@ export {
   fullscreenVertexSource,
   WGSL_COLOR_HELPERS,
   WGSL_BLEND_HELPERS,
+  WGSL_OUTPUT_ENCODE,
+  WGSL_OUTPUT_ENCODE_EXTENDED,
+  toHdrPresentWgsl,
 } from './common';
 export {
   fragmentShaderRedOrange,

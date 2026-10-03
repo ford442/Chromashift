@@ -291,6 +291,8 @@ export interface AppUIControlProps {
   setAntialiasEnabled: (enabled: boolean) => void;
   displayColorSpace: import('../engine/gpuOptions').DisplayColorSpace;
   setDisplayColorSpace: (space: import('../engine/gpuOptions').DisplayColorSpace) => void;
+  canvasHdr: boolean;
+  setCanvasHdr: (enabled: boolean) => void;
   handleReset: () => void;
   imageChangeInterval: number;
   setImageChangeInterval: (seconds: number) => void;

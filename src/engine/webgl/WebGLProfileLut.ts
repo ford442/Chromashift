@@ -1,13 +1,15 @@
-import { PROFILE_LUT_HEIGHT, PROFILE_LUT_WIDTH } from '../color/colorProfile';
+import { PROFILE_LUT_MIN_ROWS, PROFILE_LUT_WIDTH } from '../color/colorProfile';
 
 /**
- * WebGL2 mirror of `ProfileLutTexture` — a 256×3 RGBA8 colour-profile LUT read
- * with `texelFetch` (NEAREST, clamped, no mips). Uploaded only when the baked
- * LUT array identity changes.
+ * WebGL2 mirror of `ProfileLutTexture` — a 256×rows RGBA8 colour-profile LUT
+ * read with `texelFetch` (NEAREST, clamped, no mips). Uploaded only when the
+ * baked LUT array identity changes; a new row count reallocates the storage of
+ * the same texture object, so callers never see a different handle.
  */
 export class WebGLProfileLut {
   readonly texture: WebGLTexture;
   private readonly gl: WebGL2RenderingContext;
+  private rows = PROFILE_LUT_MIN_ROWS;
   private uploaded: Uint8Array | null = null;
 
   constructor(gl: WebGL2RenderingContext) {
@@ -22,8 +24,8 @@ export class WebGLProfileLut {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texImage2D(
-      gl.TEXTURE_2D, 0, gl.RGBA, PROFILE_LUT_WIDTH, PROFILE_LUT_HEIGHT, 0,
-      gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(PROFILE_LUT_WIDTH * PROFILE_LUT_HEIGHT * 4),
+      gl.TEXTURE_2D, 0, gl.RGBA, PROFILE_LUT_WIDTH, this.rows, 0,
+      gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(PROFILE_LUT_WIDTH * this.rows * 4),
     );
     gl.bindTexture(gl.TEXTURE_2D, null);
   }
@@ -31,11 +33,20 @@ export class WebGLProfileLut {
   update(lut: Uint8Array | null | undefined): void {
     if (!lut || lut === this.uploaded) return;
     const gl = this.gl;
+    const rows = lut.length / (PROFILE_LUT_WIDTH * 4);
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
-    gl.texSubImage2D(
-      gl.TEXTURE_2D, 0, 0, 0, PROFILE_LUT_WIDTH, PROFILE_LUT_HEIGHT,
-      gl.RGBA, gl.UNSIGNED_BYTE, lut,
-    );
+    if (rows !== this.rows) {
+      gl.texImage2D(
+        gl.TEXTURE_2D, 0, gl.RGBA, PROFILE_LUT_WIDTH, rows, 0,
+        gl.RGBA, gl.UNSIGNED_BYTE, lut,
+      );
+      this.rows = rows;
+    } else {
+      gl.texSubImage2D(
+        gl.TEXTURE_2D, 0, 0, 0, PROFILE_LUT_WIDTH, rows,
+        gl.RGBA, gl.UNSIGNED_BYTE, lut,
+      );
+    }
     gl.bindTexture(gl.TEXTURE_2D, null);
     this.uploaded = lut;
   }

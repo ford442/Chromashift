@@ -41,16 +41,16 @@ export function computeAudioModulation(
   const { layers, tracers, engine, reactive } = state;
   const s = reactive.audioSensitivity;
 
-  const ext0 = layers.extensions[0] * (1 + levels.mid * 0.6 * s);
-  const ext1 = layers.extensions[1] * (1 + levels.high * 0.6 * s);
-  const ext2 = layers.extensions[2] * (1 + levels.bass * 0.4 * s);
+  // Layers cycle mid / high / bass, so the canonical three keep their bands
+  // and a session of any count gets one modulated rate per layer.
+  const bandLevels = [levels.mid, levels.high, levels.bass];
+  const bandGains = [0.6, 0.6, 0.4];
 
   return {
-    extensions: [
-      clamp(ext0, 0, 360),
-      clamp(ext1, 0, 360),
-      clamp(ext2, 0, 360),
-    ],
+    extensions: layers.extensions.map((ext, i) => {
+      const band = i % bandLevels.length;
+      return clamp(ext * (1 + bandLevels[band] * bandGains[band] * s), 0, 360);
+    }),
     tracerAboveIntensity: clamp(
       tracers.aboveIntensity + levels.high * 0.45 * s,
       0,

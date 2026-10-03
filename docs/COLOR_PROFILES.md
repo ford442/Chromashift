@@ -11,6 +11,7 @@ wedge — without forking a shader per palette.
 - Code: `src/engine/color/colorProfile.ts`, `colorProfileLibrary.ts`, `ProfileLutTexture.ts`
 - State: `layers.colorProfileId` + `layers.colorProfile` (preset schema v3+)
 - Working space: LUTs are **sRGB**. The Viewport Display P3 control only changes WebGPU canvas `colorSpace`, not the baked table.
+- Canvas HDR (`viewport.canvasHdr`) does not change this. Profiles stay in the sRGB working space, and extended presentation passes linear scene values above 1.0 through the UA's HDR path ([gpu-bootstrap.md](gpu-bootstrap.md)). Colour-managed LUTs baked for Display P3 / Rec.2020 are a follow-on for the profile designer (#143).
 
 ## Built-in profiles
 
@@ -34,15 +35,23 @@ Three strategies were considered:
 
 **Shipped: C.** `cr0p-classic` renders through the existing branchy WGSL/GLSL, so classic
 pixel output is unchanged from before profiles existed (`buildRendererState` emits
-`colorProfileMode: 0` and no LUT). Any other profile bakes a **256 × 3 RGBA8 LUT** —
-column = preprocessed luminance bucket, row = layer index — that both renderers sample:
+`colorProfileMode: 0` and no LUT). Any other profile bakes a **256 × rows RGBA8 LUT** —
+column = preprocessed luminance bucket, row = session layer index — that both renderers
+sample. `rows = profileLutRows(layers.count) = max(layers.count, 3)`: never fewer than three,
+because the renderers (and the `?graph=1` executor) still compile the three canonical band
+passes, which read rows 0–2 at any layer count. Row `r` is baked from profile layer
+`r % profile.layers.length`, so a profile authored for one layer count colours every other
+count (a 3-layer profile at 5 layers cycles warm / cool / leaf / warm / cool).
 
 - WebGPU: layer bind group binding 5, `textureLoad(profileLut, vec2<i32>(col, layer), 0)`
 - WebGL2: `u_profileLut` (NEAREST, no mips), `texelFetch(u_profileLut, ivec2(col, layer), 0)`
 
 The LUT texture is always resident, so the bind group layout never changes; only the
 texture contents are re-uploaded, and only when the baked array identity changes
-(`getColorProfileLut` memoizes per profile + quantized average luminance).
+(`getColorProfileLut` memoizes per profile + row count + quantized average luminance). A
+change in row count (only above three layers) recreates the WebGPU texture — the layer
+bind-group cache and the graph executor both rebind on texture identity — and reallocates
+the WebGL texture's storage in place.
 
 Because the LUT covers the whole band decision, the `r8uint` GPU/WASM classification mask
 is bypassed while a non-classic profile is active — the mask encodes classic band indices
@@ -65,7 +74,8 @@ only. The classic path continues to use it exactly as before.
 ```
 
 - `id` — 1–64 chars of letters, digits, `.`, `-`, `_`. Cannot collide with a built-in id.
-- `layers` — exactly three, one per colour-separation pass, in warm / cool / leaf order.
+- `layers` — 1–10 (the canonical band count in `shared/band.json`). Session layer `r` uses
+  `layers[r % layers.length]`; the built-ins have three, in warm / cool / leaf order.
 
 ### `preprocess`
 
@@ -134,9 +144,10 @@ URL, or share a preset **file**, when the recipient needs a custom table.
 
 | Spec | Covers |
 |------|--------|
-| `src/engine/color/colorProfile.test.ts` | Built-in table validity, classic ↔ `shared/band.json` parity, validation errors, LUT geometry / band boundaries / gradient ramps, classic colour equations, LUT memoization, shader lookup rule |
+| `src/engine/color/colorProfile.test.ts` | Built-in table validity, classic ↔ `shared/band.json` parity, validation errors, LUT geometry / band boundaries / gradient ramps, classic colour equations, LUT memoization, shader lookup rule, 1–10-layer profiles, row wrap, byte-identical 3-row bakes |
+| `src/engine/color/ProfileLutTexture.test.ts` | Texture recreated (and the old one destroyed) only when the LUT row count changes |
 | `src/engine/color/colorProfileLibrary.test.ts` | Import / list / delete, malformed and colliding documents, resolution order |
-| `src/engine/buildRendererState.test.ts` | Classic stays on the branchy path; alternates emit a LUT; unknown ids fall back |
+| `src/engine/buildRendererState.test.ts` | Classic stays on the branchy path; alternates emit a LUT sized to the layer count; unknown ids fall back |
 | `src/state/serializeSettings.test.ts` | Schema v3 round-trip, v1→v3 migration, URL vs file embedding |
 
 ## Non-goals

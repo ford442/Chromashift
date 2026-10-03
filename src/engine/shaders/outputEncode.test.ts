@@ -5,7 +5,11 @@ import {
   compositorFragmentSource,
   displayTextureFragmentSource,
   tracerViewFragmentSource,
+  toHdrPresentWgsl,
+  WGSL_OUTPUT_ENCODE,
+  WGSL_OUTPUT_ENCODE_EXTENDED,
 } from './index';
+import { encodeDisplay, encodeDisplayExtended } from '../color/displayEncode';
 
 /**
  * Every pass that targets the *canvas* format owns the linear -> sRGB OETF.
@@ -54,5 +58,34 @@ describe('canvas-format shaders encode their output', () => {
       expect(source).not.toContain('vec3<f32>(0.15)');
       expect(source).not.toContain('* 1.04');
     }
+  });
+});
+
+describe('hdr-extended present variant', () => {
+  it.each(CANVAS_TARGET_SHADERS)('%s swaps in the unclamped OETF', (_name, source) => {
+    const hdr = toHdrPresentWgsl(source);
+    expect(hdr).not.toContain(WGSL_OUTPUT_ENCODE);
+    expect(hdr).toContain(WGSL_OUTPUT_ENCODE_EXTENDED);
+    expect(hdr).not.toContain('clamp(c, vec3<f32>(0.0), vec3<f32>(1.0))');
+    // Only the encode block changes; every call site is untouched.
+    expect(hdr.split(WGSL_OUTPUT_ENCODE_EXTENDED).join(WGSL_OUTPUT_ENCODE)).toBe(source);
+  });
+
+  it('leaves the SDR sources as they were', () => {
+    expect(compositorFragmentSource).toContain(WGSL_OUTPUT_ENCODE);
+    expect(compositorFragmentSource).not.toContain(WGSL_OUTPUT_ENCODE_EXTENDED);
+  });
+
+  it('keeps an over-bright additive tracer above SDR white', () => {
+    expect(encodeDisplay(2)).toBeCloseTo(1, 12);
+    expect(encodeDisplayExtended(2)).toBeGreaterThan(1.3);
+  });
+
+  it('matches the SDR encode everywhere inside [0, 1]', () => {
+    for (let i = 0; i <= 64; i++) {
+      const x = i / 64;
+      expect(encodeDisplayExtended(x)).toBeCloseTo(encodeDisplay(x), 12);
+    }
+    expect(encodeDisplayExtended(-0.5)).toBeCloseTo(-encodeDisplay(0.5), 12);
   });
 });

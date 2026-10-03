@@ -180,6 +180,7 @@ export interface ViewportPanelProps {
   squareCanvas: boolean;
   antialiasEnabled: boolean;
   displayColorSpace: import('../../engine/gpuOptions').DisplayColorSpace;
+  canvasHdr: boolean;
   viewportQuarterZoom: boolean;
   viewportHalfOverlay: boolean;
   isViewingTracer: boolean;
@@ -187,6 +188,7 @@ export interface ViewportPanelProps {
   onSquareCanvasToggle: (value: boolean) => void;
   onAntialiasToggle: (value: boolean) => void;
   onDisplayColorSpaceChange: (space: import('../../engine/gpuOptions').DisplayColorSpace) => void;
+  onCanvasHdrToggle: (enabled: boolean) => void;
   onViewportQuarterZoomToggle: (value: boolean) => void;
   onViewportHalfOverlayToggle: (value: boolean) => void;
   compareLayout: import('../../engine/compareViews').CompareLayoutMode;

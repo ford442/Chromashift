@@ -10,6 +10,8 @@ import {
   MIN_DEVICE_TEXTURE_DIMENSION,
   configureWebGpuCanvas,
   getCanvasToneMappingSupport,
+  getCanvasHdrSupport,
+  probeCanvasHdr,
   releasePageGpuDevice,
   requestWebGpuDevice,
   resetCanvasToneMappingSupportForTests,
@@ -414,6 +416,22 @@ describe('buildWebGpuCanvasConfiguration', () => {
     expect(config.colorSpace).toBe('display-p3');
     expect(config.toneMapping).toEqual({ mode: 'standard' });
   });
+
+  it('hdr-extended configures an rgba16float canvas with extended tone mapping', () => {
+    const config = buildWebGpuCanvasConfiguration(device, 'bgra8unorm', {
+      presentation: 'hdr-extended',
+      toneMappingMode: 'standard',
+    });
+    expect(config.format).toBe('rgba16float');
+    expect(config.toneMapping).toEqual({ mode: 'extended' });
+    // COPY_SRC stays: preview thumbnails and collision stats copy the swap chain.
+    expect(config.usage).toBe(0x10 | 0x01);
+  });
+
+  it('sdr keeps the preferred format', () => {
+    const config = buildWebGpuCanvasConfiguration(device, 'bgra8unorm', { presentation: 'sdr' });
+    expect(config.format).toBe('bgra8unorm');
+  });
 });
 
 describe('getWebGL2ContextAttributes', () => {
@@ -536,6 +554,78 @@ describe('configureWebGpuCanvas tone mapping', () => {
     configureWebGpuCanvas(next, device, 'bgra8unorm');
     expect(next.configure).toHaveBeenCalledTimes(1);
     expect(next.configure.mock.calls[0][0].toneMapping).toBeUndefined();
+  });
+});
+
+describe('configureWebGpuCanvas hdr-extended', () => {
+  const device = { features: new Set<string>() } as unknown as GPUDevice;
+
+  function fakeContext(overrides: Partial<GPUCanvasContext> = {}) {
+    return {
+      configure: vi.fn(),
+      unconfigure: vi.fn(),
+      ...overrides,
+    } as unknown as GPUCanvasContext & { configure: ReturnType<typeof vi.fn> };
+  }
+
+  beforeEach(() => {
+    resetCanvasToneMappingSupportForTests();
+    vi.stubGlobal('GPUTextureUsage', { RENDER_ATTACHMENT: 0x10, COPY_SRC: 0x01 });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    resetCanvasToneMappingSupportForTests();
+  });
+
+  it('presents HDR when the UA applies it', () => {
+    const context = fakeContext({
+      getConfiguration: () => ({
+        device, format: 'rgba16float', toneMapping: { mode: 'extended' },
+      }) as GPUCanvasConfiguration,
+    } as Partial<GPUCanvasContext>);
+    expect(configureWebGpuCanvas(context, device, 'bgra8unorm', { presentation: 'hdr-extended' }))
+      .toBe('hdr-extended');
+    expect(context.configure).toHaveBeenCalledTimes(1);
+    expect(getCanvasHdrSupport()).toBe(true);
+  });
+
+  it('falls back to SDR, never unconfigured, when the configure throws', () => {
+    const context = fakeContext();
+    context.configure
+      .mockImplementationOnce(() => { throw new Error('rgba16float unsupported'); })
+      .mockImplementation(() => {});
+    expect(configureWebGpuCanvas(context, device, 'bgra8unorm', { presentation: 'hdr-extended' }))
+      .toBe('sdr');
+    expect(context.configure).toHaveBeenCalledTimes(2);
+    expect(context.configure.mock.calls[1][0].format).toBe('bgra8unorm');
+    expect(getCanvasHdrSupport()).toBe(false);
+
+    // Cached: the next HDR request goes straight to SDR without a throw.
+    const next = fakeContext();
+    expect(configureWebGpuCanvas(next, device, 'bgra8unorm', { presentation: 'hdr-extended' }))
+      .toBe('sdr');
+    expect(next.configure).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to SDR when the UA silently drops extended tone mapping', () => {
+    const context = fakeContext({
+      getConfiguration: () => ({ device, format: 'rgba16float' }) as GPUCanvasConfiguration,
+    } as Partial<GPUCanvasContext>);
+    expect(configureWebGpuCanvas(context, device, 'bgra8unorm', { presentation: 'hdr-extended' }))
+      .toBe('sdr');
+    expect(context.configure.mock.calls.at(-1)?.[0].format).toBe('bgra8unorm');
+  });
+
+  it('probeCanvasHdr reports unavailability without throwing', () => {
+    const context = fakeContext();
+    context.configure.mockImplementation(() => { throw new Error('nope'); });
+    const probe = probeCanvasHdr(context, device, 'bgra8unorm');
+    expect(probe.available).toBe(false);
+    expect(probe.reason).toMatch(/not supported/);
   });
 });
 

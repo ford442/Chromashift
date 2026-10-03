@@ -112,7 +112,12 @@ export interface ChromashiftSettingsInput {
   ui?: Pick<UiSlice, 'isAutoPlayActive' | 'imageChangeInterval' | 'referenceBlendMode' | 'overlayImageSource' | 'referenceOpacity' | 'upscaleModel'>;
   reactive?: Partial<ReactiveSettings>;
   compare?: CompareViewState;
-  viewport?: { quarterZoom?: boolean; halfOverlay?: boolean; colorSpace?: import('../engine/gpuOptions').DisplayColorSpace };
+  viewport?: {
+    quarterZoom?: boolean;
+    halfOverlay?: boolean;
+    colorSpace?: import('../engine/gpuOptions').DisplayColorSpace;
+    canvasHdr?: boolean;
+  };
   kiosk?: Pick<UiSlice, 'kioskEnabled' | 'kioskUiHidden' | 'kioskAttractMode'>;
 }
 
@@ -424,6 +429,7 @@ export function applySettingsToState(
         displayColorSpace: settings.viewport.colorSpace
           ? parseDisplayColorSpace(settings.viewport.colorSpace)
           : next.output.displayColorSpace,
+        canvasHdr: settings.viewport.canvasHdr ?? next.output.canvasHdr,
       },
     };
   }

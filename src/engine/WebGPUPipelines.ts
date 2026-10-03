@@ -12,8 +12,10 @@ import {
   compareFragmentSource,
   persistDiagnosticBlitFragmentSource,
   stampDiagnosticViewFragmentSource,
+  toHdrPresentWgsl,
 } from './shaders';
 import { DEFAULT_LAYER_COUNT, assertLayerCount } from './graph';
+import type { CanvasPresentation } from './gpuOptions';
 
 /**
  * `GPUShaderStage` is a runtime global, not a type — reading it at module scope
@@ -56,6 +58,13 @@ export class WebGPUPipelines {
    */
   public readonly layerCount: number;
 
+  /**
+   * Output encode for the pipelines that target `format` (the canvas): the
+   * clamping sRGB OETF for `sdr`, the unclamped extended-sRGB one for
+   * `hdr-extended` (docs/gpu-bootstrap.md).
+   */
+  public readonly presentation: CanvasPresentation;
+
   public persistBGL: GPUBindGroupLayout;
   public persistMotionBGL: GPUBindGroupLayout;
   public persistCompositeBGL: GPUBindGroupLayout;
@@ -73,11 +82,13 @@ export class WebGPUPipelines {
     format: GPUTextureFormat,
     internalFormat: GPUTextureFormat,
     layerCount: number = DEFAULT_LAYER_COUNT,
+    presentation: CanvasPresentation = 'sdr',
   ) {
     this.device = device;
     this.format = format;
     this.internalFormat = internalFormat;
     this.layerCount = assertLayerCount(layerCount);
+    this.presentation = presentation;
 
     this.persistBGL = this.createPersistBGL();
     this.persistMotionBGL = this.createPersistMotionBGL();
@@ -90,6 +101,11 @@ export class WebGPUPipelines {
     this.compareBGL = this.createCompareBGL();
     this.persistDiagnosticBlitBGL = this.createPersistDiagnosticBlitBGL();
     this.stampDiagnosticViewBGL = this.createStampDiagnosticViewBGL();
+  }
+
+  /** A canvas-target fragment source, encoded for this pipeline set's presentation. */
+  private canvasSource(source: string): string {
+    return this.presentation === 'hdr-extended' ? toHdrPresentWgsl(source) : source;
   }
 
   public createPersistBGL(): GPUBindGroupLayout {
@@ -315,7 +331,7 @@ export class WebGPUPipelines {
       layout  : device.createPipelineLayout({ bindGroupLayouts: [this.compositorBGL] }),
       vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module     : device.createShaderModule({ code: compositorFragmentSource }),
+        module     : device.createShaderModule({ code: this.canvasSource(compositorFragmentSource) }),
         entryPoint : 'main',
         targets    : [{ format: this.format }],
       },
@@ -331,7 +347,7 @@ export class WebGPUPipelines {
       layout  : device.createPipelineLayout({ bindGroupLayouts: [this.tracerViewBGL] }),
       vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module     : device.createShaderModule({ code: tracerViewFragmentSource }),
+        module     : device.createShaderModule({ code: this.canvasSource(tracerViewFragmentSource) }),
         entryPoint : 'main',
         targets    : [{ format: this.format }],
       },
@@ -346,7 +362,7 @@ export class WebGPUPipelines {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.displayBGL] }),
       vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module: this.device.createShaderModule({ code: displayTextureFragmentSource }),
+        module: this.device.createShaderModule({ code: this.canvasSource(displayTextureFragmentSource) }),
         entryPoint: 'main',
         targets: [{ format: this.format }],
       },
@@ -361,7 +377,7 @@ export class WebGPUPipelines {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.heatmapBGL] }),
       vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module: this.device.createShaderModule({ code: coincidenceHeatmapFragmentSource }),
+        module: this.device.createShaderModule({ code: this.canvasSource(coincidenceHeatmapFragmentSource) }),
         entryPoint: 'main',
         targets: [{ format: this.format }],
       },
@@ -376,7 +392,7 @@ export class WebGPUPipelines {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.compareBGL] }),
       vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module: this.device.createShaderModule({ code: compareFragmentSource }),
+        module: this.device.createShaderModule({ code: this.canvasSource(compareFragmentSource) }),
         entryPoint: 'main',
         targets: [{ format: this.format }],
       },
@@ -406,7 +422,7 @@ export class WebGPUPipelines {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.stampDiagnosticViewBGL] }),
       vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module: this.device.createShaderModule({ code: stampDiagnosticViewFragmentSource }),
+        module: this.device.createShaderModule({ code: this.canvasSource(stampDiagnosticViewFragmentSource) }),
         entryPoint: 'main',
         targets: [{ format: this.format }],
       },
@@ -453,4 +469,26 @@ export class WebGPUPipelines {
     return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer, rotationData: new Float32Array(4), fragData: new Float32Array(8) };
   }
 
+}
+
+/**
+ * How many of the compiled band passes a frame draws. The hand-written encode
+ * path still compiles the canonical three; a session with fewer layers draws
+ * the first `layerCount` and {@link encodeLayerClear}s the rest, and one with
+ * more draws all three until the pass-graph executor owns the band passes.
+ */
+export function drawnLayerCount(pipelineCount: number, layerCount: number): number {
+  return Math.min(pipelineCount, layerCount);
+}
+
+/** Clears a band-layer target to transparent without drawing into it. */
+export function encodeLayerClear(enc: GPUCommandEncoder, texture: GPUTexture): void {
+  enc.beginRenderPass({
+    colorAttachments: [{
+      view: texture.createView(),
+      loadOp: 'clear',
+      storeOp: 'store',
+      clearValue: { r: 0, g: 0, b: 0, a: 0 },
+    }],
+  }).end();
 }

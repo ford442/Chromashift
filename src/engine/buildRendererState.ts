@@ -100,7 +100,9 @@ export function buildRendererState(
   target.motionDecayBias = tracers.motionDecayBias;
   target.motionThreshold = tracers.motionThreshold;
   target.colorMode = layers.colorMode;
-  target.colorProfileLut = useProfileLut ? getColorProfileLut(profile, engine.avgLuminance) : null;
+  target.colorProfileLut = useProfileLut
+    ? getColorProfileLut(profile, engine.avgLuminance, angles.length)
+    : null;
   target.colorProfileMode = useProfileLut ? 1 : 0;
   target.colorProfileLightDark = profile.preprocess.lightDarkMode === 'classic' ? 1 : 0;
   target.sobelEnabled = layers.sobelEnabled;
