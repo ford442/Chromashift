@@ -112,9 +112,11 @@ on the render loop's cadence and must not stamp over the load-time analysis crum
 
 ### Where it runs
 
-- **WebGPU** — `MotionFieldPass` encodes the compute dispatch into the frame's own
-  `GPUCommandEncoder`, right after the layer passes and before persistence, and hands
-  `PersistencePass` the field texture. It shows in the Perf HUD as its own **Motion** row.
+- **WebGPU** — `MotionFieldPass` records the compute dispatch into its own
+  `GPUCommandEncoder` and submits it immediately, before the frame's encoder (which holds the
+  layer, persistence and compositor passes), then hands `PersistencePass` the field texture.
+  Keeping it out of the frame's command buffer means a validation error in the motion lane cannot
+  blank the frame. It shows in the Perf HUD as its own **Motion** row.
 - **WebGL** — there is no compute lane, so `useLiveSource`'s tick loop samples the video element
   into a canvas *already at field resolution* (one `drawImage` the browser box-filters), hands the
   pixels to the chore's CPU lane, and uploads the result into a quarter-scale texture via
@@ -175,11 +177,11 @@ Two tuning decisions are worth knowing:
 
 Where the extra work lands:
 
-- **WebGPU** — two more compute dispatches in the same frame encoder, writing a second
+- **WebGPU** — two more compute dispatches in the same motion encoder, writing a second
   `rgba16float` texture whose `r` is the Stage 1 magnitude copied through unchanged and whose `gb`
   is the velocity. `PersistencePass` binds that texture instead; the binding layout does not move.
   Both are `rgba16float` rather than the narrower `rg16float`, which is not a core storage format.
-  The Perf HUD splits them out as their own **Flow** row so a `direction`-mode jump is attributable.
+  The Perf HUD splits them out as their own **Motion flow** row so a `direction`-mode jump is attributable.
 - **CPU** — in `motion.worker.ts`. At 4K the field is 960×540 cells and the solve is millions of
   multiply-adds; the main thread keeps only the `drawImage` into a field-resolution canvas and the
   `getImageData` that reads it back (the #150 lesson — never `getImageData` on rAF). Inside the

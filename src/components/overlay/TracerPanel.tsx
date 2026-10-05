@@ -69,7 +69,7 @@ const MOTION_MODE_HINTS: Record<MotionMode, string> = {
   off: 'Tracers ignore time — identical to the classic pipeline.',
   boost: 'Moving regions stamp brighter and hold their trail longer.',
   gate: 'Stamp only where the frame changed — isolates a live subject.',
-  direction: 'Flow angle drives hue (zero flow reads as a magnitude tint).',
+  direction: 'Flow angle drives hue; still regions keep a magnitude tint.',
 };
 
 function MotionSlider({
