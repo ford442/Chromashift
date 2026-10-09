@@ -75,6 +75,7 @@ export function AppUI(props: AppUIProps) {
     toggleKioskFullscreen,
     setSpecificImageError,
     handleDropFiles,
+    rendererBackend,
   } = props;
 
   const showChrome = !kioskEnabled || !kioskUiHidden;
@@ -135,6 +136,20 @@ export function AppUI(props: AppUIProps) {
         <div className="absolute inset-0 z-[100] pointer-events-none flex items-center justify-center bg-black/60 border-4 border-dashed border-amber-400">
           <div className="text-amber-200 font-mono text-lg px-6 py-3 rounded-xl bg-black/70 border border-amber-400/50">
             Drop images or folders to add to your local library
+          </div>
+        </div>
+      )}
+
+      {rendererBackend === 'webgl' && (
+        <div
+          data-testid="webgl2-banner"
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none absolute top-14 left-1/2 z-[60] -translate-x-1/2 rounded-md border-2 border-cyan-300 bg-cyan-950/95 px-4 py-2 text-center shadow-lg shadow-cyan-900/50"
+        >
+          <div className="font-mono text-sm font-bold tracking-wide text-cyan-50">WEBGL2 active</div>
+          <div className="font-mono text-[10px] leading-tight text-cyan-100/90">
+            Opt-in diagnostic renderer. WebGPU is not running this session.
           </div>
         </div>
       )}

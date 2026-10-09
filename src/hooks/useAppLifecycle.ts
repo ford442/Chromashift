@@ -142,7 +142,10 @@ export function useCollisionStatsPoll(
 
     const requestStats = () => {
       const renderer = rendererRef.current;
-      if (!renderer) return;
+      // A WebGL pixel-pack map drains every pass still queued on this context.
+      // On a deferred driver that is a multi-second hitch on the animation
+      // thread, so the live collision poll stays on the WebGPU readback path.
+      if (!renderer || renderer.backend === 'webgl') return;
       renderer.requestCollisionStats((stats) => {
         if (!cancelled) setCollisionStats(stats);
       });

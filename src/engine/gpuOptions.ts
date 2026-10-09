@@ -187,6 +187,7 @@ export function getWebGL2ContextAttributes(
     depth: RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.depth,
     stencil: RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.stencil,
     premultipliedAlpha: RENDERER_CANVAS_OPTIONS_MATRIX.webgl2.premultipliedAlpha,
+    powerPreference: 'high-performance',
     xrCompatible: options.xrCompatible,
   };
 }

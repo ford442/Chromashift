@@ -12,12 +12,18 @@ import type {
 import { EMPTY_GPU_RENDER_TIMING } from '../types/RendererContracts';
 import { durationToDecay } from '../math/decay';
 import type { ChromashiftTextureHandle, WebGlTextureHandle } from '../types/TextureHandle';
+import { WebGLBlit } from './WebGLBlit';
 import { WebGLCompositorPass } from './WebGLCompositorPass';
 import { WebGLDebugPasses } from './WebGLDebugPasses';
 import { WebGLLayerPass } from './WebGLLayerPass';
 import { WebGLPersistencePass } from './WebGLPersistencePass';
 import { WebGLReadback } from './WebGLReadback';
 import { WebGLStationaryPreviewRenderer } from './WebGLStationaryPreviewRenderer';
+import {
+  createWebglScaleController,
+  stepWebglInternalScale,
+  type WebglScaleController,
+} from './internalScale';
 import { createTarget, destroyTarget, type RenderTarget } from './resources';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { WebGLRenderViewport } from './types';
@@ -47,10 +53,15 @@ export class WebGLRenderer implements ChromashiftRenderer {
   private readonly persistencePass: WebGLPersistencePass;
   private readonly compositorPass: WebGLCompositorPass;
   private readonly readback: WebGLReadback;
+  private readonly blit: WebGLBlit;
   private readonly stationaryPreview: WebGLStationaryPreviewRenderer;
+  private readonly scaleController: WebglScaleController = createWebglScaleController();
+  private compositeTarget: RenderTarget | null = null;
   private currentTexture: WebGlTextureHandle | null = null;
   private lastCpuMs = 0;
   private avgCpuMs = 0;
+  /** Previous on-screen frame's main-thread time, fed into the scale controller. */
+  private pendingElapsedMs: number | null = null;
 
   constructor(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext) {
     this.canvas = canvas;
@@ -60,6 +71,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.persistencePass = new WebGLPersistencePass(gl);
     this.compositorPass = new WebGLCompositorPass(gl);
     this.readback = new WebGLReadback(gl);
+    this.blit = new WebGLBlit(gl);
     this.stationaryPreview = new WebGLStationaryPreviewRenderer(gl);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
@@ -127,10 +139,42 @@ export class WebGLRenderer implements ChromashiftRenderer {
   render(state: RendererState, fps = 30, viewport?: WebGLRenderViewport): void {
     if (!this.currentTexture) return;
     const start = performance.now();
-    const width = viewport?.width ?? Math.max(1, this.canvas.width);
-    const height = viewport?.height ?? Math.max(1, this.canvas.height);
+    const canvasW = Math.max(1, this.canvas.width);
+    const canvasH = Math.max(1, this.canvas.height);
+    const destW = viewport?.width ?? canvasW;
+    const destH = viewport?.height ?? canvasH;
+    // An explicit viewport (WebXR) is already the draw size. The on-screen
+    // canvas applies the internal budget plus the layer/tracer scale sliders.
+    const contentScale = viewport
+      ? 1
+      : stepWebglInternalScale(
+          this.scaleController,
+          canvasW,
+          canvasH,
+          this.pendingElapsedMs,
+          1000 / Math.max(1, fps),
+        );
+    if (!viewport) publishWebglInternalScale(contentScale);
+    const internalW = Math.max(1, Math.round(destW * contentScale));
+    const internalH = Math.max(1, Math.round(destH * contentScale));
+    const layerScale = viewport ? 1 : (state.layerScale ?? 1);
+    const tracerScale = viewport ? 1 : (state.tracerScale ?? 1);
     const layerOpacities = computeLayerOpacities(state);
-    this.renderFrameInternal(state, width, height, fps, null, viewport);
+    const upsample = !viewport && (internalW !== canvasW || internalH !== canvasH);
+    const compositeTarget = upsample ? this.ensureCompositeTarget(internalW, internalH) : null;
+    this.renderFrameInternal(state, fps, {
+      layerWidth: Math.max(1, Math.round(internalW * layerScale)),
+      layerHeight: Math.max(1, Math.round(internalH * layerScale)),
+      tracerWidth: Math.max(1, Math.round(internalW * tracerScale)),
+      tracerHeight: Math.max(1, Math.round(internalH * tracerScale)),
+      compositeWidth: upsample ? internalW : destW,
+      compositeHeight: upsample ? internalH : destH,
+      compositeTarget,
+      viewport: upsample ? undefined : viewport,
+    });
+    if (upsample && compositeTarget) {
+      this.blit.draw(compositeTarget.texture, canvasW, canvasH);
+    }
     this.readback.afterFrame(
       this.compositorPass,
       this.layerPass.targets,
@@ -138,9 +182,14 @@ export class WebGLRenderer implements ChromashiftRenderer {
       state,
       layerOpacities,
     );
+    // Hand the queued passes to the GPU every frame. Leaving them buffered
+    // makes the next pixel read (preview, export) execute the whole backlog
+    // on the main thread in one hitch.
+    this.gl.flush();
     const elapsed = performance.now() - start;
     this.lastCpuMs = elapsed;
     this.avgCpuMs = this.avgCpuMs === 0 ? elapsed : this.avgCpuMs * 0.9 + elapsed * 0.1;
+    if (!viewport) this.pendingElapsedMs = elapsed;
   }
 
   restoreRenderSize(width: number, height: number): void {
@@ -175,8 +224,9 @@ export class WebGLRenderer implements ChromashiftRenderer {
     };
 
     const target = createTarget(this.gl, width, height);
-    this.renderFrameInternal(exportState, width, height, fps, target);
-    const pixels = this.readback.readTexturePixels(target, width, height);
+    this.renderFrameInternal(exportState, fps, fullFrame(width, height, target));
+    const pixels = await this.readback.readTexturePixelsAsync(target, width, height)
+      ?? this.readback.readTexturePixels(target, width, height);
     destroyTarget(this.gl, target);
     return { data: pixels, width, height };
   }
@@ -208,13 +258,19 @@ export class WebGLRenderer implements ChromashiftRenderer {
       state,
       layerOpacities,
     );
-    const pixels = this.readback.readTexturePixels(target, options.width, options.height);
+    const pixels = await this.readback.readTexturePixelsAsync(target, options.width, options.height)
+      ?? this.readback.readTexturePixels(target, options.width, options.height);
     destroyTarget(this.gl, target);
     return { data: pixels, width: options.width, height: options.height };
   }
 
   destroy(): void {
+    if (this.compositeTarget) {
+      destroyTarget(this.gl, this.compositeTarget);
+      this.compositeTarget = null;
+    }
     this.readback.destroy();
+    this.blit.destroy();
     this.stationaryPreview.destroy();
     this.layerPass.destroy();
     this.persistencePass.destroy();
@@ -222,24 +278,32 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.debugPasses.destroy();
   }
 
+  private ensureCompositeTarget(width: number, height: number): RenderTarget {
+    if (this.compositeTarget
+      && this.compositeTarget.width === width
+      && this.compositeTarget.height === height) {
+      return this.compositeTarget;
+    }
+    if (this.compositeTarget) destroyTarget(this.gl, this.compositeTarget);
+    this.compositeTarget = createTarget(this.gl, width, height);
+    return this.compositeTarget;
+  }
+
   private renderFrameInternal(
     state: RendererState,
-    width: number,
-    height: number,
     fps: number,
-    compositeTarget: RenderTarget | null,
-    viewport?: WebGLRenderViewport,
+    frame: WebGLFrameSize,
   ): void {
     if (!this.currentTexture) return;
-    this.layerPass.ensureTextures(width, height);
-    this.persistencePass.ensureTextures(width, height);
+    this.layerPass.ensureTextures(frame.layerWidth, frame.layerHeight);
+    this.persistencePass.ensureTextures(frame.tracerWidth, frame.tracerHeight);
 
     const debugMode = state.webglDebugMode ?? 0;
     this.layerPass.render(
       this.currentTexture.texture,
       state,
       debugMode,
-      width / height,
+      frame.layerWidth / frame.layerHeight,
     );
 
     const readIndex = this.persistencePass.pingPong;
@@ -263,14 +327,42 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.persistencePass.advancePingPong(state.paused);
 
     this.compositorPass.render(
-      compositeTarget,
-      width,
-      height,
+      frame.compositeTarget,
+      frame.compositeWidth,
+      frame.compositeHeight,
       this.layerPass.targets,
       this.persistencePass,
       state,
       computeLayerOpacities(state),
-      viewport,
+      frame.viewport,
     );
   }
+}
+
+interface WebGLFrameSize {
+  layerWidth: number;
+  layerHeight: number;
+  tracerWidth: number;
+  tracerHeight: number;
+  compositeWidth: number;
+  compositeHeight: number;
+  compositeTarget: RenderTarget | null;
+  viewport?: WebGLRenderViewport;
+}
+
+function fullFrame(width: number, height: number, compositeTarget: RenderTarget): WebGLFrameSize {
+  return {
+    layerWidth: width,
+    layerHeight: height,
+    tracerWidth: width,
+    tracerHeight: height,
+    compositeWidth: width,
+    compositeHeight: height,
+    compositeTarget,
+  };
+}
+
+function publishWebglInternalScale(scale: number): void {
+  const target = window as Window & { webglInternalScale?: number };
+  target.webglInternalScale = scale;
 }

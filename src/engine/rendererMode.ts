@@ -29,8 +29,12 @@ export function readRequestedBackend(): RendererBackend | null {
   try {
     const params = new URLSearchParams(window.location.search);
     const explicit = params.get('renderer')?.toLowerCase();
-    if (explicit === 'webgl' || params.has('webgl')) return 'webgl';
-    if (explicit === 'webgpu' || params.has('webgpu')) return 'webgpu';
+    // An explicit `renderer=` wins over the bare flags, so `?renderer=webgpu`
+    // is never rewritten by a leftover `webgl2` parameter.
+    if (explicit === 'webgl') return 'webgl';
+    if (explicit === 'webgpu') return 'webgpu';
+    if (params.has('webgl') || webgl2QueryOptIn(params)) return 'webgl';
+    if (params.has('webgpu')) return 'webgpu';
   } catch {
     // Malformed URL — fall through to storage.
   }
@@ -116,8 +120,19 @@ export function switchRendererPreference(backend: RendererBackend): void {
   const url = new URL(window.location.href);
   url.searchParams.set('renderer', backend);
   url.searchParams.delete('webgl');
+  url.searchParams.delete('webgl2');
   url.searchParams.delete('webgpu');
   window.location.assign(url.toString());
+}
+
+/**
+ * `?webgl2=1` (also `true`, or a bare `?webgl2`) opts into the diagnostic
+ * backend. `0` / `false` do not — a WebGL2 session never starts on its own.
+ */
+export function webgl2QueryOptIn(params: URLSearchParams): boolean {
+  if (!params.has('webgl2')) return false;
+  const value = (params.get('webgl2') ?? '').toLowerCase();
+  return value === '' || value === '1' || value === 'true';
 }
 
 /** Navigate into an explicit WebGL diagnostic / XR / screenshot session. */
