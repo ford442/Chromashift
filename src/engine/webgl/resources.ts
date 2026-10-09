@@ -1,3 +1,5 @@
+import { flipRgbaRows } from './asyncReadback';
+
 export interface RenderTarget {
   texture: WebGLTexture;
   framebuffer: WebGLFramebuffer;
@@ -40,12 +42,5 @@ export function readTargetPixels(
   const data = new Uint8Array(width * height * 4);
   gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
   gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
-  const flipped = new Uint8ClampedArray(width * height * 4);
-  const rowBytes = width * 4;
-  for (let y = 0; y < height; y += 1) {
-    const srcOffset = (height - 1 - y) * rowBytes;
-    const dstOffset = y * rowBytes;
-    flipped.set(data.subarray(srcOffset, srcOffset + rowBytes), dstOffset);
-  }
-  return flipped;
+  return flipRgbaRows(data, width, height);
 }

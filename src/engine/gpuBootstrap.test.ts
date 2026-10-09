@@ -446,6 +446,7 @@ describe('getWebGL2ContextAttributes', () => {
     // The live diagnostic session never reads the canvas back; preserving it
     // costs a copy per frame. Screenshot / readback callers opt in below.
     expect(attrs.preserveDrawingBuffer).toBe(false);
+    expect(attrs.powerPreference).toBe('high-performance');
   });
 
   it('allows screenshot/readback callers to opt into preserveDrawingBuffer', () => {

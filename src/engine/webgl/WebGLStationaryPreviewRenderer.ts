@@ -12,6 +12,7 @@ import { WebGLCompositorPass } from './WebGLCompositorPass';
 import { WebGLDebugPasses } from './WebGLDebugPasses';
 import { WebGLLayerPass } from './WebGLLayerPass';
 import { WebGLPersistencePass } from './WebGLPersistencePass';
+import { PixelPackRead } from './asyncReadback';
 import { createTarget, destroyTarget, readTargetPixels, type RenderTarget } from './resources';
 
 /**
@@ -57,10 +58,10 @@ export class WebGLStationaryPreviewRenderer {
     this.debugPasses.destroy();
   }
 
-  render(
+  async render(
     state: RendererState,
     options: StationaryPreviewOptions = {},
-  ): StationaryPreviewResult {
+  ): Promise<StationaryPreviewResult> {
     if (!this.sourceTexture) return { separated: null, tracer: null };
 
     const size = STATIONARY_PREVIEW_SIZE;
@@ -75,7 +76,7 @@ export class WebGLStationaryPreviewRenderer {
 
     const layerOpacities = computeLayerOpacities(state);
     const separated = wantSeparated
-      ? this.renderSeparated(state, size, layerOpacities)
+      ? await this.renderSeparated(state, size, layerOpacities)
       : null;
 
     let tracer: Uint8ClampedArray<ArrayBuffer> | null = null;
@@ -84,7 +85,7 @@ export class WebGLStationaryPreviewRenderer {
       for (let frame = 0; frame < warmupFrames; frame += 1) {
         this.encodeLayersAndPersistence(state, fps);
       }
-      tracer = this.renderTracer(state, size, layerOpacities);
+      tracer = await this.renderTracer(state, size, layerOpacities);
     }
 
     return { separated, tracer };
@@ -119,11 +120,11 @@ export class WebGLStationaryPreviewRenderer {
     this.persistencePass.advancePingPong(false);
   }
 
-  private renderSeparated(
+  private async renderSeparated(
     state: RendererState,
     size: number,
     layerOpacities: number[],
-  ): Uint8ClampedArray<ArrayBuffer> | null {
+  ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     this.layerPass.render(this.sourceTexture!.texture, state, 0, 1);
     const separatedState: RendererState = {
       ...state,
@@ -143,14 +144,14 @@ export class WebGLStationaryPreviewRenderer {
       separatedState,
       layerOpacities,
     );
-    return readTargetPixels(this.gl, this.outputTarget!, size, size);
+    return this.readOutput(size);
   }
 
-  private renderTracer(
+  private async renderTracer(
     state: RendererState,
     size: number,
     layerOpacities: number[],
-  ): Uint8ClampedArray<ArrayBuffer> | null {
+  ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const tracerState: RendererState = {
       ...state,
       mainViewMode: MAIN_VIEW_MODES.FULL_RES_TRACER,
@@ -169,6 +170,18 @@ export class WebGLStationaryPreviewRenderer {
       tracerState,
       layerOpacities,
     );
-    return readTargetPixels(this.gl, this.outputTarget!, size, size);
+    return this.readOutput(size);
+  }
+
+  private async readOutput(size: number): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
+    const target = this.outputTarget;
+    if (!target) return null;
+    const pack = new PixelPackRead(this.gl);
+    try {
+      pack.start(target, size, size);
+      return await pack.wait() ?? readTargetPixels(this.gl, target, size, size);
+    } finally {
+      pack.destroy();
+    }
   }
 }

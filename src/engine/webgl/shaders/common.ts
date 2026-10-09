@@ -53,3 +53,16 @@ void main() {
   gl_Position = vec4(POS[gl_VertexID], 0.0, 1.0);
 }
 `;
+
+/** Sample the internal composite 1:1 in UV. Filtering on the texture does the upsample. */
+export const BLIT_FRAGMENT_SOURCE = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_source;
+in vec2 v_uv;
+out vec4 outColor;
+
+void main() {
+  outColor = texture(u_source, v_uv);
+}
+`;

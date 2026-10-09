@@ -67,7 +67,7 @@ function PerfHudTelemetry({ frameRate, rendererBackend }: { frameRate: number; r
         </>
       ) : (
         <div className="text-[10px] font-mono text-amber-300/80">
-          GPU timing N/A{rendererBackend !== 'webgpu' ? ' (WebGL fallback)' : ''}
+          GPU timing N/A{rendererBackend !== 'webgpu' ? ' (WebGL2 diagnostic)' : ''}
         </div>
       )}
 

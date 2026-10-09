@@ -172,7 +172,7 @@ src/
 > **Automatic `WebGPU → WebGL` fallback is off.** A failed adapter/device init
 > **hard-fails** with a blocking probe screen; `window.usingWebGL` stays false
 > on that path. WebGL2 starts only when the user (or E2E) asks for it —
-> `?renderer=webgl`, `?webgl`, the NUNIF **Renderer** control, or a stored
+> `?renderer=webgl`, `?webgl`, `?webgl2=1`, the NUNIF **Renderer** control, or a stored
 > `chromashift.renderer = webgl` preference. Explicit WebGL bootstrap does
 > **not** request a WebGPU adapter/device first. See
 > **[docs/webgl-fallback.md](docs/webgl-fallback.md)**.

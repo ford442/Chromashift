@@ -27,6 +27,8 @@ test.describe('Chromashift smoke', () => {
     expect(breadcrumbs.usingWebGL).toBe(true);
     expect(breadcrumbs.usingWebGPU).toBe(false);
 
+    await expect(page.getByTestId('webgl2-banner')).toBeVisible();
+    await expect(page.getByTestId('webgl2-banner')).toContainText('WEBGL2 active');
     await expect(page.locator('canvas').first()).toBeVisible();
 
     fs.mkdirSync(screenshotsDir, { recursive: true });
@@ -45,5 +47,13 @@ test.describe('Chromashift smoke', () => {
     await expect(webglButton).toBeEnabled();
     await expect(webglButton).toHaveAttribute('title', /diagnostic \/ XR/i);
     await expect(webglButton).toHaveAttribute('title', /not an automatic fallback/i);
+  });
+
+  test('?webgl2=1 opts into WebGL2 and shows the banner', async ({ page }) => {
+    await page.goto('/?webgl2=1');
+    await waitForWebGL(page);
+    await expect(page.getByTestId('webgl2-banner')).toBeVisible();
+    const backend = await page.evaluate(() => window.rendererType);
+    expect(backend).toBe('webgl');
   });
 });

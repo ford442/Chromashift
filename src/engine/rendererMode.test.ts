@@ -3,6 +3,7 @@ import {
   WEBGL_BACKEND_ENABLED,
   getRendererPreference,
   getStoredRendererPreference,
+  webgl2QueryOptIn,
   isWebGlRequestIgnored,
   openWebGlDiagnosticSession,
   publishRendererBootFailure,
@@ -63,6 +64,25 @@ describe('getRendererPreference', () => {
     installBrowserGlobals('?webgl');
     expect(getRendererPreference()).toBe('webgl');
     expect(readRequestedBackend()).toBe('webgl');
+  });
+
+  it('honours ?webgl2=1 as an explicit opt-in', () => {
+    installBrowserGlobals('?webgl2=1');
+    expect(webgl2QueryOptIn(new URLSearchParams('webgl2=1'))).toBe(true);
+    expect(getRendererPreference()).toBe('webgl');
+    expect(readRequestedBackend()).toBe('webgl');
+  });
+
+  it('does not treat ?webgl2=0 as a request to start WebGL', () => {
+    installBrowserGlobals('?webgl2=0');
+    expect(webgl2QueryOptIn(new URLSearchParams('webgl2=0'))).toBe(false);
+    expect(getRendererPreference()).toBe('webgpu');
+    expect(readRequestedBackend()).toBeNull();
+  });
+
+  it('lets an explicit renderer=webgpu win over ?webgl2=1', () => {
+    installBrowserGlobals('?renderer=webgpu&webgl2=1');
+    expect(getRendererPreference()).toBe('webgpu');
   });
 
   it('defaults to webgpu with no query or stored preference', () => {

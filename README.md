@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ford442/chromashift/actions/workflows/ci.yml/badge.svg)](https://github.com/ford442/chromashift/actions/workflows/ci.yml)
 
-A WebGPU-based visual engine that performs real-time RGB colour separation and independent layer rotation — replacing a legacy Canvas 2D / Emscripten slideshow. WebGL2 is available as an **explicit** diagnostic / XR / screenshot backend (`?renderer=webgl`); it is not an automatic fallback when WebGPU fails.
+A WebGPU-based visual engine that performs real-time RGB colour separation and independent layer rotation — replacing a legacy Canvas 2D / Emscripten slideshow. WebGL2 is available as an **explicit** diagnostic / XR / screenshot backend (`?renderer=webgl` or `?webgl2=1`); it is not an automatic fallback when WebGPU fails, and an active WebGL2 session shows a **WEBGL2 active** banner.
 
 ## Features
 

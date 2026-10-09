@@ -15,7 +15,8 @@ WebGL. Issue [#141](https://github.com/ford442/Chromashift/issues/141) restores
 | Path | Behaviour |
 |------|-----------|
 | Default / `?renderer=webgpu` | Probe + WebGPU bootstrap. Failure blocks with probe stage/adapter. `window.usingWebGL === false`. |
-| Explicit `?renderer=webgl` / `?webgl` / Renderer panel / stored preference | Start WebGL2 **without** requesting a WebGPU adapter or device. gpu-chores has no WebGPU lane. |
+| Explicit `?renderer=webgl` / `?webgl` / `?webgl2=1` / Renderer panel / stored preference | Start WebGL2 **without** requesting a WebGPU adapter or device. A banner reading **WEBGL2 active** stays on screen. gpu-chores has no WebGPU lane. |
+| `?webgl2=0` or no WebGL flag | WebGPU is required. A failed boot hard-fails. `window.usingWebGL === false`. |
 | Failed WebGPU overlay | **Open WebGL diagnostic session** navigates to `?renderer=webgl` (new load). Not an in-place switch. |
 
 `WEBGL_BACKEND_ENABLED` in `src/engine/rendererMode.ts` is the kill switch for
@@ -54,7 +55,10 @@ window.rendererFallbackReason  // hard-fail detail, or null
 ?renderer=webgl
 ?webgpu
 ?webgl
+?webgl2=1
 ```
+
+`?webgl2=1` (also `?webgl2=true` or a bare `?webgl2`) is an explicit opt-in, same as `?renderer=webgl`. `?webgl2=0` does not start WebGL. An explicit `renderer=` parameter wins over the bare flags. While WebGL2 is the active backend the page shows a **WEBGL2 active** banner (`data-testid="webgl2-banner"`) so the session cannot be mistaken for WebGPU.
 
 The NUNIF **Renderer** control persists `localStorage.chromashift.renderer` and
 reloads with `?renderer=`. Tooltip: diagnostic / XR, not fallback.
@@ -90,6 +94,26 @@ The WebGL-only debug selector in the Renderer panel supports:
 - `Layer mask isolation`: active colour-band masks before final compositing.
 
 These modes are intended for fast browser-visible checks. The WebGPU renderer ignores `webglDebugMode`. Debug shaders live in `src/engine/webgl/shaders/debug.ts`; `WebGLDebugPasses` owns the three debug programs.
+
+## Live-view cost
+
+The diagnostic pipeline is six fullscreen passes (three band layers, two tracers, compositor). On a machine whose WebGPU probe stops at `No available adapters`, that work often runs on a software GL driver, and a synchronous `gl.readPixels` flushes every pass still queued on the context.
+
+Measured in headless Chromium on SwiftShader (the draws themselves return immediately; the flush is the stall):
+
+| Canvas | Sync `readPixels` of a 64×64 target | Same frame, pixel-pack buffer + fence |
+| --- | --- | --- |
+| 512² | ~346 ms | — |
+| 1280² | ~570 ms on the main thread | < 1 ms |
+| 1920² | ~3.9 s | — |
+
+The live view therefore:
+
+- Packs preview and collision readback into a `PIXEL_PACK_BUFFER` and maps it only after a fence signals, so the 1 Hz stats poll does not freeze clicks.
+- Caps the internal long edge at 960 px and steps it down (floor 480 px) while main-thread frame time stays over the FPS budget. The canvas CSS size is unchanged; the composite is upscaled. `window.webglInternalScale` is the scale in use. Export and WebXR keep the resolution they asked for.
+- Requests `powerPreference: 'high-performance'` on the WebGL2 context.
+
+Layer and tracer scale sliders apply on this backend the same way they do on WebGPU.
 
 ## GPU Performance HUD (WebGPU only)
 
