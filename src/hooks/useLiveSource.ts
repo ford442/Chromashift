@@ -127,8 +127,8 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
   const lastFpsSyncRef = useRef(0);
   // WebGL has no compute lane, so the motion field is sampled here from the
   // video element and handed to the renderer. On WebGPU the renderer runs the
-  // `motion-field` chore's GPU lane inside its own frame encoder instead, and
-  // this sampler is never constructed.
+  // `motion-field` chore's GPU lane itself, and this sampler is constructed
+  // only when that lane declines (`?no_gpu_compute`) — `wantsCpuMotionField`.
   const motionSamplerRef = useRef<LiveMotionSampler | null>(null);
   const lastMotionAtRef = useRef(0);
   useEffect(() => {
@@ -146,7 +146,7 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
     publishLiveSourceBreadcrumbs(true, liveSourceManagerRef.current?.kind ?? null, 0);
 
     /**
-     * Refresh the WebGL backend's motion field. A no-op with
+     * Refresh the CPU-lane motion field (WebGL, or WebGPU when its GPU lane declines). A no-op with
      * `motionMode: 'off'` — nothing is sampled, nothing is uploaded, and the
      * persistence pass keeps running the pre-motion program.
      */
@@ -155,6 +155,15 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
       if (!renderer?.setMotionField) return;
 
       const { tracers } = renderStateRef.current;
+      if (renderer.wantsCpuMotionField && !renderer.wantsCpuMotionField()) {
+        // The renderer's GPU lane is serving the field (and its breadcrumbs).
+        if (motionSamplerRef.current) {
+          motionSamplerRef.current.destroy();
+          motionSamplerRef.current = null;
+          renderer.setMotionField(null);
+        }
+        return;
+      }
       if (tracers.motionMode === 'off') {
         if (motionSamplerRef.current) {
           motionSamplerRef.current.destroy();

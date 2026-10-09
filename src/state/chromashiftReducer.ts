@@ -95,7 +95,7 @@ export type ChromashiftAction =
   | { type: 'reactive/setMidiBindings'; bindings: MidiBinding[] }
   | { type: 'reactive/addMidiBinding'; binding: MidiBinding }
   | { type: 'reactive/removeMidiBinding'; param: import('../engine/reactive/types').MidiParamId }
-  | { type: 'settings/apply'; settings: ChromashiftSettingsInput }
+  | { type: 'settings/apply'; settings: ChromashiftSettingsInput; presetId?: string }
   | { type: 'compare/setLayout'; layout: import('../engine/compareViews').CompareLayoutMode }
   | { type: 'compare/setSyncPlay'; syncPlay: boolean }
   | { type: 'compare/setSlotB'; label: string; settings: ChromashiftSettingsInput }
@@ -157,6 +157,20 @@ function withSlice<K extends keyof ChromashiftState>(
 }
 
 export function chromashiftReducer(
+  state: ChromashiftState,
+  action: ChromashiftAction,
+): ChromashiftState {
+  const next = reduceSlices(state, action);
+  const activePresetId = action.type === 'settings/apply'
+    ? action.presetId ?? null
+    : next.layers !== state.layers || next.tracers !== state.tracers || next.output !== state.output
+      ? null
+      : next.ui.activePresetId;
+  if (activePresetId === next.ui.activePresetId) return next;
+  return { ...next, ui: { ...next.ui, activePresetId } };
+}
+
+function reduceSlices(
   state: ChromashiftState,
   action: ChromashiftAction,
 ): ChromashiftState {

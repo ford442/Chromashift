@@ -62,6 +62,7 @@ export function buildControlProps(
     builtinPresets: handlers.builtinPresets,
     savedPresets: handlers.savedPresets,
     presetStatus: handlers.presetStatus,
+    activePresetId: handlers.activePresetId,
     presetError: handlers.presetError ?? ui.presetLoadError,
     handleSavePreset: handlers.handleSavePreset,
     handleLoadPreset: handlers.handleLoadPreset,

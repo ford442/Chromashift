@@ -61,6 +61,7 @@ export interface AppUiHandlerBundle {
   builtinPresets: readonly BuiltinPreset[];
   savedPresets: StoredPreset[];
   presetStatus: string | null;
+  activePresetId: string | null;
   presetError: string | null;
   handleSavePreset: (name: string) => void;
   handleLoadPreset: (name: string) => void;
@@ -206,6 +207,7 @@ export interface AppUIControlProps {
   builtinPresets: readonly BuiltinPreset[];
   savedPresets: StoredPreset[];
   presetStatus: string | null;
+  activePresetId: string | null;
   presetError: string | null;
   handleSavePreset: (name: string) => void;
   handleLoadPreset: (name: string) => void;

@@ -21,7 +21,7 @@ import { GpuReadback } from './GpuReadback';
 import { GpuTimestampProfiler, publishGpuTimestampBreadcrumbs } from './GpuTimestampProfiler';
 import { StationaryPreviewRenderer } from './StationaryPreviewRenderer';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from './stationaryPreview';
-import type { ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, GpuRenderTiming, RenderTiming } from './types/RendererContracts';
+import type { CpuMotionField, ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, GpuRenderTiming, RenderTiming } from './types/RendererContracts';
 import { EMPTY_GPU_RENDER_TIMING } from './types/RendererContracts';
 import type { CollisionStats, RendererState } from './types/RendererState';
 import type { ChromashiftTextureHandle } from './types/TextureHandle';
@@ -369,6 +369,15 @@ export class WebGPURenderer {
       && this.graphExecutor.ready
       && passMode === 'composite'
       && (state.motionMode ?? 0) === 0;
+  }
+
+  /** CPU-lane fallback for when `MotionFieldPass` declines; see its docs. */
+  setMotionField(motion: CpuMotionField | null): void {
+    this.motionField.setCpuField(motion);
+  }
+
+  wantsCpuMotionField(): boolean {
+    return this.motionField.wantsCpuField();
   }
 
   setTexture(handle: ChromashiftTextureHandle): void {

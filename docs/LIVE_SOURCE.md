@@ -125,6 +125,13 @@ on the render loop's cadence and must not stamp over the load-time analysis crum
   need a fresh difference every frame, and `getImageData` is the one part of that loop that is not
   free. The kernel itself runs in `motion.worker.ts`, so the tick loop pays for the downsample and
   nothing else.
+- **WebGPU, compute declined** (`?no_gpu_compute`, no compute on the device, an oversize source) —
+  the same CPU sampler as WebGL, gated by `WebGPURenderer.wantsCpuMotionField()` so a healthy
+  WebGPU device never calls `getImageData`. `WebGPURenderer.setMotionField()` hands the result to
+  `MotionFieldPass`, which packs it to half floats and uploads it into an `rgba16float` texture in
+  the GPU lane's own layout (`r` magnitude, `gb` flow or zero, `a` 1), and serves that texture
+  whenever its GPU lane declines — so `PersistencePass` binds it unchanged.
+  `window.motionFieldBackend` reports the CPU lane (`wasm-worker` / `ts-worker`).
 
 With `motionMode: 'off'` neither path runs at all — nothing is sampled, nothing is uploaded, and
 no dispatch is encoded.
