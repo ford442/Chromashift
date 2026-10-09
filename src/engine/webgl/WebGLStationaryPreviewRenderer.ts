@@ -13,7 +13,7 @@ import { WebGLDebugPasses } from './WebGLDebugPasses';
 import { WebGLLayerPass } from './WebGLLayerPass';
 import { WebGLPersistencePass } from './WebGLPersistencePass';
 import { PixelPackRead } from './asyncReadback';
-import { createTarget, destroyTarget, readTargetPixels, type RenderTarget } from './resources';
+import { createTarget, destroyTarget, type RenderTarget } from './resources';
 
 /**
  * Per-layer opacity, global multiplier folded in — one entry per layer the
@@ -179,7 +179,11 @@ export class WebGLStationaryPreviewRenderer {
     const pack = new PixelPackRead(this.gl);
     try {
       pack.start(target, size, size);
-      return await pack.wait() ?? readTargetPixels(this.gl, target, size, size);
+      // Never fall back to a client readPixels here. On a deferred driver that
+      // maps the buffer only when something syncs, that fallback executes every
+      // frame still queued on this context and freezes input for seconds.
+      // A missed thumbnail is retried by the live-preview interval.
+      return await pack.wait();
     } finally {
       pack.destroy();
     }

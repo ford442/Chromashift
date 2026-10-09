@@ -61,12 +61,10 @@ export class PixelPackRead {
   poll(): Uint8ClampedArray<ArrayBuffer> | null {
     if (!this.pending || !this.fence || !this.pbo) return null;
     const gl = this.gl;
-    const status = gl.clientWaitSync(this.fence, 0, 0);
-    if (status === gl.WAIT_FAILED) {
-      this.cancel();
-      return null;
-    }
-    if (status !== gl.ALREADY_SIGNALED && status !== gl.CONDITION_SATISFIED) return null;
+    // clientWaitSync(timeout=0) still blocks on some software GL drivers until
+    // the whole queued pipeline finishes. SYNC_STATUS does not wait.
+    const status = gl.getSyncParameter(this.fence, gl.SYNC_STATUS);
+    if (status !== gl.SIGNALED) return null;
     gl.deleteSync(this.fence);
     this.fence = null;
     this.pending = false;

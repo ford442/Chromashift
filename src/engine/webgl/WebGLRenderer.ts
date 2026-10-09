@@ -182,6 +182,10 @@ export class WebGLRenderer implements ChromashiftRenderer {
       state,
       layerOpacities,
     );
+    // Hand the queued passes to the GPU every frame. Leaving them buffered
+    // makes the next pixel read (preview, export) execute the whole backlog
+    // on the main thread in one hitch.
+    this.gl.flush();
     const elapsed = performance.now() - start;
     this.lastCpuMs = elapsed;
     this.avgCpuMs = this.avgCpuMs === 0 ? elapsed : this.avgCpuMs * 0.9 + elapsed * 0.1;

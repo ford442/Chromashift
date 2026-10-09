@@ -109,7 +109,7 @@ Measured in headless Chromium on SwiftShader (the draws themselves return immedi
 
 The live view therefore:
 
-- Packs preview and collision readback into a `PIXEL_PACK_BUFFER` and maps it only after a fence signals, so the 1 Hz stats poll does not freeze clicks.
+- Maps a pixel-pack buffer only after its fence reports signaled, and does not fall back to a synchronous `readPixels` for thumbnails. The live collision poll and the repeating tracer-thumbnail refresh stay on WebGPU: on WebGL that map drains every pass still queued on the shared context. WebGL thumbnails refresh when playback is paused.
 - Caps the internal long edge at 960 px and steps it down (floor 480 px) while main-thread frame time stays over the FPS budget. The canvas CSS size is unchanged; the composite is upscaled. `window.webglInternalScale` is the scale in use. Export and WebXR keep the resolution they asked for.
 - Requests `powerPreference: 'high-performance'` on the WebGL2 context.
 

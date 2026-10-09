@@ -107,6 +107,7 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
   }, [rendererRef, renderStateRef, applyPreviewResult]);
 
   const gpuReady = state.engine.gpuReady;
+  const paused = state.engine.paused;
   const exportingVideo = state.ui.exportingVideo;
   const quadActive = isQuadCompareLayout(state.ui.compareView.layout);
   const livePreviewEnabled = state.output.livePreviewEnabled;
@@ -115,6 +116,9 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
 
   useEffect(() => {
     if (!gpuReady || exportingVideo || quadActive) return;
+    // Same reason as the interval below: a WebGL thumbnail read while the live
+    // loop is submitting frames drains the whole context. Refresh when paused.
+    if (rendererRef.current?.backend === 'webgl' && !paused) return;
 
     const forced = capturePreviewAfterRender.current;
     if (forced) capturePreviewAfterRender.current = false;
@@ -125,15 +129,22 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     void refreshPreviews({ separated: true, tracer: true });
   }, [
     gpuReady,
+    paused,
     exportingVideo,
     quadActive,
     settingsFingerprint,
     refreshPreviews,
     capturePreviewAfterRender,
+    rendererRef,
   ]);
 
   useEffect(() => {
     if (!gpuReady || exportingVideo || quadActive || !livePreviewEnabled || tracerPreviewFrozen) return;
+    // The tracer thumbnail re-renders on this same WebGL context. A pixel-pack
+    // map there drains every live frame still queued, which on a deferred
+    // driver freezes input. WebGPU readback does not, so only that backend
+    // keeps the repeating refresh; WebGL still updates on a settings change.
+    if (rendererRef.current?.backend === 'webgl') return;
 
     const interval = window.setInterval(() => {
       void refreshPreviews({ separated: false, tracer: true });
@@ -147,5 +158,6 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     livePreviewEnabled,
     tracerPreviewFrozen,
     refreshPreviews,
+    rendererRef,
   ]);
 }
