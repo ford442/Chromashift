@@ -1,0 +1,56 @@
+{
+  "name": "Body smear",
+  "description": "Live source through a 4-frame trail, pushed along the optical-flow field, then the classic three bands, coincidence and two tracers. The kiosk-camera look.",
+  "graph": {
+    "output": "swapchain",
+    "nodes": [
+      { "id": "source", "kind": "source", "inputs": [], "params": {} },
+      { "id": "motion", "kind": "source", "inputs": [], "params": { "role": "motion-field" } },
+      {
+        "id": "smear-history",
+        "kind": "history",
+        "inputs": ["source"],
+        "params": { "frames": 4, "mode": "trail", "falloff": 0.6 }
+      },
+      {
+        "id": "smear-displace",
+        "kind": "displace",
+        "inputs": ["smear-history", "motion"],
+        "params": { "field": "motion", "gain": 1, "mode": "inverse" }
+      },
+      {
+        "id": "layer0",
+        "kind": "band-layer",
+        "inputs": ["smear-displace"],
+        "params": { "layerIndex": 0, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "layer1",
+        "kind": "band-layer",
+        "inputs": ["smear-displace"],
+        "params": { "layerIndex": 1, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "layer2",
+        "kind": "band-layer",
+        "inputs": ["smear-displace"],
+        "params": { "layerIndex": 2, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "coincidence",
+        "kind": "coincidence",
+        "inputs": ["layer0", "layer1", "layer2"],
+        "params": { "minOverlap": 2, "emitDiagnostic": true, "colorThresh": 0.05, "stampBoost": 1.8 }
+      },
+      { "id": "tracer-below", "kind": "decay", "inputs": ["coincidence"], "params": { "durationMs": 0 } },
+      { "id": "tracer-above", "kind": "decay", "inputs": ["coincidence"], "params": { "durationMs": 1000 } },
+      {
+        "id": "composite",
+        "kind": "blend",
+        "inputs": ["layer0", "layer1", "layer2", "tracer-below", "tracer-above"],
+        "params": { "layerInputs": 3, "tracerInputs": 2 }
+      },
+      { "id": "swapchain", "kind": "output", "inputs": ["composite"], "params": {} }
+    ]
+  }
+}

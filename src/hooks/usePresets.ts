@@ -47,7 +47,7 @@ export function usePresets(store: ChromashiftStore) {
   const handleApplyBuiltinPreset = useCallback((id: string) => {
     const preset = findBuiltinPreset(id);
     if (!preset) return;
-    actions.applySettings(preset.settings);
+    actions.applySettings(preset.settings, preset.id);
     setPresetError(null);
     setPresetStatus(`Applied “${preset.name}”`);
   }, [actions]);
@@ -118,6 +118,7 @@ export function usePresets(store: ChromashiftStore) {
 
   return {
     builtinPresets: BUILTIN_PRESETS,
+    activePresetId: state.ui.activePresetId,
     savedPresets,
     presetStatus,
     presetError,

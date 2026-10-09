@@ -17,6 +17,8 @@ import {
   emitCoincidenceDecayWgsl,
   emitColorHelpersWgsl,
   emitCompositorWgsl,
+  emitDisplaceWgsl,
+  emitHistoryTapsWgsl,
   emitLutWgsl,
   emitWarpWgsl,
 } from './templates/wgsl';
@@ -130,6 +132,24 @@ function emitPass(
         ...base,
         fragment: emitBlurWgsl(intParam(node, 'radius', 2)),
         textureBindings: ['source'],
+      };
+
+    case 'history': {
+      // The taps half. The write half is a fixed blit the executor owns
+      // (`emitHistoryWriteWgsl`), so it is not a second emitted pass.
+      const frames = intParam(node, 'frames', 2);
+      return {
+        ...base,
+        fragment: emitHistoryTapsWgsl(frames),
+        textureBindings: Array.from({ length: frames }, (_, i) => `ring${i}`),
+      };
+    }
+
+    case 'displace':
+      return {
+        ...base,
+        fragment: emitDisplaceWgsl(node.params.field === 'color' ? 'color' : 'motion'),
+        textureBindings: ['source', 'field'],
       };
   }
 }

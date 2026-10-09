@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { waitForWebGL } from './helpers/renderer';
+import { waitForWebGL, waitForWebGPU } from './helpers/renderer';
 import { setE2eViewport, stubMinimalCorpus } from './helpers/mockCorpus';
 import { primeOverlaySections } from './helpers/overlaySections';
 
@@ -172,5 +172,36 @@ test.describe('Live source motion field', () => {
     );
 
     expect(await peakMotionEnergy(page)).toBe(0);
+  });
+});
+
+test.describe('Live source motion field (WebGPU, ?no_gpu_compute)', () => {
+  test.describe.configure({ timeout: 90_000 });
+
+  test.beforeEach(async ({ page }) => {
+    await setE2eViewport(page);
+    await stubMinimalCorpus(page);
+    await primeOverlaySections(page, { tracer: true });
+    await page.goto('/?renderer=webgpu&no_gpu_compute');
+    // Headless runners without a GPU adapter can't host this case; the
+    // upload/pack path is covered by `MotionFieldPass.test.ts` there.
+    const hasAdapter = await page.evaluate(async () => Boolean(await navigator.gpu?.requestAdapter()));
+    test.skip(!hasAdapter, 'No WebGPU adapter on this runner');
+    await waitForWebGPU(page);
+  });
+
+  test('direction falls back to the CPU lane and still solves flow', async ({ page }) => {
+    await page.getByTestId('tracer-motion-mode').selectOption('direction');
+    await loadVideo(page, movingVideo);
+
+    // The GPU lane declines here, so the renderer adopts the sampler's CPU
+    // field — the breadcrumbs name that lane, not a bare decline.
+    await page.waitForFunction(
+      () => window.motionFieldHasFlow === true && (window.motionFieldFlow?.movingCells ?? 0) > 0,
+      undefined,
+      { timeout: 30_000 },
+    );
+    expect(await page.evaluate(() => window.motionFieldBackend ?? null)).toMatch(/^(ts|wasm)/);
+    expect(await peakMotionEnergy(page, 6)).toBeGreaterThan(0);
   });
 });

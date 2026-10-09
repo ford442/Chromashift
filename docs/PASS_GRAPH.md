@@ -9,7 +9,9 @@ pipeline they hard-code.
 > hand encoder's fused-fragment persistence path, and within ±1 on a handful of
 > pixels of its compute-fed one (see [Pixel parity](#pixel-parity-on-a-device));
 > `?graph=blur` and `?graph=warp` are different *shapes* that draw without a
-> renderer edit. The WebGL diagnostic backend compiles only, and refuses the
+> renderer edit, and the starter graphs `?graph=smear` / `?graph=feedback`
+> add temporal node kinds (`history`, `displace`) the hand encoder has no
+> equivalent for. The WebGL diagnostic backend compiles only, and refuses the
 > shapes it has no template for by name.
 > See [Phase 2](#phase-2--shipped) for what landed and what is left.
 
@@ -36,7 +38,7 @@ composition.
 
 ```ts
 type NodeKind =
-  | 'source'        // sampled texture (image, live source, previous frame)
+  | 'source'        // external texture: role 'image' (default) or 'motion-field'
   | 'band-layer'    // luminance→colour band isolation, rotation, flip
   | 'lut'           // colorProfile 256×N LUT sample
   | 'coincidence'   // N-input overlap detection (generalises the persistence stamp)
@@ -44,6 +46,8 @@ type NodeKind =
   | 'blend'         // alpha / add / subtract / multiply / screen
   | 'warp'          // UV transform: rotate, scale, feedback displacement
   | 'blur'          // separable gaussian
+  | 'history'       // N-frame delay line: a ring of textures that outlives the frame
+  | 'displace'      // warp UVs by a field texture (motion field or colour-as-flow)
   | 'output';       // swapchain
 
 interface GraphNode { id: string; kind: NodeKind; inputs: string[]; params: Record<string, ParamValue>; }
@@ -53,6 +57,24 @@ interface PassGraph { nodes: GraphNode[]; output: string; }
 Each kind is described once in `nodeKinds.ts` — arity, edge type, resolution
 class, whether it ping-pongs, and which params are *structural* (they change
 emitted code) rather than *value* params (they change a uniform).
+
+| Kind | Inputs | Resolution | Structural params | Value params | WebGL |
+|---|---|---|---|---|---|
+| `source` | 0 | source | `role` (`image` \| `motion-field`) | — | ✓ |
+| `band-layer` | 1 | layer | `layerIndex`, `layerCount` | angle, flip | ✓ |
+| `lut` | 1 | layer | `rows` | `row`, `mixAmount` | ✓ |
+| `coincidence` | 1–∞ | tracer | `minOverlap`, `emitDiagnostic` | thresholds | ✓ |
+| `decay` | 1 | tracer (ping-pong) | — | duration | ✓ |
+| `blend` | 2–∞ | output | `layerInputs`, `tracerInputs` | opacities, modes | ✓ |
+| `warp` | 1 | layer | `mode` (`affine` \| `feedback`) | `angleDeg`, `scale`, `displace` | — |
+| `blur` | 1 | layer | `radius` | `axis` | — |
+| `history` | 1 | layer, or tracer | `frames` (2–8), `resolution` | `mode` (`trail` \| `tap`), `delay`, `falloff` | — |
+| `displace` | 2: `[source, field]` | layer | `field` (`motion` \| `color`) | `gain`, `mode` (`inverse` \| `forward`) | — |
+| `output` | 1 | output | — | — | ✓ |
+
+A structural param that selects code or a binding is checked by `validate.ts`:
+an unknown `role`, `field` or `resolution`, or a `frames` outside 2–8, is an
+`invalid-param` error naming the node, never a fallback to a default.
 
 ## The default graph
 
@@ -102,7 +124,10 @@ guarantee in `bandTable.test.ts` is untouched.
 
 `capabilities.ts` lists the node kinds each backend can emit. The WebGL
 diagnostic backend supports every kind that has a GLSL template — today
-everything except `warp` and `blur`. Compiling a graph that reaches an
+everything except `warp`, `blur`, `history` and `displace`. The last two are
+WebGPU-only on purpose rather than for want of a template: the WebGL backend
+does not *execute* graphs yet, so a GLSL emitter would be code nothing runs.
+They arrive with the WebGL executor. Compiling a graph that reaches an
 unsupported node throws a `PassGraphError` with `code: 'unsupported-node'`
 naming the node and the kind. It never silently approximates.
 
@@ -171,6 +196,7 @@ For the default graph that changes the encode path, not the look: see
 | `window.passGraphCompileCount` | compilations so far — must not move on a parameter change |
 | `window.passGraphPasses` | scheduled pass order, as node ids |
 | `window.passGraphSlots` | pool slot count per resolution class |
+| `window.passGraphRingFrames` | `history` ring textures per resolution class — VRAM that outlives the frame, so it is not in `passGraphSlots` |
 | `window.passGraphError` | a refusal, or `null`: `unsupported-node: …` names a node the backend has no template for; `invalid-pipeline: …` carries the device's own error for an emitted shader it rejected |
 | `window.passGraphName` | which named shape the gate selected |
 | `window.passGraphExecuting` | the shape a GPU executor is **drawing**, or `null` — published only once the device has validated its pipelines |
@@ -272,11 +298,111 @@ the executor is not a second hand-written encoder:
 | `1` / `default` | today's pipeline: layers → coincidence → decay×2 → blend |
 | `blur` | each band layer through a separable gaussian (H then V) **before** coincidence; the compositor keeps the sharp layers |
 | `warp` | an affine `warp` on layer 0 before coincidence |
+| `smear` | **body smear** starter: source → `history(4)` → `displace` by the motion field → the three band layers (see below) |
+| `feedback` | **self-feedback warp** starter: layer 0 through `warp` in `feedback` mode before coincidence |
 | `0` | off — the hand encoder |
 
 `blur` is the case the transient pool was built for: each layer's horizontal
 result dies the instant its vertical pass reads it, so the allocator hands the
 same target back out instead of sizing 2N of them.
+
+## Starter graphs
+
+The graphs the installation work builds on. They are selected with `?graph=` until
+the executor is on by default:
+
+1. **Classic** (`?graph=1`): `buildDefaultGraph(3)`, the control. It is also what
+   every refusal falls back to. A graph that will not compile on this backend, or that
+   the device rejects, leaves the hand encoder drawing this look with
+   `window.passGraphError` naming the reason. You never get a black canvas.
+2. **Blur → persistence** (`?graph=blur`): a builder, so it scales with the layer count.
+3. **Body smear** (`?graph=smear`): `starters/body-smear.json`. The live source passes
+   through a 4-frame `history` trail. A `displace` node then pushes that trail along the
+   optical-flow field, and the three band layers, coincidence and tracers follow it.
+   This is what someone walking in front of a kiosk camera sees. Their body pulls
+   colour, the flow steers it, and the trail turns a rotated still into a moving painting.
+4. **Self-feedback warp** (`?graph=feedback`): `starters/feedback-warp.json`. This is the
+   `warp` node's `feedback` mode, drawn. Note what "feedback" means here: the warp
+   displaces by its *input's* `.rg - 0.5`, not by a previous frame. True
+   previous-frame feedback would need a `history` that can close a cycle. It is a
+   follow-up, not part of this graph.
+
+The JSON starters are authored for the canonical three bands. Asking for one at another
+layer count is a `PassGraphError` rather than a guess. `parsePassGraphJson` checks only
+their *shape*. Everything a graph means is `validateGraph`'s job, so a pasted graph
+(and the node editor, later) is held to the same rules, and an unknown kind is refused
+by name.
+
+## History and displace
+
+### `history`: an N-frame delay line
+
+A ring of `frames` textures (2–8) at the node's resolution class (`layer` by default,
+`tracer` if `params.resolution` says so). The ring and the output always share that
+class. Each frame encodes **two** passes:
+
+1. **Write.** Blit the input into `ring[head]`. This is a sampled render pass rather
+   than `copyTextureToTexture`, because a `history` fed by the `source` node reads a
+   texture of another size and format than its ring.
+2. **Taps.** Sample every slot and mix them by weight into the node's pooled output.
+   The slots are bound in *physical* order, so the bind group is built once. The
+   moving head is only a uniform: `historyWeights()` gives slot `i` its weight from
+   its age, `(head − i) mod frames`.
+   - `trail` weights age *a* by `falloff^a`, normalised.
+   - `tap` puts all the weight on the slot `delay` frames old.
+
+   Only the slots holding a real frame get weight, so a ring that has not wrapped yet
+   (or was just cleared) trails rather than fading in from black. Only `frames` is
+   structural, so moving a tap or a falloff slider never recompiles.
+
+The ring is **not** in the transient pool. It is listed in `AllocationPlan.rings`, and its
+VRAM is bounded by the cap:
+
+```
+frames × width × height × 4 B     (rg11b10ufloat or rgba8unorm internal format)
+```
+
+That is up to eight layer-sized targets per `history` node. `estimateVram` counts it,
+and `window.passGraphRingFrames` reports it.
+
+The ring follows the tracers:
+- Its head advances with the ping-pong `flip()`, so a paused session freezes it.
+- "Reset trails" clears it along with the accumulators.
+- Switching graphs releases it with the rest of the pool.
+
+`history` is not ping-pong. Its output is read *after* this frame's write, so it is not
+a previous-frame value a cycle can close on.
+
+Bands cut from a `history` (or `displace`) output sample a layer-scale texture in the
+internal format, not the source itself. With `rg11b10ufloat` that texture has no
+alpha channel.
+
+### `displace`: UVs pushed by a field
+
+Inputs are `[source, field]`. The emitted shader samples `field` at the fragment's UV,
+turns it into a UV offset and samples `source` at `uv + sign × gain × offset`. The
+sampler clamps to the edge, so a large push smears the border instead of needing an
+out-of-bounds branch.
+
+| `field` | Reads | Convention |
+|---|---|---|
+| `motion` | `.gb` | The motion-field chore's velocity: field cells per frame, signed, centred on 0, +y down. It is divided by the field's size to land in UV. |
+| `color` | `.rg` | Colour-as-flow centred on 0.5, the convention `warp`'s `feedback` mode already uses. |
+
+The `mode` param sets the sign:
+- `inverse` (the default, sign −1) pulls colour from where the motion came from, so the
+  image trails behind it.
+- `forward` (sign +1) pushes ahead.
+
+The motion field enters the graph as a `source` node with `role: 'motion-field'`. `role`
+is structural, because the executor binds by it, and a value param could be a stale one
+from the first graph compiled for a topology. When the plan contains one, the renderer
+runs the motion chore itself, with flow (Lucas–Kanade), in its own command buffer, as the
+hand path does. This happens whatever `motionMode` says, because `motionMode` selects
+the *persistence* term. Any mode other than `off` still keeps the hand encoder, so
+boost/gate/direction are unchanged, and a graph without the role runs no chore at all.
+If the lane declines, the executor binds a 1×1 zero field and `displace` becomes the
+identity.
 
 ## Phase 2 — shipped
 
@@ -383,7 +509,12 @@ be observed:
   template to N tracers is what unblocks it.
 - **The temporal (motion) term.** `motionMode` has no graph node, so a session
   that selects one falls back to the hand encoder rather than quietly dropping
-  the term. The node kind is the fix, not a uniform.
+  the term. The node kind is the fix, not a uniform. (The motion *field* is
+  already a graph input — `source` with `role: 'motion-field'` — it is the
+  persistence term that reads it which is not.)
+- **`history` feedback cycles.** A ring whose oldest slot could close a cycle
+  would make true previous-frame feedback (a warp steered by its own last
+  output) expressible.
 - **The assembler shim.** `shaders/{layers,persistence,compositor}.ts` are still
   the hand encoder's entry point into the templates. They can become re-exports
   once the hand-encoded path itself goes away.
@@ -404,8 +535,9 @@ src/engine/graph/
 ├── compile.ts        # validate → schedule → allocate → emit → cache
 ├── defaultGraph.ts   # today's pipeline as a graph, for any layer count
 ├── layerSpecs.ts     # the band table the band-layer templates read
-├── gate.ts           # ?graph=1|blur|warp + window.passGraph* breadcrumbs
-├── altGraphs.ts      # the named graph shapes the gate can select
+├── gate.ts           # ?graph=1|blur|warp|smear|feedback + window.passGraph* breadcrumbs
+├── altGraphs.ts      # the named graph shapes the gate can select, JSON starter parsing
+├── starters/         # body-smear.json, feedback-warp.json
 ├── shaderText.ts     # shader normalisation used by the parity test
 ├── exec/
 │   ├── plan.ts                  # CompiledGraph → encodable steps (no WebGPU)
@@ -413,7 +545,7 @@ src/engine/graph/
 │   ├── nodePipelines.ts         # one emitted pass → layout + pipeline + uniforms
 │   └── WebGpuGraphExecutor.ts   # walks the steps and encodes the frame
 ├── templates/
-│   ├── wgsl.ts       # band-layer, coincidence+decay, blend, lut, warp, blur
+│   ├── wgsl.ts       # band-layer, coincidence+decay, blend, lut, warp, blur, history, displace
 │   └── glsl.ts       # band-layer, coincidence+decay, blend, lut
 └── __golden__/       # pre-refactor shader sources — the pixel-identity baseline
 ```

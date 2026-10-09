@@ -370,12 +370,11 @@ ${BAND_LAYER_PRELUDE_WGSL}
 ${emitGradientWgsl(spec, 2)}
   } else if (fragUniforms.colorMode >= 1.5) {
     // --- CROP MODE (2.0) / CROP NUNIF2 (3.0) ---
-    // CR0P (mode 2) maps pixels straight from raw luminance so its bands line
-    // up with the go.1ink.us/chromashift reference; NUNIF2 (mode 3) keeps the
-    // luminance lift: lum += (128 + |avgLum - 128| / 2) / 2.
+    // Both modes apply the classic cr0p luminance lift (as Fixed and the C++
+    // classifier do): lum += (128 + |avgLum - 128| / 2) / 2. Raw luminance
+    // pushed typical photos into the green/yellow layer, unlike cr0p.1ink.us.
     let isNunif2  = fragUniforms.colorMode > 2.5;
-    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
-    let bandLum   = select(lum, adj, isNunif2);
+    let bandLum   = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
     let nonAlpha  = select(1.0, ${spec.nunif2Alpha}, isNunif2);
     let darkAlpha = select(0.0, 0.1, isNunif2);
     result = ${cropFnName(spec)}(bandLum, fragUniforms.softCropEnabled, nonAlpha, darkAlpha);
@@ -1088,6 +1087,105 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   var acc = vec4<f32>(0.0);
 ${samples}
   return acc;
+}
+`;
+}
+
+/**
+ * `history`, write half → copy this frame's input into the ring slot at `head`.
+ *
+ * A render pass rather than `copyTextureToTexture`: a `history` fed straight by
+ * the `source` node reads a texture of another size and format than its ring,
+ * and a sampled blit resamples where a copy would be a validation error.
+ */
+export function emitHistoryWriteWgsl(): string {
+  return /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var tex        : texture_2d<f32>;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  return textureSample(tex, texSampler, uv);
+}
+`;
+}
+
+/** Bytes in the `history` taps uniform block: one weight per ring slot, padded. */
+export const HISTORY_UNIFORM_BYTES = 32;
+
+/**
+ * `history`, read half → a weighted mix of every ring slot.
+ *
+ * The slots are bound in fixed *physical* order and the CPU writes each one's
+ * weight from its age (`historyWeights`), so the bind group never changes as
+ * the head moves and a single tap, a delay or a decaying trail are all the same
+ * shader. Every slot is sampled unconditionally — a zero weight is cheaper than
+ * a branch, and `textureSample` must stay in uniform control flow.
+ */
+export function emitHistoryTapsWgsl(frames: number): string {
+  const bindings = Array.from(
+    { length: frames },
+    (_, i) => `@group(0) @binding(${i + 1}) var ring${i} : texture_2d<f32>;`,
+  ).join('\n');
+  const taps = Array.from(
+    { length: frames },
+    (_, i) => `  acc = acc + textureSample(ring${i}, texSampler, uv) * hu.weights[${i >> 2}][${i & 3}];`,
+  ).join('\n');
+
+  return /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+${bindings}
+
+struct HistoryUniforms {
+  /** Weight of ring slot i at [i / 4][i % 4]; written per frame from the head. */
+  weights : array<vec4<f32>, 2>,
+};
+@group(0) @binding(${frames + 1}) var<uniform> hu : HistoryUniforms;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  var acc = vec4<f32>(0.0);
+${taps}
+  return acc;
+}
+`;
+}
+
+/**
+ * `displace` → sample `tex` at UVs pushed by a field texture.
+ *
+ * - `motion`: the motion-field chore's `rgba16float` output. `.gb` is a signed
+ *   velocity in field cells per frame, centred on 0, +y down (docs/LIVE_SOURCE.md
+ *   § Optical flow), so it is divided by the field's size to land in UV.
+ * - `color`: any texture read as colour-as-flow, `.rg` centred on 0.5 — the
+ *   convention the `warp` node's `feedback` mode already uses.
+ *
+ * `du.sign` is -1 for `inverse` (pull colour from where the motion came from,
+ * so the image trails it) and +1 for `forward`. The sampler clamps to the edge,
+ * so a large push smears the border rather than needing an out-of-bounds branch.
+ */
+export function emitDisplaceWgsl(field: 'motion' | 'color'): string {
+  const offset = field === 'motion'
+    ? '  let offset = f.gb / vec2<f32>(textureDimensions(field));'
+    : '  let offset = f.rg - vec2<f32>(0.5);';
+  return /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var tex        : texture_2d<f32>;
+@group(0) @binding(2) var field      : texture_2d<f32>;
+
+struct DisplaceUniforms {
+  gain  : f32,
+  sign  : f32,
+  _pad0 : f32,
+  _pad1 : f32,
+};
+@group(0) @binding(3) var<uniform> du : DisplaceUniforms;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let f = textureSample(field, texSampler, uv);
+${offset}
+  return textureSample(tex, texSampler, uv + du.sign * du.gain * offset);
 }
 `;
 }

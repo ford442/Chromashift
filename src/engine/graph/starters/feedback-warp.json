@@ -1,0 +1,49 @@
+{
+  "name": "Self-feedback warp",
+  "description": "Layer 0 displaced by its own colour (the warp node's feedback mode: .rg read as flow around 0.5), then rotated and scaled, before coincidence. The other layers and the compositor are the classic graph.",
+  "graph": {
+    "output": "swapchain",
+    "nodes": [
+      { "id": "source", "kind": "source", "inputs": [], "params": {} },
+      {
+        "id": "layer0",
+        "kind": "band-layer",
+        "inputs": ["source"],
+        "params": { "layerIndex": 0, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "layer1",
+        "kind": "band-layer",
+        "inputs": ["source"],
+        "params": { "layerIndex": 1, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "layer2",
+        "kind": "band-layer",
+        "inputs": ["source"],
+        "params": { "layerIndex": 2, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "layer0-warp",
+        "kind": "warp",
+        "inputs": ["layer0"],
+        "params": { "mode": "feedback", "angleDeg": 6, "scale": 1.04, "displace": 0.15 }
+      },
+      {
+        "id": "coincidence",
+        "kind": "coincidence",
+        "inputs": ["layer0-warp", "layer1", "layer2"],
+        "params": { "minOverlap": 2, "emitDiagnostic": true, "colorThresh": 0.05, "stampBoost": 1.8 }
+      },
+      { "id": "tracer-below", "kind": "decay", "inputs": ["coincidence"], "params": { "durationMs": 0 } },
+      { "id": "tracer-above", "kind": "decay", "inputs": ["coincidence"], "params": { "durationMs": 1000 } },
+      {
+        "id": "composite",
+        "kind": "blend",
+        "inputs": ["layer0", "layer1", "layer2", "tracer-below", "tracer-above"],
+        "params": { "layerInputs": 3, "tracerInputs": 2 }
+      },
+      { "id": "swapchain", "kind": "output", "inputs": ["composite"], "params": {} }
+    ]
+  }
+}

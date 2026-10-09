@@ -170,3 +170,74 @@ describe('MotionFieldPass.encodeAndSubmit', () => {
     expect(createCommandEncoder).not.toHaveBeenCalled();
   });
 });
+
+describe('MotionFieldPass CPU fallback', () => {
+  beforeEach(() => {
+    isSupported.mockReturnValue(false);
+    vi.stubGlobal('GPUTextureUsage', { TEXTURE_BINDING: 4, COPY_DST: 2 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    isSupported.mockReturnValue(true);
+  });
+
+  function cpuDevice() {
+    const textures: { width: number; height: number; destroy: ReturnType<typeof vi.fn> }[] = [];
+    const createTexture = vi.fn((desc: GPUTextureDescriptor) => {
+      const [width, height] = desc.size as number[];
+      const texture = { width, height, format: desc.format, destroy: vi.fn() };
+      textures.push(texture);
+      return texture;
+    });
+    const writeTexture = vi.fn();
+    const device = {
+      createCommandEncoder: vi.fn(),
+      createTexture,
+      queue: { submit: vi.fn(), writeTexture },
+    } as unknown as GPUDevice;
+    return { device, createTexture, writeTexture, textures };
+  }
+
+  it('wants a CPU field only when the GPU lane cannot serve one', () => {
+    const { device } = cpuDevice();
+    expect(new MotionFieldPass(device).wantsCpuField()).toBe(true);
+    isSupported.mockReturnValue(true);
+    expect(new MotionFieldPass(device).wantsCpuField()).toBe(false);
+  });
+
+  it('serves the uploaded rgba16float field on decline, with flow', () => {
+    const { device, createTexture, writeTexture } = cpuDevice();
+    const pass = new MotionFieldPass(device);
+    pass.setCpuField({
+      field: new Float32Array([1, 0.5]),
+      flow: new Float32Array([1, -2, 0, 0]),
+      width: 2,
+      height: 1,
+    });
+
+    expect(createTexture).toHaveBeenCalledWith(expect.objectContaining({ format: 'rgba16float' }));
+    const [, data, layout] = writeTexture.mock.calls[0];
+    expect(Array.from(data as Uint16Array)).toEqual([0x3c00, 0x3c00, 0xc000, 0x3c00, 0x3800, 0, 0, 0x3c00]);
+    expect(layout).toEqual({ bytesPerRow: 16, rowsPerImage: 1 });
+
+    const result = pass.encodeAndSubmit(source, 640, 480, { threshold: 0.04 }, true);
+    expect(result).toBe(createTexture.mock.results[0].value);
+    expect(pass.hasFlowField()).toBe(true);
+  });
+
+  it('reuses the texture at the same size and drops it on null', () => {
+    const { device, createTexture, textures } = cpuDevice();
+    const pass = new MotionFieldPass(device);
+    const motion = { field: new Float32Array(4), width: 2, height: 2 };
+    pass.setCpuField(motion);
+    pass.setCpuField(motion);
+    expect(createTexture).toHaveBeenCalledTimes(1);
+    expect(pass.encodeAndSubmit(source, 640, 480, { threshold: 0.04 }, false)).not.toBeNull();
+    expect(pass.hasFlowField()).toBe(false);
+
+    pass.setCpuField(null);
+    expect(textures[0].destroy).toHaveBeenCalled();
+    expect(pass.encodeAndSubmit(source, 640, 480, { threshold: 0.04 }, false)).toBeNull();
+  });
+});

@@ -4,19 +4,29 @@ import {
   PassGraphError,
   allocateTextures,
   buildDefaultGraph,
+  buildGraphPreset,
   buildLayerSpecs,
   compileGraph,
   estimateVram,
   graphCompileCount,
+  parsePassGraphJson,
   passOrder,
   resetGraphCompileCache,
+  ringTexturesByResolution,
   scheduleGraph,
   sharedSlots,
   structuralHash,
+  structuralKey,
   supportedNodeKinds,
   validateGraph,
 } from './index';
-import { emitBlurWgsl, emitWarpWgsl } from './templates/wgsl';
+import {
+  emitBlurWgsl,
+  emitDisplaceWgsl,
+  emitHistoryTapsWgsl,
+  emitHistoryWriteWgsl,
+  emitWarpWgsl,
+} from './templates/wgsl';
 import type { GraphNode, PassGraph, ResolutionClass } from './types';
 
 const node = (
@@ -294,10 +304,10 @@ describe('compilation cache', () => {
 });
 
 describe('backend capabilities', () => {
-  it('lists warp and blur as WebGPU-only', () => {
-    expect(supportedNodeKinds('webgpu')).toEqual(expect.arrayContaining(['warp', 'blur']));
-    expect(supportedNodeKinds('webgl')).not.toEqual(expect.arrayContaining(['warp']));
-    expect(supportedNodeKinds('webgl')).not.toEqual(expect.arrayContaining(['blur']));
+  it('lists warp, blur, history and displace as WebGPU-only', () => {
+    const webgpuOnly = ['warp', 'blur', 'history', 'displace'] as const;
+    expect(supportedNodeKinds('webgpu')).toEqual(expect.arrayContaining([...webgpuOnly]));
+    for (const kind of webgpuOnly) expect(supportedNodeKinds('webgl')).not.toContain(kind);
   });
 
   it('refuses an unsupported node on WebGL, naming it', () => {
@@ -403,6 +413,10 @@ describe('emitted sampling passes stay in uniform control flow', () => {
     ['warp (affine)', emitWarpWgsl('affine')],
     ['warp (feedback)', emitWarpWgsl('feedback')],
     ['blur', emitBlurWgsl(3)],
+    ['history write', emitHistoryWriteWgsl()],
+    ['history taps', emitHistoryTapsWgsl(8)],
+    ['displace (motion)', emitDisplaceWgsl('motion')],
+    ['displace (color)', emitDisplaceWgsl('color')],
   ];
 
   for (const [name, source] of cases) {
@@ -414,5 +428,161 @@ describe('emitted sampling passes stay in uniform control flow', () => {
 
   it('warp still returns transparent black outside the warped image', () => {
     expect(emitWarpWgsl('affine')).toMatch(/select\(sampled, vec4<f32>\(0\.0\), outside\)/);
+  });
+});
+
+describe('history and displace', () => {
+  const smearGraph = (): PassGraph => buildGraphPreset('smear');
+  const withParams = (graph: PassGraph, id: string, params: GraphNode['params']): PassGraph => {
+    graph.nodes.find((n) => n.id === id)!.params = params;
+    return graph;
+  };
+
+  it('takes exactly one input for history and two for displace', () => {
+    const history = graphOf(
+      [node('src', 'source'), node('h', 'history', ['src', 'src'], { frames: 2 }), node('out', 'output', ['h'])],
+      'out',
+    );
+    expect(() => validateGraph(history)).toThrow(expect.objectContaining({ code: 'input-arity', nodeId: 'h' }));
+    const displace = graphOf(
+      [node('src', 'source'), node('d', 'displace', ['src']), node('out', 'output', ['d'])],
+      'out',
+    );
+    expect(() => validateGraph(displace)).toThrow(expect.objectContaining({ code: 'input-arity', nodeId: 'd' }));
+  });
+
+  it.each([
+    ['frames below the ring minimum', 'smear-history', { frames: 1 }],
+    ['frames above the VRAM cap', 'smear-history', { frames: 9 }],
+    ['fractional frames', 'smear-history', { frames: 2.5 }],
+    ['a resolution class history cannot use', 'smear-history', { frames: 4, resolution: 'output' }],
+    ['an unknown field convention', 'smear-displace', { field: 'depth' }],
+    ['an unknown source role', 'motion', { role: 'webcam' }],
+  ])('refuses %s as invalid-param, naming the node', (_name, id, params) => {
+    expect(() => validateGraph(withParams(smearGraph(), id, params))).toThrow(
+      expect.objectContaining({ code: 'invalid-param', nodeId: id }),
+    );
+  });
+
+  it('schedules the smear before the band layers that read it', () => {
+    const order = passOrder(scheduleGraph(smearGraph(), validateGraph(smearGraph())));
+    expect(order.indexOf('smear-history')).toBeLessThan(order.indexOf('smear-displace'));
+    expect(order.indexOf('smear-displace')).toBeLessThan(order.indexOf('layer0'));
+    expect(order.indexOf('motion')).toBeLessThan(order.indexOf('smear-displace'));
+  });
+
+  it('gives the ring its own storage and pools the history output', () => {
+    const allocation = plan(smearGraph());
+    expect(allocation.rings).toEqual([
+      { id: 'ring:smear-history', nodeId: 'smear-history', resolution: 'layer', frames: 4 },
+    ]);
+    expect(allocation.assignment['smear-history']).toMatch(/^layer:/);
+    expect(allocation.assignment.motion).toBe('external');
+    // The history output dies as displace reads it, so the smear costs one
+    // pooled layer slot over the default graph: displace's, live until the last
+    // band layer has sampled it.
+    expect(allocation.slotsByResolution).toEqual({ source: 0, layer: 4, tracer: 3, output: 0 });
+    expect(ringTexturesByResolution(allocation)).toEqual({ source: 0, layer: 4, tracer: 0, output: 0 });
+  });
+
+  it('runs a tracer-resolution ring at tracer scale, output and ring alike', () => {
+    const graph = withParams(smearGraph(), 'smear-history', { frames: 3, resolution: 'tracer' });
+    const allocation = plan(graph);
+    expect(allocation.rings[0].resolution).toBe('tracer');
+    expect(allocation.assignment['smear-history']).toMatch(/^tracer:/);
+  });
+
+  it('counts every ring slot in the VRAM estimate', () => {
+    const sizes: Record<ResolutionClass, { width: number; height: number; bytesPerPixel: number }> = {
+      source: { width: 0, height: 0, bytesPerPixel: 4 },
+      layer: { width: 100, height: 100, bytesPerPixel: 4 },
+      tracer: { width: 50, height: 50, bytesPerPixel: 4 },
+      output: { width: 0, height: 0, bytesPerPixel: 4 },
+    };
+    const base = estimateVram(plan(buildDefaultGraph()), sizes);
+    // One extra pooled layer slot plus four ring slots.
+    expect(estimateVram(plan(smearGraph()), sizes)).toBe(base + 5 * 100 * 100 * 4);
+  });
+
+  it('emits one taps sample per ring slot', () => {
+    const compiled = compileGraph(smearGraph(), 'webgpu');
+    const history = compiled.emitted.find((pass) => pass.nodeId === 'smear-history')!;
+    expect(history.textureBindings).toEqual(['ring0', 'ring1', 'ring2', 'ring3']);
+    expect(history.fragment.match(/textureSample\(/g)).toHaveLength(4);
+    const displace = compiled.emitted.find((pass) => pass.nodeId === 'smear-displace')!;
+    expect(displace.textureBindings).toEqual(['source', 'field']);
+    expect(displace.fragment).toContain('f.gb / vec2<f32>(textureDimensions(field))');
+    expect(emitDisplaceWgsl('color')).toContain('f.rg - vec2<f32>(0.5)');
+  });
+
+  it('recompiles for a new ring length or field, not for tap weights or gain', () => {
+    compileGraph(smearGraph(), 'webgpu');
+    const count = graphCompileCount();
+    const tweaked = smearGraph();
+    Object.assign(tweaked.nodes.find((n) => n.id === 'smear-history')!.params, { mode: 'tap', delay: 2, falloff: 0.1 });
+    Object.assign(tweaked.nodes.find((n) => n.id === 'smear-displace')!.params, { gain: 4, mode: 'forward' });
+    compileGraph(tweaked, 'webgpu');
+    expect(graphCompileCount()).toBe(count);
+
+    compileGraph(withParams(smearGraph(), 'smear-history', { frames: 6 }), 'webgpu');
+    expect(graphCompileCount()).toBe(count + 1);
+    compileGraph(withParams(smearGraph(), 'smear-displace', { field: 'color' }), 'webgpu');
+    expect(graphCompileCount()).toBe(count + 2);
+  });
+
+  it('keys the source role into the hash without moving the default graph', () => {
+    // `role` became structural; a source with no params must hash exactly as
+    // before, which is what this key spells out (empty structural brackets).
+    expect(structuralKey(buildDefaultGraph(), 'webgpu')).toContain(';source:source()[];');
+    const motion = buildDefaultGraph();
+    motion.nodes[0].params = { role: 'motion-field' };
+    expect(structuralHash(motion, 'webgpu')).not.toBe(structuralHash(buildDefaultGraph(), 'webgpu'));
+  });
+});
+
+describe('starter graphs', () => {
+  it.each(['smear', 'feedback'] as const)('%s compiles, schedules and allocates on WebGPU', (name) => {
+    const compiled = compileGraph(buildGraphPreset(name), 'webgpu');
+    expect(compiled.layerCount).toBe(3);
+    expect(compiled.passes.at(-1)!.kind).toBe('output');
+  });
+
+  it('feedback is the warp shape in its feedback mode', () => {
+    const compiled = compileGraph(buildGraphPreset('feedback'), 'webgpu');
+    const warp = compiled.emitted.find((pass) => pass.nodeId === 'layer0-warp')!;
+    expect(warp.fragment).toContain('wu.displace');
+    expect(compiled.passes.find((p) => p.nodeId === 'coincidence')!.inputs).toContain('layer0-warp');
+  });
+
+  it('refuses a starter for a layer count it was not authored for', () => {
+    expect(() => buildGraphPreset('smear', 5)).toThrow(
+      expect.objectContaining({ code: 'input-arity' }),
+    );
+  });
+
+  it('refuses JSON naming a node kind that does not exist, by name', () => {
+    const json = {
+      output: 'out',
+      nodes: [
+        { id: 'src', kind: 'source', inputs: [], params: {} },
+        { id: 'echo', kind: 'reverb', inputs: ['src'], params: {} },
+        { id: 'out', kind: 'output', inputs: ['echo'], params: {} },
+      ],
+    };
+    expect(() => parsePassGraphJson(json)).toThrow(
+      expect.objectContaining({ code: 'unsupported-node', nodeId: 'echo' }),
+    );
+  });
+
+  it('refuses malformed JSON rather than guessing', () => {
+    expect(() => parsePassGraphJson({ nodes: [] })).toThrow(PassGraphError);
+    expect(() => parsePassGraphJson({ output: 'o', nodes: [{ id: 'o', kind: 'output', inputs: [3] }] }))
+      .toThrow(expect.objectContaining({ code: 'invalid-param', nodeId: 'o' }));
+  });
+
+  it('round-trips the default graph through JSON unchanged', () => {
+    const graph = buildDefaultGraph();
+    const parsed = parsePassGraphJson(JSON.parse(JSON.stringify(graph)));
+    expect(structuralHash(parsed, 'webgpu')).toBe(structuralHash(graph, 'webgpu'));
   });
 });

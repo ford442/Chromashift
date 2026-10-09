@@ -148,6 +148,7 @@ export function buildOverlayProps(
     builtinPresets: p.builtinPresets,
     savedPresets: p.savedPresets,
     presetStatus: p.presetStatus,
+    activePresetId: p.activePresetId,
     colorProfiles: p.colorProfiles,
     presetError: p.presetError,
     onSavePreset: p.handleSavePreset,

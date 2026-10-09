@@ -1,7 +1,10 @@
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from './defaultGraph';
 import { PassGraphError } from './errors';
 import { CANONICAL_LAYER_COUNT } from './layerSpecs';
-import type { GraphNode, PassGraph } from './types';
+import { isKnownNodeKind } from './nodeKinds';
+import bodySmearStarter from './starters/body-smear.json';
+import feedbackWarpStarter from './starters/feedback-warp.json';
+import type { GraphNode, ParamValue, PassGraph } from './types';
 
 /**
  * Graph shapes the gate can select by name.
@@ -11,7 +14,7 @@ import type { GraphNode, PassGraph } from './types';
  * different pool — and every one of them draws without a line changing in
  * `WebGPUPipelines.ts` or `PersistencePass.ts`.
  */
-export const GRAPH_PRESETS = ['default', 'blur', 'warp'] as const;
+export const GRAPH_PRESETS = ['default', 'blur', 'warp', 'smear', 'feedback'] as const;
 export type GraphPresetName = (typeof GRAPH_PRESETS)[number];
 
 export function isGraphPresetName(value: string): value is GraphPresetName {
@@ -109,6 +112,78 @@ export function buildWarpGraph(
   };
 }
 
+/**
+ * Starter graphs shipped as JSON (`starters/*.json`), the format a pasted graph
+ * or the node editor will use. They are authored for the canonical three bands;
+ * the builders above are what scale with the layer count.
+ */
+export const STARTER_GRAPHS = {
+  smear: bodySmearStarter,
+  feedback: feedbackWarpStarter,
+} as const;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isParamValue = (value: unknown): value is ParamValue =>
+  typeof value === 'number'
+  || typeof value === 'boolean'
+  || typeof value === 'string'
+  || (Array.isArray(value) && value.every((item) => typeof item === 'number'));
+
+/**
+ * Turn untyped JSON into a `PassGraph`, or refuse it.
+ *
+ * This checks the *shape* only — ids, kinds, inputs and params of the right
+ * types. Everything a graph means (arity, edges, cycles, param ranges) is
+ * `validateGraph`'s job, so a starter is held to exactly the rules a built
+ * graph is. An unknown kind is refused here, by name, as `unsupported-node`.
+ */
+export function parsePassGraphJson(json: unknown): PassGraph {
+  const malformed = (what: string, nodeId: string | null = null): PassGraphError =>
+    new PassGraphError('invalid-param', `Malformed graph JSON: ${what}.`, nodeId);
+
+  const graph = isRecord(json) && isRecord(json.graph) ? json.graph : json;
+  if (!isRecord(graph)) throw malformed('expected an object');
+  if (typeof graph.output !== 'string') throw malformed('`output` must be a node id');
+  if (!Array.isArray(graph.nodes)) throw malformed('`nodes` must be an array');
+
+  const nodes = graph.nodes.map((raw, index): GraphNode => {
+    if (!isRecord(raw) || typeof raw.id !== 'string') throw malformed(`node ${index} has no string id`);
+    const id = raw.id;
+    if (typeof raw.kind !== 'string') throw malformed(`node '${id}' has no kind`, id);
+    if (!isKnownNodeKind(raw.kind)) {
+      throw new PassGraphError(
+        'unsupported-node',
+        `Unknown node kind '${raw.kind}' (node '${id}').`,
+        id,
+      );
+    }
+    const inputs = raw.inputs ?? [];
+    if (!Array.isArray(inputs) || !inputs.every((input) => typeof input === 'string')) {
+      throw malformed(`node '${id}' inputs must be node ids`, id);
+    }
+    const params = raw.params ?? {};
+    if (!isRecord(params) || !Object.values(params).every(isParamValue)) {
+      throw malformed(`node '${id}' params must be numbers, booleans, strings or number arrays`, id);
+    }
+    return { id, kind: raw.kind, inputs: [...inputs], params: { ...params } as GraphNode['params'] };
+  });
+
+  return { nodes, output: graph.output };
+}
+
+function buildStarterGraph(name: keyof typeof STARTER_GRAPHS, layerCount: number): PassGraph {
+  if (layerCount !== CANONICAL_LAYER_COUNT) {
+    throw new PassGraphError(
+      'input-arity',
+      `The '${name}' starter graph is authored for ${CANONICAL_LAYER_COUNT} colour bands, `
+      + `not ${layerCount}.`,
+    );
+  }
+  return parsePassGraphJson(STARTER_GRAPHS[name]);
+}
+
 /** Build a named preset for `layerCount` colour bands. */
 export function buildGraphPreset(
   name: GraphPresetName,
@@ -119,6 +194,9 @@ export function buildGraphPreset(
       return buildBlurGraph(layerCount);
     case 'warp':
       return buildWarpGraph(layerCount);
+    case 'smear':
+    case 'feedback':
+      return buildStarterGraph(name, layerCount);
     case 'default':
       return buildDefaultGraph(layerCount);
   }

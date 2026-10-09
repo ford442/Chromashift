@@ -1,5 +1,10 @@
 import { PassGraphError } from './errors';
-import { isKnownNodeKind, nodeKindSpec } from './nodeKinds';
+import {
+  HISTORY_MAX_FRAMES,
+  HISTORY_MIN_FRAMES,
+  isKnownNodeKind,
+  nodeKindSpec,
+} from './nodeKinds';
 import type { GraphNode, PassGraph } from './types';
 
 /** An edge that closes a cycle — legal only when its producer ping-pongs. */
@@ -93,10 +98,58 @@ export function validateGraph(graph: PassGraph): ValidationResult {
         );
       }
     }
+    validateParams(node);
   }
 
   const { reachable, feedbackEdges } = walk(graph, byId);
   return { reachable, feedbackEdges, byId };
+}
+
+/**
+ * Structural params that select emitted code or a binding. A typo here would
+ * otherwise fall through to a default and quietly draw something else.
+ */
+function validateParams(node: GraphNode): void {
+  const oneOf = (name: string, allowed: readonly string[], fallback: string): void => {
+    const value = node.params[name] ?? fallback;
+    if (typeof value !== 'string' || !allowed.includes(value)) {
+      throw new PassGraphError(
+        'invalid-param',
+        `Node '${node.id}' (${node.kind}) has ${name} ${JSON.stringify(value)}; `
+        + `expected one of ${allowed.map((v) => `'${v}'`).join(', ')}.`,
+        node.id,
+      );
+    }
+  };
+
+  switch (node.kind) {
+    case 'source':
+      oneOf('role', ['image', 'motion-field'], 'image');
+      break;
+    case 'history': {
+      const frames = node.params.frames;
+      if (
+        typeof frames !== 'number'
+        || !Number.isInteger(frames)
+        || frames < HISTORY_MIN_FRAMES
+        || frames > HISTORY_MAX_FRAMES
+      ) {
+        throw new PassGraphError(
+          'invalid-param',
+          `Node '${node.id}' (history) has frames ${JSON.stringify(frames)}; `
+          + `expected an integer from ${HISTORY_MIN_FRAMES} to ${HISTORY_MAX_FRAMES}.`,
+          node.id,
+        );
+      }
+      oneOf('resolution', ['layer', 'tracer'], 'layer');
+      break;
+    }
+    case 'displace':
+      oneOf('field', ['motion', 'color'], 'motion');
+      break;
+    default:
+      break;
+  }
 }
 
 type Colour = 'grey' | 'black';
