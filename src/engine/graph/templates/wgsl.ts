@@ -370,12 +370,11 @@ ${BAND_LAYER_PRELUDE_WGSL}
 ${emitGradientWgsl(spec, 2)}
   } else if (fragUniforms.colorMode >= 1.5) {
     // --- CROP MODE (2.0) / CROP NUNIF2 (3.0) ---
-    // CR0P (mode 2) maps pixels straight from raw luminance so its bands line
-    // up with the go.1ink.us/chromashift reference; NUNIF2 (mode 3) keeps the
-    // luminance lift: lum += (128 + |avgLum - 128| / 2) / 2.
+    // Both modes apply the classic cr0p luminance lift (as Fixed and the C++
+    // classifier do): lum += (128 + |avgLum - 128| / 2) / 2. Raw luminance
+    // pushed typical photos into the green/yellow layer, unlike cr0p.1ink.us.
     let isNunif2  = fragUniforms.colorMode > 2.5;
-    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
-    let bandLum   = select(lum, adj, isNunif2);
+    let bandLum   = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
     let nonAlpha  = select(1.0, ${spec.nunif2Alpha}, isNunif2);
     let darkAlpha = select(0.0, 0.1, isNunif2);
     result = ${cropFnName(spec)}(bandLum, fragUniforms.softCropEnabled, nonAlpha, darkAlpha);

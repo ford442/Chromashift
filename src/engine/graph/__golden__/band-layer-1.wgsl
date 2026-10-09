@@ -197,10 +197,8 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   } else if (fragUniforms.colorMode >= 1.5) {
     // --- CROP MODE (2.0) / CROP NUNIF2 (3.0) ---
     let isNunif2  = fragUniforms.colorMode > 2.5;
-    // CR0P (mode 2) uses raw luminance to match the go.1ink.us/chromashift reference;
-    // NUNIF2 (mode 3) keeps its luminance lift.
-    let adj       = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
-    let bandLum   = select(lum, adj, isNunif2);
+    // Both modes apply the classic cr0p luminance lift.
+    let bandLum   = lum + (128.0 + abs(fragUniforms.avgLuminance - 128.0) * 0.5) * 0.5;
     let nonAlpha  = select(1.0, 0.777, isNunif2);  // NUNIF2 Layer 2 opacity = 0.777
     let darkAlpha = select(0.0, 0.1, isNunif2);
     result = cropLayer1Color(bandLum, fragUniforms.softCropEnabled, nonAlpha, darkAlpha);

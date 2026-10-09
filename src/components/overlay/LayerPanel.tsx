@@ -281,7 +281,7 @@ export const LayerPanel = memo(function LayerPanel({
                   ? 'bg-emerald-600 text-white shadow-[0_0_8px_rgba(16,185,129,0.4)]'
                   : 'bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700'
               }`}
-              title="Sobel edge boost on luminance before band assignment. Off = raw luminance (CROP reference parity)."
+              title="Sobel edge boost on luminance before band assignment. Off = unboosted luminance (cr0p reference parity)."
             >
               {sobelEnabled ? '◎ Sobel ON' : '○ Sobel'}
             </button>

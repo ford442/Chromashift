@@ -5,6 +5,8 @@ import { useRenderCount } from '../../debug/renderCounts';
 
 export interface PresetsPanelProps {
   builtinPresets: readonly BuiltinPreset[];
+  /** Gallery preset the session still matches as applied, or null. */
+  activePresetId: string | null;
   savedPresets: StoredPreset[];
   presetStatus: string | null;
   presetError: string | null;
@@ -23,6 +25,7 @@ export interface PresetsPanelProps {
 
 export const PresetsPanel = memo(function PresetsPanel({
   builtinPresets,
+  activePresetId,
   savedPresets,
   presetStatus,
   presetError,
@@ -54,7 +57,12 @@ export const PresetsPanel = memo(function PresetsPanel({
                 type="button"
                 title={preset.description}
                 onClick={() => onApplyBuiltinPreset(preset.id)}
-                className="flex-1 text-[10px] px-2 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-100 text-left truncate"
+                aria-pressed={preset.id === activePresetId}
+                className={`flex-1 text-[10px] px-2 py-1 rounded border hover:bg-zinc-700 text-amber-100 text-left truncate ${
+                  preset.id === activePresetId
+                    ? 'bg-amber-800/60 border-amber-400'
+                    : 'bg-zinc-800 border-amber-500/30'
+                }`}
               >
                 {preset.name}
               </button>

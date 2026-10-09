@@ -194,6 +194,12 @@ export interface UiSlice {
   upscaleInfo: string;
   /** Friendly message when a ?preset= URL parameter could not be applied. */
   presetLoadError: string | null;
+  /**
+   * Gallery preset the render settings currently match exactly as applied, or
+   * null. Set by `settings/apply` with a `presetId`; cleared by any later edit
+   * to the layers / tracers / output slices.
+   */
+  activePresetId: string | null;
   /** Set from `?kiosk=1` — gallery / installation mode. */
   kioskEnabled: boolean;
   /** When true, NUNIF and peripheral chrome are hidden for a clean canvas. */
