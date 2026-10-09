@@ -18,11 +18,16 @@ const SUPPORTED: Record<GraphBackend, ReadonlySet<NodeKind>> = {
     'blend',
     'warp',
     'blur',
+    'history',
+    'displace',
     'output',
   ]),
-  // No `warp` or `blur`: the WebGL path is the diagnostic / XR / screenshot
-  // backend and has no GLSL template for either. Adding one here means adding
-  // the emitter in templates/glsl.ts — nothing else.
+  // No `warp`, `blur`, `history` or `displace`: the WebGL path is the
+  // diagnostic / XR / screenshot backend and has no GLSL template for them.
+  // Adding one here means adding the emitter in templates/glsl.ts — nothing
+  // else. `history` and `displace` wait for the WebGL executor on purpose: a
+  // GLSL template nothing executes would be dead code, and a refusal by name
+  // keeps the hand encoder (the classic look) on screen.
   webgl: new Set<NodeKind>([
     'source',
     'band-layer',

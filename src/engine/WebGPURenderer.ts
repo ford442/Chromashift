@@ -704,6 +704,25 @@ export class WebGPURenderer {
       // The live-preview readback still runs through `CompositorPass`, so its
       // uniform block has to be written even though the graph drew the frame.
       this.compositor.writeUniforms(this.compositorUniformParams(state));
+      // A graph that binds the motion field (a `displace` steered by it) runs
+      // the chore itself, with flow, whatever `motionMode` says — `motionMode`
+      // selects the *persistence* term, and any non-zero mode keeps the hand
+      // encoder (`executorDrawsFrame`), so boost/gate are untouched here. Same
+      // isolation as the hand path: its own command buffer, `null` on decline.
+      let motionField: GPUTexture | null = null;
+      if (this.graphExecutor!.wantsMotionField) {
+        motionField = this.motionField.encodeAndSubmit(
+          this.currentTexture,
+          this.currentTexture.width,
+          this.currentTexture.height,
+          {
+            threshold: state.motionThreshold ?? 0.04,
+            reset: this.motionResetPending || state.paused === true,
+          },
+          true,
+        );
+        this.motionResetPending = false;
+      }
       this.graphExecutor!.encode(
         enc,
         {
@@ -711,6 +730,7 @@ export class WebGPURenderer {
           classificationMask: this.classificationMaskTexture ?? this.fallbackMaskTexture,
           hasClassificationMask: this.classificationMaskTexture !== null,
           profileLut: this.updatedProfileLut(state),
+          motionField,
         },
         {
           state,

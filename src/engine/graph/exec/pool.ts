@@ -1,5 +1,5 @@
 import { EXTERNAL_SLOT, SWAPCHAIN_SLOT } from '../allocate';
-import type { AllocationPlan, PoolSlot, ResolutionClass } from '../types';
+import type { AllocationPlan, HistoryRing, PoolSlot, ResolutionClass } from '../types';
 
 /** Pixel size for one resolution class. */
 export interface ClassSize {
@@ -35,6 +35,9 @@ const DIAGNOSTIC_FORMAT: GPUTextureFormat = 'rgba8unorm';
  * - Everything else is a pooled transient, created **lazily**. A slot the
  *   executor never writes (the fused `coincidence` node, whose pass its `decay`
  *   consumers absorb) therefore costs no VRAM, even though the plan sized it.
+ *
+ * A `history` node's ring is the fourth kind of storage: `frames` textures that
+ * outlive the frame like a ping-pong pair, advanced by the same `flip()`.
  */
 export class GraphTexturePool {
   private readonly device: PoolDevice;
@@ -45,6 +48,15 @@ export class GraphTexturePool {
   private sampleCount = 1;
 
   private readonly slotById = new Map<string, PoolSlot>();
+  private readonly ringByNode = new Map<string, HistoryRing>();
+  private readonly rings = new Map<string, GPUTexture[]>();
+  /**
+   * Ring write position and fill level, shared by every ring in the graph the
+   * way `phase` is shared by every ping-pong pair. `head` is the slot written
+   * *this* frame; `filled` counts slots holding a real frame (capped per ring).
+   */
+  private ringFrame = 0;
+  private ringFilled = 0;
   private readonly transients = new Map<string, GPUTexture>();
   private readonly pairs = new Map<string, [GPUTexture, GPUTexture]>();
   private readonly diagnostics = new Map<string, [GPUTexture, GPUTexture]>();
@@ -82,12 +94,51 @@ export class GraphTexturePool {
     this.sampleCount = sampleCount;
     this.slotById.clear();
     for (const slot of plan.slots) this.slotById.set(slot.id, slot);
+    this.ringByNode.clear();
+    for (const ring of plan.rings) this.ringByNode.set(ring.nodeId, ring);
     this.phase = 0;
+    this.ringFrame = 0;
+    this.ringFilled = 0;
   }
 
-  /** Advance the ping-pong phase. Call once per encoded frame, after encoding. */
+  /**
+   * Advance the ping-pong phase and every ring's head. Call once per encoded
+   * frame, after encoding; a paused frame skips it, which freezes both.
+   */
   flip(): void {
     this.phase = this.phase === 0 ? 1 : 0;
+    this.ringFrame += 1;
+    this.ringFilled += 1;
+  }
+
+  /**
+   * One `history` node's ring: its textures, the slot this frame writes, and how
+   * many slots hold a real frame once that write lands.
+   */
+  ring(nodeId: string): { textures: GPUTexture[]; head: number; filled: number } {
+    const ring = this.ringByNode.get(nodeId);
+    if (!ring) throw new Error(`Graph node '${nodeId}' has no history ring.`);
+    let textures = this.rings.get(ring.id);
+    if (!textures) {
+      textures = Array.from(
+        { length: ring.frames },
+        () => this.create(ring.resolution, this.internalFormat),
+      );
+      this.rings.set(ring.id, textures);
+    }
+    return {
+      textures,
+      head: this.ringFrame % ring.frames,
+      filled: Math.min(this.ringFilled + 1, ring.frames),
+    };
+  }
+
+  /**
+   * Forget every frame the rings hold. Paired with clearing their textures, so
+   * the trail restarts from this frame rather than weighting zeroed slots.
+   */
+  resetRings(): void {
+    this.ringFilled = 0;
   }
 
   /** Index of the texture a `decay` node *reads* this frame. */
@@ -166,13 +217,20 @@ export class GraphTexturePool {
    *
    * `clearPersistence()` has to reach these: when the executor draws, they are
    * the tracer state, and clearing only the hand encoder's `PersistencePass`
-   * would leave the next graph frame accumulating from the old trails.
+   * would leave the next graph frame accumulating from the old trails. The
+   * `history` rings are trails too, so they are cleared with them.
    */
   accumulatorTextures(): GPUTexture[] {
     return [
       ...[...this.pairs.values()].flat(),
       ...[...this.diagnostics.values()].flat(),
+      ...[...this.rings.values()].flat(),
     ];
+  }
+
+  /** Ring textures created so far — what `history` costs in VRAM right now. */
+  ringTextureCount(): number {
+    return [...this.rings.values()].reduce((total, ring) => total + ring.length, 0);
   }
 
   msaaTarget(): GPUTexture | null {
@@ -185,10 +243,12 @@ export class GraphTexturePool {
     for (const texture of this.transients.values()) texture.destroy();
     for (const [a, b] of this.pairs.values()) { a.destroy(); b.destroy(); }
     for (const [a, b] of this.diagnostics.values()) { a.destroy(); b.destroy(); }
+    for (const ring of this.rings.values()) for (const texture of ring) texture.destroy();
     this.msaa?.destroy();
     this.transients.clear();
     this.pairs.clear();
     this.diagnostics.clear();
+    this.rings.clear();
     this.msaa = null;
     this.plan = null;
     this.sizes = null;

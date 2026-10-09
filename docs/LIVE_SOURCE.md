@@ -205,6 +205,22 @@ accumulates in JavaScript doubles while the shader and the C++ kernel accumulate
 WGSL lane is checked at `5e-3` because its output is read back through an `rgba16float` texture,
 and one half-precision ulp near 2.0 is already about `0.001`.
 
+### The same field, as a pass-graph input (body smear)
+
+The pass graph can read this field too, without `motionMode`. `?graph=smear` (the
+**body-smear** starter, `src/engine/graph/starters/body-smear.json`) feeds the live source
+through a 4-frame `history` trail. A `displace` node then pushes that trail along the
+optical-flow field before the three bands are cut from it. The result is that a person walking
+past the camera drags their colour behind them.
+
+That graph binds the field through a `source` node with `role: 'motion-field'`. The renderer runs
+the chore with flow on whenever the graph wants it, whatever `motionMode` says. `motionMode`
+still selects only the *persistence* term, and any mode other than `off` keeps the hand encoder,
+so `boost`/`gate`/`direction` behave exactly as above. If the lane declines (no WebGPU compute),
+the graph binds a zero field: the trail still smears but nothing steers it. WebGPU only: the
+WebGL backend refuses the starter by name (`unsupported-node`). See
+[PASS_GRAPH.md](PASS_GRAPH.md#history-and-displace).
+
 ### `off` is the old pipeline, not a reproduction of it
 
 The motion term is emitted as a **separate shader variant** rather than a branch inside the

@@ -79,6 +79,8 @@ describe('named graph shapes', () => {
     ['?graph=default', 'default'],
     ['?graph=blur', 'blur'],
     ['?graph=warp', 'warp'],
+    ['?graph=smear', 'smear'],
+    ['?graph=feedback', 'feedback'],
     // An unrecognised name is the default graph, not a refusal: the gate's job
     // is to pick a shape, and "on with something unknown" means "on".
     ['?graph=nonsense', 'default'],
@@ -102,6 +104,18 @@ describe('named graph shapes', () => {
     expect(win.passGraphError).toContain('unsupported-node');
     expect(win.passGraphError).toContain("'warp'");
     expect(win.passGraphExecuting).toBeNull();
+    warn.mockRestore();
+  });
+
+  it('refuses the body-smear starter on WebGL, naming its history node', () => {
+    const win = installBrowserGlobals('?graph=smear');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(activatePassGraph('webgl')).toBeNull();
+    expect(win.passGraphError).toMatch(/^unsupported-node: /);
+    expect(win.passGraphError).toContain("'history'");
+    expect(win.passGraphError).toContain("'smear-history'");
+    expect(win.passGraphRingFrames).toEqual({});
     warn.mockRestore();
   });
 
@@ -136,6 +150,17 @@ describe('breadcrumbs', () => {
     expect(win.passGraphCompileCount).toBe(1);
     expect(win.passGraphPasses).toEqual(compiled!.passes.map((pass) => pass.nodeId));
     expect(win.passGraphSlots).toEqual({ source: 0, layer: 3, tracer: 3, output: 0 });
+    expect(win.passGraphRingFrames).toEqual({ source: 0, layer: 0, tracer: 0, output: 0 });
+  });
+
+  it('reports the body-smear ring beside the pool slots', () => {
+    const win = installBrowserGlobals('?graph=smear');
+    const compiled = activatePassGraph('webgpu');
+
+    expect(win.passGraphError).toBeNull();
+    expect(win.passGraphPasses).toEqual(expect.arrayContaining(['smear-history', 'smear-displace']));
+    expect(win.passGraphRingFrames).toEqual({ source: 0, layer: 4, tracer: 0, output: 0 });
+    expect(compiled!.allocation.rings).toHaveLength(1);
   });
 
   it('holds the compile counter steady when only a parameter changes', () => {
