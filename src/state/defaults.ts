@@ -180,6 +180,7 @@ export function createInitialState(): ChromashiftState {
       upscaleProgress: 0,
       upscaleInfo: '',
       presetLoadError: null,
+      activePresetId: null,
       kioskEnabled: false,
       kioskUiHidden: false,
       kioskAttractMode: false,
