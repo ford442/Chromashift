@@ -229,6 +229,7 @@ const PRESETS_KEYS = keysOf<PresetsPanelProps>({
   builtinPresets: true,
   savedPresets: true,
   presetStatus: true,
+  activePresetId: true,
   presetError: true,
   onSavePreset: true,
   onLoadPreset: true,

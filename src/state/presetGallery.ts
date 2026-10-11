@@ -24,6 +24,41 @@ export const BUILTIN_PRESETS: readonly BuiltinPreset[] = [
     },
   },
   {
+    // A full patch, not a tweak: presets merge partially, so every field that
+    // differs from the cr0p.1ink.us look is named here or the session default
+    // leaks through. cr0p's middle spin rate is unconfirmed (its knob is
+    // partly hidden); 230 is assumed until it is read off the reference.
+    // Layer 0's reverse spin is fixed in the engine and has no setting.
+    id: 'cr0p-reference',
+    name: 'cr0p Defaults',
+    description: 'cr0p.1ink.us look: CROP palette, hard bands, one thin tracer',
+    settings: {
+      layers: {
+        count: 3,
+        angles: [0, 0, 0],
+        extensions: [130, 230, 330],
+        colorMode: 2,
+        sobelEnabled: false,
+        softCropEnabled: false,
+        opacity: 1,
+        opacities: [1, 1, 1],
+        scale: 1,
+      },
+      tracers: {
+        aboveIntensity: 0.85,
+        aboveDuration: 500,
+        belowIntensity: 0,
+        belowDuration: 2000,
+        mode: 0,
+        scale: 1,
+        layerBlendMode: 0,
+        tracerBlendMode: 0,
+        motionMode: 'off',
+      },
+      output: { outputMode: 0, diagnosticsMode: false, stampBoost: 1.8 },
+    },
+  },
+  {
     id: 'soft-glow',
     name: 'Soft Glow',
     description: 'Gradient bands, soft crop, screen-blended layers',

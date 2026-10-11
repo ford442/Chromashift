@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && npm run check:dist",
-    "check:dist": "node scripts/check-dist-assets.mjs",
+    "check:dist": "node scripts/check-dist-assets.mjs && node scripts/check-wasm-exports.mjs dist",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

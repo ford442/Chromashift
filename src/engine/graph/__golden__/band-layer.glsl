@@ -181,9 +181,9 @@ void main() {
     }
 
   } else if (u_colorMode >= 1.5) {
-    float adjusted = lum + (128.0 + abs(u_avgLuminance - 128.0) * 0.5) * 0.5;
+    // Both CROP (2) and NUNIF2 (3) apply the classic cr0p luminance lift.
+    float bandLum = lum + (128.0 + abs(u_avgLuminance - 128.0) * 0.5) * 0.5;
     bool isNunif2 = u_colorMode > 2.5;
-    float bandLum = isNunif2 ? adjusted : lum;
     float nonAlpha = isNunif2 && u_layerIndex == 0 ? 0.5 : isNunif2 ? 0.777 : 1.0;
     float darkAlpha = isNunif2 ? 0.1 : 0.0;
     result = cropColor(u_layerIndex, bandLum, u_softCropEnabled, nonAlpha, darkAlpha);
