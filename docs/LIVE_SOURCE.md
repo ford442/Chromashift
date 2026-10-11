@@ -125,6 +125,13 @@ on the render loop's cadence and must not stamp over the load-time analysis crum
   need a fresh difference every frame, and `getImageData` is the one part of that loop that is not
   free. The kernel itself runs in `motion.worker.ts`, so the tick loop pays for the downsample and
   nothing else.
+- **WebGPU, compute declined** (`?no_gpu_compute`, no compute on the device, an oversize source) —
+  the same CPU sampler as WebGL, gated by `WebGPURenderer.wantsCpuMotionField()` so a healthy
+  WebGPU device never calls `getImageData`. `WebGPURenderer.setMotionField()` hands the result to
+  `MotionFieldPass`, which packs it to half floats and uploads it into an `rgba16float` texture in
+  the GPU lane's own layout (`r` magnitude, `gb` flow or zero, `a` 1), and serves that texture
+  whenever its GPU lane declines — so `PersistencePass` binds it unchanged.
+  `window.motionFieldBackend` reports the CPU lane (`wasm-worker` / `ts-worker`).
 
 With `motionMode: 'off'` neither path runs at all — nothing is sampled, nothing is uploaded, and
 no dispatch is encoded.
@@ -204,6 +211,22 @@ The tolerance is `2e-3` between the CPU lanes, and it is not zero because the Ty
 accumulates in JavaScript doubles while the shader and the C++ kernel accumulate in float32. The
 WGSL lane is checked at `5e-3` because its output is read back through an `rgba16float` texture,
 and one half-precision ulp near 2.0 is already about `0.001`.
+
+### The same field, as a pass-graph input (body smear)
+
+The pass graph can read this field too, without `motionMode`. `?graph=smear` (the
+**body-smear** starter, `src/engine/graph/starters/body-smear.json`) feeds the live source
+through a 4-frame `history` trail. A `displace` node then pushes that trail along the
+optical-flow field before the three bands are cut from it. The result is that a person walking
+past the camera drags their colour behind them.
+
+That graph binds the field through a `source` node with `role: 'motion-field'`. The renderer runs
+the chore with flow on whenever the graph wants it, whatever `motionMode` says. `motionMode`
+still selects only the *persistence* term, and any mode other than `off` keeps the hand encoder,
+so `boost`/`gate`/`direction` behave exactly as above. If the lane declines (no WebGPU compute),
+the graph binds a zero field: the trail still smears but nothing steers it. WebGPU only: the
+WebGL backend refuses the starter by name (`unsupported-node`). See
+[PASS_GRAPH.md](PASS_GRAPH.md#history-and-displace).
 
 ### `off` is the old pipeline, not a reproduction of it
 

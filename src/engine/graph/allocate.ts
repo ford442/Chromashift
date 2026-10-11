@@ -2,6 +2,7 @@ import { nodeKindSpec } from './nodeKinds';
 import type { Schedule } from './schedule';
 import type {
   AllocationPlan,
+  HistoryRing,
   PoolSlot,
   ResolutionClass,
   TextureLifetime,
@@ -25,6 +26,10 @@ const RESOLUTION_CLASSES: ResolutionClass[] = ['source', 'layer', 'tracer', 'out
  * `source` nodes bind externally supplied textures and `output` nodes write the
  * swapchain, so neither consumes a pool slot. Ping-pong nodes hold two textures
  * across frames and are likewise excluded.
+ *
+ * A `history` node is both: its tap-mix *output* is an ordinary transient that
+ * goes through the pool, while its ring of `frames` textures outlives the frame
+ * and is listed separately in `rings`, never pooled.
  */
 export function allocateTextures(schedule: Schedule): AllocationPlan {
   const lifetimeOf = new Map<string, TextureLifetime>();
@@ -44,6 +49,7 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
   };
 
   const slots: PoolSlot[] = [];
+  const rings: HistoryRing[] = [];
   const assignment: Record<string, string> = {};
   const free = new Map<ResolutionClass, PoolSlot[]>(
     RESOLUTION_CLASSES.map((resolution) => [resolution, []]),
@@ -87,6 +93,15 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
       continue;
     }
 
+    if (pass.kind === 'history') {
+      rings.push({
+        id: `ring:${pass.nodeId}`,
+        nodeId: pass.nodeId,
+        resolution: lifetime.resolution,
+        frames: schedule.historyFrames[pass.nodeId],
+      });
+    }
+
     if (writesSwapchain(pass.nodeId)) {
       assignment[pass.nodeId] = SWAPCHAIN_SLOT;
       continue;
@@ -114,22 +129,39 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
     ]),
   ) as Record<ResolutionClass, number>;
 
-  return { slots, assignment, lifetimes: schedule.lifetimes, slotsByResolution };
+  return { slots, rings, assignment, lifetimes: schedule.lifetimes, slotsByResolution };
+}
+
+/** Ring textures per resolution class — `history`'s VRAM, beside `slotsByResolution`. */
+export function ringTexturesByResolution(plan: AllocationPlan): Record<ResolutionClass, number> {
+  return Object.fromEntries(
+    RESOLUTION_CLASSES.map((resolution) => [
+      resolution,
+      plan.rings
+        .filter((ring) => ring.resolution === resolution)
+        .reduce((total, ring) => total + ring.frames, 0),
+    ]),
+  ) as Record<ResolutionClass, number>;
 }
 
 /**
  * VRAM proxy for a plan: bytes for every pool slot at the given resolutions.
- * Ping-pong slots count twice — they own a read and a write texture.
+ * Ping-pong slots count twice — they own a read and a write texture — and each
+ * `history` ring counts `frames` times.
  */
 export function estimateVram(
   plan: AllocationPlan,
   sizes: Record<ResolutionClass, { width: number; height: number; bytesPerPixel: number }>,
 ): number {
-  return plan.slots.reduce((total, slot) => {
-    const size = sizes[slot.resolution];
-    const copies = slot.id.startsWith('persist:') ? 2 : 1;
-    return total + size.width * size.height * size.bytesPerPixel * copies;
-  }, 0);
+  const bytes = (resolution: ResolutionClass, copies: number): number => {
+    const size = sizes[resolution];
+    return size.width * size.height * size.bytesPerPixel * copies;
+  };
+  const pooled = plan.slots.reduce(
+    (total, slot) => total + bytes(slot.resolution, slot.id.startsWith('persist:') ? 2 : 1),
+    0,
+  );
+  return plan.rings.reduce((total, ring) => total + bytes(ring.resolution, ring.frames), pooled);
 }
 
 /** Nodes that share a pool slot — the reuse the budget test asserts on. */

@@ -1,6 +1,10 @@
 import { fullscreenVertexSource } from '../../shaders';
 import type { LayerPipeline, WebGPUPipelines } from '../../WebGPUPipelines';
-import { compositorUniformBytes } from '../templates/wgsl';
+import {
+  HISTORY_UNIFORM_BYTES,
+  compositorUniformBytes,
+  emitHistoryWriteWgsl,
+} from '../templates/wgsl';
 import type { EmittedPass, NodeKind } from '../types';
 
 /** Pipeline + bind-group layout + uniform storage for one graph node. */
@@ -13,7 +17,17 @@ export interface NodePipeline {
   readonly uniformData: ArrayBuffer | null;
   /** `band-layer` reuses the shipped layer pipeline, buffers and all. */
   readonly layer: LayerPipeline | null;
+  /** `history` only: the blit that writes this frame's input into the ring. */
+  readonly ringWrite: RingWritePipeline | null;
   /** Cached views so a bind group is only rebuilt when a texture changes. */
+  bindGroup: GPUBindGroup | null;
+  bindGroupKey: string;
+}
+
+/** The write half of a `history` node: one texture in, the ring slot out. */
+export interface RingWritePipeline {
+  readonly pipeline: GPURenderPipeline;
+  readonly bindGroupLayout: GPUBindGroupLayout;
   bindGroup: GPUBindGroup | null;
   bindGroupKey: string;
 }
@@ -38,7 +52,10 @@ export function uniformBytes(kind: NodeKind, layerCount: number): number {
     case 'warp':
     case 'blur':
     case 'lut':
+    case 'displace':
       return 16;
+    case 'history':
+      return HISTORY_UNIFORM_BYTES;
     default:
       return 0;
   }
@@ -119,7 +136,7 @@ export function createNodePipeline(
   ctx: NodePipelineContext,
   emitted: EmittedPass,
 ): NodePipeline {
-  const base = { kind: emitted.kind, bindGroup: null, bindGroupKey: '' };
+  const base = { kind: emitted.kind, bindGroup: null, bindGroupKey: '', ringWrite: null };
 
   if (emitted.kind === 'band-layer') {
     // Identical to the shipped layer pipeline — same layout, same MSAA count,
@@ -140,21 +157,12 @@ export function createNodePipeline(
     entries: bindGroupLayoutEntries(emitted, ctx.layerCount),
   });
 
-  const pipeline = ctx.device.createRenderPipeline({
-    layout: ctx.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-    vertex: {
-      module: ctx.device.createShaderModule({ code: fullscreenVertexSource }),
-      entryPoint: 'main',
-    },
-    fragment: {
-      module: ctx.device.createShaderModule({ code: emitted.fragment }),
-      entryPoint: 'main',
-      targets: targetFormats(emitted.kind, ctx.internalFormat, ctx.outputFormat)
-        .map((format) => ({ format })),
-    },
-    primitive: { topology: 'triangle-list' },
-    multisample: { count: 1 },
-  });
+  const pipeline = fullscreenPipeline(
+    ctx.device,
+    bindGroupLayout,
+    emitted.fragment,
+    targetFormats(emitted.kind, ctx.internalFormat, ctx.outputFormat),
+  );
 
   const bytes = uniformBytes(emitted.kind, ctx.layerCount);
   return {
@@ -169,7 +177,45 @@ export function createNodePipeline(
       : null,
     uniformData: bytes > 0 ? new ArrayBuffer(bytes) : null,
     layer: null,
+    ringWrite: emitted.kind === 'history' ? createRingWritePipeline(ctx) : null,
   };
+}
+
+function createRingWritePipeline(ctx: NodePipelineContext): RingWritePipeline {
+  const bindGroupLayout = ctx.device.createBindGroupLayout({ entries: [sampler(0), texture(1)] });
+  return {
+    pipeline: fullscreenPipeline(
+      ctx.device,
+      bindGroupLayout,
+      emitHistoryWriteWgsl(),
+      [ctx.internalFormat],
+    ),
+    bindGroupLayout,
+    bindGroup: null,
+    bindGroupKey: '',
+  };
+}
+
+function fullscreenPipeline(
+  device: GPUDevice,
+  bindGroupLayout: GPUBindGroupLayout,
+  fragment: string,
+  formats: GPUTextureFormat[],
+): GPURenderPipeline {
+  return device.createRenderPipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+    vertex: {
+      module: device.createShaderModule({ code: fullscreenVertexSource }),
+      entryPoint: 'main',
+    },
+    fragment: {
+      module: device.createShaderModule({ code: fragment }),
+      entryPoint: 'main',
+      targets: formats.map((format) => ({ format })),
+    },
+    primitive: { topology: 'triangle-list' },
+    multisample: { count: 1 },
+  });
 }
 
 /** Release the GPU resources one node pipeline owns. */

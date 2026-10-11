@@ -14,6 +14,7 @@ export type GraphErrorCode =
   | 'missing-output'
   | 'output-kind'
   | 'unreachable-output'
+  | 'invalid-param'
   | 'unsupported-node';
 
 export class PassGraphError extends Error {

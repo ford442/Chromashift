@@ -1,3 +1,4 @@
+import { ringTexturesByResolution } from './allocate';
 import { buildGraphPreset, isGraphPresetName, type GraphPresetName } from './altGraphs';
 import { compileGraph, graphCompileCount } from './compile';
 import { PassGraphError } from './errors';
@@ -15,6 +16,11 @@ declare global {
     passGraphPasses?: string[];
     /** Pool slot count per resolution class. */
     passGraphSlots?: Record<string, number>;
+    /**
+     * `history` ring textures per resolution class — VRAM that outlives the
+     * frame and so is not in `passGraphSlots`. Empty when no graph compiled.
+     */
+    passGraphRingFrames?: Record<string, number>;
     /** Set when compilation refused the graph, naming the node. */
     passGraphError?: string | null;
     /** Which named graph shape the gate selected. */
@@ -40,8 +46,9 @@ export interface PassGraphSelection {
  * Pass-graph gate.
  *
  * `?graph=1` compiles the default graph and, on WebGPU, hands it to the
- * `GraphExecutor` that draws it. `?graph=blur` / `?graph=warp` select a
- * different *shape* — a graph the hand-written encoder cannot express — and
+ * `GraphExecutor` that draws it. `?graph=blur` / `?graph=warp` and the starter
+ * graphs `?graph=smear` / `?graph=feedback` select a different *shape* — a
+ * graph the hand-written encoder cannot express — and
  * `?graph=0` forces the hand encoder. The WebGL diagnostic backend compiles but
  * does not execute, so it stays on the hand encoder either way.
  */
@@ -133,6 +140,7 @@ function publish(
   window.passGraphCompileCount = graphCompileCount();
   window.passGraphPasses = compiled ? compiled.passes.map((pass) => pass.nodeId) : [];
   window.passGraphSlots = compiled ? { ...compiled.allocation.slotsByResolution } : {};
+  window.passGraphRingFrames = compiled ? ringTexturesByResolution(compiled.allocation) : {};
   window.passGraphError = error;
   window.passGraphName = name;
   // Cleared for *every* result, not just a refusal: a successful WebGL compile

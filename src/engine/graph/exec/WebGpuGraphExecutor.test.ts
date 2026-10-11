@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { WebGPUPipelines } from '../../WebGPUPipelines';
-import { buildBlurGraph, buildWarpGraph } from '../altGraphs';
+import { buildBlurGraph, buildGraphPreset, buildWarpGraph } from '../altGraphs';
 import { compileGraph, graphCompileCount, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph } from '../defaultGraph';
 import type { CompiledGraph } from '../types';
@@ -32,6 +32,7 @@ describe('WebGpuGraphExecutor', () => {
   const encode = (
     exec: WebGpuGraphExecutor,
     overrides: Record<string, unknown> = {},
+    motionField: GPUTexture | null = null,
   ): void => {
     exec.encode(
       gpu.device.createCommandEncoder(),
@@ -40,6 +41,7 @@ describe('WebGpuGraphExecutor', () => {
         classificationMask: source,
         hasClassificationMask: false,
         profileLut: source,
+        motionField,
       },
       {
         state: fakeRendererState(overrides),
@@ -293,5 +295,124 @@ describe('WebGpuGraphExecutor', () => {
     executor.destroy();
     expect(pooled.every((t) => t.destroyed)).toBe(true);
     expect(gpu.textures.find((t) => t.label === sourceLabel)!.destroyed).toBe(false);
+  });
+  describe('history and displace (the body-smear starter)', () => {
+    const smear = () => compile(buildGraphPreset('smear'));
+    const label = (texture: GPUTexture) => (texture as unknown as { label: string }).label;
+    /** Texture labels a recorded pass wrote, without the load op. */
+    const written = (index: number) => gpu.passes[index].attachments[0].split('@')[0];
+
+    it('writes the ring, mixes its taps and displaces before the band layers', () => {
+      executor.setGraph(smear());
+      gpu.reset();
+      encode(executor);
+
+      expect(executor.encodedPasses()).toEqual([
+        'smear-history', 'smear-displace',
+        'layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite',
+      ]);
+      // The history node owns two passes: the ring write, then the taps mix.
+      expect(gpu.passes).toHaveLength(9);
+      expect(written(0)).not.toBe(written(1));
+      expect(gpu.fragments.filter((code) => code.includes('HistoryUniforms'))).toHaveLength(1);
+      expect(gpu.fragments.filter((code) => code.includes('DisplaceUniforms'))).toHaveLength(1);
+      expect(executor.wantsMotionField).toBe(true);
+      expect(executor.ringTextureCount()).toBe(4);
+    });
+
+    it('advances the ring head every frame, through all four slots', () => {
+      executor.setGraph(smear());
+      const heads: string[] = [];
+      for (let frame = 0; frame < 5; frame += 1) {
+        gpu.reset();
+        encode(executor);
+        heads.push(written(0));
+      }
+      expect(new Set(heads.slice(0, 4)).size).toBe(4);
+      expect(heads[4]).toBe(heads[0]);
+    });
+
+    it('binds the ring once, however far the head moves', () => {
+      executor.setGraph(smear());
+      encode(executor);
+      encode(executor);
+      const taps = gpu.passes.at(-8)!;
+      gpu.reset();
+      encode(executor);
+      encode(executor);
+      // Nothing about the taps pass rebinds: the head is a uniform, not a binding.
+      expect(gpu.passes.at(-8)!.bindGroup).toBe(taps.bindGroup);
+    });
+
+    it('skips the ring write while paused, freezing the trail', () => {
+      executor.setGraph(smear());
+      encode(executor);
+      gpu.reset();
+      encode(executor, { paused: true });
+      // No ring write and no accumulators: taps, displace, 3 layers, composite.
+      expect(gpu.passes).toHaveLength(6);
+    });
+
+    it('binds the motion field it is given, and a zero field when it has none', () => {
+      const field = gpu.device.createTexture({
+        size: [160, 120, 1],
+        format: 'rgba16float',
+        usage: GPUTextureUsage.TEXTURE_BINDING,
+      });
+      executor.setGraph(smear());
+      gpu.reset();
+      encode(executor, {}, field);
+      const displace = () => gpu.bindGroups.find((group) => group.label === gpu.passes[2].bindGroup)!;
+      expect(displace().textures[1]).toBe(label(field));
+
+      gpu.reset();
+      encode(executor, {}, null);
+      const fallback = displace();
+      expect(fallback.textures).toHaveLength(2);
+      expect(fallback.textures[1]).not.toBe(label(field));
+      const zero = gpu.textures.find((t) => t.label === fallback.textures[1])!;
+      expect([zero.width, zero.height, zero.format]).toEqual([1, 1, 'rgba16float']);
+    });
+
+    it('does not recreate a pipeline when a tap or gain value changes', () => {
+      executor.setGraph(smear());
+      encode(executor);
+      const built = executor.pipelineBuildCount;
+      const tweaked = buildGraphPreset('smear');
+      for (const node of tweaked.nodes) {
+        if (node.kind === 'history') Object.assign(node.params, { mode: 'tap', delay: 2, falloff: 0.9 });
+        if (node.kind === 'displace') Object.assign(node.params, { gain: 3, mode: 'forward' });
+      }
+      executor.setGraph(compileGraph(tweaked, 'webgpu'));
+      encode(executor);
+      expect(executor.pipelineBuildCount).toBe(built);
+    });
+
+    it('releases the ring when the graph switches back to the default', () => {
+      executor.setGraph(smear());
+      encode(executor);
+      const before = new Set(gpu.textures.map((t) => t.label));
+      expect(executor.ringTextureCount()).toBe(4);
+
+      executor.setGraph(compile());
+      encode(executor);
+      expect(executor.ringTextureCount()).toBe(0);
+      expect(executor.wantsMotionField).toBe(false);
+      const stillLive = gpu.textures.filter(
+        (t) => before.has(t.label) && !t.destroyed && t.width > 1,
+      );
+      // Only the caller's source texture survives the switch (and the 1×1 zero
+      // field, which lives as long as the executor).
+      expect(stillLive.map((t) => t.label)).toEqual([label(source)]);
+    });
+
+    it('clears the ring with the tracers on reset', () => {
+      executor.setGraph(smear());
+      encode(executor);
+      gpu.reset();
+      executor.clearAccumulators();
+      // Eight tracer clears (see above) plus the four ring slots.
+      expect(gpu.passes).toHaveLength(12);
+    });
   });
 });

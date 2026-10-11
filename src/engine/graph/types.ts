@@ -21,7 +21,7 @@ export type EdgeType = 'texture' | 'scalar';
 export type ResolutionClass = 'source' | 'layer' | 'tracer' | 'output';
 
 export type NodeKind =
-  | 'source'        // sampled texture (image, live source, previous frame)
+  | 'source'        // externally supplied texture: `role` 'image' (default) or 'motion-field'
   | 'band-layer'    // luminance→colour band isolation, rotation, flip
   | 'lut'           // colorProfile 256×3 LUT sample
   | 'coincidence'   // N-input overlap detection (generalises today's persistence stamp)
@@ -29,6 +29,8 @@ export type NodeKind =
   | 'blend'         // alpha / add / subtract / multiply / screen
   | 'warp'          // UV transform: rotate, scale, feedback displacement
   | 'blur'          // separable gaussian
+  | 'history'       // N-frame delay line: a ring of textures that outlives the frame
+  | 'displace'      // warp UVs by a field texture (motion field or colour-as-flow)
   | 'output';       // swapchain
 
 export type ParamValue = number | boolean | string | readonly number[];
@@ -99,8 +101,23 @@ export interface PoolSlot {
   nodes: string[];
 }
 
+/**
+ * The ring of textures a `history` node keeps across frames. Never pooled:
+ * every slot holds a frame some later frame will read, exactly as a ping-pong
+ * pair does — just `frames` of them instead of two.
+ */
+export interface HistoryRing {
+  id: string;
+  nodeId: string;
+  resolution: ResolutionClass;
+  /** Ring length; also the texture count. Bounded to 2–8 by validation. */
+  frames: number;
+}
+
 export interface AllocationPlan {
   slots: PoolSlot[];
+  /** `history` rings, one per node. Their textures are counted here, not in `slots`. */
+  rings: HistoryRing[];
   /** node id → pool slot id (or a dedicated persistent/ external slot id). */
   assignment: Record<string, string>;
   lifetimes: TextureLifetime[];

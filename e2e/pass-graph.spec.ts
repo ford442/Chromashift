@@ -92,6 +92,8 @@ test.describe('pass graph', () => {
   for (const [name, node, kind] of [
     ['warp', 'layer0-warp', 'warp'],
     ['blur', 'layer0-blur-x', 'blur'],
+    ['feedback', 'layer0-warp', 'warp'],
+    ['smear', 'smear-history', 'history'],
   ] as const) {
     test(`refuses ?graph=${name} by name and keeps drawing`, async ({ page }) => {
       await stubMinimalCorpus(page);

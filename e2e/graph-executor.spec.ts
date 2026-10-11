@@ -189,9 +189,22 @@ test.describe('pass-graph executor', () => {
   });
 
   test.describe('non-default shapes draw', () => {
-    for (const [name, marker] of [
-      ['blur', 'layer0-blur-y'],
-      ['warp', 'layer0-warp'],
+    for (const { name, marker, scheduled, rings, differs } of [
+      { name: 'blur', marker: 'layer0-blur-y', scheduled: [], rings: 0, differs: true },
+      { name: 'warp', marker: 'layer0-warp', scheduled: [], rings: 0, differs: true },
+      { name: 'feedback', marker: 'layer0-warp', scheduled: [], rings: 0, differs: true },
+      // The frozen scene is a still image with no motion: its flow field is
+      // zero, so `displace` is the identity, and the history of a still frame
+      // is that frame. What the smear must prove here is that it compiles,
+      // allocates its ring and draws without a GPU error — not that a still
+      // image looks smeared.
+      {
+        name: 'smear',
+        marker: 'smear-displace',
+        scheduled: ['smear-history', 'smear-displace', 'motion'],
+        rings: 4,
+        differs: false,
+      },
     ] as const) {
       test(`?graph=${name} compiles, schedules, allocates and draws`, async ({ page }) => {
         test.setTimeout(180_000);
@@ -202,21 +215,27 @@ test.describe('pass-graph executor', () => {
           error: window.passGraphError,
           executing: window.passGraphExecuting,
           executed: window.passGraphExecutedPasses ?? [],
+          scheduled: window.passGraphPasses ?? [],
+          rings: window.passGraphRingFrames ?? {},
         }));
         expect(crumbs.error).toBeNull();
         expect(crumbs.executing).toBe(name);
         expect(crumbs.executed).toContain(marker);
+        expect(crumbs.scheduled).toEqual(expect.arrayContaining([...scheduled]));
+        expect(crumbs.rings.layer ?? 0).toBe(rings);
         // The breadcrumbs above were all true of a `?graph=warp` whose shader
         // the device rejected — every frame dropped, the canvas black. These
         // two are what "draws" means.
         expect(gpuErrors).toEqual([]);
         expectContent(shaped, `the ?graph=${name} frame`);
 
-        const base = await captureFrame(page, url('1'));
-        expect(
-          frameDifference(shaped, base).differingPixels,
-          `?graph=${name} drew the default graph's pixels`,
-        ).toBeGreaterThan(0);
+        if (differs) {
+          const base = await captureFrame(page, url('1'));
+          expect(
+            frameDifference(shaped, base).differingPixels,
+            `?graph=${name} drew the default graph's pixels`,
+          ).toBeGreaterThan(0);
+        }
       });
     }
   });

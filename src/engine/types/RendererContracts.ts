@@ -102,11 +102,17 @@ export interface ChromashiftRenderer {
   setAntialiasing(enabled: boolean): void;
   clearPersistence(): void;
   /**
-   * Adopt a CPU-produced motion field. Implemented by the WebGL diagnostic
-   * backend, which has no compute lane; the WebGPU renderer runs the
-   * `motion-field` chore inside its own frame encoder and omits this.
+   * Adopt a CPU-produced motion field. The WebGL diagnostic backend has no
+   * compute lane and always uses this; the WebGPU renderer uses it only as a
+   * fallback when its GPU lane declines (see `wantsCpuMotionField`).
    */
   setMotionField?(motion: CpuMotionField | null): void;
+  /**
+   * Whether `setMotionField` input is wanted right now. Absent means always
+   * (WebGL). WebGPU returns `false` while its own compute lane is healthy, so
+   * the live-source tick never samples the video for motion there.
+   */
+  wantsCpuMotionField?(): boolean;
   /**
    * Adopt a compiled pass graph and encode `compiled.passes` instead of the
    * hand-written topology, or `null` to go back to it.

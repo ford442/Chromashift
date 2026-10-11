@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { compileGraph, resetGraphCompileCache } from '../compile';
-import { buildBlurGraph } from '../altGraphs';
+import { buildBlurGraph, buildGraphPreset } from '../altGraphs';
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from '../defaultGraph';
 import { createFakeGpu, type FakeGpu } from './__fixtures__/fakeDevice';
 import { GraphTexturePool, type PoolSizes } from './pool';
@@ -111,5 +111,49 @@ describe('GraphTexturePool', () => {
     configure();
     expect(() => pool.transient(DEFAULT_GRAPH_IDS.output)).toThrow(/no pooled render target/);
     expect(pool.writesSwapchain(DEFAULT_GRAPH_IDS.composite)).toBe(true);
+  });
+
+  describe('history rings', () => {
+    const smearPlan = () => compileGraph(buildGraphPreset('smear'), 'webgpu').allocation;
+
+    it('creates a ring lazily, frames textures at its resolution class', () => {
+      configure(smearPlan());
+      expect(gpu.textures).toHaveLength(0);
+      const ring = pool.ring('smear-history');
+      expect(ring.textures).toHaveLength(4);
+      expect(ring.textures.every((t) => t.width === 400 && t.height === 300)).toBe(true);
+      expect(pool.ring('smear-history').textures).toBe(ring.textures);
+    });
+
+    it('moves the head and fill level with flip()', () => {
+      configure(smearPlan());
+      expect(pool.ring('smear-history')).toMatchObject({ head: 0, filled: 1 });
+      pool.flip();
+      expect(pool.ring('smear-history')).toMatchObject({ head: 1, filled: 2 });
+      for (let i = 0; i < 4; i += 1) pool.flip();
+      expect(pool.ring('smear-history')).toMatchObject({ head: 1, filled: 4 });
+      pool.resetRings();
+      expect(pool.ring('smear-history').filled).toBe(1);
+    });
+
+    it('counts the ring among the textures a reset clears', () => {
+      configure(smearPlan());
+      const ring = pool.ring('smear-history');
+      expect(pool.accumulatorTextures()).toEqual(expect.arrayContaining(ring.textures));
+    });
+
+    it('destroys the ring on release and on a different plan', () => {
+      configure(smearPlan());
+      pool.ring('smear-history');
+      expect(pool.ringTextureCount()).toBe(4);
+      configure();
+      expect(pool.ringTextureCount()).toBe(0);
+      expect(gpu.textures.every((t) => t.destroyed)).toBe(true);
+    });
+
+    it('refuses a ring for a node that has none', () => {
+      configure(smearPlan());
+      expect(() => pool.ring('layer0')).toThrow(/no history ring/);
+    });
   });
 });

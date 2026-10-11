@@ -37,7 +37,16 @@ export type EncodeStep =
     tracerInputs: string[];
   }
   | {
-    kind: 'warp' | 'blur' | 'lut';
+    kind: 'history';
+    nodeId: string;
+    /** Producer whose result is written into the ring each frame. */
+    input: string;
+    /** Ring length — structural, so never a stale value param. */
+    frames: number;
+  }
+  | {
+    /** `displace` inputs are `[source, field]`. */
+    kind: 'warp' | 'blur' | 'lut' | 'displace';
     nodeId: string;
     inputs: string[];
   };
@@ -56,6 +65,12 @@ export interface EncodePlan {
   fused: Set<string>;
   roles: GraphRoles;
   layerCount: number;
+  /**
+   * True when a scheduled `source` node binds the motion field. The renderer
+   * only runs the motion chore for the executor when this says so, so a graph
+   * without one costs exactly what it did before.
+   */
+  wantsMotionField: boolean;
 }
 
 const intParam = (node: GraphNode, name: string, fallback: number): number =>
@@ -195,6 +210,15 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
         break;
       }
 
+      case 'history':
+        steps.push({
+          kind: 'history',
+          nodeId: pass.nodeId,
+          input: pass.inputs[0],
+          frames: intParam(node, 'frames', 2),
+        });
+        break;
+
       default:
         steps.push({ kind: pass.kind, nodeId: pass.nodeId, inputs: [...pass.inputs] });
         break;
@@ -213,7 +237,56 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
       tracerAbove: tracerRole(1),
     },
     layerCount: compiled.layerCount,
+    wantsMotionField: compiled.passes.some(
+      (pass) => pass.kind === 'source' && byId.get(pass.nodeId)!.params.role === 'motion-field',
+    ),
   };
+}
+
+/** Which tap a `history` node reads. Value params: they change weights, not code. */
+export interface HistoryTapParams {
+  /** `trail`: every filled slot, decaying by age. `tap`: one slot, `delay` frames old. */
+  mode: 'trail' | 'tap';
+  /** Age of the single slot `tap` reads; 0 is this frame. */
+  delay: number;
+  /** Per-frame weight ratio for `trail`; 0 keeps only this frame, 1 is a flat mean. */
+  falloff: number;
+}
+
+/**
+ * Per-slot weights for a `history` node's taps pass.
+ *
+ * Slots are bound in physical order and `head` is the slot this frame was just
+ * written into, so slot `i` holds the frame `(head - i) mod frames` frames old.
+ * `filled` is how many slots hold a real frame: a ring that has not wrapped yet
+ * (or was just cleared) still has zeroed slots, and weighting those would fade
+ * the image to black instead of trailing it. A `tap` past the filled range
+ * reads the oldest real frame rather than an empty slot, for the same reason.
+ */
+export function historyWeights(
+  frames: number,
+  head: number,
+  filled: number,
+  params: HistoryTapParams,
+): number[] {
+  const weights = new Array<number>(frames).fill(0);
+  const live = Math.max(1, Math.min(filled, frames));
+  const slotOfAge = (age: number): number => (((head - age) % frames) + frames) % frames;
+
+  if (params.mode === 'tap') {
+    const delay = Math.min(Math.max(0, Math.round(params.delay)), live - 1);
+    weights[slotOfAge(delay)] = 1;
+    return weights;
+  }
+
+  const falloff = Math.min(Math.max(params.falloff, 0), 1);
+  let total = 0;
+  for (let age = 0; age < live; age += 1) {
+    const weight = falloff ** age;
+    weights[slotOfAge(age)] = weight;
+    total += weight;
+  }
+  return weights.map((weight) => weight / total);
 }
 
 /** Node ids the plan actually encodes, in order — the executor's breadcrumb. */

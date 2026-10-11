@@ -1,10 +1,12 @@
-import { nodeKindSpec } from './nodeKinds';
+import { nodeKindSpec, nodeResolution } from './nodeKinds';
 import type { ValidationResult } from './validate';
 import type { PassGraph, ScheduledPass, TextureLifetime } from './types';
 
 export interface Schedule {
   passes: ScheduledPass[];
   lifetimes: TextureLifetime[];
+  /** Ring length per scheduled `history` node — what the allocator sizes rings by. */
+  historyFrames: Record<string, number>;
 }
 
 /**
@@ -77,14 +79,20 @@ export function scheduleGraph(graph: PassGraph, validation: ValidationResult): S
       const spec = nodeKindSpec(pass.kind);
       return {
         nodeId: pass.nodeId,
-        resolution: spec.resolution,
+        resolution: nodeResolution(byId.get(pass.nodeId)!),
         def: pass.order,
         lastUse: lastUse.get(pass.nodeId) ?? pass.order,
         persistent: spec.pingPong,
       };
     });
 
-  return { passes, lifetimes };
+  const historyFrames: Record<string, number> = {};
+  for (const pass of passes) {
+    const frames = byId.get(pass.nodeId)!.params.frames;
+    if (pass.kind === 'history' && typeof frames === 'number') historyFrames[pass.nodeId] = frames;
+  }
+
+  return { passes, lifetimes, historyFrames };
 }
 
 /** Schedule order as node ids — handy in tests and breadcrumbs. */

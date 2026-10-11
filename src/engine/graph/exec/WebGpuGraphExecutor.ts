@@ -3,7 +3,13 @@ import { layerRotationUniforms } from '../../math/rotation';
 import type { WebGPUPipelines } from '../../WebGPUPipelines';
 import type { RendererState } from '../../types/RendererState';
 import { compositorUniformLayout } from '../templates/wgsl';
-import { buildEncodePlan, encodedPassOrder, type EncodePlan, type EncodeStep } from './plan';
+import {
+  buildEncodePlan,
+  encodedPassOrder,
+  historyWeights,
+  type EncodePlan,
+  type EncodeStep,
+} from './plan';
 import {
   createNodePipeline,
   destroyNodePipeline,
@@ -25,6 +31,13 @@ export interface GraphExternalInputs {
    */
   hasClassificationMask: boolean;
   profileLut: GPUTexture;
+  /**
+   * The motion-field chore's output, bound by a `source` node with
+   * `role: 'motion-field'`. Absent when the plan does not want it or the lane
+   * declined; the executor then binds a zero field, so `displace` is the
+   * identity rather than a missing binding.
+   */
+  motionField?: GPUTexture | null;
 }
 
 /** Texture roles the renderer's preview, readback and inspect passes still need. */
@@ -86,6 +99,7 @@ export class WebGpuGraphExecutor {
   private readonly layerSampler: GPUSampler;
   private readonly passSampler: GPUSampler;
   private readonly pool: GraphTexturePool;
+  private zeroField: GPUTexture | null = null;
 
   private compiled: CompiledGraph | null = null;
   private plan: EncodePlan | null = null;
@@ -164,6 +178,11 @@ export class WebGpuGraphExecutor {
     if (!this.compiled || !this.plan) return Promise.resolve(null);
     this.ensurePipelines(this.compiled);
     return this.verdict;
+  }
+
+  /** True when the adopted graph binds the motion field — the renderer runs the chore for it. */
+  get wantsMotionField(): boolean {
+    return this.plan?.wantsMotionField ?? false;
   }
 
   get graphHash(): string | null {
@@ -255,6 +274,7 @@ export class WebGpuGraphExecutor {
    */
   clearAccumulators(): void {
     const textures = this.pool.accumulatorTextures();
+    this.pool.resetRings();
     if (textures.length === 0) return;
 
     const enc = this.device.createCommandEncoder();
@@ -276,6 +296,13 @@ export class WebGpuGraphExecutor {
     this.buildGeneration += 1;
     this.verdict = Promise.resolve(null);
     this.pool.release();
+    this.zeroField?.destroy();
+    this.zeroField = null;
+  }
+
+  /** Ring textures the pool holds right now — `history`'s live VRAM, for tests. */
+  ringTextureCount(): number {
+    return this.pool.ringTextureCount();
   }
 
   // ─── pipelines ────────────────────────────────────────────────────────────
@@ -352,9 +379,13 @@ export class WebGpuGraphExecutor {
       case 'blend':
         this.encodeBlend(enc, step, inputs, params, plan);
         break;
+      case 'history':
+        this.encodeHistory(enc, step, inputs, params);
+        break;
       case 'warp':
       case 'blur':
       case 'lut':
+      case 'displace':
         this.encodeSingleInput(enc, step, inputs, params);
         break;
     }
@@ -530,20 +561,88 @@ export class WebGpuGraphExecutor {
     pass.end();
   }
 
-  /** `warp`, `blur` and `lut`: one input texture, one 16-byte uniform block. */
+  /**
+   * `history`: blit this frame's input into the ring slot at the head, then mix
+   * every slot by age into the node's pooled target.
+   *
+   * Two passes, because the taps pass samples the slot the write pass targets.
+   * The taps bind group is the ring in physical order, so it is built once and
+   * the moving head is only ever a uniform write. A paused frame skips the write
+   * — the pool does not flip either — so the ring freezes like a tracer.
+   */
+  private encodeHistory(
+    enc: GPUCommandEncoder,
+    step: Extract<EncodeStep, { kind: 'history' }>,
+    inputs: GraphExternalInputs,
+    params: GraphEncodeParams,
+  ): void {
+    const node = this.nodePipeline(step.nodeId);
+    const write = node.ringWrite!;
+    const ring = this.pool.ring(step.nodeId);
+
+    if (params.state.paused !== true) {
+      const source = this.textureFor(step.input, inputs);
+      this.bindIfChanged(write, [source], () => [
+        { binding: 0, resource: this.passSampler },
+        { binding: 1, resource: source.createView() },
+      ]);
+      const pass = enc.beginRenderPass({
+        colorAttachments: [clearAttachment(ring.textures[ring.head].createView())],
+      });
+      pass.setPipeline(write.pipeline);
+      pass.setBindGroup(0, write.bindGroup!);
+      pass.draw(6);
+      pass.end();
+    }
+
+    const graphNode = this.graphNode(step.nodeId);
+    const weights = historyWeights(step.frames, ring.head, ring.filled, {
+      mode: graphNode.params.mode === 'tap' ? 'tap' : 'trail',
+      delay: numberParam(graphNode.params.delay, 0),
+      falloff: numberParam(graphNode.params.falloff, 0.6),
+    });
+    const f32 = new Float32Array(node.uniformData!);
+    f32.fill(0);
+    f32.set(weights);
+    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
+
+    this.bindIfChanged(node, ring.textures, () => [
+      { binding: 0, resource: this.passSampler },
+      ...ring.textures.map((texture, i) => ({ binding: i + 1, resource: texture.createView() })),
+      { binding: ring.textures.length + 1, resource: { buffer: node.uniformBuffer! } },
+    ]);
+
+    const pass = enc.beginRenderPass({
+      colorAttachments: [clearAttachment(this.pool.transient(step.nodeId).createView())],
+    });
+    pass.setPipeline(node.pipeline);
+    pass.setBindGroup(0, node.bindGroup!);
+    pass.draw(6);
+    pass.end();
+  }
+
+  /**
+   * `warp`, `blur`, `lut` and `displace`: sampled inputs (one, or `displace`'s
+   * source + field), one 16-byte uniform block.
+   */
   private encodeSingleInput(
     enc: GPUCommandEncoder,
-    step: Extract<EncodeStep, { kind: 'warp' | 'blur' | 'lut' }>,
+    step: Extract<EncodeStep, { kind: 'warp' | 'blur' | 'lut' | 'displace' }>,
     inputs: GraphExternalInputs,
     params: GraphEncodeParams,
   ): void {
     const node = this.nodePipeline(step.nodeId);
     const source = this.textureFor(step.inputs[0], inputs);
     const target = this.pool.transient(step.nodeId);
-    const graphNode = this.compiled!.graph.nodes.find((n) => n.id === step.nodeId)!;
+    const graphNode = this.graphNode(step.nodeId);
     const f32 = new Float32Array(node.uniformData!);
 
-    if (step.kind === 'warp') {
+    if (step.kind === 'displace') {
+      f32[0] = numberParam(graphNode.params.gain, 1);
+      f32[1] = graphNode.params.mode === 'forward' ? 1 : -1;
+      f32[2] = 0;
+      f32[3] = 0;
+    } else if (step.kind === 'warp') {
       f32[0] = ((numberParam(graphNode.params.angleDeg, 0)) * Math.PI) / 180;
       f32[1] = numberParam(graphNode.params.scale, 1);
       f32[2] = params.width / params.height;
@@ -560,7 +659,11 @@ export class WebGpuGraphExecutor {
     }
     this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
 
-    const bound = step.kind === 'lut' ? [source, inputs.profileLut] : [source];
+    const bound = step.kind === 'lut'
+      ? [source, inputs.profileLut]
+      : step.kind === 'displace'
+        ? [source, this.textureFor(step.inputs[1], inputs)]
+        : [source];
     this.bindIfChanged(node, bound, () => [
       { binding: 0, resource: this.passSampler },
       ...bound.map((texture, i) => ({ binding: i + 1, resource: texture.createView() })),
@@ -584,7 +687,11 @@ export class WebGpuGraphExecutor {
   private textureFor(nodeId: string, inputs: GraphExternalInputs): GPUTexture {
     const node = this.compiled!.graph.nodes.find((n) => n.id === nodeId);
     if (!node) throw new Error(`Graph input '${nodeId}' is not a node.`);
-    if (node.kind === 'source') return inputs.source;
+    if (node.kind === 'source') {
+      return node.params.role === 'motion-field'
+        ? inputs.motionField ?? this.zeroMotionField()
+        : inputs.source;
+    }
     // Forward edges out of an accumulator read the *history* side, not the
     // target this frame writes. That is not an oversight, it is parity:
     // `encodeFrameCore` samples `getTracerTextures()` before
@@ -595,6 +702,20 @@ export class WebGpuGraphExecutor {
     return this.pool.transient(nodeId);
   }
 
+  private graphNode(nodeId: string) {
+    return this.compiled!.graph.nodes.find((n) => n.id === nodeId)!;
+  }
+
+  /** 1×1 zero velocity — what a `motion-field` source binds when the lane has no field. */
+  private zeroMotionField(): GPUTexture {
+    this.zeroField ??= this.device.createTexture({
+      size: [1, 1, 1],
+      format: 'rgba16float',
+      usage: GPUTextureUsage.TEXTURE_BINDING,
+    });
+    return this.zeroField;
+  }
+
   /**
    * Rebuild a bind group only when one of its textures changed identity.
    *
@@ -603,7 +724,7 @@ export class WebGpuGraphExecutor {
    * avoid on the hand-encoded path.
    */
   private bindIfChanged(
-    node: NodePipeline,
+    node: Pick<NodePipeline, 'bindGroupLayout' | 'bindGroup' | 'bindGroupKey'>,
     textures: GPUTexture[],
     entries: () => GPUBindGroupEntry[],
   ): void {

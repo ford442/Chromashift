@@ -9,6 +9,7 @@ export type {
   EmittedPass,
   GraphBackend,
   GraphNode,
+  HistoryRing,
   NodeKind,
   NodeKindSpec,
   ParamValue,
@@ -18,7 +19,14 @@ export type {
   ScheduledPass,
   TextureLifetime,
 } from './types';
-export { NODE_KINDS, isKnownNodeKind, nodeKindSpec } from './nodeKinds';
+export {
+  HISTORY_MAX_FRAMES,
+  HISTORY_MIN_FRAMES,
+  NODE_KINDS,
+  isKnownNodeKind,
+  nodeKindSpec,
+  nodeResolution,
+} from './nodeKinds';
 export { PassGraphError, type GraphErrorCode } from './errors';
 export { validateGraph, type FeedbackEdge, type ValidationResult } from './validate';
 export { passOrder, scheduleGraph, type Schedule } from './schedule';
@@ -27,6 +35,7 @@ export {
   SWAPCHAIN_SLOT,
   allocateTextures,
   estimateVram,
+  ringTexturesByResolution,
   sharedSlots,
 } from './allocate';
 export { structuralHash, structuralKey } from './hash';
@@ -35,10 +44,12 @@ export { compileGraph, graphCompileCount, resetGraphCompileCache } from './compi
 export { DEFAULT_GRAPH_IDS, DEFAULT_LAYER_COUNT, buildDefaultGraph } from './defaultGraph';
 export {
   GRAPH_PRESETS,
+  STARTER_GRAPHS,
   buildBlurGraph,
   buildGraphPreset,
   buildWarpGraph,
   isGraphPresetName,
+  parsePassGraphJson,
   type GraphPresetName,
 } from './altGraphs';
 // The executor is deliberately *not* re-exported here. `WebGLLayerPass` and

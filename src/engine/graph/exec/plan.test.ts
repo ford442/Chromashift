@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildBlurGraph, buildWarpGraph } from '../altGraphs';
+import { buildBlurGraph, buildGraphPreset, buildWarpGraph } from '../altGraphs';
 import { compileGraph, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from '../defaultGraph';
 import { PassGraphError } from '../errors';
 import type { PassGraph } from '../types';
-import { buildEncodePlan, encodedPassOrder } from './plan';
+import { buildEncodePlan, encodedPassOrder, historyWeights } from './plan';
 
 const compile = (graph: PassGraph) => {
   resetGraphCompileCache();
@@ -205,5 +205,69 @@ describe('encode plan — refusals', () => {
       )),
     };
     expect(() => buildEncodePlan(compile(graph))).toThrow(/binds exactly two/);
+  });
+});
+
+describe('encode plan — body smear', () => {
+  const plan = buildEncodePlan(compile(buildGraphPreset('smear')));
+
+  it('runs history, then displace, then the band layers it feeds', () => {
+    expect(encodedPassOrder(plan)).toEqual([
+      'smear-history', 'smear-displace',
+      'layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite',
+    ]);
+    expect(plan.steps[0]).toEqual({
+      kind: 'history', nodeId: 'smear-history', input: 'source', frames: 4,
+    });
+    expect(plan.steps[1]).toEqual({
+      kind: 'displace', nodeId: 'smear-displace', inputs: ['smear-history', 'motion'],
+    });
+  });
+
+  it('asks for the motion field only when a source binds it', () => {
+    expect(plan.wantsMotionField).toBe(true);
+    expect(buildEncodePlan(compile(buildDefaultGraph())).wantsMotionField).toBe(false);
+    expect(buildEncodePlan(compile(buildGraphPreset('feedback'))).wantsMotionField).toBe(false);
+  });
+
+  it('keeps the band-layer roles the preview passes read', () => {
+    expect(plan.roles.layers).toEqual(['layer0', 'layer1', 'layer2']);
+    expect(plan.roles.tracerAbove).toBe('tracer-above');
+  });
+});
+
+describe('historyWeights', () => {
+  const sum = (weights: number[]) => weights.reduce((a, b) => a + b, 0);
+
+  it('reads one slot, `delay` frames behind the head, in tap mode', () => {
+    // head 1: slot 1 is this frame, slot 0 last frame, slot 3 two frames ago.
+    expect(historyWeights(4, 1, 4, { mode: 'tap', delay: 0, falloff: 0 })).toEqual([0, 1, 0, 0]);
+    expect(historyWeights(4, 1, 4, { mode: 'tap', delay: 1, falloff: 0 })).toEqual([1, 0, 0, 0]);
+    expect(historyWeights(4, 1, 4, { mode: 'tap', delay: 2, falloff: 0 })).toEqual([0, 0, 0, 1]);
+  });
+
+  it('never taps a slot the ring has not filled yet', () => {
+    // Two frames written: a delay of 3 reads the oldest real one, not black.
+    expect(historyWeights(4, 1, 2, { mode: 'tap', delay: 3, falloff: 0 })).toEqual([1, 0, 0, 0]);
+  });
+
+  it('decays a trail by age and normalises it', () => {
+    const weights = historyWeights(4, 0, 4, { mode: 'trail', delay: 0, falloff: 0.5 });
+    // Ages: slot 0 → 0, slot 3 → 1, slot 2 → 2, slot 1 → 3.
+    expect(sum(weights)).toBeCloseTo(1, 6);
+    expect(weights[0]).toBeGreaterThan(weights[3]);
+    expect(weights[3]).toBeGreaterThan(weights[2]);
+    expect(weights[2]).toBeGreaterThan(weights[1]);
+    expect(weights[3] / weights[0]).toBeCloseTo(0.5, 6);
+  });
+
+  it('weights only the filled slots while the ring warms up', () => {
+    const weights = historyWeights(8, 1, 2, { mode: 'trail', delay: 0, falloff: 1 });
+    expect(weights).toEqual([0.5, 0.5, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('wraps the head around the ring', () => {
+    const weights = historyWeights(3, 0, 3, { mode: 'tap', delay: 1, falloff: 0 });
+    expect(weights).toEqual([0, 0, 1]);
   });
 });
