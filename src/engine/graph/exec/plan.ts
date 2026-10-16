@@ -20,7 +20,10 @@ export type EncodeStep =
      */
     stampInputs: string[];
     /**
-     * Which tracer timescale this accumulator is — picks its state uniforms.
+     * Which tracer timescale this accumulator is — picks where its duration
+     * comes from. `below` and `above` are the shipped pair, timed by the
+     * session's tracer settings; an `extra` timescale (a third tracer and on)
+     * is timed by its own node's `durationMs`.
      *
      * Derived from the compositor's input order, never from a node param:
      * `compileGraph` memoises on a structural hash and returns the *first*
@@ -28,7 +31,7 @@ export type EncodeStep =
      * stale one from an earlier graph of the same shape. Topology cannot be
      * stale — it is what the hash covers.
      */
-    role: 'below' | 'above';
+    role: TracerTimescale;
     /**
      * The motion-field `source` this pass weights its stamp by, when a `motion`
      * node is absorbed into it — the temporal term — or `null` for the
@@ -56,6 +59,9 @@ export type EncodeStep =
     nodeId: string;
     inputs: string[];
   };
+
+/** A tracer accumulator's timescale: the shipped below / above pair, or an extra one. */
+export type TracerTimescale = 'below' | 'above' | 'extra';
 
 /** Node ids playing the roles the renderer's ancillary passes still need. */
 export interface GraphRoles {
@@ -147,18 +153,18 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
 
   const decayNodes = compiled.passes.filter((pass) => pass.kind === 'decay');
 
-  // The compositor binds its two tracer textures as (below, above), so its
-  // input order is what names the timescales. A graph whose accumulators do not
-  // reach a blend falls back to schedule order.
+  // The compositor binds its tracer textures as (below, above, extras…), so
+  // its input order is what names the timescales. A graph whose accumulators
+  // do not reach a blend falls back to schedule order.
   const blendPass = compiled.passes.find((pass) => pass.kind === 'blend');
   const blendNode = blendPass ? byId.get(blendPass.nodeId) : undefined;
   const tracerOrder = blendNode
     ? blendPass!.inputs.slice(intParam(blendNode, 'layerInputs', compiled.layerCount))
     : [];
-  const roleOf = (nodeId: string, index: number): 'below' | 'above' => {
+  const roleOf = (nodeId: string, index: number): TracerTimescale => {
     const position = tracerOrder.indexOf(nodeId);
-    if (position >= 0) return position === 0 ? 'below' : 'above';
-    return index === 0 ? 'below' : 'above';
+    const at = position >= 0 ? position : index;
+    return at === 0 ? 'below' : at === 1 ? 'above' : 'extra';
   };
 
   // The temporal term exists only inside an accumulator: its decay-rate bias
@@ -249,11 +255,15 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
       case 'blend': {
         const layerInputs = intParam(node, 'layerInputs', compiled.layerCount);
         const tracerInputs = pass.inputs.slice(layerInputs);
-        if (tracerInputs.length !== 2) {
+        // The emitted compositor binds every tracer input (at least the below /
+        // above pair; the compiler refuses fewer). A `tracerInputs` param that
+        // disagrees with the edges is an authoring error, not a hint to follow.
+        const declared = node.params.tracerInputs;
+        if (typeof declared === 'number' && declared !== tracerInputs.length) {
           throw new PassGraphError(
             'input-arity',
-            `Node '${pass.nodeId}' (blend) has ${tracerInputs.length} tracer input(s); `
-            + 'the compositor template binds exactly two (below, above).',
+            `Node '${pass.nodeId}' (blend) declares tracerInputs ${declared} but reads `
+            + `${tracerInputs.length} tracer input(s).`,
             pass.nodeId,
           );
         }

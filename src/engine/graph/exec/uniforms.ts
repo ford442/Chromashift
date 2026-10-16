@@ -90,6 +90,24 @@ export function tracerDurationMs(state: RendererState, role: TracerRole): number
 export interface PersistUniformContext {
   role: TracerRole;
   fps: number;
+  /**
+   * The accumulator's duration in renderer units, when it is not one of the
+   * session's two (an extra timescale reads its node's `durationMs` through
+   * {@link graphTracerDuration}). Overrides `role` for the decay factor.
+   */
+  durationMs?: number;
+}
+
+/**
+ * A tracer duration authored on a graph node, in the renderer's units.
+ *
+ * `buildRendererState` hands the renderers the panel's tracer durations scaled
+ * by `60 / fps`, so a duration written on a node in the panel's milliseconds
+ * gets the same scaling: `durationMs: 2000` on a third tracer lasts exactly as
+ * long as a 2000 ms panel setting would.
+ */
+export function graphTracerDuration(durationMs: number, fps: number): number {
+  return durationMs * (60 / fps);
 }
 
 /**
@@ -103,7 +121,10 @@ export function persistUniforms(
   context: PersistUniformContext,
 ): UniformValues<PersistUniformName> {
   return {
-    decayFactor: durationToDecay(tracerDurationMs(state, context.role), context.fps),
+    decayFactor: durationToDecay(
+      context.durationMs ?? tracerDurationMs(state, context.role),
+      context.fps,
+    ),
     colorThresh: rendererStateValue(state, 'tracerThreshold'),
     stampBoost: rendererStateValue(state, 'stampBoost'),
     tracerMode: rendererStateValue(state, 'tracerMode'),
@@ -120,6 +141,11 @@ export interface CompositorUniformOptions {
    * WebGL compositor honours them; every WebGPU encode path writes 0.
    */
   viewportTransforms?: boolean;
+  /**
+   * Opacities of the tracer timescales past the shipped two, in input order —
+   * a graph's own, from each extra accumulator's `intensity`.
+   */
+  extraTracerOpacities?: readonly number[];
 }
 
 /** `CompositorUniforms` for a `layerCount`-layer compositor. */
@@ -147,6 +173,7 @@ export function compositorUniforms(
     viewportHalfOverlay: flag(transforms && rendererStateValue(state, 'viewportHalfOverlay')),
   };
   for (let i = 0; i < layerCount; i += 1) values[`layerOpacity${i}`] = frameLayerOpacity(state, i);
+  options.extraTracerOpacities?.forEach((opacity, k) => { values[`tracerOpacity${k + 2}`] = opacity; });
   return values as UniformValues<CompositorUniformName>;
 }
 

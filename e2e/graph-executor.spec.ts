@@ -8,6 +8,7 @@ import {
   frameDifference,
   frameDistinctColours,
   installGpuCanvasReadback,
+  readGpuCanvasFrame,
   readStableGpuCanvasFrame,
   type CanvasFrame,
 } from './helpers/gpuCanvasReadback';
@@ -214,10 +215,23 @@ test.describe('pass-graph executor', () => {
   });
 
   test.describe('non-default shapes draw', () => {
-    for (const { name, marker, scheduled, rings, differs } of [
+    for (const { name, marker, scheduled, rings, differs, settles = true } of [
       { name: 'blur', marker: 'layer0-blur-y', scheduled: [], rings: 0, differs: true },
       { name: 'warp', marker: 'layer0-warp', scheduled: [], rings: 0, differs: true },
       { name: 'feedback', marker: 'layer0-warp', scheduled: [], rings: 0, differs: true },
+      // A third tracer timescale, blended under the shipped pair. Its echo is
+      // timed by its own node (6 s), not the frozen scene's zero durations, so
+      // what the image's asynchronous arrival stamped keeps fading for tens of
+      // seconds: the frame never holds byte-still long enough for the stable
+      // reader, and one settled frame is read instead.
+      {
+        name: 'trails3',
+        marker: 'tracer-echo',
+        scheduled: ['tracer-echo'],
+        rings: 0,
+        differs: true,
+        settles: false,
+      },
       // The frozen scene is a still image with no motion: its flow field is
       // zero, so `displace` is the identity, and the history of a still frame
       // is that frame. What the smear must prove here is that it compiles,
@@ -235,7 +249,9 @@ test.describe('pass-graph executor', () => {
         test.setTimeout(180_000);
         const gpuErrors = collectGpuErrors(page);
 
-        const shaped = await captureFrame(page, url(name));
+        const shaped = settles
+          ? await captureFrame(page, url(name))
+          : await openScene(page, url(name)).then(() => readGpuCanvasFrame(page));
         const crumbs = await page.evaluate(() => ({
           error: window.passGraphError,
           executing: window.passGraphExecuting,

@@ -67,7 +67,7 @@ emitted code) rather than *value* params (they change a uniform).
 | `coincidence` | 1–∞ | tracer | `minOverlap`, `emitDiagnostic` | thresholds | ✓ |
 | `motion` | 2: `[stamp, field]` | tracer | — | mode, gain, decay bias (from `RendererState`) | ✓ (fused into `decay`) |
 | `decay` | 1 | tracer (ping-pong) | — | duration | ✓ |
-| `blend` | 2–∞ | output | `layerInputs`, `tracerInputs` | opacities, modes | ✓ |
+| `blend` | layers + ≥ 2 tracers | output | `layerInputs`, `tracerInputs` | opacities, modes; an extra tracer's `intensity` | ✓ (two tracers only) |
 | `warp` | 1 | layer | `mode` (`affine` \| `feedback`) | `angleDeg`, `scale`, `displace` | — |
 | `blur` | 1 | layer | `radius` | `axis` | — |
 | `history` | 1 | layer, or tracer | `frames` (2–8), `resolution` | `mode` (`trail` \| `tap`), `delay`, `falloff` | — |
@@ -330,6 +330,7 @@ the executor is not a second hand-written encoder:
 | `warp` | an affine `warp` on layer 0 before coincidence |
 | `smear` | **body smear** starter: source → `history(4)` → `displace` by the motion field → the three band layers (see below) |
 | `feedback` | **self-feedback warp** starter: layer 0 through `warp` in `feedback` mode before coincidence |
+| `trails3` | a **third tracer timescale**: a third `decay` over the same stamp, a slow faint echo the compositor blends under the shipped pair (see [Tracer timescales](#tracer-timescales)) |
 | `0` | off — the hand encoder |
 
 `blur` is the case the transient pool was built for: each layer's horizontal
@@ -506,6 +507,32 @@ On SwiftShader the browser grants extended tone mapping, so
 `e2e/graph-executor.spec.ts` reads the float swap chain back (decoded to 8 bits)
 and finds the executor's HDR frame byte-identical to the hand encoder's.
 
+## Tracer timescales
+
+The shipped compositor blends two accumulators: `persistBelow` under the live
+layers and `persistAbove` over them, timed by the session's tracer settings.
+`emitCompositorWgsl(layers, helpers, tracerCount)` takes any count of two or more:
+
+- **The first two are the shipped pair**, in the `blend`'s input order (below,
+  then above), and a two-tracer compositor emits exactly the shipped source —
+  `__golden__/compositor.wgsl` still pins it.
+- **Every tracer after them is an extra timescale** (`tracer2`, …), blended
+  deepest first in input order, beneath the `below` tracer, in every output mode
+  that shows tracers. Its opacity is a `tracerOpacity<j>` field appended at the
+  *end* of `CompositorUniforms`, so no shipped field moves.
+- **An extra timescale is timed by its own node**: `durationMs` (in the panel's
+  milliseconds, scaled like the panel's own durations — `graphTracerDuration`)
+  and `intensity`. The shipped pair stay on `RendererState`; the plan names each
+  accumulator's role (`below`, `above`, `extra`) from the compositor's input
+  order, never from a param.
+- The temporal term reaches every accumulator through the one shared `motion`
+  node; the readback roles (`tracerBelow`, `tracerAbove`) are still the pair.
+- **WebGL refuses** a compositor with more than two tracers, by name.
+
+`?graph=trails3` (`buildTrails3Graph`) is the starter: the default graph plus a
+6-second echo at 0.45, drawn under everything — the trail a slow-moving subject
+leaves long after the shipped tracers have faded.
+
 ## Phase 2 — shipped
 
 - **A graph-driven executor.** `WebGpuGraphExecutor` encodes `compiled.passes`
@@ -597,6 +624,9 @@ path, one step per PR. Landed so far:
   that count), so `layers.count = 7` draws seven band passes and composites all
   seven. `e2e/graph-executor.spec.ts` checks the pass list at 1, 7 and 10 layers
   and reads back a frame that only the seventh band can have drawn.
+- **N tracer timescales** (step 5). The compositor blends any number of `decay`
+  inputs, so a graph with three compiles and draws: `?graph=trails3`. See
+  [Tracer timescales](#tracer-timescales).
 
 Still to do:
 
@@ -617,10 +647,6 @@ Still to do:
   the executor: the stationary previews and the tracer-inspect passes (the tracer
   PNG export binds the first three of an N-layer frame). Those move onto the graph
   in the steps below, and the clear helpers go with the hand encoder.
-- **A third tracer timescale.** `emitCompositorWgsl` binds exactly two tracer
-  textures (`persistBelow`, `persistAbove`), so a graph with three `decay`
-  nodes is refused rather than approximated. Generalising the compositor
-  template to N tracers is what unblocks it.
 - **`history` feedback cycles.** A ring whose oldest slot could close a cycle
   would make true previous-frame feedback (a warp steered by its own last
   output) expressible.
@@ -644,7 +670,7 @@ src/engine/graph/
 ├── compile.ts        # validate → schedule → allocate → emit → cache
 ├── defaultGraph.ts   # today's pipeline as a graph, for any layer count
 ├── layerSpecs.ts     # the band table the band-layer templates read
-├── gate.ts           # ?graph=1|blur|warp|smear|feedback + window.passGraph* breadcrumbs
+├── gate.ts           # ?graph=1|blur|warp|smear|feedback|trails3 + window.passGraph* breadcrumbs
 ├── variants.ts       # GraphVariant, PassGraphSource, withMotionTerm (the temporal term)
 ├── altGraphs.ts      # the named graph shapes the gate can select, JSON starter parsing
 ├── starters/         # body-smear.json, feedback-warp.json

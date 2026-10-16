@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBlurGraph, buildGraphPreset, buildWarpGraph } from '../altGraphs';
+import { TRAILS3_ECHO_ID, buildBlurGraph, buildGraphPreset, buildTrails3Graph, buildWarpGraph } from '../altGraphs';
 import { compileGraph, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from '../defaultGraph';
 import { PassGraphError } from '../errors';
@@ -195,7 +195,7 @@ describe('encode plan — refusals', () => {
     expect(() => buildEncodePlan(compile(graph))).toThrow(/no history texture/);
   });
 
-  it('refuses a blend with more than two tracer inputs', () => {
+  it('refuses a blend whose tracerInputs param disagrees with its edges', () => {
     const base = buildDefaultGraph();
     const graph: PassGraph = {
       ...base,
@@ -205,7 +205,20 @@ describe('encode plan — refusals', () => {
           : node
       )),
     };
-    expect(() => buildEncodePlan(compile(graph))).toThrow(/binds exactly two/);
+    expect(() => buildEncodePlan(compile(graph))).toThrow(/declares tracerInputs 2 but reads 3/);
+  });
+
+  it('refuses a blend with fewer than the shipped two tracers', () => {
+    const base = buildDefaultGraph();
+    const graph: PassGraph = {
+      ...base,
+      nodes: base.nodes.map((node) => (
+        node.id === DEFAULT_GRAPH_IDS.composite
+          ? { ...node, inputs: node.inputs.slice(0, -1), params: { ...node.params, tracerInputs: 1 } }
+          : node
+      )),
+    };
+    expect(() => compile(graph)).toThrow(/blends at least 2 \(below, above\)/);
   });
 
   it('refuses a motion term read by anything but an accumulator', () => {
@@ -315,5 +328,30 @@ describe('historyWeights', () => {
   it('wraps the head around the ring', () => {
     const weights = historyWeights(3, 0, 3, { mode: 'tap', delay: 1, falloff: 0 });
     expect(weights).toEqual([0, 0, 1]);
+  });
+});
+
+describe('encode plan — a third tracer timescale', () => {
+  const plan = buildEncodePlan(compile(buildTrails3Graph()));
+
+  it('accumulates the one stamp three times and blends all three', () => {
+    expect(encodedPassOrder(plan)).toEqual([
+      'layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', TRAILS3_ECHO_ID, 'composite',
+    ]);
+    const roles = plan.steps.flatMap((step) => (step.kind === 'decay' ? [[step.nodeId, step.role]] : []));
+    // The shipped pair keep their roles (the session times them); the third is
+    // an extra timescale, timed by its own node.
+    expect(roles).toEqual([['tracer-below', 'below'], ['tracer-above', 'above'], [TRAILS3_ECHO_ID, 'extra']]);
+    const blend = plan.steps.find((step) => step.kind === 'blend');
+    expect(blend?.kind === 'blend' && blend.tracerInputs).toEqual(['tracer-below', 'tracer-above', TRAILS3_ECHO_ID]);
+    // The readback roles are still the shipped pair.
+    expect(plan.roles.tracerBelow).toBe('tracer-below');
+    expect(plan.roles.tracerAbove).toBe('tracer-above');
+  });
+
+  it('gives the temporal term to all three accumulators through one motion node', () => {
+    const moving = buildEncodePlan(compile(withMotionTerm(buildTrails3Graph())));
+    const fields = moving.steps.flatMap((step) => (step.kind === 'decay' ? [step.motionField] : []));
+    expect(fields).toEqual([MOTION_FIELD_SOURCE_ID, MOTION_FIELD_SOURCE_ID, MOTION_FIELD_SOURCE_ID]);
   });
 });

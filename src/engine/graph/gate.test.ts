@@ -81,6 +81,7 @@ describe('named graph shapes', () => {
     ['?graph=warp', 'warp'],
     ['?graph=smear', 'smear'],
     ['?graph=feedback', 'feedback'],
+    ['?graph=trails3', 'trails3'],
     // An unrecognised name is the default graph, not a refusal: the gate's job
     // is to pick a shape, and "on with something unknown" means "on".
     ['?graph=nonsense', 'default'],

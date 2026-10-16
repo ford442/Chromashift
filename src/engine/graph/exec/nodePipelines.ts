@@ -97,11 +97,10 @@ export function textureBindingCount(emitted: EmittedPass, layerCount: number): n
   switch (emitted.kind) {
     case 'coincidence':
       return layerCount + 1;
-    case 'blend':
-      return layerCount + 2;
     default:
       // `decay` binds its stamp's layers, its previous frame and — in the
-      // motion variant — the field, which is exactly what it reports.
+      // motion variant — the field; `blend` its layers and every tracer.
+      // Each reports exactly that.
       return emitted.textureBindings.length;
   }
 }

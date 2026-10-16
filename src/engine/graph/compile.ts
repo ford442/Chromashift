@@ -14,6 +14,7 @@ import {
 import {
   BLUR_UNIFORMS,
   DISPLACE_UNIFORMS,
+  SHIPPED_TRACER_COUNT,
   HISTORY_UNIFORMS,
   LUT_UNIFORMS,
   WARP_UNIFORMS,
@@ -141,8 +142,27 @@ function emitPass(
 
     case 'blend': {
       const layerInputs = intParam(node, 'layerInputs', layerCount);
+      // Every input past the layers is a tracer timescale: the shipped below /
+      // above pair, then any extra accumulators.
+      const tracerCount = inputCount - layerInputs;
+      if (tracerCount < SHIPPED_TRACER_COUNT) {
+        throw new PassGraphError(
+          'input-arity',
+          `Node '${node.id}' (blend) has ${tracerCount} tracer input(s); the compositor `
+          + `blends at least ${SHIPPED_TRACER_COUNT} (below, above).`,
+          node.id,
+        );
+      }
+      if (!webgpu && tracerCount !== SHIPPED_TRACER_COUNT) {
+        throw new PassGraphError(
+          'unsupported-node',
+          `The webgl backend's compositor blends exactly ${SHIPPED_TRACER_COUNT} tracers; `
+          + `node '${node.id}' has ${tracerCount}.`,
+          node.id,
+        );
+      }
       let fragment = webgpu
-        ? emitCompositorWgsl(layerInputs, WGSL_BLEND_HELPERS)
+        ? emitCompositorWgsl(layerInputs, WGSL_BLEND_HELPERS, tracerCount)
         : emitCompositorGlsl(layerInputs);
       // Presenting to an `hdr-extended` canvas swaps the clamping OETF for the
       // extended one, text for text — the source the hand encoder's HDR
@@ -159,11 +179,15 @@ function emitPass(
         fragment = toHdrPresentWgsl(fragment);
       }
       const bindings = Array.from({ length: layerInputs }, (_, i) => `layer${i}`);
+      const extraTracers = Array.from(
+        { length: tracerCount - SHIPPED_TRACER_COUNT },
+        (_, k) => `tracer${k + SHIPPED_TRACER_COUNT}`,
+      );
       return {
         ...base,
         fragment,
-        textureBindings: [...bindings, 'tracerBelow', 'tracerAbove'],
-        uniformLayout: block(compositorUniformLayout(layerInputs)),
+        textureBindings: [...bindings, 'tracerBelow', 'tracerAbove', ...extraTracers],
+        uniformLayout: block(compositorUniformLayout(layerInputs, tracerCount)),
         ...(canvas ? { presentation: canvas } : {}),
       };
     }

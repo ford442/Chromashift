@@ -15,6 +15,7 @@ import { packUniforms, type UniformLayout, type UniformValues } from '../templat
 import {
   bandLayerUniforms,
   compositorUniforms,
+  graphTracerDuration,
   persistUniforms,
   rendererStateValue,
 } from './uniforms';
@@ -85,6 +86,13 @@ export interface GraphEncodeParams {
 }
 
 const MARK_ORDER = ['layersEnd', 'stampEnd', 'compositorEnd'] as const;
+
+/**
+ * What an extra tracer timescale (a third accumulator and on) is drawn with
+ * when its node does not say: a slow, faint echo under the shipped pair.
+ */
+const EXTRA_TRACER_DURATION_MS = 4000;
+const EXTRA_TRACER_INTENSITY = 0.4;
 
 /**
  * Executes a `CompiledGraph` on WebGPU.
@@ -289,7 +297,7 @@ export class WebGpuGraphExecutor {
       // A paused session freezes the tracers exactly as `PersistencePass` does:
       // the accumulator passes are not encoded and the ping-pong never flips.
       if (paused && step.kind === 'decay') continue;
-      this.encodeStep(enc, step, inputs, params, plan);
+      this.encodeStep(enc, step, inputs, params);
     }
     fireThrough(MARK_ORDER.length - 1);
     if (!paused) this.pool.flip();
@@ -413,7 +421,6 @@ export class WebGpuGraphExecutor {
     step: EncodeStep,
     inputs: GraphExternalInputs,
     params: GraphEncodeParams,
-    plan: EncodePlan,
   ): void {
     switch (step.kind) {
       case 'band-layer':
@@ -423,7 +430,7 @@ export class WebGpuGraphExecutor {
         this.encodeStamp(enc, step, inputs, params);
         break;
       case 'blend':
-        this.encodeBlend(enc, step, inputs, params, plan);
+        this.encodeBlend(enc, step, inputs, params);
         break;
       case 'history':
         this.encodeHistory(enc, step, inputs, params);
@@ -507,10 +514,18 @@ export class WebGpuGraphExecutor {
     // layout and the block that shipped before the term existed.
     const field = step.motionField ? this.textureFor(step.motionField, inputs) : null;
 
+    // The shipped pair are timed by the session; an extra timescale by its own node.
+    const role = step.role;
     this.writeUniforms(
       node,
       persistUniformLayout(field !== null),
-      persistUniforms(state, { role: step.role, fps }),
+      persistUniforms(state, {
+        role: role === 'extra' ? 'above' : role,
+        fps,
+        durationMs: role === 'extra'
+          ? graphTracerDuration(numberParam(this.graphNode(step.nodeId).params.durationMs, EXTRA_TRACER_DURATION_MS), fps)
+          : undefined,
+      }),
     );
 
     const bound = [...stampTextures, history.read, ...(field ? [field] : [])];
@@ -537,17 +552,19 @@ export class WebGpuGraphExecutor {
     step: Extract<EncodeStep, { kind: 'blend' }>,
     inputs: GraphExternalInputs,
     params: GraphEncodeParams,
-    plan: EncodePlan,
   ): void {
     const node = this.nodePipeline(step.nodeId);
     const { state, outputView } = params;
     const layerTextures = step.layerInputs.map((id) => this.textureFor(id, inputs));
     const tracerTextures = step.tracerInputs.map((id) => this.textureFor(id, inputs));
 
+    // Opacities of the timescales past the shipped two come from their own nodes.
+    const extraTracerOpacities = step.tracerInputs.slice(2).map((id) =>
+      numberParam(this.graphNode(id).params.intensity, EXTRA_TRACER_INTENSITY));
     this.writeUniforms(
       node,
-      compositorUniformLayout(plan.layerCount),
-      compositorUniforms(state, plan.layerCount),
+      compositorUniformLayout(step.layerInputs.length, step.tracerInputs.length),
+      compositorUniforms(state, step.layerInputs.length, { extraTracerOpacities }),
     );
 
     this.bindIfChanged(node, [...layerTextures, ...tracerTextures], () => [

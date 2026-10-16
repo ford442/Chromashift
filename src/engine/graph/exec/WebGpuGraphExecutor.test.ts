@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { WebGPUPipelines } from '../../WebGPUPipelines';
 import { PersistencePass } from '../../PersistencePass';
-import { createUniformData, packUniforms } from '../templates/uniformLayout';
-import { PERSIST_MOTION_UNIFORMS } from '../templates/wgsl';
-import { persistUniforms } from './uniforms';
-import { buildBlurGraph, buildGraphPreset, buildWarpGraph } from '../altGraphs';
+import { createUniformData, packUniforms, uniformOffset } from '../templates/uniformLayout';
+import { PERSIST_MOTION_UNIFORMS, PERSIST_UNIFORMS, compositorUniformLayout } from '../templates/wgsl';
+import { graphTracerDuration, persistUniforms } from './uniforms';
+import { TRAILS3_ECHO_ID, buildBlurGraph, buildGraphPreset, buildTrails3Graph, buildWarpGraph } from '../altGraphs';
 import { compileGraph, graphCompileCount, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph } from '../defaultGraph';
 import { presentingTo, withMotionTerm } from '../variants';
@@ -567,6 +567,34 @@ describe('WebGpuGraphExecutor', () => {
       expect(blend.textures).toHaveLength(count + 2);
       // Every layer is a role the readbacks can reach, not just the first three.
       expect(sized.roleTextures()!.layers).toHaveLength(count);
+    });
+  });
+
+  describe('a third tracer timescale', () => {
+    it('accumulates, and composites, three tracers', () => {
+      executor.setGraph(compile(buildTrails3Graph(3, { durationMs: 6000, intensity: 0.45 })));
+      gpu.reset();
+      encode(executor);
+      expect(executor.encodedPasses()).toEqual([
+        'layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', TRAILS3_ECHO_ID, 'composite',
+      ]);
+      // Three band layers and all three tracers reach the compositor.
+      expect(gpu.bindGroups.at(-1)!.textures).toHaveLength(6);
+
+      const blocks = gpu.bufferWrites.map((write) => [...gpu.bufferContents.get(write.buffer)!]);
+      // The echo is timed by its own node, in the panel's milliseconds…
+      const echo = packUniforms(
+        PERSIST_UNIFORMS,
+        persistUniforms(fakeRendererState(), { role: 'above', fps: 30, durationMs: graphTracerDuration(6000, 30) }),
+        createUniformData(PERSIST_UNIFORMS),
+      );
+      expect(blocks).toContainEqual([...new Uint8Array(echo.buffer)]);
+      // …and blended at its own intensity, from the slot after every shipped field.
+      const layout = compositorUniformLayout(3, 3);
+      const composite = blocks.find((block) => block.length === layout.bytes)!;
+      const view = new DataView(new Uint8Array(composite).buffer);
+      expect(view.getFloat32(uniformOffset(layout, 'tracerOpacity2'), true)).toBeCloseTo(0.45, 6);
+      expect(uniformOffset(layout, 'tracerOpacity2')).toBe(compositorUniformLayout(3).fields.length * 4);
     });
   });
 });

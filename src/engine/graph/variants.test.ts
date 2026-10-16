@@ -4,7 +4,7 @@ import {
   persistenceMotionFragmentSource,
 } from '../shaders/persistence';
 import { compositorFragmentSource } from '../shaders/compositor';
-import { buildGraphPreset } from './altGraphs';
+import { GRAPH_PRESETS, buildGraphPreset } from './altGraphs';
 import { compileGraph, graphCompileCount, resetGraphCompileCache } from './compile';
 import { DEFAULT_GRAPH_IDS, buildDefaultGraph } from './defaultGraph';
 import { PassGraphError } from './errors';
@@ -59,11 +59,11 @@ describe('withMotionTerm', () => {
   });
 
   it('applies to every shipped shape', () => {
-    for (const name of ['default', 'blur', 'warp', 'smear', 'feedback'] as const) {
+    for (const name of GRAPH_PRESETS) {
       const compiled = compileGraph(presetGraphSource(name).build(MOVING), 'webgpu');
       const plan = buildEncodePlan(compiled);
       const decays = plan.steps.filter((step) => step.kind === 'decay');
-      expect(decays, name).toHaveLength(2);
+      expect(decays.length, name).toBe(name === 'trails3' ? 3 : 2);
       for (const decay of decays) expect(decay.motionField, name).not.toBeNull();
     }
   });
@@ -183,5 +183,11 @@ describe('the hdr-extended present', () => {
     const output = graph.nodes.find((n) => n.kind === 'output')!;
     output.params = { presentation: 'hdr10' };
     expect(() => validateGraph(graph)).toThrow(/presentation "hdr10"/);
+  });
+});
+
+describe('a third tracer on the WebGL backend', () => {
+  it('is refused by name: that compositor blends exactly two', () => {
+    expect(() => compileGraph(buildGraphPreset('trails3'), 'webgl')).toThrow(/blends exactly 2 tracers/);
   });
 });
