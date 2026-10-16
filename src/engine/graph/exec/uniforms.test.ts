@@ -82,13 +82,13 @@ describe('state → uniform values', () => {
     expect(persistUniforms(state, { role: 'below', fps: 30 }).peakMode).toBe(1);
   });
 
-  it('compositor: viewport transforms reach the shader only on request, and only over the composite', () => {
+  it('compositor: viewport transforms reach the shader, over the composite only', () => {
     const zoomed = minimal({ viewportQuarterZoom: true, viewportHalfOverlay: true });
-    expect(compositorUniforms(zoomed, 3).viewportQuarterZoom).toBe(0);
-    expect(compositorUniforms(zoomed, 3, { viewportTransforms: true }).viewportQuarterZoom).toBe(1);
-    expect(compositorUniforms(zoomed, 3, { viewportTransforms: true }).viewportHalfOverlay).toBe(1);
+    expect(compositorUniforms(zoomed, 3).viewportQuarterZoom).toBe(1);
+    expect(compositorUniforms(zoomed, 3).viewportHalfOverlay).toBe(1);
+    expect(compositorUniforms(minimal(), 3).viewportQuarterZoom).toBe(0);
     const tracerView = { ...zoomed, mainViewMode: 1 };
-    expect(compositorUniforms(tracerView, 3, { viewportTransforms: true }).viewportQuarterZoom).toBe(0);
+    expect(compositorUniforms(tracerView, 3).viewportQuarterZoom).toBe(0);
   });
 });
 

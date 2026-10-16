@@ -472,6 +472,27 @@ test.describe('pass-graph executor', () => {
       expect(frameDifference(tracerViews[0], tracerViews[1])).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
     });
 
+    test('Quarter Zoom zooms the WebGPU canvas, and both encoders zoom it alike', async ({ page }) => {
+      // Also broken since the July refactor: the WebGPU compositor was always
+      // handed 0 for both viewport transforms, so only WebGL honoured them.
+      test.setTimeout(300_000);
+      const zoomedFrames: CanvasFrame[] = [];
+      for (const graph of ['0', '1']) {
+        await primeOverlaySections(page, { viewport: true });
+        const composite = await captureFrame(page, url(graph, { compute: false }));
+        await page.getByRole('button', { name: /Zoom Bottom-Left Quarter/i }).click();
+        await expect(page.getByRole('button', { name: /Exit Quarter Zoom/i })).toBeVisible();
+        await page.waitForTimeout(500);
+        const zoomed = await readStableGpuCanvasFrame(page);
+        expect(
+          frameDifference(composite, zoomed).differingPixels,
+          `?graph=${graph} ignored Quarter Zoom`,
+        ).toBeGreaterThan(0);
+        zoomedFrames.push(zoomed);
+      }
+      expect(frameDifference(zoomedFrames[0], zoomedFrames[1])).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+    });
+
     test('a seven-layer session previews its seventh band', async ({ page }) => {
       test.setTimeout(180_000);
       const scene = encodePresetParam({

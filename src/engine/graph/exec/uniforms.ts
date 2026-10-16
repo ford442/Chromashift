@@ -137,11 +137,6 @@ export function persistUniforms(
 
 export interface CompositorUniformOptions {
   /**
-   * Run the quarter-zoom / half-overlay transforms in the shader. Only the
-   * WebGL compositor honours them; every WebGPU encode path writes 0.
-   */
-  viewportTransforms?: boolean;
-  /**
    * Opacities of the tracer timescales past the shipped two, in input order —
    * a graph's own, from each extra accumulator's `intensity`.
    */
@@ -154,10 +149,10 @@ export function compositorUniforms(
   layerCount: number,
   options: CompositorUniformOptions = {},
 ): UniformValues<CompositorUniformName> {
-  // The WebGL compositor applies the viewport transforms to the processed
-  // composite only, never over an alternate main view.
-  const transforms = options.viewportTransforms === true
-    && rendererStateValue(state, 'mainViewMode') === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
+  // The quarter-zoom / half-overlay transforms apply to the processed
+  // composite only, never over an alternate main view. Exports, previews and
+  // the quad cells switch them off in the state they render.
+  const transforms = rendererStateValue(state, 'mainViewMode') === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
   const values: Record<string, number> = {
     tracerAboveOpacity: rendererStateValue(state, 'tracerAboveIntensity'),
     tracerBelowOpacity: rendererStateValue(state, 'tracerBelowIntensity'),
