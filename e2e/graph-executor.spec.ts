@@ -356,6 +356,67 @@ test.describe('pass-graph executor', () => {
     });
   });
 
+  test.describe('any layer count', () => {
+    /**
+     * A frozen `count`-layer scene with the tracers hidden, so the frame is the
+     * band layers alone. Per-layer opacities pick which of them show.
+     */
+    function layerScene(count: number, opacities: number[]): string {
+      return encodePresetParam({
+        version: 8,
+        settings: {
+          layers: {
+            count,
+            angles: Array.from({ length: count }, (_, i) => i * 40),
+            extensions: Array.from({ length: count }, () => 0),
+            opacities,
+          },
+          tracers: { aboveDuration: 0, belowDuration: 0, aboveIntensity: 0, belowIntensity: 0 },
+        },
+      });
+    }
+    const opaque = (count: number) => Array.from({ length: count }, () => 1);
+    const onlyLayer = (count: number, index: number) =>
+      Array.from({ length: count }, (_, i) => (i === index ? 1 : 0));
+
+    for (const count of [1, 7, 10]) {
+      test(`layers.count = ${count} draws exactly ${count} band pass${count === 1 ? '' : 'es'}`, async ({ page }) => {
+        test.setTimeout(120_000);
+        const gpuErrors = collectGpuErrors(page);
+        await openScene(page, url('1', { scene: layerScene(count, opaque(count)) }));
+        await expect.poll(() => page.evaluate(() => window.passGraphExecuting), { timeout: 30_000 })
+          .toBe('default');
+        const crumbs = await page.evaluate(() => ({
+          executed: window.passGraphExecutedPasses ?? [],
+          variant: window.passGraphVariant ?? '',
+          error: window.passGraphError,
+        }));
+        expect(crumbs.error).toBeNull();
+        expect(crumbs.variant.startsWith(`${count}:`)).toBe(true);
+        expect(crumbs.executed).toEqual([
+          ...Array.from({ length: count }, (_, i) => `layer${i}`),
+          'tracer-below', 'tracer-above', 'composite',
+        ]);
+        expect(gpuErrors).toEqual([]);
+      });
+    }
+
+    test('the seventh band draws, which the hand encoder could not', async ({ page }) => {
+      test.setTimeout(240_000);
+      // Layer 7 alone (index 6): the executor draws it into the composite...
+      const seventh = await captureFrame(page, url('1', { scene: layerScene(7, onlyLayer(7, 6)) }));
+      expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
+      expectContent(seventh, 'layer 7 on its own');
+      // ...and with it hidden too, nothing is left: the content above was layer 7.
+      const none = await captureFrame(page, url('1', { scene: layerScene(7, Array.from({ length: 7 }, () => 0)) }));
+      expect(frameDistinctColours(none)).toBe(1);
+      // The hand encoder draws the first three of its three passes and no more,
+      // so the same scene is empty there.
+      const hand = await captureFrame(page, url('0', { scene: layerScene(7, onlyLayer(7, 6)) }));
+      expect(frameDistinctColours(hand)).toBe(1);
+    });
+  });
+
   test.describe('the hdr-extended present', () => {
     test('an HDR canvas draws through the executor, as the hand encoder draws it', async ({ page }) => {
       test.setTimeout(240_000);

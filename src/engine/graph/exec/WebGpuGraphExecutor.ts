@@ -230,13 +230,14 @@ export class WebGpuGraphExecutor {
 
   /**
    * Textures for the roles the renderer's preview / readback / inspect passes
-   * read. `null` when the graph does not have them — a graph with two band
-   * layers and no tracers is legal, and those extras simply do not run.
+   * read: every band layer the graph draws, in order, and the two tracers.
+   * `null` when the graph does not have them — a graph with no tracers is
+   * legal, and those extras simply do not run.
    */
   roleTextures(): GraphRoleTextures | null {
     if (!this.plan) return null;
     const { layers, tracerBelow, tracerAbove } = this.plan.roles;
-    if (layers.length < 3 || !tracerBelow || !tracerAbove) return null;
+    if (layers.length === 0 || !tracerBelow || !tracerAbove) return null;
     try {
       return {
         layers: layers.map((id) => this.pool.transient(id)),

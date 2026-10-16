@@ -545,4 +545,28 @@ describe('WebGpuGraphExecutor', () => {
       expect(gpu.pipelineTargets.slice(before).at(-1)).toEqual(['bgra8unorm']);
     });
   });
+
+  describe('any layer count', () => {
+    const layers = (count: number) => Array.from({ length: count }, (_, i) => ({ angleDeg: i * 9 }));
+
+    it.each([1, 5, 7, 10])('draws exactly %i band passes, and composites every one', (count) => {
+      const pipelines = new WebGPUPipelines(gpu.device, 'bgra8unorm', 'rgba16float', count);
+      const sized = new WebGpuGraphExecutor(
+        gpu.device, pipelines, 'rgba16float', 'bgra8unorm',
+        gpu.device.createSampler({}), gpu.device.createSampler({}),
+      );
+      sized.setGraph(compile(buildDefaultGraph(count)));
+      gpu.reset();
+      encode(sized, { layers: layers(count) });
+
+      const bandIds = Array.from({ length: count }, (_, i) => `layer${i}`);
+      expect(sized.encodedPasses()).toEqual([...bandIds, 'tracer-below', 'tracer-above', 'composite']);
+      expect(gpu.passes).toHaveLength(count + 3);
+      // The compositor binds every band layer and both tracers.
+      const blend = gpu.bindGroups.at(-1)!;
+      expect(blend.textures).toHaveLength(count + 2);
+      // Every layer is a role the readbacks can reach, not just the first three.
+      expect(sized.roleTextures()!.layers).toHaveLength(count);
+    });
+  });
 });

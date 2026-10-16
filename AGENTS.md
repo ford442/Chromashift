@@ -229,10 +229,11 @@ Uniforms follow the same single-source rule. A uniform block is declared as a ty
 1. `fetchCorpusManifest('./images.json')` (`src/engine/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
 2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
-   - one independent `GPURenderPipeline` per colour layer (each can use 4× MSAA) — the three
-     canonical passes today, and `layers.count` once the graph executor owns the band passes.
-     A session with fewer layers draws the first `layers.count` and clears the rest
-     (`drawnLayerCount` / `encodeLayerClear` in `WebGPUPipelines.ts`; `WebGLLayerPass` mirrors it).
+   - one independent `GPURenderPipeline` per colour layer (each can use 4× MSAA). Under `?graph`
+     the executor draws exactly `layers.count` of them (1–10). The hand encoder still compiles the
+     canonical three: a session with fewer layers draws the first `layers.count` and clears the
+     rest, one with more draws all three (`drawnLayerCount` / `encodeLayerClear` in
+     `WebGPUPipelines.ts`; `WebGLLayerPass` mirrors it).
    - 1 persistence pipeline that reads the layer textures + previous tracer texture. Its
      bind-group layout is generated from the layer count, so the binding `prevTex` lives at
      moves with it (see `docs/PASS_GRAPH.md`, "Layer counts").

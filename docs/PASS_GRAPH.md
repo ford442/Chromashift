@@ -178,6 +178,11 @@ The count is also a *session* parameter, not just a compile-time one:
 the state contract and checks the generated WebGPU bind-group layouts against
 the emitted shaders' binding numbers at 1, 2, 3, 5, 8 and 10 layers.
 
+And it is an *execution* parameter: under `?graph` the renderer compiles the
+frame's variant at `state.layers.length` (see
+[The temporal term](#the-temporal-term-motion) for variants), so the executor draws
+exactly that many band passes and the compositor blends them all.
+
 The overlap test is emitted once and used twice: `emitCoincidenceDecayWgsl(n)`
 (the fused fragment pass) and `emitCoincidenceComputeWgsl(n)` (the chore lane's
 kernel) share their per-layer arms through `coincidenceParts`, and
@@ -587,6 +592,11 @@ path, one step per PR. Landed so far:
   hand encoder. See [The temporal term](#the-temporal-term-motion).
 - **The `hdr-extended` present** (step 3). An HDR canvas no longer keeps the hand
   encoder. See [The hdr-extended present](#the-hdr-extended-present).
+- **N-layer execution** (step 4). The layer count is the fourth part of the
+  variant: the executor draws `buildDefaultGraph(layers.count)` (or the preset at
+  that count), so `layers.count = 7` draws seven band passes and composites all
+  seven. `e2e/graph-executor.spec.ts` checks the pass list at 1, 7 and 10 layers
+  and reads back a frame that only the seventh band can have drawn.
 
 Still to do:
 
@@ -600,18 +610,13 @@ Still to do:
 - **The WebGL executor.** The diagnostic / XR / screenshot backend still
   compiles only. It is second in line on purpose: it has no template for `warp`
   or `blur`, so the shapes worth executing are WebGPU's first.
-- **N-layer execution.** The *data* half is done: `layers.count` is a session
-  parameter (schema v7), `RendererState.layers` and `layerOpacities` are arrays,
-  `BindGroupCache` stores `layers: GPUTexture[]`, the WebGPU bind-group layouts
-  are generated from `layerCount`, the coincidence compute kernel is emitted by
-  `emitCoincidenceComputeWgsl(n)`, the C ABI takes a pointer and a count, and
-  colour profiles take 1–10 layers baked into a 256 × max(n, 3) LUT.
-  What is left is *execution*: the WebGPU renderer still builds one layer
-  pipeline per entry in `layerFragmentSources`, so changing `layers.count`
-  resizes the state, the panel and the uniforms but not yet the number of band
-  passes drawn. Until then the hand encoders draw the first `min(n, 3)` of the
-  three canonical passes and clear the rest (`drawnLayerCount` /
-  `encodeLayerClear`). The executor owning the layer passes is what closes that.
+- **N layers everywhere else.** What still draws at most three is the hand
+  encoder — `drawnLayerCount` / `encodeLayerClear` draw the first `min(n, 3)` of
+  its three canonical passes and clear the rest, which is what a `?graph=0`
+  session gets until the flip — and the passes that read the band layers outside
+  the executor: the stationary previews and the tracer-inspect passes (the tracer
+  PNG export binds the first three of an N-layer frame). Those move onto the graph
+  in the steps below, and the clear helpers go with the hand encoder.
 - **A third tracer timescale.** `emitCompositorWgsl` binds exactly two tracer
   textures (`persistBelow`, `persistAbove`), so a graph with three `decay`
   nodes is refused rather than approximated. Generalising the compositor

@@ -1,5 +1,6 @@
 import { layerFragmentSources } from './shaders';
 import {
+  MAX_LAYER_COUNT,
   compileGraph,
   graphVariantKey,
   passGraphRefusal,
@@ -96,6 +97,8 @@ export class WebGPURenderer {
    * a genuinely new source apart from the next frame of the current one.
    */
   private motionResetPending = true;
+  /** 1×1 transparent band layer, padding the inspect passes' layout for a frame of fewer layers. */
+  private transparentLayer: GPUTexture | null = null;
   /** Whether this frame ran the motion chore, so `afterSubmit` maps its stats only then. */
   private motionFieldEncoded = false;
   /** `motionFieldUse` per compiled graph — asked every frame, computed once. */
@@ -674,16 +677,23 @@ export class WebGPURenderer {
     const readbackFlags = this.readback.encodeQueuedReadbacks(
       enc,
       (previewView) => {
+        // The deprecated preview composites through the hand encoder's
+        // `CompositorPass`, whose layout is sized for `pipelines.layerCount`;
+        // a frame the executor drew at another count would not bind to it, and
+        // a binding error would drop this whole command buffer — the frame
+        // with it. Such a frame simply has no preview.
+        const layers = this.getLayerTextures();
+        if (layers.length !== this.pipelines.layerCount) return;
         this.compositor.encodePreview(
           enc,
           previewView,
-          this.getLayerTextures(),
+          layers,
           this.getTracerTextures().below,
           this.getTracerTextures().above,
           this.activePingPong,
         );
       },
-      this.diagnosticForReadback(state.paused === true),
+      this.diagnosticForReadback(rendererStateValue(state, 'paused')),
     );
 
     this.gpuProfiler?.finishFrame(enc);
@@ -780,8 +790,12 @@ export class WebGPURenderer {
     // submitted ahead of `enc` wherever in the frame it is called, so producing
     // it up front changes nothing on the queue.
     const motionMode = rendererStateValue(state, 'motionMode');
+    // The frame's band count. The executor draws exactly this many passes; the
+    // hand encoder, while it is still the fallback, draws the first
+    // min(n, 3) of its three and clears the rest.
+    const layerCount = Math.max(1, Math.min(MAX_LAYER_COUNT, state.layers.length));
     const graphMayDraw = this.graphExecutor !== null && passMode === 'composite';
-    const graphField = graphMayDraw ? this.graphFieldUse() : NO_MOTION_FIELD_USE;
+    const graphField = graphMayDraw ? this.graphFieldUse(layerCount) : NO_MOTION_FIELD_USE;
     this.motionFieldEncoded = (motionMode !== 0 || graphField.reads) && this.currentTexture !== null;
     const motionTexture = this.motionFieldEncoded
       ? this.encodeMotionField(state, motionMode === MOTION_MODE_DIRECTION || graphField.needsFlow)
@@ -796,7 +810,7 @@ export class WebGPURenderer {
     // is skipped whole rather than partly reused.
     if (graphMayDraw && this.currentTexture) {
       const compiled = this.adoptGraphVariant({
-        layerCount: this.pipelines.layerCount,
+        layerCount,
         motion: motionMode !== 0 && motionTexture !== null,
         presentation: hdrCanvas ? 'hdr-extended' : 'sdr',
       });
@@ -951,12 +965,8 @@ export class WebGPURenderer {
    * because it decides whether the chore runs at all, and that decides which
    * variant the frame gets.
    */
-  private graphFieldUse(): MotionFieldUse {
-    const still = this.compiledGraphVariant({
-      layerCount: this.pipelines.layerCount,
-      motion: false,
-      presentation: 'sdr',
-    });
+  private graphFieldUse(layerCount: number): MotionFieldUse {
+    const still = this.compiledGraphVariant({ layerCount, motion: false, presentation: 'sdr' });
     if (!still) return NO_MOTION_FIELD_USE;
     let use = this.fieldUseByGraph.get(still);
     if (!use) {
@@ -984,11 +994,28 @@ export class WebGPURenderer {
       {
         persistAbove: above,
         persistBelow: below,
-        layerTextures: this.getLayerTextures(),
+        layerTextures: this.layersForInspect(this.getLayerTextures()),
         pingPong: this.activePingPong,
       },
       options,
     );
+  }
+
+  /**
+   * `layers` fitted to the inspect passes' layout, which still binds
+   * `pipelines.layerCount` of them: the first ones, padded with a transparent
+   * texel when the executor drew fewer. Those passes read layers only for the
+   * optional overlay; the tracers they inspect are whole either way.
+   */
+  private layersForInspect(layers: LayerTextures): LayerTextures {
+    const count = this.pipelines.layerCount;
+    if (layers.length === count) return layers;
+    this.transparentLayer ??= this.device.createTexture({
+      size: [1, 1, 1],
+      format: this.internalFormat,
+      usage: GPUTextureUsage.TEXTURE_BINDING,
+    });
+    return Array.from({ length: count }, (_, i) => layers[i] ?? this.transparentLayer!);
   }
 
   destroy(): void {
@@ -1010,6 +1037,7 @@ export class WebGPURenderer {
     this.stationaryPreview.destroy();
     this.gpuProfiler?.destroy();
     this.fallbackMaskTexture.destroy();
+    this.transparentLayer?.destroy();
     this.profileLut.destroy();
   }
 }
