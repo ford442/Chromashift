@@ -121,7 +121,7 @@ describe('the hand encoder and the graph executor write the same bytes', () => {
     );
     // The blend node's block is the one other buffer of the compositor's size.
     const bytes = compositorUniformLayout(layerCount).bytes;
-    const skip = new Set([hand.uniformBuf.label, hand.previewUniformBuf.label]);
+    const skip = new Set([hand.uniformBuf.label]);
     const graphLabel = [...gpu.bufferSizes]
       .find(([label, size]) => size === bytes && !skip.has(label) && gpu.bufferContents.has(label))![0];
     return { handBytes, graphBytes: gpu.bufferContents.get(graphLabel)! };

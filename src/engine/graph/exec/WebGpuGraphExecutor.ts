@@ -56,11 +56,19 @@ export interface GraphExternalInputs {
   motionField?: GPUTexture | null;
 }
 
-/** Texture roles the renderer's preview, readback and inspect passes still need. */
-export interface GraphRoleTextures {
+/**
+ * `CompiledGraph.outputs`, resolved to this frame's textures — what the
+ * inspect views, readbacks and exports read instead of a pass of their own.
+ */
+export interface GraphOutputTextures {
+  /** Every band layer, in order. */
   layers: GPUTexture[];
+  /** Every accumulator's read side (the last frame's result), in the compositor's order. */
+  tracers: GPUTexture[];
+  /** The shipped pair: `tracers[0]` and `tracers[1]`. */
   tracerBelow: GPUTexture;
   tracerAbove: GPUTexture;
+  /** The `above` accumulator's stamp diagnostic, read side. */
   diagnostic: GPUTexture;
   pingPong: 0 | 1;
 }
@@ -83,6 +91,13 @@ export interface GraphEncodeParams {
   height: number;
   fps: number;
   marks?: GraphEncodeMarks;
+  /**
+   * `false` encodes every pass but the compositor — the layers and the
+   * accumulators advance as usual and nothing is written to `outputView`. For
+   * a frame whose canvas shows one of the graph's outputs (the full-res
+   * tracer, a band layer, the heatmap) rather than its composite.
+   */
+  composite?: boolean;
 }
 
 const MARK_ORDER = ['layersEnd', 'stampEnd', 'compositorEnd'] as const;
@@ -237,21 +252,24 @@ export class WebGpuGraphExecutor {
   }
 
   /**
-   * Textures for the roles the renderer's preview / readback / inspect passes
-   * read: every band layer the graph draws, in order, and the two tracers.
-   * `null` when the graph does not have them — a graph with no tracers is
-   * legal, and those extras simply do not run.
+   * The graph's named outputs as this frame's textures. `null` when the graph
+   * does not have them — a graph with no band layer or fewer than two
+   * accumulators is legal, and the views that need them simply do not run —
+   * or before the first frame has sized the pool.
    */
-  roleTextures(): GraphRoleTextures | null {
-    if (!this.plan) return null;
-    const { layers, tracerBelow, tracerAbove } = this.plan.roles;
-    if (layers.length === 0 || !tracerBelow || !tracerAbove) return null;
+  outputTextures(): GraphOutputTextures | null {
+    const outputs = this.compiled?.outputs;
+    if (!outputs || outputs.layers.length === 0 || outputs.tracers.length < 2 || !outputs.diagnostic) {
+      return null;
+    }
     try {
+      const tracers = outputs.tracers.map((id) => this.pool.pingPong(id).read);
       return {
-        layers: layers.map((id) => this.pool.transient(id)),
-        tracerBelow: this.pool.pingPong(tracerBelow).read,
-        tracerAbove: this.pool.pingPong(tracerAbove).read,
-        diagnostic: this.pool.diagnostic(tracerAbove).read,
+        layers: outputs.layers.map((id) => this.pool.transient(id)),
+        tracers,
+        tracerBelow: tracers[0],
+        tracerAbove: tracers[1],
+        diagnostic: this.pool.diagnostic(outputs.diagnostic).read,
         pingPong: this.pool.readPhase,
       };
     } catch {
@@ -291,12 +309,14 @@ export class WebGpuGraphExecutor {
     };
 
     const paused = state.paused === true;
+    const composite = params.composite !== false;
     for (const step of plan.steps) {
       if (step.kind === 'decay') fireThrough(0);
       if (step.kind === 'blend') fireThrough(1);
       // A paused session freezes the tracers exactly as `PersistencePass` does:
       // the accumulator passes are not encoded and the ping-pong never flips.
       if (paused && step.kind === 'decay') continue;
+      if (!composite && step.kind === 'blend') continue;
       this.encodeStep(enc, step, inputs, params);
     }
     fireThrough(MARK_ORDER.length - 1);

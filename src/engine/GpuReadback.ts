@@ -10,7 +10,6 @@ import type { WebGPUPipelines } from './WebGPUPipelines';
 import type { LayerTextures } from './BindGroupCache';
 
 export class GpuReadback {
-  static readonly PREVIEW_SIZE = 128;
   static readonly DIAGNOSTIC_SIZE = 64;
 
   private readonly device: GPUDevice;
@@ -23,12 +22,6 @@ export class GpuReadback {
     texture: null,
     sampler: null,
   };
-
-  private previewTexture: GPUTexture | null = null;
-  private previewStagingBuffer: GPUBuffer | null = null;
-  private previewReadPending = false;
-  private previewCaptureQueued = false;
-  private previewReadCallback: ((data: Uint8ClampedArray<ArrayBuffer>) => void) | null = null;
 
   private diagnosticTexture: GPUTexture | null = null;
   private diagnosticStagingBuffer: GPUBuffer | null = null;
@@ -53,13 +46,6 @@ export class GpuReadback {
     invalidateSimpleTextureCache(this.diagnosticBlitBindGroupCache);
   }
 
-  requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean {
-    if (this.previewReadPending || this.previewCaptureQueued || this.previewReadCallback) return false;
-    this.previewReadCallback = callback;
-    this.previewCaptureQueued = true;
-    return true;
-  }
-
   /**
    * @param layerCount  Layers the frame being sampled was rendered with — the
    *   diagnostic red channel encodes the dominant layer as `index / (n - 1)`,
@@ -76,55 +62,34 @@ export class GpuReadback {
     return true;
   }
 
+  /** Encode the collision-stats blit + copy if one is queued; returns whether it was. */
   encodeQueuedReadbacks(
     enc: GPUCommandEncoder,
-    onPreviewNeeded: (previewView: GPUTextureView) => void,
     persistDiagnostic: GPUTexture | null,
-  ): { preview: boolean; diagnostic: boolean } {
-    let preview = false;
-    let diagnostic = false;
-
-    if (this.previewCaptureQueued && !this.previewReadPending) {
-      this.ensurePreviewResources();
-    }
+  ): boolean {
     if (this.diagnosticCaptureQueued && !this.diagnosticReadPending) {
       this.ensureDiagnosticResources();
     }
-
-    if (this.previewCaptureQueued && this.previewTexture && this.previewStagingBuffer && this.previewReadCallback) {
-      onPreviewNeeded(this.previewTexture.createView());
-
-      const sz = GpuReadback.PREVIEW_SIZE;
-      enc.copyTextureToBuffer(
-        { texture: this.previewTexture },
-        { buffer: this.previewStagingBuffer, bytesPerRow: sz * 4 },
-        [sz, sz, 1],
-      );
-      this.previewCaptureQueued = false;
-      preview = true;
+    if (!this.diagnosticCaptureQueued || !this.diagnosticTexture || !this.diagnosticStagingBuffer
+      || !this.diagnosticReadCallback) {
+      return false;
+    }
+    if (persistDiagnostic) {
+      this.encodeDiagnosticBlit(enc, persistDiagnostic);
     }
 
-    if (this.diagnosticCaptureQueued && this.diagnosticTexture && this.diagnosticStagingBuffer && this.diagnosticReadCallback) {
-      if (persistDiagnostic) {
-        this.encodeDiagnosticBlit(enc, persistDiagnostic);
-      }
-
-      const sz = GpuReadback.DIAGNOSTIC_SIZE;
-      enc.copyTextureToBuffer(
-        { texture: this.diagnosticTexture },
-        { buffer: this.diagnosticStagingBuffer, bytesPerRow: sz * 4 },
-        [sz, sz, 1],
-      );
-      this.diagnosticCaptureQueued = false;
-      diagnostic = true;
-    }
-
-    return { preview, diagnostic };
+    const sz = GpuReadback.DIAGNOSTIC_SIZE;
+    enc.copyTextureToBuffer(
+      { texture: this.diagnosticTexture },
+      { buffer: this.diagnosticStagingBuffer, bytesPerRow: sz * 4 },
+      [sz, sz, 1],
+    );
+    this.diagnosticCaptureQueued = false;
+    return true;
   }
 
-  afterSubmit(flags: { preview: boolean; diagnostic: boolean }): void {
-    if (flags.preview) this.beginPreviewReadback();
-    if (flags.diagnostic) this.beginDiagnosticReadback();
+  afterSubmit(diagnosticEncoded: boolean): void {
+    if (diagnosticEncoded) this.beginDiagnosticReadback();
   }
 
   async readTexturePixels(
@@ -242,25 +207,8 @@ export class GpuReadback {
   }
 
   destroy(): void {
-    this.previewTexture?.destroy();
-    this.previewStagingBuffer?.destroy();
     this.diagnosticTexture?.destroy();
     this.diagnosticStagingBuffer?.destroy();
-  }
-
-  private ensurePreviewResources(): void {
-    if (this.previewTexture && this.previewStagingBuffer) return;
-
-    const sz = GpuReadback.PREVIEW_SIZE;
-    this.previewTexture = this.device.createTexture({
-      size: [sz, sz, 1],
-      format: this.format,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-    });
-    this.previewStagingBuffer = this.device.createBuffer({
-      size: sz * sz * 4,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
   }
 
   private ensureDiagnosticResources(): void {
@@ -303,23 +251,6 @@ export class GpuReadback {
     pass.setBindGroup(0, bg);
     pass.draw(6);
     pass.end();
-  }
-
-  private beginPreviewReadback(): void {
-    if (!this.previewStagingBuffer || !this.previewReadCallback || this.previewReadPending) return;
-    const callback = this.previewReadCallback;
-    this.previewReadCallback = null;
-    this.previewReadPending = true;
-    this.previewStagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
-      const mapped = this.previewStagingBuffer!.getMappedRange() as ArrayBuffer;
-      const data = new Uint8ClampedArray(mapped.slice(0) as ArrayBuffer);
-      this.previewStagingBuffer!.unmap();
-      this.previewReadPending = false;
-      callback(data);
-    }).catch(() => {
-      this.previewReadPending = false;
-      this.previewReadCallback = null;
-    });
   }
 
   /** Layer count the queued diagnostic frame was rendered with. */

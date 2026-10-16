@@ -1,29 +1,78 @@
 import { WGSL_BLEND_HELPERS, WGSL_OUTPUT_ENCODE } from './common';
-import { defineUniformLayout, emitUniformStructWgsl } from '../graph/templates/uniformLayout';
+import {
+  defineUniformLayout,
+  emitUniformStructWgsl,
+  type UniformFieldSpec,
+  type UniformLayout,
+} from '../graph/templates/uniformLayout';
 
 /**
- * Uniform layouts of the inspection passes below. These shaders still read the
- * three canonical layers, so the per-layer opacities are three fixed fields.
+ * Uniform layouts of the inspection passes below. The tracer view and the
+ * compare split read every band layer, so their blocks carry one opacity per
+ * layer; each is memoised per count.
  */
-export const TRACER_VIEW_UNIFORMS = defineUniformLayout('TracerViewUniforms', [
-  { name: 'canvasAspect', kind: 'f32' },
-  { name: 'texAspect', kind: 'f32' },
-  { name: 'tracerAboveOpacity', kind: 'f32' },
-  { name: 'tracerBelowOpacity', kind: 'f32' },
-  { name: 'tracerBlendMode', kind: 'u32' },
-  { name: 'showHeatmap', kind: 'u32' },
-  { name: 'zoom', kind: 'f32' },
-  { name: 'panX', kind: 'f32' },
-  { name: 'panY', kind: 'f32' },
-  { name: 'heatmapOpacity', kind: 'f32' },
-  { name: 'exposure', kind: 'f32' },
-  { name: 'applyTonemap', kind: 'u32' },
-  { name: 'showLayers', kind: 'u32' },
-  { name: 'layerBlendMode', kind: 'u32' },
-  { name: 'layerOpacity0', kind: 'f32' },
-  { name: 'layerOpacity1', kind: 'f32' },
-  { name: 'layerOpacity2', kind: 'f32' },
-], { column: 19 });
+const tracerViewLayouts = new Map<number, UniformLayout<TracerViewUniformName>>();
+const compareLayouts = new Map<number, UniformLayout<CompareUniformName>>();
+
+export type TracerViewUniformName =
+  | 'canvasAspect' | 'texAspect' | 'tracerAboveOpacity' | 'tracerBelowOpacity'
+  | 'tracerBlendMode' | 'showHeatmap' | 'zoom' | 'panX' | 'panY' | 'heatmapOpacity'
+  | 'exposure' | 'applyTonemap' | 'showLayers' | 'layerBlendMode' | `layerOpacity${number}`;
+
+export type CompareUniformName =
+  | 'sourceAspect' | 'tracerAboveOpacity' | 'tracerBelowOpacity' | 'layerBlendMode'
+  | 'tracerBlendMode' | `layerOpacity${number}` | 'stampBoost' | 'dividerWidth'
+  | 'outputMode' | 'tracerMode';
+
+const layerOpacityFields = (layerCount: number) =>
+  Array.from({ length: layerCount }, (_, i) => ({ name: `layerOpacity${i}` as const, kind: 'f32' as const }));
+
+export function tracerViewUniformLayout(layerCount: number): UniformLayout<TracerViewUniformName> {
+  let layout = tracerViewLayouts.get(layerCount);
+  if (!layout) {
+    const fields: UniformFieldSpec<TracerViewUniformName>[] = [
+      { name: 'canvasAspect', kind: 'f32' },
+      { name: 'texAspect', kind: 'f32' },
+      { name: 'tracerAboveOpacity', kind: 'f32' },
+      { name: 'tracerBelowOpacity', kind: 'f32' },
+      { name: 'tracerBlendMode', kind: 'u32' },
+      { name: 'showHeatmap', kind: 'u32' },
+      { name: 'zoom', kind: 'f32' },
+      { name: 'panX', kind: 'f32' },
+      { name: 'panY', kind: 'f32' },
+      { name: 'heatmapOpacity', kind: 'f32' },
+      { name: 'exposure', kind: 'f32' },
+      { name: 'applyTonemap', kind: 'u32' },
+      { name: 'showLayers', kind: 'u32' },
+      { name: 'layerBlendMode', kind: 'u32' },
+      ...layerOpacityFields(layerCount),
+    ];
+    layout = defineUniformLayout('TracerViewUniforms', fields, { column: 19 });
+    tracerViewLayouts.set(layerCount, layout);
+  }
+  return layout;
+}
+
+export function compareUniformLayout(layerCount: number): UniformLayout<CompareUniformName> {
+  let layout = compareLayouts.get(layerCount);
+  if (!layout) {
+    const fields: UniformFieldSpec<CompareUniformName>[] = [
+      { name: 'sourceAspect', kind: 'f32' },
+      { name: 'tracerAboveOpacity', kind: 'f32' },
+      { name: 'tracerBelowOpacity', kind: 'f32' },
+      { name: 'layerBlendMode', kind: 'u32' },
+      { name: 'tracerBlendMode', kind: 'u32' },
+      ...layerOpacityFields(layerCount),
+      { name: 'stampBoost', kind: 'f32' },
+      { name: 'dividerWidth', kind: 'f32' },
+      { name: 'outputMode', kind: 'u32' },
+      { name: 'tracerMode', kind: 'u32' },
+    ];
+    layout = defineUniformLayout('CompareUniforms', fields, { column: 19 });
+    compareLayouts.set(layerCount, layout);
+  }
+  return layout;
+}
 
 export const DISPLAY_UNIFORMS = defineUniformLayout('DisplayUniforms', [
   { name: 'canvasAspect', kind: 'f32' },
@@ -42,40 +91,42 @@ export const HEATMAP_UNIFORMS = defineUniformLayout('HeatmapUniforms', [
   { name: '_pad2', kind: 'u32' },
 ], { column: 10 });
 
-export const COMPARE_UNIFORMS = defineUniformLayout('CompareUniforms', [
-  { name: 'sourceAspect', kind: 'f32' },
-  { name: 'tracerAboveOpacity', kind: 'f32' },
-  { name: 'tracerBelowOpacity', kind: 'f32' },
-  { name: 'layerBlendMode', kind: 'u32' },
-  { name: 'tracerBlendMode', kind: 'u32' },
-  { name: 'layerOpacity0', kind: 'f32' },
-  { name: 'layerOpacity1', kind: 'f32' },
-  { name: 'layerOpacity2', kind: 'f32' },
-  { name: 'stampBoost', kind: 'f32' },
-  { name: 'dividerWidth', kind: 'f32' },
-  { name: 'outputMode', kind: 'u32' },
-  { name: 'tracerMode', kind: 'u32' },
-], { column: 19 });
-
 // ─── Tracer View (centered aspect-fit blit, issues #58/#59/#61) ──────────────
 // "Show Full Tracer" inspection path. Previously bypassed the compositor
 // entirely, causing mismatched hue/brightness and ignoring user controls.
 // Now uses the same blend helpers and Reinhard tonemap, respects
 // tracerAboveOpacity/tracerBelowOpacity/tracerBlendMode, and still preserves
 // the aspect-fit letterboxing for non-1.0 tracerScale values.
-export const tracerViewFragmentSource = /* wgsl */ `
+/** The full-res tracer view for `layerCount` band layers (the layers only show as an overlay). */
+export function emitTracerViewWgsl(layerCount: number): string {
+  const layers = Array.from({ length: layerCount }, (_, i) => i);
+  const bindings = layers
+    .map((i) => `@group(0) @binding(${i + 3}) var layer${i}      : texture_2d<f32>;`)
+    .join('\n');
+  const sampled = (pad: string) => layers
+    .map((i) => `${pad}let c${i} = textureSampleLevel(layer${i}, texSampler, sampleUV, 0.0);`)
+    .join('\n');
+  const scaled = layers
+    .map((i) => `    let c${i}s = scale_premultiplied(c${i}, tvu.layerOpacity${i});`)
+    .join('\n');
+  // Painter's order, as in the compositor: the last layer goes down first.
+  const stacked = [...layers].reverse()
+    .map((i) => `    col = blend(col, c${i}s, tvu.layerBlendMode);`)
+    .join('\n');
+  const counted = layers
+    .map((i) => `    if (c${i}.a > 0.05) { count = count + 1u; }`)
+    .join('\n');
+  return /* wgsl */ `
 ${WGSL_BLEND_HELPERS}
 ${WGSL_OUTPUT_ENCODE}
 
 @group(0) @binding(0) var texSampler  : sampler;
 @group(0) @binding(1) var persistAbove: texture_2d<f32>;
 @group(0) @binding(2) var persistBelow: texture_2d<f32>;
-@group(0) @binding(3) var layer0      : texture_2d<f32>;
-@group(0) @binding(4) var layer1      : texture_2d<f32>;
-@group(0) @binding(5) var layer2      : texture_2d<f32>;
+${bindings}
 
-${emitUniformStructWgsl(TRACER_VIEW_UNIFORMS)}
-@group(0) @binding(6) var<uniform> tvu : TracerViewUniforms;
+${emitUniformStructWgsl(tracerViewUniformLayout(layerCount))}
+@group(0) @binding(${layerCount + 3}) var<uniform> tvu : TracerViewUniforms;
 
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
@@ -121,25 +172,15 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // This makes the tracer inspector match the artistic output as closely
   // as possible (modulo stampBoost and diagnostics overlays).
   if (tvu.showLayers == 1u) {
-    let c0 = textureSampleLevel(layer0, texSampler, sampleUV, 0.0);
-    let c1 = textureSampleLevel(layer1, texSampler, sampleUV, 0.0);
-    let c2 = textureSampleLevel(layer2, texSampler, sampleUV, 0.0);
-    let c0s = scale_premultiplied(c0, tvu.layerOpacity0);
-    let c1s = scale_premultiplied(c1, tvu.layerOpacity1);
-    let c2s = scale_premultiplied(c2, tvu.layerOpacity2);
-    col = blend(col, c2s, tvu.layerBlendMode);
-    col = blend(col, c1s, tvu.layerBlendMode);
-    col = blend(col, c0s, tvu.layerBlendMode);
+${sampled('    ')}
+${scaled}
+${stacked}
   }
 
   if (tvu.showHeatmap == 1u) {
-    let c0 = textureSampleLevel(layer0, texSampler, sampleUV, 0.0);
-    let c1 = textureSampleLevel(layer1, texSampler, sampleUV, 0.0);
-    let c2 = textureSampleLevel(layer2, texSampler, sampleUV, 0.0);
+${sampled('    ')}
     var count = 0u;
-    if (c0.a > 0.05) { count = count + 1u; }
-    if (c1.a > 0.05) { count = count + 1u; }
-    if (c2.a > 0.05) { count = count + 1u; }
+${counted}
     var overlay = vec3<f32>(0.0);
     if (count == 2u) {
       overlay = vec3<f32>(1.0, 0.92, 0.18);
@@ -158,6 +199,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   return vec4<f32>(encode_display(col.rgb), 1.0);
 }
 `;
+}
 
 export const displayTextureFragmentSource = /* wgsl */ `
 ${WGSL_OUTPUT_ENCODE}
@@ -195,34 +237,38 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-export const coincidenceHeatmapFragmentSource = /* wgsl */ `
+/** The coincidence heatmap over `layerCount` band layers: dim where under two overlap, warm at two, hot at three or more. */
+export function emitCoincidenceHeatmapWgsl(layerCount: number): string {
+  const layers = Array.from({ length: layerCount }, (_, i) => i);
+  const bindings = layers
+    .map((i) => `@group(0) @binding(${i + 1}) var layer${i}     : texture_2d<f32>;`)
+    .join('\n');
+  const sampled = layers.map((i) => `  let c${i} = textureSample(layer${i}, texSampler, uv);`).join('\n');
+  const counted = layers.map((i) => `  if (c${i}.a > hu.threshold) { count = count + 1u; }`).join('\n');
+  const maxBand = layers.slice(1).reduce((acc, i) => `max(${acc}, c${i}.rgb)`, 'c0.rgb');
+  const combined = layers.map((i) => `c${i}.rgb`).join(' + ');
+  return /* wgsl */ `
 ${WGSL_OUTPUT_ENCODE}
 
 @group(0) @binding(0) var texSampler : sampler;
-@group(0) @binding(1) var layer0     : texture_2d<f32>;
-@group(0) @binding(2) var layer1     : texture_2d<f32>;
-@group(0) @binding(3) var layer2     : texture_2d<f32>;
+${bindings}
 
 ${emitUniformStructWgsl(HEATMAP_UNIFORMS)}
-@group(0) @binding(4) var<uniform> hu : HeatmapUniforms;
+@group(0) @binding(${layerCount + 1}) var<uniform> hu : HeatmapUniforms;
 
 @fragment
 fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let c0 = textureSample(layer0, texSampler, uv);
-  let c1 = textureSample(layer1, texSampler, uv);
-  let c2 = textureSample(layer2, texSampler, uv);
+${sampled}
 
   var count = 0u;
-  if (c0.a > hu.threshold) { count = count + 1u; }
-  if (c1.a > hu.threshold) { count = count + 1u; }
-  if (c2.a > hu.threshold) { count = count + 1u; }
+${counted}
 
   if (count < 2u) {
-    let maxBand = max(max(c0.rgb, c1.rgb), c2.rgb) * 0.22;
+    let maxBand = ${maxBand} * 0.22;
     return vec4<f32>(encode_display(maxBand), 1.0);
   }
 
-  let combined = c0.rgb + c1.rgb + c2.rgb;
+  let combined = ${combined};
   if (count == 2u) {
     let warm = normalize(max(combined, vec3<f32>(0.0001))) * vec3<f32>(1.0, 0.9, 0.25);
     return vec4<f32>(encode_display(warm), 1.0);
@@ -232,6 +278,7 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   return vec4<f32>(encode_display(min(hot, vec3<f32>(1.0))), 1.0);
 }
 `;
+}
 
 export const diagnosticFragmentSource = /* wgsl */ `
 @group(0) @binding(0) var texSampler : sampler;
@@ -302,32 +349,40 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-export const compareFragmentSource = /* wgsl */ `
+/** The source | composite split for `layerCount` band layers. */
+export function emitCompareWgsl(layerCount: number): string {
+  const layers = Array.from({ length: layerCount }, (_, i) => i);
+  const bindings = layers
+    .map((i) => `@group(0) @binding(${i + 2}) var layer${i}         : texture_2d<f32>;`)
+    .join('\n');
+  const sampled = layers
+    .map((i) => `  let c${i} = scale_premultiplied(textureSampleLevel(layer${i}, cSampler, uv, 0.0), cu.layerOpacity${i});`)
+    .join('\n');
+  const stacked = [...layers].reverse()
+    .map((i) => `  layerCol = blend(layerCol, c${i}, cu.layerBlendMode);`)
+    .join('\n');
+  const counted = layers.map((i) => `    if (c${i}.a > thresh) { layerCount = layerCount + 1u; }`).join('\n');
+  const summed = layers.map((i) => `      if (c${i}.a > thresh) { sum = sum + c${i}.rgb; }`).join('\n');
+  return /* wgsl */ `
 ${WGSL_BLEND_HELPERS}
 ${WGSL_OUTPUT_ENCODE}
 
 @group(0) @binding(0) var cSampler       : sampler;
 @group(0) @binding(1) var sourceTex      : texture_2d<f32>;
-@group(0) @binding(2) var layer0         : texture_2d<f32>;
-@group(0) @binding(3) var layer1         : texture_2d<f32>;
-@group(0) @binding(4) var layer2         : texture_2d<f32>;
-@group(0) @binding(5) var persistBelow   : texture_2d<f32>;
-@group(0) @binding(6) var persistAbove   : texture_2d<f32>;
+${bindings}
+@group(0) @binding(${layerCount + 2}) var persistBelow   : texture_2d<f32>;
+@group(0) @binding(${layerCount + 3}) var persistAbove   : texture_2d<f32>;
 
-${emitUniformStructWgsl(COMPARE_UNIFORMS)}
-@group(0) @binding(7) var<uniform> cu : CompareUniforms;
+${emitUniformStructWgsl(compareUniformLayout(layerCount))}
+@group(0) @binding(${layerCount + 4}) var<uniform> cu : CompareUniforms;
 
 fn compositeAt(uv : vec2<f32>) -> vec3<f32> {
-  let c0 = scale_premultiplied(textureSampleLevel(layer0, cSampler, uv, 0.0), cu.layerOpacity0);
-  let c1 = scale_premultiplied(textureSampleLevel(layer1, cSampler, uv, 0.0), cu.layerOpacity1);
-  let c2 = scale_premultiplied(textureSampleLevel(layer2, cSampler, uv, 0.0), cu.layerOpacity2);
+${sampled}
   let pBelow = scale_premultiplied(textureSampleLevel(persistBelow, cSampler, uv, 0.0), cu.tracerBelowOpacity);
   let pAbove = scale_premultiplied(textureSampleLevel(persistAbove, cSampler, uv, 0.0), cu.tracerAboveOpacity);
 
   var layerCol = vec4<f32>(0.0);
-  layerCol = blend(layerCol, c2, cu.layerBlendMode);
-  layerCol = blend(layerCol, c1, cu.layerBlendMode);
-  layerCol = blend(layerCol, c0, cu.layerBlendMode);
+${stacked}
 
   var finalCol = vec4<f32>(0.0);
   if (cu.outputMode == 1u) {
@@ -340,14 +395,10 @@ fn compositeAt(uv : vec2<f32>) -> vec3<f32> {
   } else if (cu.outputMode == 3u) {
     let thresh = 0.05;
     var layerCount = 0u;
-    if (c0.a > thresh) { layerCount = layerCount + 1u; }
-    if (c1.a > thresh) { layerCount = layerCount + 1u; }
-    if (c2.a > thresh) { layerCount = layerCount + 1u; }
+${counted}
     if (layerCount >= 2u) {
       var sum = vec3<f32>(0.0);
-      if (c0.a > thresh) { sum = sum + c0.rgb; }
-      if (c1.a > thresh) { sum = sum + c1.rgb; }
-      if (c2.a > thresh) { sum = sum + c2.rgb; }
+${summed}
       let combined = sum / f32(layerCount);
       if (cu.tracerMode == 1u) {
         let lum = dot(combined, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -404,4 +455,9 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   return vec4<f32>(encode_display(compositeAt(rightUV)), 1.0);
 }
 `;
+}
 
+/** The canonical three-layer inspection sources. */
+export const tracerViewFragmentSource = emitTracerViewWgsl(3);
+export const coincidenceHeatmapFragmentSource = emitCoincidenceHeatmapWgsl(3);
+export const compareFragmentSource = emitCompareWgsl(3);

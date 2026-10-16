@@ -9,7 +9,6 @@ import { layerTextureEntries, type LayerTextures } from './BindGroupCache';
 import {
   createUniformData,
   packUniforms,
-  uniformOffset,
   type UniformData,
   type UniformLayout,
   type UniformValues,
@@ -32,11 +31,8 @@ export class CompositorPass {
    */
   private readonly layout: UniformLayout<CompositorUniformName>;
   readonly uniformBuf: GPUBuffer;
-  readonly previewUniformBuf: GPUBuffer;
   private readonly uniforms: UniformData;
-  private readonly previewUniforms: UniformData;
   private readonly bindGroupCache: TexturePairBindGroupCacheEntry[];
-  private readonly previewBindGroupCache: TexturePairBindGroupCacheEntry[];
 
   constructor(device: GPUDevice, pipelines: WebGPUPipelines, sampler: GPUSampler) {
     this.device = device;
@@ -45,17 +41,11 @@ export class CompositorPass {
     this.pipeline = pipelines.createCompositorPipeline();
     this.layout = compositorUniformLayout(pipelines.layerCount);
     this.uniforms = createUniformData(this.layout);
-    this.previewUniforms = createUniformData(this.layout);
     this.uniformBuf = device.createBuffer({
       size: this.layout.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    this.previewUniformBuf = device.createBuffer({
-      size: this.layout.bytes,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
     this.bindGroupCache = createTexturePairCache(2);
-    this.previewBindGroupCache = createTexturePairCache(2);
   }
 
   get pipelineHandle(): GPURenderPipeline {
@@ -64,18 +54,11 @@ export class CompositorPass {
 
   invalidateCaches(): void {
     invalidateTexturePairCache(this.bindGroupCache);
-    invalidateTexturePairCache(this.previewBindGroupCache);
   }
 
   writeUniforms(values: CompositorUniformValues): void {
     packUniforms(this.layout, values, this.uniforms);
     this.device.queue.writeBuffer(this.uniformBuf, 0, this.uniforms.buffer);
-
-    // Preview pass shares compositor uniforms but disables viewport effects.
-    new Uint8Array(this.previewUniforms.buffer).set(new Uint8Array(this.uniforms.buffer));
-    this.previewUniforms.u32[uniformOffset(this.layout, 'viewportQuarterZoom') / 4] = 0;
-    this.previewUniforms.u32[uniformOffset(this.layout, 'viewportHalfOverlay') / 4] = 0;
-    this.device.queue.writeBuffer(this.previewUniformBuf, 0, this.previewUniforms.buffer);
   }
 
   encode(
@@ -108,39 +91,8 @@ export class CompositorPass {
     pass.end();
   }
 
-  encodePreview(
-    enc: GPUCommandEncoder,
-    targetView: GPUTextureView,
-    layerTextures: LayerTextures,
-    persistBelow: GPUTexture,
-    persistAbove: GPUTexture,
-    pingPong: 0 | 1,
-  ): void {
-    const bg = this.getBindGroup(
-      this.previewBindGroupCache[pingPong],
-      layerTextures,
-      persistBelow,
-      persistAbove,
-      this.previewUniformBuf,
-    );
-
-    const pass = enc.beginRenderPass({
-      colorAttachments: [{
-        view: targetView,
-        loadOp: 'clear',
-        storeOp: 'store',
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },
-      }],
-    });
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, bg);
-    pass.draw(6);
-    pass.end();
-  }
-
   destroy(): void {
     this.uniformBuf.destroy();
-    this.previewUniformBuf.destroy();
   }
 
   private getBindGroup(

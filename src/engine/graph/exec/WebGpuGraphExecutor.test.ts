@@ -149,17 +149,17 @@ describe('WebGpuGraphExecutor', () => {
     gpu.reset();
     encode(executor, { paused: true });
     expect(gpu.passes).toHaveLength(4);
-    const before = executor.roleTextures()!.tracerAbove;
+    const before = executor.outputTextures()!.tracerAbove;
     encode(executor, { paused: true });
-    expect(executor.roleTextures()!.tracerAbove).toBe(before);
+    expect(executor.outputTextures()!.tracerAbove).toBe(before);
   });
 
   it('flips the tracer pair on an unpaused frame', () => {
     executor.setGraph(compile());
     encode(executor);
-    const first = executor.roleTextures()!.tracerAbove;
+    const first = executor.outputTextures()!.tracerAbove;
     encode(executor);
-    expect(executor.roleTextures()!.tracerAbove).not.toBe(first);
+    expect(executor.outputTextures()!.tracerAbove).not.toBe(first);
   });
 
   it('composites the previous frame\u2019s tracer, as the hand encoder does', () => {
@@ -185,7 +185,7 @@ describe('WebGpuGraphExecutor', () => {
   it('publishes the role textures the preview and readback passes read', () => {
     executor.setGraph(compile());
     encode(executor);
-    const roles = executor.roleTextures()!;
+    const roles = executor.outputTextures()!;
     expect(roles.layers).toHaveLength(3);
     expect(roles.layers[0]).not.toBe(roles.layers[1]);
     expect(roles.tracerBelow).not.toBe(roles.tracerAbove);
@@ -566,7 +566,7 @@ describe('WebGpuGraphExecutor', () => {
       const blend = gpu.bindGroups.at(-1)!;
       expect(blend.textures).toHaveLength(count + 2);
       // Every layer is a role the readbacks can reach, not just the first three.
-      expect(sized.roleTextures()!.layers).toHaveLength(count);
+      expect(sized.outputTextures()!.layers).toHaveLength(count);
     });
   });
 
@@ -595,6 +595,40 @@ describe('WebGpuGraphExecutor', () => {
       const view = new DataView(new Uint8Array(composite).buffer);
       expect(view.getFloat32(uniformOffset(layout, 'tracerOpacity2'), true)).toBeCloseTo(0.45, 6);
       expect(uniformOffset(layout, 'tracerOpacity2')).toBe(compositorUniformLayout(3).fields.length * 4);
+    });
+  });
+
+  describe('a frame that shows an output, not the composite', () => {
+    it('encodes every pass but the compositor, and still advances the tracers', () => {
+      executor.setGraph(compile());
+      encode(executor);
+      const before = executor.outputTextures()!;
+      gpu.reset();
+      executor.encode(
+        gpu.device.createCommandEncoder(),
+        { source, classificationMask: source, hasClassificationMask: false, profileLut: source },
+        {
+          state: fakeRendererState(),
+          outputView: { __texture: 'swapchain' } as unknown as GPUTextureView,
+          width: CANVAS.width,
+          height: CANVAS.height,
+          fps: 30,
+          composite: false,
+        },
+      );
+      // Three band layers and the two accumulators; nothing reaches the swapchain.
+      expect(gpu.passes).toHaveLength(5);
+      expect(gpu.passes.flatMap((pass) => pass.attachments)).not.toContain('swapchain@clear');
+      // The accumulators flipped, so the outputs now read this frame's result.
+      expect(executor.outputTextures()!.tracerAbove).not.toBe(before.tracerAbove);
+    });
+
+    it('names every accumulator among its outputs, the shipped pair first', () => {
+      executor.setGraph(compile(buildTrails3Graph()));
+      encode(executor);
+      const outputs = executor.outputTextures()!;
+      expect(outputs.tracers).toHaveLength(3);
+      expect(outputs.tracers.slice(0, 2)).toEqual([outputs.tracerBelow, outputs.tracerAbove]);
     });
   });
 });

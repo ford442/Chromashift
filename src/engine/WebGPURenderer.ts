@@ -10,7 +10,7 @@ import {
   type GraphVariant,
   type PassGraphSource,
 } from './graph';
-import { WebGpuGraphExecutor, type GraphRoleTextures } from './graph/exec/WebGpuGraphExecutor';
+import { WebGpuGraphExecutor, type GraphOutputTextures } from './graph/exec/WebGpuGraphExecutor';
 import { buildEncodePlan, motionFieldUse, type MotionFieldUse } from './graph/exec/plan';
 import type { CompiledGraph } from './graph/types';
 import { WebGPUPipelines, drawnLayerCount, encodeLayerClear, type LayerPipeline } from './WebGPUPipelines';
@@ -46,6 +46,7 @@ import { layerRotationUniforms } from './math/rotation';
 import { ProfileLutTexture } from './color/ProfileLutTexture';
 import {
   HDR_CANVAS_FORMAT,
+  type CanvasPresentation,
   canvasHdrInternalNote,
   internalColorFormatBytesPerPixel,
   selectInternalColorFormat,
@@ -61,9 +62,19 @@ type TextureSize = { readonly width: number; readonly height: number };
 /** A frame whose graph reads no motion field and solves no flow. */
 const NO_MOTION_FIELD_USE: MotionFieldUse = { reads: false, needsFlow: false };
 
+/**
+ * The main view an export pass mode draws: `composite` the processed
+ * composite, `tracers` the full-res tracer view, and `layers` whatever view
+ * the session shows, with its tracers zeroed by the caller.
+ */
+function exportMainView(passMode: ExportPassMode, state: RendererState): number {
+  if (passMode === 'tracers') return MAIN_VIEW_MODES.FULL_RES_TRACER;
+  if (passMode === 'layers') return rendererStateValue(state, 'mainViewMode');
+  return MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
+}
+
 export class WebGPURenderer {
   readonly backend = 'webgpu' as const;
-  static readonly PREVIEW_SIZE = GpuReadback.PREVIEW_SIZE;
   static readonly DIAGNOSTIC_SIZE = GpuReadback.DIAGNOSTIC_SIZE;
 
   private device         : GPUDevice;
@@ -97,8 +108,8 @@ export class WebGPURenderer {
    * a genuinely new source apart from the next frame of the current one.
    */
   private motionResetPending = true;
-  /** 1×1 transparent band layer, padding the inspect passes' layout for a frame of fewer layers. */
-  private transparentLayer: GPUTexture | null = null;
+  /** Inspect passes for a layer count other than the canonical one, by `count:presentation`. */
+  private readonly inspectPassSets = new Map<string, TracerInspectPass>();
   /** Whether this frame ran the motion chore, so `afterSubmit` maps its stats only then. */
   private motionFieldEncoded = false;
   /** `motionFieldUse` per compiled graph — asked every frame, computed once. */
@@ -212,6 +223,7 @@ export class WebGPURenderer {
       this.internalFormat,
       format,
       this.compositorSampler,
+      (layerCount) => this.inspectPassesFor(layerCount, 'sdr'),
     );
     const timestamp = GpuTimestampProfiler.create(device);
     this.gpuProfiler = timestamp.profiler;
@@ -501,11 +513,6 @@ export class WebGPURenderer {
     this.invalidateBindGroupCaches();
   }
 
-  /** @deprecated Side previews use {@link renderStationaryPreviews}. Kept for collision-stats blit path. */
-  requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean {
-    return this.readback.requestPreviewReadback(callback);
-  }
-
   async renderStationaryPreviews(
     state: RendererState,
     options?: StationaryPreviewOptions,
@@ -532,9 +539,9 @@ export class WebGPURenderer {
    * encoder's now-untouched targets and report a black frame.
    */
   /** Graph-owned textures, but only when the graph encoded the current frame. */
-  private lastFrameRoleTextures(): GraphRoleTextures | null {
+  private lastFrameOutputs(): GraphOutputTextures | null {
     if (!this.executorEncodedLastFrame) return null;
-    return this.graphExecutor?.roleTextures() ?? null;
+    return this.graphExecutor?.outputTextures() ?? null;
   }
 
   /**
@@ -545,12 +552,12 @@ export class WebGPURenderer {
    * created. Every pass downstream binds `layers.length` of them.
    */
   private getLayerTextures(): LayerTextures {
-    const roles = this.lastFrameRoleTextures();
+    const roles = this.lastFrameOutputs();
     return roles ? roles.layers : this.layerTextures;
   }
 
   private getTracerTextures(): { below: GPUTexture; above: GPUTexture } {
-    const roles = this.lastFrameRoleTextures();
+    const roles = this.lastFrameOutputs();
     if (roles) return { below: roles.tracerBelow, above: roles.tracerAbove };
     return {
       below: this.persistence.belowTextures[this.persistence.pingPong]!,
@@ -560,7 +567,7 @@ export class WebGPURenderer {
 
   /** Ping-pong index the bind-group caches key on, from whichever path drew. */
   private get activePingPong(): 0 | 1 {
-    return this.lastFrameRoleTextures()?.pingPong ?? this.persistence.pingPong;
+    return this.lastFrameOutputs()?.pingPong ?? this.persistence.pingPong;
   }
 
   private encodeLayerPasses(
@@ -662,6 +669,9 @@ export class WebGPURenderer {
       });
     }
 
+    // The live canvas shows whichever main view the session selected — the
+    // processed composite, or one of the inspect views (the full-res tracer, a
+    // band layer, the heatmap, …).
     this.encodeFrameCore(
       enc,
       state,
@@ -669,30 +679,13 @@ export class WebGPURenderer {
       canvasTex.width,
       canvasTex.height,
       fps,
-      'composite',
+      rendererStateValue(state, 'mainViewMode'),
       this.gpuProfiler,
       hdrCanvas,
     );
 
-    const readbackFlags = this.readback.encodeQueuedReadbacks(
+    const statsEncoded = this.readback.encodeQueuedReadbacks(
       enc,
-      (previewView) => {
-        // The deprecated preview composites through the hand encoder's
-        // `CompositorPass`, whose layout is sized for `pipelines.layerCount`;
-        // a frame the executor drew at another count would not bind to it, and
-        // a binding error would drop this whole command buffer — the frame
-        // with it. Such a frame simply has no preview.
-        const layers = this.getLayerTextures();
-        if (layers.length !== this.pipelines.layerCount) return;
-        this.compositor.encodePreview(
-          enc,
-          previewView,
-          layers,
-          this.getTracerTextures().below,
-          this.getTracerTextures().above,
-          this.activePingPong,
-        );
-      },
       this.diagnosticForReadback(rendererStateValue(state, 'paused')),
     );
 
@@ -707,12 +700,12 @@ export class WebGPURenderer {
     // Only when the chore ran: `off` must not map a stats buffer, or publish a
     // breadcrumb, for a pass that never ran.
     if (this.motionFieldEncoded) this.motionField.afterSubmit();
-    this.readback.afterSubmit(readbackFlags);
+    this.readback.afterSubmit(statsEncoded);
   }
 
   /** Stamp-diagnostic texture the collision-stats readback samples. */
   private diagnosticForReadback(paused: boolean): GPUTexture | null {
-    const roles = this.lastFrameRoleTextures();
+    const roles = this.lastFrameOutputs();
     if (roles) return roles.diagnostic;
     return this.persistence.getDiagnosticTextureForReadback(paused);
   }
@@ -755,7 +748,7 @@ export class WebGPURenderer {
     };
 
     const enc = this.device.createCommandEncoder();
-    this.encodeFrameCore(enc, exportState, output.createView(), width, height, fps, passMode);
+    this.encodeFrameCore(enc, exportState, output.createView(), width, height, fps, exportMainView(passMode, state));
     this.device.queue.submit([enc.finish()]);
 
     const result = await this.readback.readTexturePixels(output, width, height);
@@ -770,11 +763,12 @@ export class WebGPURenderer {
     width: number,
     height: number,
     fps: number,
-    passMode: ExportPassMode,
+    mainView: number,
     profiler: GpuTimestampProfiler | null = null,
     hdrCanvas = false,
   ): void {
     profiler?.beginFrame(enc);
+    const presentation: CanvasPresentation = hdrCanvas ? 'hdr-extended' : 'sdr';
 
     // The motion field depends only on the source frame, so it is produced
     // first, for whichever encoder draws. It is wanted when the temporal term
@@ -794,7 +788,7 @@ export class WebGPURenderer {
     // hand encoder, while it is still the fallback, draws the first
     // min(n, 3) of its three and clears the rest.
     const layerCount = Math.max(1, Math.min(MAX_LAYER_COUNT, state.layers.length));
-    const graphMayDraw = this.graphExecutor !== null && passMode === 'composite';
+    const graphMayDraw = this.graphExecutor !== null;
     const graphField = graphMayDraw ? this.graphFieldUse(layerCount) : NO_MOTION_FIELD_USE;
     this.motionFieldEncoded = (motionMode !== 0 || graphField.reads) && this.currentTexture !== null;
     const motionTexture = this.motionFieldEncoded
@@ -808,18 +802,24 @@ export class WebGPURenderer {
     // presents `hdr-extended`, and the compositor writing it emits the
     // unclamped OETF into the float canvas — and the hand-written encode path
     // is skipped whole rather than partly reused.
+    //
+    // A frame whose canvas shows an inspect view rather than the composite
+    // still runs every pass but the compositor, so the tracers keep
+    // accumulating, and the view is drawn from the graph's outputs.
     if (graphMayDraw && this.currentTexture) {
       const compiled = this.adoptGraphVariant({
         layerCount,
         motion: motionMode !== 0 && motionTexture !== null,
-        presentation: hdrCanvas ? 'hdr-extended' : 'sdr',
+        presentation,
       });
       const executor = this.graphExecutor;
       if (compiled && executor?.ready) {
         this.executorEncodedLastFrame = true;
-        // The live-preview readback still runs through `CompositorPass`, so its
-        // uniform block has to be written even though the graph drew the frame.
-        this.compositor.writeUniforms(compositorUniforms(state, this.pipelines.layerCount));
+        const { outputs } = compiled;
+        const inspectView = mainView !== MAIN_VIEW_MODES.PROCESSED_COMPOSITE
+          && outputs.layers.length > 0
+          && outputs.tracers.length >= 2
+          && TracerInspectPass.drawsMainView(mainView, outputs.layers.length);
         executor.encode(
           enc,
           {
@@ -835,6 +835,7 @@ export class WebGPURenderer {
             width,
             height,
             fps,
+            composite: !inspectView,
             marks: {
               layersEnd: () => {
                 profiler?.markLayersEnd(enc);
@@ -842,10 +843,22 @@ export class WebGPURenderer {
                 profiler?.markMotionFlowEnd(enc);
               },
               stampEnd: () => profiler?.markPersistenceEnd(enc),
-              compositorEnd: () => profiler?.markCompositorEnd(enc),
+              // An inspect view is the frame's compositor; it is marked below.
+              compositorEnd: inspectView ? undefined : () => profiler?.markCompositorEnd(enc),
             },
           },
         );
+        if (inspectView) {
+          const textures = executor.outputTextures()!;
+          this.encodeInspectView(enc, state, mainView, outputView, width, height, presentation, {
+            layers: textures.layers,
+            below: textures.tracerBelow,
+            above: textures.tracerAbove,
+            diagnostic: textures.diagnostic,
+            pingPong: textures.pingPong,
+          });
+          profiler?.markCompositorEnd(enc);
+        }
         return;
       }
     }
@@ -865,52 +878,69 @@ export class WebGPURenderer {
     this.persistence.encode(enc, layerTextures, { state, fps, motionTexture });
     profiler?.markPersistenceEnd(enc);
 
-    const compositorValues = compositorUniforms(state, this.pipelines.layerCount);
-    // The SDR compositor's uniforms are written either way: the live-preview
-    // readback draws through it.
-    this.compositor.writeUniforms(compositorValues);
-    const present = hdrCanvas
-      ? this.hdrPresentPasses()
-      : { compositor: this.compositor, tracerInspect: this.tracerInspect };
-    if (hdrCanvas) present.compositor.writeUniforms(compositorValues);
-    const inspect = tracerInspectSettings(state);
+    const drewView = TracerInspectPass.drawsMainView(mainView, layerTextures.length)
+      && this.encodeInspectView(enc, state, mainView, outputView, width, height, presentation, {
+        layers: layerTextures,
+        // The tracers as they were before this frame's accumulate — what the
+        // hand encoder has always shown — and this frame's stamp diagnostic.
+        below: persistBelow,
+        above: persistAbove,
+        diagnostic: this.persistence.diagnosticTextures[this.persistence.pingPong],
+        pingPong: this.persistence.pingPong,
+      });
+    if (!drewView) {
+      const compositor = hdrCanvas ? this.hdrPresentPasses().compositor : this.compositor;
+      compositor.writeUniforms(compositorUniforms(state, this.pipelines.layerCount));
+      compositor.encode(
+        enc,
+        outputView,
+        layerTextures,
+        persistBelow,
+        persistAbove,
+        this.persistence.pingPong,
+      );
+    }
+    profiler?.markCompositorEnd(enc);
+  }
+
+  /**
+   * Draw one of the inspect views (`TracerInspectPass.drawsMainView`) into
+   * `outputView` from whichever encoder's textures drew this frame. Returns
+   * whether it drew.
+   */
+  private encodeInspectView(
+    enc: GPUCommandEncoder,
+    state: RendererState,
+    mainView: number,
+    outputView: GPUTextureView,
+    width: number,
+    height: number,
+    presentation: CanvasPresentation,
+    textures: {
+      layers: LayerTextures;
+      below: GPUTexture;
+      above: GPUTexture;
+      diagnostic: GPUTexture | null;
+      pingPong: 0 | 1;
+    },
+  ): boolean {
     const {
       tracerAboveOpacity, tracerBelowOpacity, tracerBlendMode, layerBlendMode, layerOpacities,
       ...inspectView
-    } = inspect;
-
-    if (passMode === 'tracers') {
-      present.tracerInspect.encodeTracerView(
-        enc,
-        outputView,
-        { ...inspect, canvasWidth: width, canvasHeight: height },
-        {
-          layerTextures,
-          persistAbove,
-          persistBelow,
-          pingPong: this.persistence.pingPong,
-        },
-      );
-      profiler?.markCompositorEnd(enc);
-      return;
-    }
-
-    const mainViewMode = passMode === 'composite'
-      ? MAIN_VIEW_MODES.PROCESSED_COMPOSITE
-      : rendererStateValue(state, 'mainViewMode');
-
-    const handledAlternateView = present.tracerInspect.encodeMainView(enc, {
-      mainViewMode,
+    } = tracerInspectSettings(state);
+    const compositorValues = compositorUniforms(state, textures.layers.length);
+    return this.inspectPassesFor(textures.layers.length, presentation).encodeMainView(enc, {
+      mainViewMode: mainView,
       canvasView: outputView,
       canvasWidth: width,
       canvasHeight: height,
       sourceTexture: this.currentTexture!,
       sourceSampler: this.sampler,
-      layerTextures,
-      persistBelow,
-      persistAbove,
-      persistDiagnostic: this.persistence.diagnosticTextures[this.persistence.pingPong],
-      pingPong: this.persistence.pingPong,
+      layerTextures: textures.layers,
+      persistBelow: textures.below,
+      persistAbove: textures.above,
+      persistDiagnostic: textures.diagnostic,
+      pingPong: textures.pingPong,
       colorThresh: rendererStateValue(state, 'tracerThreshold'),
       tracerAboveOp: tracerAboveOpacity,
       tracerBelowOp: tracerBelowOpacity,
@@ -922,18 +952,32 @@ export class WebGPURenderer {
       tracerMode: compositorValues.tracerMode,
       tracerInspect: inspectView,
     });
+  }
 
-    if (!handledAlternateView) {
-      present.compositor.encode(
-        enc,
-        outputView,
-        layerTextures,
-        persistBelow,
-        persistAbove,
-        this.persistence.pingPong,
-      );
+  /**
+   * The inspect passes for a frame of `layerCount` band layers presented to
+   * `presentation`: their shaders and layouts bind every layer, so a frame of
+   * another count needs its own set. The renderer's canonical set is reused;
+   * others are built on first use and kept.
+   */
+  private inspectPassesFor(layerCount: number, presentation: CanvasPresentation): TracerInspectPass {
+    if (layerCount === this.pipelines.layerCount) {
+      return presentation === 'hdr-extended' ? this.hdrPresentPasses().tracerInspect : this.tracerInspect;
     }
-    profiler?.markCompositorEnd(enc);
+    const key = `${layerCount}:${presentation}`;
+    let pass = this.inspectPassSets.get(key);
+    if (!pass) {
+      const pipelines = new WebGPUPipelines(
+        this.device,
+        presentation === 'hdr-extended' ? HDR_CANVAS_FORMAT : this.pipelines.format,
+        this.internalFormat,
+        layerCount,
+        presentation,
+      );
+      pass = new TracerInspectPass(this.device, pipelines, this.compositorSampler);
+      this.inspectPassSets.set(key, pass);
+    }
+    return pass;
   }
 
   /**
@@ -983,39 +1027,23 @@ export class WebGPURenderer {
   }
 
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
-    const roles = this.lastFrameRoleTextures();
-    const above = roles?.tracerAbove ?? this.persistence.aboveTextures[this.persistence.pingPong];
-    const below = roles?.tracerBelow ?? this.persistence.belowTextures[this.persistence.pingPong];
+    const outputs = this.lastFrameOutputs();
+    const above = outputs?.tracerAbove ?? this.persistence.aboveTextures[this.persistence.pingPong];
+    const below = outputs?.tracerBelow ?? this.persistence.belowTextures[this.persistence.pingPong];
     if (!above || !below) return null;
-    if (!roles && this.layerTextures.length < this.layerPipelines.length) return null;
+    if (!outputs && this.layerTextures.length < this.layerPipelines.length) return null;
+    const layers = this.getLayerTextures();
 
     return this.readback.exportTracerView(
-      this.tracerInspect,
+      this.inspectPassesFor(layers.length, 'sdr'),
       {
         persistAbove: above,
         persistBelow: below,
-        layerTextures: this.layersForInspect(this.getLayerTextures()),
+        layerTextures: layers,
         pingPong: this.activePingPong,
       },
       options,
     );
-  }
-
-  /**
-   * `layers` fitted to the inspect passes' layout, which still binds
-   * `pipelines.layerCount` of them: the first ones, padded with a transparent
-   * texel when the executor drew fewer. Those passes read layers only for the
-   * optional overlay; the tracers they inspect are whole either way.
-   */
-  private layersForInspect(layers: LayerTextures): LayerTextures {
-    const count = this.pipelines.layerCount;
-    if (layers.length === count) return layers;
-    this.transparentLayer ??= this.device.createTexture({
-      size: [1, 1, 1],
-      format: this.internalFormat,
-      usage: GPUTextureUsage.TEXTURE_BINDING,
-    });
-    return Array.from({ length: count }, (_, i) => layers[i] ?? this.transparentLayer!);
   }
 
   destroy(): void {
@@ -1033,11 +1061,11 @@ export class WebGPURenderer {
     this.tracerInspect.destroy();
     this.hdrPresent?.compositor.destroy();
     this.hdrPresent?.tracerInspect.destroy();
+    for (const pass of this.inspectPassSets.values()) pass.destroy();
     this.readback.destroy();
     this.stationaryPreview.destroy();
     this.gpuProfiler?.destroy();
     this.fallbackMaskTexture.destroy();
-    this.transparentLayer?.destroy();
     this.profileLut.destroy();
   }
 }

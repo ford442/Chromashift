@@ -6,16 +6,14 @@ import {
   persistenceCompositeFragmentSource,
   persistenceCompositeMotionFragmentSource,
   compositorFragmentSource,
-  tracerViewFragmentSource,
   displayTextureFragmentSource,
-  coincidenceHeatmapFragmentSource,
-  compareFragmentSource,
   persistDiagnosticBlitFragmentSource,
   stampDiagnosticViewFragmentSource,
   toHdrPresentWgsl,
 } from './shaders';
 import { DEFAULT_LAYER_COUNT, assertLayerCount } from './graph';
 import { BAND_LAYER_UNIFORMS } from './graph/templates/wgsl';
+import { emitCoincidenceHeatmapWgsl, emitCompareWgsl, emitTracerViewWgsl } from './shaders/diagnostics';
 import { createUniformData, type UniformData } from './graph/templates/uniformLayout';
 import type { CanvasPresentation } from './gpuOptions';
 
@@ -350,7 +348,7 @@ export class WebGPUPipelines {
       layout  : device.createPipelineLayout({ bindGroupLayouts: [this.tracerViewBGL] }),
       vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module     : device.createShaderModule({ code: this.canvasSource(tracerViewFragmentSource) }),
+        module     : device.createShaderModule({ code: this.canvasSource(emitTracerViewWgsl(this.layerCount)) }),
         entryPoint : 'main',
         targets    : [{ format: this.format }],
       },
@@ -380,7 +378,7 @@ export class WebGPUPipelines {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.heatmapBGL] }),
       vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module: this.device.createShaderModule({ code: this.canvasSource(coincidenceHeatmapFragmentSource) }),
+        module: this.device.createShaderModule({ code: this.canvasSource(emitCoincidenceHeatmapWgsl(this.layerCount)) }),
         entryPoint: 'main',
         targets: [{ format: this.format }],
       },
@@ -395,7 +393,7 @@ export class WebGPUPipelines {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.compareBGL] }),
       vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module: this.device.createShaderModule({ code: this.canvasSource(compareFragmentSource) }),
+        module: this.device.createShaderModule({ code: this.canvasSource(emitCompareWgsl(this.layerCount)) }),
         entryPoint: 'main',
         targets: [{ format: this.format }],
       },

@@ -128,8 +128,6 @@ export interface ChromashiftRenderer {
     state: RendererState,
     options?: StationaryPreviewOptions,
   ): Promise<StationaryPreviewResult>;
-  /** @deprecated Side previews use {@link renderStationaryPreviews}. */
-  requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean;
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean;
   getRenderTiming(): RenderTiming;
   exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null>;

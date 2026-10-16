@@ -151,6 +151,26 @@ export interface EmittedPass {
   presentation?: CanvasPresentation;
 }
 
+/**
+ * What the rest of the renderer reads out of a graph, by what it is — the
+ * inspect views, the readbacks, the exports and the stationary previews. Node
+ * ids; the executor resolves them to this frame's textures.
+ */
+export interface GraphOutputs {
+  /** The pass whose result reaches the swapchain (the `blend`), or `null`. */
+  composite: string | null;
+  /** `band-layer` nodes, in `layerIndex` order. */
+  layers: string[];
+  /**
+   * The accumulators, in the compositor's input order: the shipped below /
+   * above pair first, then any extra timescales. Schedule order for a graph
+   * whose accumulators reach no compositor.
+   */
+  tracers: string[];
+  /** The accumulator whose stamp diagnostic the readbacks sample (the `above` tracer). */
+  diagnostic: string | null;
+}
+
 export interface CompiledGraph {
   backend: GraphBackend;
   /** Structural hash — the cache key. Identical topology ⇒ identical hash. */
@@ -161,4 +181,5 @@ export interface CompiledGraph {
   emitted: EmittedPass[];
   /** Number of `band-layer` nodes, i.e. the colour-band count this graph renders. */
   layerCount: number;
+  outputs: GraphOutputs;
 }

@@ -310,13 +310,39 @@ exists to avoid on the hand-encoded path.
 `window.passGraphCompileCount` makes the first half observable and
 `WebGpuGraphExecutor.pipelineBuildCount` the second.
 
-### The roles the rest of the renderer still needs
+### Named outputs
 
-The live preview, the collision-stats readback and the tracer-inspect passes
-read named textures. When the executor draws the frame they come out of *its*
-pool: `roleTextures()` maps the graph's `band-layer` nodes (in `layerIndex`
-order) and the `blend` node's two tracer inputs onto those roles. A graph
-without them is legal — those extras simply do not run.
+Everything outside the compositor that reads a graph — the inspect views, the
+collision-stats readback, the export pass modes, the stationary previews —
+reads it through `CompiledGraph.outputs`, which the compiler names from the
+topology: the `composite` (the `blend`), the `layers` in `layerIndex` order,
+every accumulator in the compositor's input order (`tracers`: below, above,
+extras), and the `diagnostic` accumulator the readbacks sample. The executor
+resolves them to this frame's textures (`outputTextures()`). A graph without
+them is legal — the views that need them simply do not run.
+
+A frame whose canvas shows an output rather than the composite runs the graph
+with `composite: false`: every pass but the compositor, so the layers draw and
+the tracers keep accumulating, and then the view is drawn from the outputs:
+
+| Reads the outputs | How |
+|---|---|
+| Main views — full-res tracer, a band layer, source, heatmap, compare split, stamp diagnostics | `TracerInspectPass`, whose shaders are emitted for the frame's layer count |
+| Export `tracers` / `layers` | the tracer view / the session's view with its tracers zeroed |
+| Tracer PNG export, collision stats | the last frame's `tracers` / `diagnostic` |
+| Stationary previews | a second executor at 128×128 (*Separated* is its composite with the tracers hidden; *Tracer* warms its accumulators and reads them through the tracer view) |
+
+So every one of them now sees the frame's real layer count — a seven-layer
+session previews and inspects seven bands — where they used to be fixed at
+the hand encoder's three.
+
+The main views were broken on WebGPU from July until this: the export
+refactor (`ddeb3e5`) made the live frame pass `'composite'` as its export pass
+mode, which forced the processed composite whatever view the session selected,
+so "Show Full Tracer", the layer views and the quad compare cells all drew the
+composite. The live frame now draws `state.mainViewMode`, on both encoders;
+`e2e/graph-executor.spec.ts` checks that the tracer view changes the canvas and
+that the two encoders draw it byte-identically.
 
 ## Graph shapes
 
@@ -627,6 +653,11 @@ path, one step per PR. Landed so far:
 - **N tracer timescales** (step 5). The compositor blends any number of `decay`
   inputs, so a graph with three compiles and draws: `?graph=trails3`. See
   [Tracer timescales](#tracer-timescales).
+- **Consumers read the graph** (step 6). The inspect views, the export pass
+  modes, the readbacks and the stationary previews read the graph's named
+  outputs instead of the hand encoder's textures, at any layer count. See
+  [Named outputs](#named-outputs). The deprecated live-preview readback
+  (`requestPreviewReadback`, no callers) is gone.
 
 Still to do:
 
@@ -640,13 +671,10 @@ Still to do:
 - **The WebGL executor.** The diagnostic / XR / screenshot backend still
   compiles only. It is second in line on purpose: it has no template for `warp`
   or `blur`, so the shapes worth executing are WebGPU's first.
-- **N layers everywhere else.** What still draws at most three is the hand
-  encoder — `drawnLayerCount` / `encodeLayerClear` draw the first `min(n, 3)` of
-  its three canonical passes and clear the rest, which is what a `?graph=0`
-  session gets until the flip — and the passes that read the band layers outside
-  the executor: the stationary previews and the tracer-inspect passes (the tracer
-  PNG export binds the first three of an N-layer frame). Those move onto the graph
-  in the steps below, and the clear helpers go with the hand encoder.
+- **N layers on the hand encoder.** It still compiles three band passes:
+  `drawnLayerCount` / `encodeLayerClear` draw the first `min(n, 3)` and clear the
+  rest, which is what a `?graph=0` session gets until the flip. The helpers go
+  with the hand encoder.
 - **`history` feedback cycles.** A ring whose oldest slot could close a cycle
   would make true previous-frame feedback (a warp steered by its own last
   output) expressible.

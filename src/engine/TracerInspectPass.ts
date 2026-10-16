@@ -14,17 +14,20 @@ import {
 import type { WebGPUPipelines } from './WebGPUPipelines';
 import { layerTextureEntries, type LayerTextures } from './BindGroupCache';
 import { DEFAULT_PER_LAYER_OPACITY, RENDERER_STATE_DEFAULTS } from '../state/defaults';
-import { createUniformData, packUniforms } from './graph/templates/uniformLayout';
+import { createUniformData, packUniforms, type UniformData } from './graph/templates/uniformLayout';
 import {
-  COMPARE_UNIFORMS,
   DISPLAY_UNIFORMS,
   HEATMAP_UNIFORMS,
-  TRACER_VIEW_UNIFORMS,
+  compareUniformLayout,
+  tracerViewUniformLayout,
 } from './shaders/diagnostics';
 
-/** The inspection shaders still read three layers; a missing opacity is opaque. */
-const opacityAt = (opacities: readonly number[] | undefined, index: number): number =>
-  opacities?.[index] ?? DEFAULT_PER_LAYER_OPACITY;
+/** One opacity per band layer the pass binds; a missing one is opaque. */
+function layerOpacityValues(opacities: readonly number[] | undefined, count: number): Record<string, number> {
+  const values: Record<string, number> = {};
+  for (let i = 0; i < count; i += 1) values[`layerOpacity${i}`] = opacities?.[i] ?? DEFAULT_PER_LAYER_OPACITY;
+  return values;
+}
 
 export interface TracerViewEncodeParams {
   canvasWidth: number;
@@ -76,7 +79,9 @@ export class TracerInspectPass {
   private readonly tracerViewBGL: GPUBindGroupLayout;
   private readonly tracerViewUniformBuf: GPUBuffer;
   private readonly tracerViewSampler: GPUSampler;
-  private readonly tracerViewUniforms = createUniformData(TRACER_VIEW_UNIFORMS);
+  /** The band layers every pass here binds — `pipelines.layerCount`. */
+  private readonly layerCount: number;
+  private readonly tracerViewUniforms: UniformData;
   private readonly tracerViewBindGroupCache: TexturePairBindGroupCacheEntry[];
 
   private readonly displayPipeline: GPURenderPipeline;
@@ -103,7 +108,7 @@ export class TracerInspectPass {
   private readonly comparePipeline: GPURenderPipeline;
   private readonly compareBGL: GPUBindGroupLayout;
   private readonly compareUniformBuf: GPUBuffer;
-  private readonly compareUniforms = createUniformData(COMPARE_UNIFORMS);
+  private readonly compareUniforms: UniformData;
   private readonly compareBindGroupCache: LayerTextureBindGroupCacheEntry = {
     bindGroup: null,
     layers: null,
@@ -127,11 +132,14 @@ export class TracerInspectPass {
   ) {
     this.device = device;
     this.compositorSampler = compositorSampler;
+    this.layerCount = pipelines.layerCount;
+    this.tracerViewUniforms = createUniformData(tracerViewUniformLayout(this.layerCount));
+    this.compareUniforms = createUniformData(compareUniformLayout(this.layerCount));
 
     this.tracerViewBGL = pipelines.tracerViewBGL;
     this.tracerViewPipeline = pipelines.createTracerViewPipeline();
     this.tracerViewUniformBuf = device.createBuffer({
-      size: TRACER_VIEW_UNIFORMS.bytes,
+      size: tracerViewUniformLayout(pipelines.layerCount).bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.tracerViewSampler = device.createSampler({
@@ -160,7 +168,7 @@ export class TracerInspectPass {
     this.compareBGL = pipelines.compareBGL;
     this.comparePipeline = pipelines.createComparePipeline();
     this.compareUniformBuf = device.createBuffer({
-      size: COMPARE_UNIFORMS.bytes,
+      size: compareUniformLayout(pipelines.layerCount).bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -180,6 +188,23 @@ export class TracerInspectPass {
     invalidateLayerTextureCache(this.heatmapBindGroupCache);
     invalidateLayerTextureCache(this.compareBindGroupCache);
     invalidateSimpleTextureCache(this.stampDiagnosticBindGroupCache);
+  }
+
+  /**
+   * Whether {@link encodeMainView} draws `mainViewMode` itself for a frame of
+   * `layerCount` band layers — every view but the processed composite, and a
+   * layer view only of a layer the frame has. A frame showing one of these
+   * needs the graph's outputs, not its compositor.
+   */
+  static drawsMainView(mainViewMode: number, layerCount: number): boolean {
+    const layerIndex = mainViewMode - MAIN_VIEW_MODES.LAYER_0;
+    return mainViewMode === MAIN_VIEW_MODES.FULL_RES_TRACER
+      || mainViewMode === MAIN_VIEW_MODES.SOURCE_IMAGE
+      || (mainViewMode >= MAIN_VIEW_MODES.LAYER_0 && mainViewMode <= MAIN_VIEW_MODES.LAYER_2
+        && layerIndex < layerCount)
+      || mainViewMode === MAIN_VIEW_MODES.COINCIDENCE_HEATMAP
+      || mainViewMode === MAIN_VIEW_MODES.COMPARE_SOURCE_COMPOSITE
+      || mainViewMode === MAIN_VIEW_MODES.STAMP_DIAGNOSTICS;
   }
 
   encodeMainView(enc: GPUCommandEncoder, params: MainViewEncodeParams): boolean {
@@ -221,7 +246,10 @@ export class TracerInspectPass {
       return true;
     }
 
-    if (mainViewMode >= MAIN_VIEW_MODES.LAYER_0 && mainViewMode <= MAIN_VIEW_MODES.LAYER_2) {
+    if (
+      mainViewMode >= MAIN_VIEW_MODES.LAYER_0 && mainViewMode <= MAIN_VIEW_MODES.LAYER_2
+      && mainViewMode - MAIN_VIEW_MODES.LAYER_0 < params.layerTextures.length
+    ) {
       const layerIndex = mainViewMode - MAIN_VIEW_MODES.LAYER_0;
       this.encodeDisplay(
         enc,
@@ -266,7 +294,8 @@ export class TracerInspectPass {
     // Options come from state (`tracerInspectSettings`) or from an export
     // request, whose fields are optional; both fall back to the same defaults.
     const defaults = RENDERER_STATE_DEFAULTS;
-    packUniforms(TRACER_VIEW_UNIFORMS, {
+    packUniforms(tracerViewUniformLayout(this.layerCount), {
+      ...layerOpacityValues(options.layerOpacities, this.layerCount),
       canvasAspect: options.canvasWidth / Math.max(1, options.canvasHeight),
       texAspect: tW / Math.max(1, tH),
       tracerAboveOpacity: options.tracerAboveOpacity,
@@ -281,9 +310,6 @@ export class TracerInspectPass {
       applyTonemap: (options.applyTonemap ?? defaults.tracerInspectTonemap) ? 1 : 0,
       showLayers: (options.showLayers ?? defaults.tracerInspectShowLayers) ? 1 : 0,
       layerBlendMode: options.layerBlendMode ?? defaults.layerBlendMode,
-      layerOpacity0: opacityAt(options.layerOpacities, 0),
-      layerOpacity1: opacityAt(options.layerOpacities, 1),
-      layerOpacity2: opacityAt(options.layerOpacities, 2),
     }, this.tracerViewUniforms);
     this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniforms.buffer);
 
@@ -399,15 +425,13 @@ export class TracerInspectPass {
   }
 
   private encodeCompare(enc: GPUCommandEncoder, targetView: GPUTextureView, params: MainViewEncodeParams): void {
-    packUniforms(COMPARE_UNIFORMS, {
+    packUniforms(compareUniformLayout(this.layerCount), {
+      ...layerOpacityValues(params.layerOpacities, this.layerCount),
       sourceAspect: params.sourceTexture.width / Math.max(1, params.sourceTexture.height),
       tracerAboveOpacity: params.tracerAboveOp,
       tracerBelowOpacity: params.tracerBelowOp,
       layerBlendMode: params.layerBlendMode,
       tracerBlendMode: params.tracerBlendMode,
-      layerOpacity0: opacityAt(params.layerOpacities, 0),
-      layerOpacity1: opacityAt(params.layerOpacities, 1),
-      layerOpacity2: opacityAt(params.layerOpacities, 2),
       stampBoost: params.stampBoost,
       dividerWidth: 0.004,
       outputMode: params.outputMode,

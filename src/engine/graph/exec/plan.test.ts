@@ -48,11 +48,12 @@ describe('encode plan — default graph', () => {
     expect(blend.tracerInputs).toEqual(['tracer-below', 'tracer-above']);
   });
 
-  it('names the role textures the renderer’s preview passes read', () => {
-    expect(plan.roles).toEqual({
+  it('names the outputs the inspect views and readbacks read', () => {
+    expect(compile(buildDefaultGraph()).outputs).toEqual({
+      composite: 'composite',
       layers: ['layer0', 'layer1', 'layer2'],
-      tracerBelow: 'tracer-below',
-      tracerAbove: 'tracer-above',
+      tracers: ['tracer-below', 'tracer-above'],
+      diagnostic: 'tracer-above',
     });
   });
 });
@@ -112,7 +113,8 @@ describe('encode plan — non-default shapes', () => {
           : node
       )),
     };
-    const plan = buildEncodePlan(compile(swapped));
+    const compiled = compile(swapped);
+    const plan = buildEncodePlan(compiled);
     // Asserted as a mapping, not a list: reordering the compositor's inputs
     // also reorders the schedule, and it is the id → timescale pairing that
     // matters here.
@@ -125,7 +127,7 @@ describe('encode plan — non-default shapes', () => {
       [DEFAULT_GRAPH_IDS.tracerAbove]: 'below',
       [DEFAULT_GRAPH_IDS.tracerBelow]: 'above',
     });
-    expect(plan.roles.tracerBelow).toBe(DEFAULT_GRAPH_IDS.tracerAbove);
+    expect(compiled.outputs.tracers[0]).toBe(DEFAULT_GRAPH_IDS.tracerAbove);
   });
 
   it('routes the warped layer into coincidence only', () => {
@@ -289,9 +291,10 @@ describe('encode plan — body smear', () => {
     expect(buildEncodePlan(compile(buildGraphPreset('feedback'))).wantsMotionField).toBe(false);
   });
 
-  it('keeps the band-layer roles the preview passes read', () => {
-    expect(plan.roles.layers).toEqual(['layer0', 'layer1', 'layer2']);
-    expect(plan.roles.tracerAbove).toBe('tracer-above');
+  it('keeps the band-layer outputs the inspect views read', () => {
+    const outputs = compile(buildGraphPreset('smear')).outputs;
+    expect(outputs.layers).toEqual(['layer0', 'layer1', 'layer2']);
+    expect(outputs.tracers[1]).toBe('tracer-above');
   });
 });
 
@@ -344,9 +347,10 @@ describe('encode plan — a third tracer timescale', () => {
     expect(roles).toEqual([['tracer-below', 'below'], ['tracer-above', 'above'], [TRAILS3_ECHO_ID, 'extra']]);
     const blend = plan.steps.find((step) => step.kind === 'blend');
     expect(blend?.kind === 'blend' && blend.tracerInputs).toEqual(['tracer-below', 'tracer-above', TRAILS3_ECHO_ID]);
-    // The readback roles are still the shipped pair.
-    expect(plan.roles.tracerBelow).toBe('tracer-below');
-    expect(plan.roles.tracerAbove).toBe('tracer-above');
+    // Every accumulator is an output; the readbacks' diagnostic is still the `above` one.
+    const outputs = compile(buildTrails3Graph()).outputs;
+    expect(outputs.tracers).toEqual(['tracer-below', 'tracer-above', TRAILS3_ECHO_ID]);
+    expect(outputs.diagnostic).toBe('tracer-above');
   });
 
   it('gives the temporal term to all three accumulators through one motion node', () => {

@@ -63,19 +63,10 @@ export type EncodeStep =
 /** A tracer accumulator's timescale: the shipped below / above pair, or an extra one. */
 export type TracerTimescale = 'below' | 'above' | 'extra';
 
-/** Node ids playing the roles the renderer's ancillary passes still need. */
-export interface GraphRoles {
-  /** `band-layer` node ids in `layerIndex` order. */
-  layers: string[];
-  tracerBelow: string | null;
-  tracerAbove: string | null;
-}
-
 export interface EncodePlan {
   steps: EncodeStep[];
   /** `coincidence` and `motion` nodes whose pass their `decay` consumers absorbed. */
   fused: Set<string>;
-  roles: GraphRoles;
   layerCount: number;
   /**
    * True when a scheduled `source` node binds the motion field. The renderer
@@ -117,7 +108,6 @@ const intParam = (node: GraphNode, name: string, fallback: number): number =>
  */
 export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
   const byId = new Map(compiled.graph.nodes.map((node) => [node.id, node]));
-  const scheduled = new Set(compiled.passes.map((pass) => pass.nodeId));
 
   // Readers, excluding feedback edges: those read the previous frame and so
   // cannot make a producer's pass necessary this frame.
@@ -147,20 +137,12 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
     if (readOnlyBy(pass.nodeId, absorbs)) fused.add(pass.nodeId);
   }
 
-  const layerNodes = compiled.graph.nodes
-    .filter((node) => node.kind === 'band-layer' && scheduled.has(node.id))
-    .sort((a, b) => intParam(a, 'layerIndex', 0) - intParam(b, 'layerIndex', 0));
-
   const decayNodes = compiled.passes.filter((pass) => pass.kind === 'decay');
 
   // The compositor binds its tracer textures as (below, above, extras…), so
-  // its input order is what names the timescales. A graph whose accumulators
-  // do not reach a blend falls back to schedule order.
-  const blendPass = compiled.passes.find((pass) => pass.kind === 'blend');
-  const blendNode = blendPass ? byId.get(blendPass.nodeId) : undefined;
-  const tracerOrder = blendNode
-    ? blendPass!.inputs.slice(intParam(blendNode, 'layerInputs', compiled.layerCount))
-    : [];
+  // its input order is what names the timescales (`compiled.outputs.tracers`;
+  // schedule order for accumulators that reach no blend).
+  const tracerOrder = compiled.outputs.tracers;
   const roleOf = (nodeId: string, index: number): TracerTimescale => {
     const position = tracerOrder.indexOf(nodeId);
     const at = position >= 0 ? position : index;
@@ -291,17 +273,10 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
     }
   }
 
-  const tracerRole = (index: 0 | 1): string | null =>
-    tracerOrder[index] ?? decayNodes[index]?.nodeId ?? null;
 
   return {
     steps,
     fused,
-    roles: {
-      layers: layerNodes.map((node) => node.id),
-      tracerBelow: tracerRole(0),
-      tracerAbove: tracerRole(1),
-    },
     layerCount: compiled.layerCount,
     ...fieldUseFlags(motionFieldUse(compiled)),
   };

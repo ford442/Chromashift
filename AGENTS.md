@@ -328,6 +328,8 @@ Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser
 
 Both are disabled while viewing the full-res tracer or any non-composite view mode.
 
+On WebGPU every view mode but the composite is drawn by `TracerInspectPass` from whichever encoder drew the frame — under `?graph` from the graph's named outputs, at the frame's layer count (docs/PASS_GRAPH.md § *Named outputs*). The live frame draws `mainViewMode`; an export draws the processed composite (`composite`), the full-res tracer (`tracers`) or the session's view with its tracers zeroed (`layers`).
+
 ### Preview strip & view hierarchy
 
 The floating **Original / Separated / Tracer** thumbnails (`PreviewStrip.tsx`) are
@@ -337,7 +339,7 @@ The floating **Original / Separated / Tracer** thumbnails (`PreviewStrip.tsx`) a
 | Preview | Objective | Implementation |
 |---------|-----------|----------------|
 | **Original** | Raw decoded source | 2D `drawImage` (`previewOriginalRef`) |
-| **Separated** | Colour-band mapping, no tracers | `StationaryPreviewRenderer` / `useStationaryPreviews` |
+| **Separated** | Colour-band mapping, no tracers | `StationaryPreviewRenderer` (a pass-graph executor of its own, at the session's layer count) / `useStationaryPreviews` |
 | **Tracer** | Coincidence map at preset angles | Isolated persistence warmup + tracers pass (`previewTracerRef`) |
 | **Main canvas** | Live rotating composite + tracers | `mainCanvasRef` swapchain render |
 
@@ -409,7 +411,7 @@ Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, C
 3. **Motion flow** — the two Lucas–Kanade dispatches, `motionMode: 'direction'` only. Split from **Motion** so switching into `direction` reads as new work rather than as the frame-difference pass regressing.
 4. **Persistence** — dual tracer ping-pong + diagnostic texture.
 5. **Compositor** — final blend or alternate main-view pass (tracer inspect, layer isolation, etc.).
-6. **Readback** — preview thumbnail + collision-stats blit/copy when queued.
+6. **Readback** — collision-stats blit/copy when queued.
 
 Timestamps resolve into a `QUERY_RESOLVE | COPY_SRC` buffer, then `copyBufferToBuffer` into a `MAP_READ | COPY_DST` readback (`MAP_READ` may only pair with `COPY_DST`). Results appear one frame later. If query/buffer allocation fails or the timestamp period is 0, GPU timing is skipped and the HUD uses CPU `performance.now()` — renderer init must not fail. The Diagnostics panel **Perf HUD** toggle (`output.performanceHudEnabled`) gates all query writes and resolves — when off, there is zero timestamp cost. The HUD shows CPU ms, per-pass GPU ms, an approximate bandwidth model, a 120-frame sparkline, budget warnings (`1000 / fps` ms), and optional auto-degrade (disable MSAA, tracer scale ×0.75, live preview readback off).
 

@@ -39,6 +39,7 @@ import type {
   EmittedPass,
   GraphBackend,
   GraphNode,
+  GraphOutputs,
   PassGraph,
   ScheduledPass,
 } from './types';
@@ -269,10 +270,39 @@ export function compileGraph(graph: PassGraph, backend: GraphBackend): CompiledG
     allocation,
     emitted,
     layerCount,
+    outputs: graphOutputs(schedule.passes, validation.byId, layerCount),
   };
   cache.set(hash, compiled);
   compileCount += 1;
   return compiled;
+}
+
+/**
+ * The named outputs of a scheduled graph. The compositor's input order is what
+ * names the tracer timescales — never a node param, which a structural-cache
+ * hit could hand back stale.
+ */
+function graphOutputs(
+  passes: readonly ScheduledPass[],
+  byId: ReadonlyMap<string, GraphNode>,
+  layerCount: number,
+): GraphOutputs {
+  const layers = passes
+    .filter((pass) => pass.kind === 'band-layer')
+    .map((pass) => byId.get(pass.nodeId)!)
+    .sort((a, b) => intParam(a, 'layerIndex', 0) - intParam(b, 'layerIndex', 0))
+    .map((node) => node.id);
+  const blend = passes.find((pass) => pass.kind === 'blend');
+  const decays = passes.filter((pass) => pass.kind === 'decay').map((pass) => pass.nodeId);
+  const tracers = blend
+    ? blend.inputs.slice(intParam(byId.get(blend.nodeId)!, 'layerInputs', layerCount))
+    : decays;
+  return {
+    composite: blend?.nodeId ?? null,
+    layers,
+    tracers,
+    diagnostic: tracers[1] ?? tracers[0] ?? null,
+  };
 }
 
 /** Validate, then reject any reachable node this backend has no template for. */

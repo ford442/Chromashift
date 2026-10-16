@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { emitCoincidenceHeatmapWgsl, emitCompareWgsl, emitTracerViewWgsl } from './shaders/diagnostics';
 import { WebGPUPipelines, drawnLayerCount, encodeLayerClear } from './WebGPUPipelines';
 import { buildRendererState } from './buildRendererState';
 import { MAX_LAYER_COUNT, assertLayerCount, clampLayerCount } from './graph/layerSpecs';
@@ -217,6 +218,25 @@ describe('WebGPU bind-group layouts are generated from the layer count', () => {
       expect(bindings(compositor.descriptor)).toHaveLength(
         maxShaderBinding(emitCompositorWgsl(layerCount, '')) + 1,
       );
+    },
+  );
+
+  it.each([1, 2, 3, 5, 8, MAX_LAYER_COUNT])(
+    'binds every layer the inspect shaders read (%i layers)',
+    (layerCount) => {
+      const pipelines = new WebGPUPipelines(device, 'bgra8unorm', 'rgba16float', layerCount);
+      const layout = (create: () => GPUBindGroupLayout) =>
+        bindings((create() as unknown as { descriptor: GPUBindGroupLayoutDescriptor }).descriptor);
+      // The tracer view, the heatmap and the compare split read every band
+      // layer, so a frame of any count is inspectable — not only the first three.
+      expect(layout(() => pipelines.createTracerViewBGL()))
+        .toHaveLength(maxShaderBinding(emitTracerViewWgsl(layerCount)) + 1);
+      expect(layout(() => pipelines.createHeatmapBGL()))
+        .toHaveLength(maxShaderBinding(emitCoincidenceHeatmapWgsl(layerCount)) + 1);
+      expect(layout(() => pipelines.createCompareBGL()))
+        .toHaveLength(maxShaderBinding(emitCompareWgsl(layerCount)) + 1);
+      expect(emitTracerViewWgsl(layerCount)).toContain(`layerOpacity${layerCount - 1}`);
+      expect(emitCompareWgsl(layerCount)).toContain(`cu.layerOpacity${layerCount - 1}`);
     },
   );
 

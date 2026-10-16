@@ -9,6 +9,7 @@ export type {
   EmittedPass,
   GraphBackend,
   GraphNode,
+  GraphOutputs,
   HistoryRing,
   NodeKind,
   NodeKindSpec,

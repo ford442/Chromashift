@@ -433,6 +433,65 @@ test.describe('pass-graph executor', () => {
     });
   });
 
+  test.describe('main views and stationary previews', () => {
+    /** The 2D thumbnail canvas labelled `label` in the preview strip, as distinct colours. */
+    const thumbnailColours = (page: Page, label: string) => page.evaluate((text) => {
+      const caption = [...document.querySelectorAll('div')]
+        .find((el) => el.textContent === text && el.previousElementSibling?.tagName === 'CANVAS');
+      const canvas = caption?.previousElementSibling as HTMLCanvasElement | undefined;
+      const context = canvas?.getContext('2d');
+      if (!canvas || !context) return 0;
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      const seen = new Set<number>();
+      for (let i = 0; i < data.length; i += 4) seen.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+      return seen.size;
+    }, label);
+
+    test('Show Full Tracer draws the tracer view, and both encoders draw it alike', async ({ page }) => {
+      // Fixed in Phase 3: since the July export refactor, the live frame always
+      // drew the processed composite, whatever view the session selected.
+      // A half-scale tracer letterboxes, so its view cannot pass for the composite.
+      test.setTimeout(300_000);
+      const scene = frozenScene({ scale: 0.5 });
+      const tracerViews: CanvasFrame[] = [];
+      for (const graph of ['0', '1']) {
+        await primeOverlaySections(page, { tracer: true });
+        const composite = await captureFrame(page, url(graph, { compute: false, scene }));
+        expectContent(composite, `the ?graph=${graph} composite`);
+        await page.getByRole('button', { name: /Show Full Tracer/ }).click();
+        await expect(page.getByRole('button', { name: /Exit Tracer View/ })).toBeVisible();
+        await page.waitForTimeout(500);
+        const tracer = await readStableGpuCanvasFrame(page);
+        expect(
+          frameDifference(composite, tracer).differingPixels,
+          `?graph=${graph} drew the composite in the tracer view`,
+        ).toBeGreaterThan(0);
+        tracerViews.push(tracer);
+      }
+      expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
+      expect(frameDifference(tracerViews[0], tracerViews[1])).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+    });
+
+    test('a seven-layer session previews its seventh band', async ({ page }) => {
+      test.setTimeout(180_000);
+      const scene = encodePresetParam({
+        version: 8,
+        settings: {
+          layers: {
+            count: 7,
+            angles: [0, 40, 80, 120, 160, 200, 240],
+            extensions: [0, 0, 0, 0, 0, 0, 0],
+            opacities: [0, 0, 0, 0, 0, 0, 1],
+          },
+        },
+      });
+      await openScene(page, url('1', { scene }));
+      // The thumbnails are frames of the default graph at the session's count,
+      // so the seventh band alone still paints the Separated preview.
+      await expect.poll(() => thumbnailColours(page, 'Separated'), { timeout: 60_000 }).toBeGreaterThan(1);
+    });
+  });
+
   test.describe('the hdr-extended present', () => {
     test('an HDR canvas draws through the executor, as the hand encoder draws it', async ({ page }) => {
       test.setTimeout(240_000);
