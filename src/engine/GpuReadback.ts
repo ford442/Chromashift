@@ -1,13 +1,8 @@
-import {
-  getOrCreateSimpleTextureBindGroup,
-  invalidateSimpleTextureCache,
-  type SimpleTextureBindGroupCacheEntry,
-} from './BindGroupCache';
+import { bindGroupSlot, cachedBindGroup, type LayerTextures } from './bindGroups';
 import type { CollisionStats } from './types/RendererState';
 import type { ExportTracerOptions, ExportTracerResult } from './types/RendererContracts';
 import type { TracerInspectPass } from './TracerInspectPass';
 import type { WebGPUPipelines } from './WebGPUPipelines';
-import type { LayerTextures } from './BindGroupCache';
 
 export class GpuReadback {
   static readonly DIAGNOSTIC_SIZE = 64;
@@ -17,11 +12,7 @@ export class GpuReadback {
   private readonly persistDiagnosticBlitPipeline: GPURenderPipeline;
   private readonly persistDiagnosticBlitBGL: GPUBindGroupLayout;
   private readonly persistDiagnosticSampler: GPUSampler;
-  private readonly diagnosticBlitBindGroupCache: SimpleTextureBindGroupCacheEntry = {
-    bindGroup: null,
-    texture: null,
-    sampler: null,
-  };
+  private readonly diagnosticBlitBindGroup = bindGroupSlot();
 
   private diagnosticTexture: GPUTexture | null = null;
   private diagnosticStagingBuffer: GPUBuffer | null = null;
@@ -40,10 +31,6 @@ export class GpuReadback {
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
     });
-  }
-
-  invalidateCaches(): void {
-    invalidateSimpleTextureCache(this.diagnosticBlitBindGroupCache);
   }
 
   /**
@@ -227,13 +214,12 @@ export class GpuReadback {
   }
 
   private encodeDiagnosticBlit(enc: GPUCommandEncoder, persistDiagnostic: GPUTexture): void {
-    const bg = getOrCreateSimpleTextureBindGroup(
+    const bg = cachedBindGroup(
       this.device,
-      this.diagnosticBlitBindGroupCache,
+      this.diagnosticBlitBindGroup,
       this.persistDiagnosticBlitBGL,
-      this.persistDiagnosticSampler,
-      persistDiagnostic,
-      [
+      [persistDiagnostic],
+      () => [
         { binding: 0, resource: this.persistDiagnosticSampler },
         { binding: 1, resource: persistDiagnostic.createView() },
       ],

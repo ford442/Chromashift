@@ -90,12 +90,13 @@ const intParam = (node: GraphNode, name: string, fallback: number): number =>
  *
  * This is the half of the executor that has nothing to do with WebGPU: which
  * passes run, in what order, reading which producers. Keeping it here means the
- * fusion rule below — the one thing that has to match the hand-written encoder
- * exactly — is checked by a unit test rather than by a screenshot.
+ * fusion rule below — the one thing that had to match the hand-written encoder
+ * exactly, and still has to match its frames pinned in `e2e/__golden__` — is
+ * checked by a unit test rather than by a screenshot.
  *
  * **Fusion.** The compiler emits one fused coincidence+decay shader for both
- * kinds, because that is what shipped: `PersistencePass` runs the overlap math
- * twice, once per tracer timescale, and there is no standalone stamp pass. So a
+ * kinds, because that is what shipped: the hand encoder ran the overlap math
+ * twice, once per tracer timescale, with no standalone stamp pass. So a
  * `coincidence` node read *only* by `decay` nodes emits no pass of its own and
  * each consumer inherits its inputs. A `coincidence` read by anything else
  * keeps its own pass.
@@ -103,8 +104,7 @@ const intParam = (node: GraphNode, name: string, fallback: number): number =>
  * The temporal term fuses the same way: a `motion` node read only by `decay`
  * nodes is absorbed into them — they run the motion variant of the pass and
  * bind its field — and a `coincidence` read only by such a node counts as read
- * by the decays. That is the hand encoder's motion persistence pass, node for
- * node.
+ * by the decays. That is the shipped motion persistence pass, node for node.
  */
 export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
   const byId = new Map(compiled.graph.nodes.map((node) => [node.id, node]));

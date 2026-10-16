@@ -3,8 +3,6 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { RENDERER_STATE_DEFAULTS } from '../../../state/defaults';
-import { CompositorPass } from '../../CompositorPass';
-import { WebGPUPipelines } from '../../WebGPUPipelines';
 import { durationToDecay } from '../../math/decay';
 import type { RendererState } from '../../types/RendererState';
 import { compileGraph, resetGraphCompileCache } from '../compile';
@@ -92,18 +90,13 @@ describe('state → uniform values', () => {
   });
 });
 
-describe('the hand encoder and the graph executor write the same bytes', () => {
+describe('the executor writes the blocks the layouts describe', () => {
   const CANVAS = { width: 320, height: 240 };
 
   function executorCompositorBytes(layerCount: number, state: RendererState) {
     const gpu = createFakeGpu();
-    const pipelines = new WebGPUPipelines(gpu.device, 'bgra8unorm', 'rgba16float', layerCount);
     const sampler = gpu.device.createSampler({});
     const source = gpu.device.createTexture({ size: [CANVAS.width, CANVAS.height, 1], format: 'rgba8unorm', usage: 0 });
-
-    const hand = new CompositorPass(gpu.device, pipelines, sampler);
-    hand.writeUniforms(compositorUniforms(state, layerCount));
-    const handBytes = gpu.bufferContents.get(hand.uniformBuf.label)!;
 
     resetGraphCompileCache();
     const executor = new WebGpuGraphExecutor(gpu.device, 'rgba16float', 'bgra8unorm', sampler, sampler);
@@ -119,24 +112,24 @@ describe('the hand encoder and the graph executor write the same bytes', () => {
         fps: 30,
       },
     );
-    // The blend node's block is the one other buffer of the compositor's size.
+    // The blend node's block is the one buffer of the compositor's size.
     const bytes = compositorUniformLayout(layerCount).bytes;
-    const skip = new Set([hand.uniformBuf.label]);
     const graphLabel = [...gpu.bufferSizes]
-      .find(([label, size]) => size === bytes && !skip.has(label) && gpu.bufferContents.has(label))![0];
-    return { handBytes, graphBytes: gpu.bufferContents.get(graphLabel)! };
+      .find(([label, size]) => size === bytes && gpu.bufferContents.has(label))![0];
+    return gpu.bufferContents.get(graphLabel)!;
   }
 
   it.each([1, 3, 5, 8])('compositor uniforms at %i layers', (layerCount) => {
     const state = stateWithLayers(layerCount);
-    const { handBytes, graphBytes } = executorCompositorBytes(layerCount, state);
-    expect([...handBytes]).toEqual([...graphBytes]);
+    const graphBytes = executorCompositorBytes(layerCount, state);
+    const layout = compositorUniformLayout(layerCount);
+    const expected = packUniforms(layout, compositorUniforms(state, layerCount), createUniformData(layout));
+    expect([...graphBytes]).toEqual([...new Uint8Array(expected.buffer)]);
 
     // And the fields after the opacities sit where the shader reads them. The
     // hand compositor used to write three opacities at slots 4–6 whatever the
     // layer count, so at any other count everything below landed a slot off.
-    const layout = compositorUniformLayout(layerCount);
-    const view = new DataView(handBytes.buffer, handBytes.byteOffset, handBytes.byteLength);
+    const view = new DataView(graphBytes.buffer, graphBytes.byteOffset, graphBytes.byteLength);
     expect(view.getFloat32(uniformOffset(layout, 'diagnosticsOpacity'), true)).toBeCloseTo(0.3, 6);
     expect(view.getUint32(uniformOffset(layout, 'outputMode'), true)).toBe(2);
     expect(view.getFloat32(uniformOffset(layout, 'halfOverlayAlpha'), true)).toBeCloseTo(0.25, 6);
@@ -144,8 +137,8 @@ describe('the hand encoder and the graph executor write the same bytes', () => {
       .toBeCloseTo(0.8 * (0.2 + (layerCount - 1) * 0.05), 6);
   });
 
-  it('band-layer and persist blocks pack identically from either path', () => {
-    // Both encoders now call the same builders, so this pins the packing:
+  it('band-layer and persist blocks pack as they shipped', () => {
+    // Every encode path calls the same builders, so this pins the packing:
     // field-for-field, the block is the shipped one.
     const state = stateWithLayers(3, { colorMode: 2, sobelEnabled: true, tracerThreshold: 0.2 });
     const band = packUniforms(BAND_LAYER_UNIFORMS, bandLayerUniforms(state, { layerIndex: 1, hasClassificationMask: false }), createUniformData(BAND_LAYER_UNIFORMS));

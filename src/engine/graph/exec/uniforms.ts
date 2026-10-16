@@ -12,9 +12,10 @@ import type {
 /**
  * `RendererState` → uniform values, once, for every encode path.
  *
- * The hand encoder, the graph executor, the stationary previews and the WebGL
- * passes each used to translate state into uniforms themselves, with their own
- * copy of every default. They now all call the functions below and pack the
+ * The hand encoder (since deleted), the graph executor, the stationary
+ * previews and the WebGL passes each used to translate state into uniforms
+ * themselves, with their own copy of every default. Every encode path now
+ * calls the functions below and pack the
  * result with the layout the shader's emitter declares (`packUniforms`), so a
  * renderer can neither pick a different fallback nor put a field in the wrong
  * slot.

@@ -134,7 +134,7 @@ Use this workflow for shader-based image effects:
 
 1. Prototype in `src/engine/webgl/` (GLSL in `webgl/shaders/`, pass logic in `WebGLLayerPass`, `WebGLCompositorPass`, etc.) when Playwright or manual screenshots need visible pixels.
 2. Keep uniform names and state fields close to the WebGPU equivalents.
-3. Port final logic to `src/engine/shaders/` and, when needed, `src/engine/WebGPUPipelines.ts`.
+3. Port final logic to the node templates in `src/engine/graph/templates/` (WGSL and GLSL), which the WebGPU executor and the WebGL passes both emit from.
 4. Verify `npm run build` and `npm run lint`.
 5. Smoke both `?renderer=webgl` and `?renderer=webgpu` when the environment supports WebGPU.
 

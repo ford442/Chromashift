@@ -115,10 +115,9 @@ export class RendererOrchestrator {
   private gpuImageAnalysis: GpuImageAnalysis | null = null;
   /**
    * Session-lifetime lease on the device's single `WebGpuChoreBackend`.
-   * Analysis, `PersistencePass` (coincidence), and `MotionFieldPass` each take
-   * their own lease on the same backend; this one outlives all of them, so a
-   * slot teardown or an analysis rebuild never destroys compute state the other
-   * lanes are still using.
+   * Analysis and `MotionFieldPass` each take their own lease on the same
+   * backend; this one outlives both, so a slot teardown or an analysis rebuild
+   * never destroys compute state the other lane is still using.
    */
   private choreLease: GpuChoreLease | null = null;
   private backend: RendererBackend;
@@ -129,7 +128,7 @@ export class RendererOrchestrator {
   private destroyed = false;
   private resizePending = false;
   private canvasOptions: WebGpuCanvasOptions = {};
-  /** The pass-graph source every slot draws, or `null` for the hand encoder. */
+  /** The pass-graph source every slot draws, or `null` for the default graph. */
   private passGraphSource: PassGraphSource | null = null;
 
   private constructor(
@@ -276,8 +275,10 @@ export class RendererOrchestrator {
   }
 
   /**
-   * Adopt a pass-graph source for every slot — the main canvas, the compare
-   * slot, the quad cells — now and as slots are created. Each slot's renderer
+   * Adopt a pass-graph source (`null`: the default graph) for every slot —
+   * the main canvas, the compare slot, the quad cells — now and as slots are
+   * created. Every slot is told its id either way, so its breadcrumbs land
+   * in its own entry of `window.passGraphSlotsExecuting`. Each slot's renderer
    * owns an executor of its own (its pool, buffers and bind groups); their
    * compiled programs are shared per device, keyed on the structural hash, so a
    * second slot drawing the same graph compiles nothing. WebGPU only: the WebGL
@@ -499,7 +500,7 @@ export class RendererOrchestrator {
 
     const slot: RendererSlot = { id, canvas, renderer, webgpuContext: context };
     this.slots.set(id, slot);
-    if (this.passGraphSource) this.applyPassGraph(slot);
+    this.applyPassGraph(slot);
     return slot;
   }
 
@@ -518,7 +519,7 @@ export class RendererOrchestrator {
 
     const slot: RendererSlot = { id, canvas, renderer, webgpuContext: context };
     this.slots.set(id, slot);
-    if (this.passGraphSource) this.applyPassGraph(slot);
+    this.applyPassGraph(slot);
     return slot;
   }
 

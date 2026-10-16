@@ -38,8 +38,8 @@ pixel output is unchanged from before profiles existed (`buildRendererState` emi
 `colorProfileMode: 0` and no LUT). Any other profile bakes a **256 × rows RGBA8 LUT** —
 column = preprocessed luminance bucket, row = session layer index — that both renderers
 sample. `rows = profileLutRows(layers.count) = max(layers.count, 3)`: never fewer than three,
-because the WebGL renderer and the WebGPU hand encoder (`?graph=0`) still compile the three
-canonical band passes, which read rows 0–2 at any layer count. Row `r` is baked from profile layer
+because the WebGL renderer still compiles the three canonical band passes, which read rows
+0–2 at any layer count (the WebGPU executor draws one band per layer and reads row `i`). Row `r` is baked from profile layer
 `r % profile.layers.length`, so a profile authored for one layer count colours every other
 count (a 3-layer profile at 5 layers cycles warm / cool / leaf / warm / cool).
 

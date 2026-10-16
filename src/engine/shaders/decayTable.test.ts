@@ -12,7 +12,7 @@ import {
 } from '../math/decay';
 import { PERSISTENCE_FRAGMENT_SOURCE } from '../webgl/shaders/persistence';
 import { DECAY_GLSL, DECAY_SHADER_FLOAT, DECAY_WGSL, shaderFloat } from './decayLiterals';
-import { persistenceCompositeFragmentSource, persistenceFragmentSource } from './persistence';
+import { persistenceFragmentSource, persistenceMotionFragmentSource } from './persistence';
 
 /**
  * Decay-constant divergence guard — the `bandTable.test.ts` counterpart for the
@@ -91,7 +91,7 @@ describe('shaderFloat', () => {
 describe('WGSL persistence consumes the canonical table', () => {
   const wgslSources = [
     ['fused persistence', persistenceFragmentSource],
-    ['compute-fed composite', persistenceCompositeFragmentSource],
+    ['fused persistence with the temporal term', persistenceMotionFragmentSource],
   ] as const;
 
   it.each(wgslSources)('%s selects between the canonical exponents', (_name, source) => {

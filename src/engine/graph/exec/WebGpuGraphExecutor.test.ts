@@ -1,6 +1,4 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { WebGPUPipelines } from '../../WebGPUPipelines';
-import { PersistencePass } from '../../PersistencePass';
 import { createUniformData, packUniforms, uniformOffset } from '../templates/uniformLayout';
 import { PERSIST_MOTION_UNIFORMS, PERSIST_UNIFORMS, compositorUniformLayout } from '../templates/wgsl';
 import { graphTracerDuration, persistUniforms } from './uniforms';
@@ -10,7 +8,7 @@ import { buildDefaultGraph } from '../defaultGraph';
 import { presentingTo, withMotionTerm } from '../variants';
 import type { CompiledGraph } from '../types';
 import { createFakeGpu, fakeRendererState, type FakeGpu } from './__fixtures__/fakeDevice';
-import { WebGpuGraphExecutor } from './WebGpuGraphExecutor';
+import { WebGpuGraphExecutor, type GraphFrame } from './WebGpuGraphExecutor';
 
 const CANVAS = { width: 640, height: 480 };
 
@@ -36,6 +34,7 @@ describe('WebGpuGraphExecutor', () => {
     exec: WebGpuGraphExecutor,
     overrides: Record<string, unknown> = {},
     motionField: GPUTexture | null = null,
+    frame?: GraphFrame,
   ): void => {
     exec.encode(
       gpu.device.createCommandEncoder(),
@@ -53,6 +52,7 @@ describe('WebGpuGraphExecutor', () => {
         height: CANVAS.height,
         fps: 30,
       },
+      frame,
     );
   };
 
@@ -289,13 +289,89 @@ describe('WebGpuGraphExecutor', () => {
       expect(executor.pipelineBuildCount).toBe(withMotion);
     });
 
-    it('re-verifies after a sample-count change, and the hand encoder draws meanwhile', async () => {
+    it('re-verifies after a sample-count change, drawing the old one meanwhile', async () => {
       executor.setGraph(compile());
       await executor.prepare();
+      encode(executor, {}, null, executor.readyFrame()!);
       executor.setSampleCount(4);
       expect(executor.ready).toBe(false);
+
+      // The last frame stands in, at the sample count it was validated at —
+      // so no 4× target is allocated for pipelines the device has not accepted.
+      const standIn = executor.readyFrame();
+      expect(standIn?.sampleCount).toBe(1);
+      gpu.reset();
+      encode(executor, {}, null, standIn!);
+      expect(gpu.textures.filter((texture) => texture.sampleCount === 4)).toEqual([]);
+
       await executor.prepare();
       expect(executor.ready).toBe(true);
+      expect(executor.readyFrame()?.sampleCount).toBe(4);
+    });
+
+    it('has nothing to draw before the first variant validates', () => {
+      executor.setGraph(compile());
+      expect(executor.readyFrame()).toBeNull();
+    });
+
+    it('keeps drawing the last variant while the next one validates', async () => {
+      const still = compile();
+      executor.setGraph(still);
+      await executor.prepare();
+      encode(executor, {}, null, executor.readyFrame()!);
+
+      const moving = compileGraph(withMotionTerm(buildDefaultGraph()), 'webgpu');
+      executor.setGraph(moving);
+      const verdict = executor.prepare();
+      // The device has not answered: the still variant keeps the canvas
+      // rather than a frame that binds unvalidated pipelines.
+      expect(executor.readyFrame()?.compiled).toBe(still);
+      expect(executor.drawnGraph).toBe(still);
+
+      await verdict;
+      expect(executor.readyFrame()?.compiled).toBe(moving);
+    });
+
+    it('keeps drawing the last variant when the next one is rejected', async () => {
+      const still = compile();
+      executor.setGraph(still);
+      await executor.prepare();
+      encode(executor, {}, null, executor.readyFrame()!);
+
+      gpu.rejectShadersContaining('WarpUniforms', 'rejected');
+      executor.setGraph(compileGraph(buildWarpGraph(), 'webgpu'));
+      await expect(executor.prepare()).resolves.toBe('rejected');
+      expect(executor.readyFrame()?.compiled).toBe(still);
+    });
+
+    it('never stands a frame in for a canvas of the other format', async () => {
+      const sdr = compile();
+      executor.setGraph(sdr);
+      await executor.prepare();
+      encode(executor, {}, null, executor.readyFrame()!);
+
+      // The canvas went HDR: the SDR compositor cannot draw into it, so until
+      // the HDR variant validates there is nothing to draw.
+      const hdr = compileGraph(presentingTo(buildDefaultGraph(), 'hdr-extended'), 'webgpu');
+      executor.setGraph(hdr);
+      const verdict = executor.prepare();
+      expect(executor.readyFrame('hdr-extended')).toBeNull();
+      await verdict;
+      expect(executor.readyFrame('hdr-extended')?.compiled).toBe(hdr);
+      // Nor the reverse: the HDR target does not draw an SDR frame.
+      expect(executor.readyFrame('sdr')?.compiled).toBe(sdr);
+    });
+
+    it('names the drawn graph\'s outputs, not the target\'s, while it stands in', async () => {
+      const three = compile(buildDefaultGraph(3));
+      executor.setGraph(three);
+      await executor.prepare();
+      encode(executor, {}, null, executor.readyFrame()!);
+
+      executor.setGraph(compileGraph(buildDefaultGraph(7), 'webgpu'));
+      void executor.prepare();
+      encode(executor, {}, null, executor.readyFrame()!);
+      expect(executor.outputTextures()?.layers).toHaveLength(3);
     });
 
     it('verifying builds nothing that encoding would not have built', async () => {
@@ -473,7 +549,7 @@ describe('WebGpuGraphExecutor', () => {
       }
     });
 
-    it('writes the motion uniform block the hand encoder writes', () => {
+    it('writes the motion uniform block persistUniforms() describes, per timescale', () => {
       const field = gpu.device.createTexture({ size: [160, 120, 1], format: 'rgba16float', usage: 0 });
       executor.setGraph(moving());
       gpu.reset();
@@ -481,24 +557,6 @@ describe('WebGpuGraphExecutor', () => {
       const graphBlocks = writtenBlocks();
       expect(graphBlocks).toContainEqual(expectedBlock('below'));
       expect(graphBlocks).toContainEqual(expectedBlock('above'));
-
-      // The hand encoder's fused motion pass — the fake device has no compute
-      // lane, so this is the fragment path the graph runs too.
-      const hand = new PersistencePass(
-        gpu.device,
-        new WebGPUPipelines(gpu.device, 'bgra8unorm', 'rgba16float'),
-        'rgba16float',
-        gpu.device.createSampler({}),
-      );
-      hand.ensureTextures(64, 64);
-      gpu.reset();
-      hand.encode(gpu.device.createCommandEncoder(), [source, source, source], {
-        state: fakeRendererState(MOTION_STATE),
-        fps: 30,
-        motionTexture: field,
-      });
-      expect(writtenBlocks()).toEqual([expectedBlock('below'), expectedBlock('above')]);
-      hand.destroy();
     });
 
     it('keeps the tracers when the term switches on and off', () => {

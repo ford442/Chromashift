@@ -238,7 +238,7 @@ export class GraphTexturePool {
    * The stamp-diagnostic attachment for a fused coincidence/decay pass. The
    * emitted shader always writes `@location(1)`, so the attachment is not
    * optional — but it ping-pongs with the tracer so a readback can name the
-   * frame it came from, exactly as `PersistencePass` does.
+   * frame it came from, exactly as the shipped persistence pass did.
    */
   diagnostic(nodeId: string): { read: GPUTexture; write: GPUTexture } {
     const slot = this.requireSlot(nodeId);
@@ -262,9 +262,7 @@ export class GraphTexturePool {
    * Every accumulator texture the pool owns — both sides of each ping-pong
    * pair and their diagnostic attachments.
    *
-   * `clearPersistence()` has to reach these: when the executor draws, they are
-   * the tracer state, and clearing only the hand encoder's `PersistencePass`
-   * would leave the next graph frame accumulating from the old trails. The
+   * `clearPersistence()` clears these: they are the tracer state. The
    * `history` rings are trails too, so they are cleared with them.
    */
   accumulatorTextures(): GPUTexture[] {

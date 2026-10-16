@@ -107,7 +107,7 @@ and the unit/C++ host tests — see "Test / benchmark only" above.
 | `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
 
 No `*With()` dispatcher is called from a per-frame render or animation-loop path
-(`useAnimationLoop.ts`, `PersistencePass.ts`, `WebGPURenderer.ts` / `WebGLRenderer.ts`
+(`useAnimationLoop.ts`, `WebGPURenderer.ts` and the graph executor / `WebGLRenderer.ts`
 compositor and persistence passes). Tracer decay used to be the one documented exception
 (`durationToDecayWith`, routed through WASM per frame for formula parity only); it now
 calls `durationToDecay()` from `math/decay.ts` directly (see [#145](https://github.com/ford442/Chromashift/issues/145)).

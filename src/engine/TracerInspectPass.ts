@@ -1,18 +1,12 @@
 import { MAIN_VIEW_MODES } from './viewModes';
 import {
-  createTexturePairCache,
-  getOrCreateLayerTextureBindGroup,
-  getOrCreateSimpleTextureBindGroup,
-  getOrCreateTexturePairBindGroup,
-  invalidateLayerTextureCache,
-  invalidateSimpleTextureCache,
-  invalidateTexturePairCache,
-  type LayerTextureBindGroupCacheEntry,
-  type SimpleTextureBindGroupCacheEntry,
-  type TexturePairBindGroupCacheEntry,
-} from './BindGroupCache';
+  bindGroupSlot,
+  cachedBindGroup,
+  layerTextureEntries,
+  type BindGroupSlot,
+  type LayerTextures,
+} from './bindGroups';
 import type { WebGPUPipelines } from './WebGPUPipelines';
-import { layerTextureEntries, type LayerTextures } from './BindGroupCache';
 import { DEFAULT_PER_LAYER_OPACITY, RENDERER_STATE_DEFAULTS } from '../state/defaults';
 import { createUniformData, packUniforms, type UniformData } from './graph/templates/uniformLayout';
 import {
@@ -82,48 +76,33 @@ export class TracerInspectPass {
   /** The band layers every pass here binds — `pipelines.layerCount`. */
   private readonly layerCount: number;
   private readonly tracerViewUniforms: UniformData;
-  private readonly tracerViewBindGroupCache: TexturePairBindGroupCacheEntry[];
+  /** One per ping-pong phase: the tracers' read halves alternate every frame. */
+  private readonly tracerViewBindGroups: [BindGroupSlot, BindGroupSlot] = [bindGroupSlot(), bindGroupSlot()];
 
   private readonly displayPipeline: GPURenderPipeline;
   private readonly displayBGL: GPUBindGroupLayout;
   private readonly displayUniformBuf: GPUBuffer;
   private readonly displayUniforms = createUniformData(DISPLAY_UNIFORMS);
-  private readonly displayBindGroupCache: SimpleTextureBindGroupCacheEntry = {
-    bindGroup: null,
-    texture: null,
-    sampler: null,
-  };
+  private readonly displayBindGroup = bindGroupSlot();
 
   private readonly heatmapPipeline: GPURenderPipeline;
   private readonly heatmapBGL: GPUBindGroupLayout;
   private readonly heatmapUniformBuf: GPUBuffer;
   private readonly heatmapUniforms = createUniformData(HEATMAP_UNIFORMS);
-  private readonly heatmapBindGroupCache: LayerTextureBindGroupCacheEntry = {
-    bindGroup: null,
-    layers: null,
-    uniformBuf: null,
-    extraTexture: null,
-  };
+  private readonly heatmapBindGroup = bindGroupSlot();
 
   private readonly comparePipeline: GPURenderPipeline;
   private readonly compareBGL: GPUBindGroupLayout;
   private readonly compareUniformBuf: GPUBuffer;
   private readonly compareUniforms: UniformData;
-  private readonly compareBindGroupCache: LayerTextureBindGroupCacheEntry = {
-    bindGroup: null,
-    layers: null,
-    uniformBuf: null,
-    extraTexture: null,
-  };
+  /** Per ping-pong phase, like the tracer view: it binds both tracers too. */
+  private readonly compareBindGroups: [BindGroupSlot, BindGroupSlot] = [bindGroupSlot(), bindGroupSlot()];
 
   private readonly stampDiagnosticViewPipeline: GPURenderPipeline;
   private readonly stampDiagnosticViewBGL: GPUBindGroupLayout;
   private readonly stampDiagnosticViewSampler: GPUSampler;
-  private readonly stampDiagnosticBindGroupCache: SimpleTextureBindGroupCacheEntry = {
-    bindGroup: null,
-    texture: null,
-    sampler: null,
-  };
+  /** Per ping-pong phase: the diagnostic accumulator flips with the tracers. */
+  private readonly stampDiagnosticBindGroups: [BindGroupSlot, BindGroupSlot] = [bindGroupSlot(), bindGroupSlot()];
 
   constructor(
     device: GPUDevice,
@@ -149,7 +128,6 @@ export class TracerInspectPass {
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
     });
-    this.tracerViewBindGroupCache = createTexturePairCache(2);
 
     this.displayBGL = pipelines.displayBGL;
     this.displayPipeline = pipelines.createDisplayPipeline();
@@ -180,14 +158,6 @@ export class TracerInspectPass {
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
     });
-  }
-
-  invalidateCaches(): void {
-    invalidateTexturePairCache(this.tracerViewBindGroupCache);
-    invalidateSimpleTextureCache(this.displayBindGroupCache);
-    invalidateLayerTextureCache(this.heatmapBindGroupCache);
-    invalidateLayerTextureCache(this.compareBindGroupCache);
-    invalidateSimpleTextureCache(this.stampDiagnosticBindGroupCache);
   }
 
   /**
@@ -273,7 +243,7 @@ export class TracerInspectPass {
     }
 
     if (mainViewMode === MAIN_VIEW_MODES.STAMP_DIAGNOSTICS && params.persistDiagnostic) {
-      this.encodeStampDiagnostic(enc, canvasView, params.persistDiagnostic);
+      this.encodeStampDiagnostic(enc, canvasView, params.persistDiagnostic, params.pingPong);
       return true;
     }
 
@@ -313,14 +283,12 @@ export class TracerInspectPass {
     }, this.tracerViewUniforms);
     this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniforms.buffer);
 
-    const bg = getOrCreateTexturePairBindGroup(
+    const bg = cachedBindGroup(
       this.device,
-      this.tracerViewBindGroupCache[ctx.pingPong],
+      this.tracerViewBindGroups[ctx.pingPong],
       this.tracerViewBGL,
-      ctx.layerTextures,
-      ctx.persistAbove,
-      ctx.persistBelow,
-      [
+      [ctx.persistAbove, ctx.persistBelow, ...ctx.layerTextures],
+      () => [
         { binding: 0, resource: this.tracerViewSampler },
         { binding: 1, resource: ctx.persistAbove.createView() },
         { binding: 2, resource: ctx.persistBelow.createView() },
@@ -361,13 +329,12 @@ export class TracerInspectPass {
     packUniforms(DISPLAY_UNIFORMS, { canvasAspect, texAspect: textureAspect }, this.displayUniforms);
     this.device.queue.writeBuffer(this.displayUniformBuf, 0, this.displayUniforms.buffer);
 
-    const bg = getOrCreateSimpleTextureBindGroup(
+    const bg = cachedBindGroup(
       this.device,
-      this.displayBindGroupCache,
+      this.displayBindGroup,
       this.displayBGL,
-      sampler,
-      texture,
-      [
+      [sampler, texture],
+      () => [
         { binding: 0, resource: sampler },
         { binding: 1, resource: texture.createView() },
         { binding: 2, resource: { buffer: this.displayUniformBuf } },
@@ -397,13 +364,12 @@ export class TracerInspectPass {
     packUniforms(HEATMAP_UNIFORMS, { threshold: colorThresh }, this.heatmapUniforms);
     this.device.queue.writeBuffer(this.heatmapUniformBuf, 0, this.heatmapUniforms.buffer);
 
-    const bg = getOrCreateLayerTextureBindGroup(
+    const bg = cachedBindGroup(
       this.device,
-      this.heatmapBindGroupCache,
+      this.heatmapBindGroup,
       this.heatmapBGL,
       layerTextures,
-      this.heatmapUniformBuf,
-      [
+      () => [
         { binding: 0, resource: this.compositorSampler },
         ...layerTextureEntries(1, layerTextures),
         { binding: layerTextures.length + 1, resource: { buffer: this.heatmapUniformBuf } },
@@ -439,13 +405,12 @@ export class TracerInspectPass {
     }, this.compareUniforms);
     this.device.queue.writeBuffer(this.compareUniformBuf, 0, this.compareUniforms.buffer);
 
-    const bg = getOrCreateLayerTextureBindGroup(
+    const bg = cachedBindGroup(
       this.device,
-      this.compareBindGroupCache,
+      this.compareBindGroups[params.pingPong],
       this.compareBGL,
-      params.layerTextures,
-      this.compareUniformBuf,
-      [
+      [params.sourceSampler, params.sourceTexture, ...params.layerTextures, params.persistBelow, params.persistAbove],
+      () => [
         { binding: 0, resource: params.sourceSampler },
         { binding: 1, resource: params.sourceTexture.createView() },
         ...layerTextureEntries(2, params.layerTextures),
@@ -453,7 +418,6 @@ export class TracerInspectPass {
         { binding: params.layerTextures.length + 3, resource: params.persistAbove.createView() },
         { binding: params.layerTextures.length + 4, resource: { buffer: this.compareUniformBuf } },
       ],
-      params.persistAbove,
     );
 
     const pass = enc.beginRenderPass({
@@ -474,14 +438,14 @@ export class TracerInspectPass {
     enc: GPUCommandEncoder,
     targetView: GPUTextureView,
     persistDiagnostic: GPUTexture,
+    pingPong: 0 | 1,
   ): void {
-    const bg = getOrCreateSimpleTextureBindGroup(
+    const bg = cachedBindGroup(
       this.device,
-      this.stampDiagnosticBindGroupCache,
+      this.stampDiagnosticBindGroups[pingPong],
       this.stampDiagnosticViewBGL,
-      this.stampDiagnosticViewSampler,
-      persistDiagnostic,
-      [
+      [persistDiagnostic],
+      () => [
         { binding: 0, resource: this.stampDiagnosticViewSampler },
         { binding: 1, resource: persistDiagnostic.createView() },
       ],

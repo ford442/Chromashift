@@ -81,8 +81,8 @@ export const MOTION_FIELD_SOURCE_ID = 'motion-field';
  * Every `decay` node's stamp is routed through a `motion` node that also reads
  * the motion field: `stamp → motion(stamp, field) → decay`. The executor fuses
  * the `motion` node into each decay pass (see `exec/plan.ts`), so the frame is
- * the hand encoder's motion persistence pass — the same program, uniforms and
- * field — rather than an extra pass.
+ * the shipped motion persistence pass — the same program, uniforms and field —
+ * rather than an extra pass.
  *
  * A graph that already reads the motion field (the body-smear starter steers a
  * `displace` with it) keeps its own source; otherwise one is added. A graph

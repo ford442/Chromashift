@@ -260,23 +260,15 @@ export function useAppWebGPUInit({
       const fallbackReason = bootstrapped.orchestrator.getFallbackReason();
       setRendererFallbackReason(fallbackReason);
       publishRendererBreadcrumbs(bootstrapped.orchestrator.getBackend(), fallbackReason);
-      // Pass-graph gate — on by default; `?graph=blur`, `?graph=trails3`, …
-      // select another shape and `?graph=0` is the escape hatch to the hand
-      // encoder. Compiles the selected graph for the live backend and
-      // publishes the breadcrumbs. On WebGPU the graph source is then handed
-      // to every slot's renderer, whose `GraphExecutor` draws it in place of
-      // the hand-written topology; the default graph is that topology (to ±1
-      // against the compute-fed stamp), so the gate changes the encode path
-      // and not the look. The WebGL diagnostic backend compiles but does not
-      // execute. See docs/PASS_GRAPH.md.
-      const compiledGraph = activatePassGraph(bootstrapped.orchestrator.getBackend());
-      if (compiledGraph) {
-        // Every slot's renderer builds the variant each frame needs from the
-        // selected shape (the temporal term, the layer count, the canvas it
-        // presents to); the main canvas's still variant is the graph just
-        // compiled, so adopting it compiles nothing new.
-        bootstrapped.orchestrator.setPassGraph(presetGraphSource(passGraphSelection().name));
-      }
+      // Pass-graph gate: which shape the session draws (`?graph=blur`,
+      // `?graph=trails3`, …; the default graph otherwise). Compiles it for the
+      // live backend and publishes the breadcrumbs. On WebGPU the graph source
+      // is then handed to every slot's renderer, whose `GraphExecutor` draws
+      // each frame — a variant the shape refuses draws the default graph. The
+      // WebGL diagnostic backend compiles but does not execute.
+      // See docs/PASS_GRAPH.md.
+      activatePassGraph(bootstrapped.orchestrator.getBackend());
+      bootstrapped.orchestrator.setPassGraph(presetGraphSource(passGraphSelection().name));
       // Apply the requested canvas colour space now: the standing effect below
       // only re-runs when `displayColorSpace` changes, so a preset URL that
       // selects display-p3 before boot would otherwise never reach the canvas.

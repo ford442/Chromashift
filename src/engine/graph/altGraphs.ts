@@ -11,8 +11,8 @@ import type { GraphNode, ParamValue, PassGraph } from './types';
  *
  * These exist to prove the executor is not a second hand-written encoder: each
  * one is a *different shape* — a different pass count, a different schedule, a
- * different pool — and every one of them draws without a line changing in
- * `WebGPUPipelines.ts` or `PersistencePass.ts`.
+ * different pool — and every one of them draws without a line changing in the
+ * renderer or the executor.
  */
 export const GRAPH_PRESETS = ['default', 'blur', 'warp', 'smear', 'feedback', 'trails3'] as const;
 export type GraphPresetName = (typeof GRAPH_PRESETS)[number];

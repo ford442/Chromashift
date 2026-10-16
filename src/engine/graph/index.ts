@@ -69,7 +69,6 @@ export {
 export {
   activatePassGraph,
   passGraphRefusal,
-  passGraphRequested,
   passGraphSelection,
   publishGraphExecutorBreadcrumbs,
   publishGraphVariant,

@@ -192,8 +192,9 @@ The `TextureManager` fetches this file on startup and loads each image into a GP
 ```
 src/
   engine/
-    WebGPURenderer.ts, WebGPUPipelines.ts, PersistencePass.ts,
-    CompositorPass.ts, TracerInspectPass.ts   # 5-pass GPU pipeline (layers → persistence → compositor)
+    WebGPURenderer.ts   # WebGPU frame: the pass-graph executor draws it (layers → persistence → compositor)
+    graph/              # pass-graph IR, compiler and WebGPU executor (docs/PASS_GRAPH.md)
+    TracerInspectPass.ts, WebGPUPipelines.ts  # inspect views over the graph's outputs
     webgl/              # WebGL2 diagnostic renderer (pass modules + GLSL shaders; WebGLRenderer.ts re-export)
     rendererMode.ts     # URL/localStorage/backend breadcrumb selection
     TextureManager.ts, WebGLTextureManager.ts  # JSON/blob fetch + GPU/WebGL texture upload

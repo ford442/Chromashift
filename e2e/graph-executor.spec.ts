@@ -14,19 +14,25 @@ import {
   type CanvasFrame,
 } from './helpers/gpuCanvasReadback';
 import { STRUCTURED_FIXTURE_PNG } from './helpers/structuredFixture';
+import { UPDATING_FRAME_GOLDENS, readFrameGolden, writeFrameGolden } from './helpers/framePng';
 
 /**
- * Pass-graph **executor** (docs/PASS_GRAPH.md Phase 2).
+ * Pass-graph **executor** (docs/PASS_GRAPH.md).
  *
  * `pass-graph.spec.ts` covers the compiler's breadcrumbs on the WebGL
  * diagnostic backend, where the graph compiles but nothing draws it. These
- * specs are the other half: on WebGPU, `?graph=1` hands the compiled graph to
- * `WebGpuGraphExecutor`, which encodes it instead of the hand-written topology.
+ * specs are the other half: on WebGPU, `WebGpuGraphExecutor` draws every frame.
  *
  * Frames are read back from the swap-chain texture (see
  * `helpers/gpuCanvasReadback.ts`), not screenshotted, and every pixel
  * comparison *fails* on a blank frame rather than skipping: a black canvas is
  * the bug these specs exist to catch, not a property of the runner.
+ *
+ * Until the hand encoder was deleted, the default graph's frames were compared
+ * with its frames on the same device. Those frames are now pinned in
+ * `e2e/__golden__/` — captured from the hand encoder at the last commit that
+ * had one, with the executor drawing them byte-identically on the same runner
+ * — and `expectHandEncoderFrame` compares against them.
  */
 
 /**
@@ -83,10 +89,10 @@ const HDR_SCENE = frozenScene({}, { canvasHdr: true });
 const SETTLE_MS = 2500;
 
 /**
- * `?no_gpu_compute` pins the hand encoder's persistence to the fused fragment
- * pass — the one the graph emits. With compute available, `PersistencePass`
- * instead stamps overlaps in a compute kernel and decays against that, which
- * is equivalent math quantised differently. See the bounded comparison below.
+ * `?no_gpu_compute` keeps every chore on its CPU lane. It is how the pinned
+ * frames were captured: the hand encoder then ran the fused fragment pass the
+ * graph emits, instead of stamping overlaps in a compute kernel (equivalent
+ * math, quantised differently — see the compute-lane spec below).
  */
 function url(
   graph: string,
@@ -131,9 +137,47 @@ async function openScene(page: Page, target: string): Promise<void> {
   await page.waitForTimeout(SETTLE_MS);
 }
 
-async function captureFrame(page: Page, target: string): Promise<CanvasFrame> {
+/**
+ * Wait until the primary canvas's executor draws a variant matching `variant`
+ * (`window.passGraphDrawnVariant`, e.g. `3:motion:sdr`). Until the device has
+ * validated a variant the last one keeps drawing — or, at boot, nothing — so a
+ * frame read before this is of the wrong variant.
+ */
+async function waitForDrawnVariant(page: Page, variant: RegExp): Promise<void> {
+  // SwiftShader takes seconds to validate a variant's pipelines.
+  await expect.poll(() => page.evaluate(() => window.passGraphDrawnVariant ?? ''), { timeout: 30_000 })
+    .toMatch(variant);
+}
+
+async function captureFrame(page: Page, target: string, variant = /./): Promise<CanvasFrame> {
   await openScene(page, target);
+  await waitForDrawnVariant(page, variant);
   return readStableGpuCanvasFrame(page);
+}
+
+/**
+ * `frame` is the frame the hand encoder drew for the same scene, pinned as
+ * `e2e/__golden__/<name>.png` (see the file comment; `UPDATE_FRAME_GOLDENS=1`
+ * rewrites it, which makes it the executor's own output — only for a change
+ * meant to move pixels).
+ *
+ * Exact on the runner the frames were captured on. The bound is the one the
+ * compute-fed stamp was held to — ±1 on a few pixels — so a SwiftShader build
+ * that rounds a float an ulp differently does not fail it; a wrong pass,
+ * binding or uniform moves far more than that.
+ */
+function expectHandEncoderFrame(frame: CanvasFrame, name: string): void {
+  expectContent(frame, `the ${name} frame`);
+  if (UPDATING_FRAME_GOLDENS) {
+    writeFrameGolden(name, frame);
+    return;
+  }
+  const golden = readFrameGolden(name, frame.format);
+  const { differingPixels, maxChannelDelta } = frameDifference(golden, frame);
+  expect(maxChannelDelta, `${name}: a channel moved by more than one step from the hand encoder's frame`)
+    .toBeLessThanOrEqual(1);
+  expect(differingPixels, `${name}: too many pixels differ from the hand encoder's frame`)
+    .toBeLessThanOrEqual(frame.width * frame.height * 0.0005);
 }
 
 /** A frame with more than one colour — the renderer drew *something*. */
@@ -145,9 +189,10 @@ function expectContent(frame: CanvasFrame, what: string): void {
 }
 
 test.describe('pass-graph executor', () => {
-  test('encodes the default graph in place of the hand-written topology', async ({ page }) => {
+  test('encodes the default graph as the five shipped passes', async ({ page }) => {
     test.setTimeout(90_000);
     await openScene(page, url('1'));
+    await waitForDrawnVariant(page, /^3:still:sdr$/);
 
     const crumbs = await page.evaluate(() => ({
       active: window.passGraphActive,
@@ -170,14 +215,16 @@ test.describe('pass-graph executor', () => {
     ]);
   });
 
-  test('stays on the hand encoder without the gate', async ({ page }) => {
-    await stubMinimalCorpus(page);
-    await stubStructuredFixture(page);
-    await page.goto(url('0'));
-    await waitForWebGPU(page);
-
-    expect(await page.evaluate(() => window.passGraphActive)).toBe(false);
-    expect(await page.evaluate(() => window.passGraphExecuting ?? null)).toBeNull();
+  test('reads the retired ?graph=0 as the default graph', async ({ page }) => {
+    // `?graph=0` selected the hand encoder for the release it outlived the
+    // flip. There is nothing to select now: it draws the default graph.
+    await openScene(page, url('0'));
+    await waitForDrawnVariant(page, /./);
+    expect(await page.evaluate(() => ({
+      active: window.passGraphActive,
+      name: window.passGraphName,
+      executing: window.passGraphExecuting,
+    }))).toEqual({ active: true, name: 'default', executing: 'default' });
   });
 
   test('draws through the executor with no ?graph at all', async ({ page }) => {
@@ -198,27 +245,20 @@ test.describe('pass-graph executor', () => {
     expect(frameDifference(byDefault, gated)).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
   });
 
-  test('default graph via the executor is byte-identical to the hand encoder', async ({ page }) => {
-    test.setTimeout(180_000);
-    const handEncoded = await captureFrame(page, url('0', { compute: false }));
-    expectContent(handEncoded, 'the hand-encoded frame');
-    const graphEncoded = await captureFrame(page, url('1', { compute: false }));
+  test('the default graph draws the hand encoder’s frame', async ({ page }) => {
+    test.setTimeout(120_000);
+    const frame = await captureFrame(page, url('1', { compute: false }));
     expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
-    expect(frameDifference(handEncoded, graphEncoded)).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+    expectHandEncoderFrame(frame, 'default-composite');
   });
 
-  test('stays within one step of the hand encoder’s compute-fed persistence', async ({ page }) => {
-    // The one known divergence, bounded rather than hidden. The compute lane
-    // writes the overlap stamp to a texture and decays against it; the fused
-    // pass never quantises the stamp. Measured here: ±1 on 3 of 731k pixels.
-    // A wrong pass, binding or uniform moves far more than that.
-    test.setTimeout(180_000);
-    const handEncoded = await captureFrame(page, url('0'));
-    expectContent(handEncoded, 'the hand-encoded frame');
-    const graphEncoded = await captureFrame(page, url('1'));
-    const { differingPixels, maxChannelDelta } = frameDifference(handEncoded, graphEncoded);
-    expect(maxChannelDelta).toBeLessThanOrEqual(1);
-    expect(differingPixels).toBeLessThanOrEqual(handEncoded.width * handEncoded.height * 0.0005);
+  test('with the GPU compute lanes on, the stamp is still the fused fragment one', async ({ page }) => {
+    // The hand encoder stamped overlaps in a compute kernel when it could and
+    // decayed against that — ±1 on 3 of 731k pixels from the fused pass,
+    // which never quantises the stamp. The graph has no such lane: whatever
+    // compute the device offers, its frame is the fused pass's.
+    test.setTimeout(120_000);
+    expectHandEncoderFrame(await captureFrame(page, url('1')), 'default-composite');
   });
 
   test('the frozen-scene preset is applied at all', async ({ page }) => {
@@ -303,8 +343,8 @@ test.describe('pass-graph executor', () => {
   test('refuses a graph whose pipelines the device rejects, and keeps drawing', async ({ page }) => {
     // Invalid WGSL is not an exception: it is an invalid pipeline, and the
     // first frame to bind it is dropped whole. Corrupt the warp shader on its
-    // way to the device and the executor must name the refusal and leave the
-    // hand encoder on screen — not adopt the graph and draw black.
+    // way to the device and the renderer must name the refusal and stand the
+    // default graph in for it — not adopt the graph and draw black.
     test.setTimeout(120_000);
     await page.addInitScript(() => {
       const create = GPUDevice.prototype.createShaderModule;
@@ -319,11 +359,13 @@ test.describe('pass-graph executor', () => {
 
     const crumbs = await page.evaluate(() => ({
       error: window.passGraphError,
+      name: window.passGraphName,
       executing: window.passGraphExecuting ?? null,
     }));
     expect(crumbs.error).toMatch(/^invalid-pipeline: /);
-    expect(crumbs.executing).toBeNull();
-    expectContent(frame, 'the frame after the refusal');
+    expect(crumbs.name).toBe('warp');
+    expect(crumbs.executing).toBe('default');
+    expectHandEncoderFrame(frame, 'default-composite');
   });
 
   test.describe('the temporal term', () => {
@@ -332,7 +374,7 @@ test.describe('pass-graph executor', () => {
     test('a motion mode draws through the executor, fused into the accumulators', async ({ page }) => {
       test.setTimeout(120_000);
       const gpuErrors = collectGpuErrors(page);
-      const frame = await captureFrame(page, url('1', { scene: GATE_SCENE }));
+      const frame = await captureFrame(page, url('1', { scene: GATE_SCENE }), /:motion:/);
       const crumbs = await page.evaluate(() => ({
         error: window.passGraphError,
         executing: window.passGraphExecuting,
@@ -351,13 +393,11 @@ test.describe('pass-graph executor', () => {
       expectContent(frame, 'the gate frame');
     });
 
-    test('gate matches the hand encoder, and is not the pre-motion frame', async ({ page }) => {
+    test('gate draws the hand encoder’s frame, and is not the pre-motion frame', async ({ page }) => {
       test.setTimeout(240_000);
-      const handEncoded = await captureFrame(page, url('0', { scene: GATE_SCENE }));
-      expectContent(handEncoded, 'the hand-encoded gate frame');
-      const graphEncoded = await captureFrame(page, url('1', { scene: GATE_SCENE }));
+      const graphEncoded = await captureFrame(page, url('1', { scene: GATE_SCENE }), /:motion:/);
       expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
-      expect(frameDifference(handEncoded, graphEncoded)).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+      expectHandEncoderFrame(graphEncoded, 'gate-composite');
 
       const off = await captureFrame(page, url('1'));
       expect(
@@ -381,9 +421,10 @@ test.describe('pass-graph executor', () => {
         // the motion variant's pipelines compile.
         await expect.poll(term, { timeout: 30_000 }).toBe(mode !== 'off');
         // The first switch on validates the motion variant's pipelines, which
-        // SwiftShader takes seconds to compile; every later switch is a cache hit.
-        await expect.poll(() => page.evaluate(() => window.passGraphExecuting), { timeout: 30_000 })
-          .toBe('default');
+        // SwiftShader takes seconds to compile — the still variant keeps
+        // drawing meanwhile; every later switch is a cache hit.
+        await waitForDrawnVariant(page, mode === 'off' ? /:still:/ : /:motion:/);
+        expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
       }
       // Moving between boost, gate and direction is a uniform; only on/off is
       // structural, and each of the two variants compiled exactly once.
@@ -419,15 +460,14 @@ test.describe('pass-graph executor', () => {
         test.setTimeout(120_000);
         const gpuErrors = collectGpuErrors(page);
         await openScene(page, url('1', { scene: layerScene(count, opaque(count)) }));
-        await expect.poll(() => page.evaluate(() => window.passGraphExecuting), { timeout: 30_000 })
-          .toBe('default');
+        await waitForDrawnVariant(page, new RegExp(`^${count}:`));
         const crumbs = await page.evaluate(() => ({
           executed: window.passGraphExecutedPasses ?? [],
-          variant: window.passGraphVariant ?? '',
+          executing: window.passGraphExecuting,
           error: window.passGraphError,
         }));
         expect(crumbs.error).toBeNull();
-        expect(crumbs.variant.startsWith(`${count}:`)).toBe(true);
+        expect(crumbs.executing).toBe('default');
         expect(crumbs.executed).toEqual([
           ...Array.from({ length: count }, (_, i) => `layer${i}`),
           'tracer-below', 'tracer-above', 'composite',
@@ -437,18 +477,16 @@ test.describe('pass-graph executor', () => {
     }
 
     test('the seventh band draws, which the hand encoder could not', async ({ page }) => {
+      // The hand encoder compiled three band passes and drew no more, so this
+      // scene was empty there.
       test.setTimeout(240_000);
       // Layer 7 alone (index 6): the executor draws it into the composite...
-      const seventh = await captureFrame(page, url('1', { scene: layerScene(7, onlyLayer(7, 6)) }));
+      const seventh = await captureFrame(page, url('1', { scene: layerScene(7, onlyLayer(7, 6)) }), /^7:/);
       expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
       expectContent(seventh, 'layer 7 on its own');
       // ...and with it hidden too, nothing is left: the content above was layer 7.
-      const none = await captureFrame(page, url('1', { scene: layerScene(7, Array.from({ length: 7 }, () => 0)) }));
+      const none = await captureFrame(page, url('1', { scene: layerScene(7, Array.from({ length: 7 }, () => 0)) }), /^7:/);
       expect(frameDistinctColours(none)).toBe(1);
-      // The hand encoder draws the first three of its three passes and no more,
-      // so the same scene is empty there.
-      const hand = await captureFrame(page, url('0', { scene: layerScene(7, onlyLayer(7, 6)) }));
-      expect(frameDistinctColours(hand)).toBe(1);
     });
   });
 
@@ -466,50 +504,37 @@ test.describe('pass-graph executor', () => {
       return seen.size;
     }, label);
 
-    test('Show Full Tracer draws the tracer view, and both encoders draw it alike', async ({ page }) => {
+    test('Show Full Tracer draws the tracer view the hand encoder drew', async ({ page }) => {
       // Fixed in Phase 3: since the July export refactor, the live frame always
       // drew the processed composite, whatever view the session selected.
       // A half-scale tracer letterboxes, so its view cannot pass for the composite.
-      test.setTimeout(300_000);
+      test.setTimeout(180_000);
       const scene = frozenScene({ scale: 0.5 });
-      const tracerViews: CanvasFrame[] = [];
-      for (const graph of ['0', '1']) {
-        await primeOverlaySections(page, { tracer: true });
-        const composite = await captureFrame(page, url(graph, { compute: false, scene }));
-        expectContent(composite, `the ?graph=${graph} composite`);
-        await page.getByRole('button', { name: /Show Full Tracer/ }).click();
-        await expect(page.getByRole('button', { name: /Exit Tracer View/ })).toBeVisible();
-        await page.waitForTimeout(500);
-        const tracer = await readStableGpuCanvasFrame(page);
-        expect(
-          frameDifference(composite, tracer).differingPixels,
-          `?graph=${graph} drew the composite in the tracer view`,
-        ).toBeGreaterThan(0);
-        tracerViews.push(tracer);
-      }
+      await primeOverlaySections(page, { tracer: true });
+      const composite = await captureFrame(page, url('1', { compute: false, scene }));
+      expectContent(composite, 'the composite');
+      await page.getByRole('button', { name: /Show Full Tracer/ }).click();
+      await expect(page.getByRole('button', { name: /Exit Tracer View/ })).toBeVisible();
+      await page.waitForTimeout(500);
+      const tracer = await readStableGpuCanvasFrame(page);
+      expect(frameDifference(composite, tracer).differingPixels, 'drew the composite in the tracer view')
+        .toBeGreaterThan(0);
       expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
-      expect(frameDifference(tracerViews[0], tracerViews[1])).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+      expectHandEncoderFrame(tracer, 'tracer-view');
     });
 
-    test('Quarter Zoom zooms the WebGPU canvas, and both encoders zoom it alike', async ({ page }) => {
+    test('Quarter Zoom zooms the WebGPU canvas as the hand encoder zoomed it', async ({ page }) => {
       // Also broken since the July refactor: the WebGPU compositor was always
       // handed 0 for both viewport transforms, so only WebGL honoured them.
-      test.setTimeout(300_000);
-      const zoomedFrames: CanvasFrame[] = [];
-      for (const graph of ['0', '1']) {
-        await primeOverlaySections(page, { viewport: true });
-        const composite = await captureFrame(page, url(graph, { compute: false }));
-        await page.getByRole('button', { name: /Zoom Bottom-Left Quarter/i }).click();
-        await expect(page.getByRole('button', { name: /Exit Quarter Zoom/i })).toBeVisible();
-        await page.waitForTimeout(500);
-        const zoomed = await readStableGpuCanvasFrame(page);
-        expect(
-          frameDifference(composite, zoomed).differingPixels,
-          `?graph=${graph} ignored Quarter Zoom`,
-        ).toBeGreaterThan(0);
-        zoomedFrames.push(zoomed);
-      }
-      expect(frameDifference(zoomedFrames[0], zoomedFrames[1])).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+      test.setTimeout(180_000);
+      await primeOverlaySections(page, { viewport: true });
+      const composite = await captureFrame(page, url('1', { compute: false }));
+      await page.getByRole('button', { name: /Zoom Bottom-Left Quarter/i }).click();
+      await expect(page.getByRole('button', { name: /Exit Quarter Zoom/i })).toBeVisible();
+      await page.waitForTimeout(500);
+      const zoomed = await readStableGpuCanvasFrame(page);
+      expect(frameDifference(composite, zoomed).differingPixels, 'ignored Quarter Zoom').toBeGreaterThan(0);
+      expectHandEncoderFrame(zoomed, 'quarter-zoom');
     });
 
     test('a seven-layer session previews its seventh band', async ({ page }) => {
@@ -561,27 +586,21 @@ test.describe('pass-graph executor', () => {
   });
 
   test.describe('the hdr-extended present', () => {
-    test('an HDR canvas draws through the executor, as the hand encoder draws it', async ({ page }) => {
-      test.setTimeout(240_000);
+    test('an HDR canvas draws through the executor, as the hand encoder drew it', async ({ page }) => {
+      test.setTimeout(180_000);
       const gpuErrors = collectGpuErrors(page);
-      const handEncoded = await captureFrame(page, url('0', { compute: false, scene: HDR_SCENE }));
+      const graphEncoded = await captureFrame(page, url('1', { compute: false, scene: HDR_SCENE }), /:hdr-extended$/);
       // The UA honoured the request: the swap chain is the float format. A
       // runner without extended tone mapping would present SDR, and this
-      // comparison would be of two SDR frames — so it says so instead.
-      expect(handEncoded.format, 'the canvas did not present hdr-extended').toBe('rgba16float');
-      expectContent(handEncoded, 'the hand-encoded HDR frame');
-
-      const graphEncoded = await captureFrame(page, url('1', { compute: false, scene: HDR_SCENE }));
+      // comparison would be of an SDR frame — so it says so instead.
+      expect(graphEncoded.format, 'the canvas did not present hdr-extended').toBe('rgba16float');
       const crumbs = await page.evaluate(() => ({
         executing: window.passGraphExecuting,
-        variant: window.passGraphVariant,
         error: window.passGraphError,
       }));
       expect(crumbs.error).toBeNull();
       expect(crumbs.executing).toBe('default');
-      expect(crumbs.variant).toContain('hdr-extended');
-      expect(graphEncoded.format).toBe('rgba16float');
-      expect(frameDifference(handEncoded, graphEncoded)).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+      expectHandEncoderFrame(graphEncoded, 'hdr-composite');
       expect(gpuErrors).toEqual([]);
     });
   });

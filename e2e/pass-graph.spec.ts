@@ -26,7 +26,7 @@ async function canvasDistinctColours(page: Page): Promise<number> {
 }
 
 /**
- * The `?graph` gate (docs/PASS_GRAPH.md) — on by default, `?graph=0` to opt out.
+ * The `?graph` gate (docs/PASS_GRAPH.md): which graph shape the session draws.
  *
  * The default graph is the pipeline the renderer already runs, so these specs
  * assert the breadcrumbs — not the pixels. Pixel identity is pinned in
@@ -34,12 +34,14 @@ async function canvasDistinctColours(page: Page): Promise<number> {
  * against the pre-refactor source.
  */
 test.describe('pass graph', () => {
-  test('stays dark under ?graph=0', async ({ page }) => {
+  test('reads the retired ?graph=0 as the default graph', async ({ page }) => {
+    // The opt-out to the hand encoder outlived the flip by one release; with
+    // the WebGPU hand encoder gone it selects nothing, on either backend.
     await page.goto('/?renderer=webgl&graph=0');
     await waitForWebGL(page);
 
-    expect(await page.evaluate(() => window.passGraphActive)).toBe(false);
-    expect(await page.evaluate(() => window.passGraphCompileCount)).toBe(0);
+    expect(await page.evaluate(() => window.passGraphActive)).toBe(true);
+    expect(await page.evaluate(() => window.passGraphName)).toBe('default');
   });
 
   test('compiles with no ?graph at all, and the WebGL backend still draws it by hand', async ({ page }) => {

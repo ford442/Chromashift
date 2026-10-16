@@ -16,8 +16,8 @@ import {
  * import, no reach into `wasm/dispatch`. See issue #145.
  */
 const HOT_PATH_FILES = [
-  '../PersistencePass.ts',
-  '../CompositorPass.ts',
+  '../graph/exec/WebGpuGraphExecutor.ts',
+  '../graph/exec/uniforms.ts',
   '../WebGPURenderer.ts',
   '../StationaryPreviewRenderer.ts',
   '../compute/chores/webgpuBackend.ts',

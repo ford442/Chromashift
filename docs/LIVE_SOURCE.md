@@ -114,7 +114,7 @@ on the render loop's cadence and must not stamp over the load-time analysis crum
 
 - **WebGPU** — `MotionFieldPass` records the compute dispatch into its own
   `GPUCommandEncoder` and submits it immediately, before the frame's encoder (which holds the
-  layer, persistence and compositor passes), then hands `PersistencePass` the field texture.
+  layer, persistence and compositor passes), then hands the graph's accumulators the field texture.
   Keeping it out of the frame's command buffer means a validation error in the motion lane cannot
   blank the frame. It shows in the Perf HUD as its own **Motion** row.
 - **WebGL** — there is no compute lane, so `useLiveSource`'s tick loop samples the video element
@@ -130,7 +130,7 @@ on the render loop's cadence and must not stamp over the load-time analysis crum
   WebGPU device never calls `getImageData`. `WebGPURenderer.setMotionField()` hands the result to
   `MotionFieldPass`, which packs it to half floats and uploads it into an `rgba16float` texture in
   the GPU lane's own layout (`r` magnitude, `gb` flow or zero, `a` 1), and serves that texture
-  whenever its GPU lane declines — so `PersistencePass` binds it unchanged.
+  whenever its GPU lane declines — so the accumulators bind it unchanged.
   `window.motionFieldBackend` reports the CPU lane (`wasm-worker` / `ts-worker`).
 
 With `motionMode: 'off'` neither path runs at all — nothing is sampled, nothing is uploaded, and
@@ -186,7 +186,7 @@ Where the extra work lands:
 
 - **WebGPU** — two more compute dispatches in the same motion encoder, writing a second
   `rgba16float` texture whose `r` is the Stage 1 magnitude copied through unchanged and whose `gb`
-  is the velocity. `PersistencePass` binds that texture instead; the binding layout does not move.
+  is the velocity. The accumulators bind that texture instead; the binding layout does not move.
   Both are `rgba16float` rather than the narrower `rg16float`, which is not a core storage format.
   The Perf HUD splits them out as their own **Motion flow** row so a `direction`-mode jump is attributable.
 - **CPU** — in `motion.worker.ts`. At 4K the field is 960×540 cells and the solve is millions of
@@ -222,9 +222,9 @@ past the camera drags their colour behind them.
 
 That graph binds the field through a `source` node with `role: 'motion-field'`. The renderer runs
 the chore with flow on whenever the graph wants it, whatever `motionMode` says. `motionMode`
-still selects only the *persistence* term: through the graph executor (the default) it is a `motion` node fused into the
-accumulators, the same program and uniforms as the hand encoder's motion pass, so
-`boost`/`gate`/`direction` behave exactly as above on either encoder (see
+still selects only the *persistence* term: a `motion` node fused into the
+accumulators, the same program and uniforms as the shipped motion pass, so
+`boost`/`gate`/`direction` behave exactly as above (see
 [PASS_GRAPH.md](PASS_GRAPH.md#the-temporal-term-motion)). If the lane declines (no WebGPU compute),
 the graph binds a zero field: the trail still smears but nothing steers it. WebGPU only: the
 WebGL backend refuses the starter by name (`unsupported-node`). See

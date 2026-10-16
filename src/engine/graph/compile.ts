@@ -51,7 +51,7 @@ let compileCount = 0;
  * How many times a graph has actually been compiled this session.
  *
  * The cache is keyed on a structural hash, so changing a parameter — opacity,
- * decay duration, a threshold — must leave this counter alone. `?graph=1`
+ * decay duration, a threshold — must leave this counter alone. The gate
  * publishes it as `window.passGraphCompileCount` so the breadcrumb is
  * observable from an E2E test, not just a unit test.
  */
@@ -93,7 +93,7 @@ function emitPass(
 
     case 'motion':
       // Fused into the `decay` passes that read it (see below), the way the
-      // hand encoder's persistence pass carries the temporal term: a stamp the
+      // shipped persistence pass carried the temporal term: a stamp the
       // motion field has not weighted yet is never written out on its own.
       return { ...base, fragment: '', textureBindings: ['stamp', 'field'], uniformLayout: null };
 
@@ -166,9 +166,9 @@ function emitPass(
         ? emitCompositorWgsl(layerInputs, WGSL_BLEND_HELPERS, tracerCount)
         : emitCompositorGlsl(layerInputs);
       // Presenting to an `hdr-extended` canvas swaps the clamping OETF for the
-      // extended one, text for text — the source the hand encoder's HDR
-      // present pass is built from (`toHdrPresentWgsl`), so the SDR emission
-      // and its golden are untouched.
+      // extended one, text for text (`toHdrPresentWgsl`, which the inspect
+      // views' HDR pipelines use too), so the SDR emission and its golden are
+      // untouched.
       if (canvas === 'hdr-extended') {
         if (!webgpu) {
           throw new PassGraphError(
