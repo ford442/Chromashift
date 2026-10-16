@@ -537,8 +537,8 @@ export class PersistencePass {
           { binding: 0, resource: this.sampler },
           ...layerTextureEntries(1, layerTextures),
           { binding: layerTextures.length + 1, resource: prevTexture.createView() },
-          { binding: layerTextures.length + 2, resource: { buffer: uniformBuf } },
-          { binding: layerTextures.length + 3, resource: motionTexture.createView() },
+          { binding: layerTextures.length + 2, resource: motionTexture.createView() },
+          { binding: layerTextures.length + 3, resource: { buffer: uniformBuf } },
         ],
       });
       entry.prevTexture = prevTexture;

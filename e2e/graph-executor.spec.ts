@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { setE2eViewport, stubMinimalCorpus } from './helpers/mockCorpus';
 import { encodePresetParam } from './helpers/presetParam';
+import { primeOverlaySections } from './helpers/overlaySections';
 import { waitForWebGPU } from './helpers/renderer';
 import {
   frameDifference,
@@ -46,15 +47,28 @@ import { STRUCTURED_FIXTURE_PNG } from './helpers/structuredFixture';
  * pacing. Measured: ±1 on 5–43 of 731k pixels between two runs of the same
  * encoder. With the multiplier at 0 there is no history to disagree about.
  */
-const FROZEN_SCENE = encodePresetParam({
-  version: 1,
-  settings: {
-    // `opacity` is here so a test can confirm the preset arrived: the Layers
-    // panel renders it as "66%", a signal that does not depend on the canvas.
-    layers: { angles: [0, 40, 80], extensions: [0, 0, 0], opacity: 0.66 },
-    tracers: { aboveDuration: 0, belowDuration: 0 },
-  },
-});
+function frozenScene(tracers: Record<string, unknown> = {}): string {
+  return encodePresetParam({
+    version: 1,
+    settings: {
+      // `opacity` is here so a test can confirm the preset arrived: the Layers
+      // panel renders it as "66%", a signal that does not depend on the canvas.
+      layers: { angles: [0, 40, 80], extensions: [0, 0, 0], opacity: 0.66 },
+      tracers: { aboveDuration: 0, belowDuration: 0, ...tracers },
+    },
+  });
+}
+
+const FROZEN_SCENE = frozenScene();
+
+/**
+ * The frozen scene with the temporal term on, in `gate` mode: a stamp survives
+ * only where the frame changed. The scene is a still image, so its motion
+ * field is zero everywhere and gate removes every stamp — a frame that differs
+ * from `off` wherever the bands overlap, and that both encoders must agree on
+ * exactly, since no stamp is left for the compute-fed lane to round.
+ */
+const GATE_SCENE = frozenScene({ motionMode: 'gate' });
 
 const SETTLE_MS = 2500;
 
@@ -64,8 +78,11 @@ const SETTLE_MS = 2500;
  * instead stamps overlaps in a compute kernel and decays against that, which
  * is equivalent math quantised differently. See the bounded comparison below.
  */
-function url(graph: string, { compute = true }: { compute?: boolean } = {}): string {
-  return `/?renderer=webgpu&graph=${graph}&preset=${FROZEN_SCENE}${compute ? '' : '&no_gpu_compute'}`;
+function url(
+  graph: string,
+  { compute = true, scene = FROZEN_SCENE }: { compute?: boolean; scene?: string } = {},
+): string {
+  return `/?renderer=webgpu&graph=${graph}&preset=${scene}${compute ? '' : '&no_gpu_compute'}`;
 }
 
 /**
@@ -264,6 +281,71 @@ test.describe('pass-graph executor', () => {
     expect(crumbs.error).toMatch(/^invalid-pipeline: /);
     expect(crumbs.executing).toBeNull();
     expectContent(frame, 'the frame after the refusal');
+  });
+
+  test.describe('the temporal term', () => {
+    const FIVE_PASSES = ['layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite'];
+
+    test('a motion mode draws through the executor, fused into the accumulators', async ({ page }) => {
+      test.setTimeout(120_000);
+      const gpuErrors = collectGpuErrors(page);
+      const frame = await captureFrame(page, url('1', { scene: GATE_SCENE }));
+      const crumbs = await page.evaluate(() => ({
+        error: window.passGraphError,
+        executing: window.passGraphExecuting,
+        executed: window.passGraphExecutedPasses ?? [],
+        scheduled: window.passGraphPasses ?? [],
+        backend: window.motionFieldBackend ?? null,
+      }));
+      // The field is real (the WebGPU lane produced it), so the frame got the
+      // variant with the term rather than the pre-motion graph.
+      expect(crumbs.backend).toBe('webgpu');
+      expect(crumbs.error).toBeNull();
+      expect(crumbs.executing).toBe('default');
+      expect(crumbs.scheduled).toEqual(expect.arrayContaining(['motion-field', 'coincidence-motion']));
+      expect(crumbs.executed).toEqual(FIVE_PASSES);
+      expect(gpuErrors).toEqual([]);
+      expectContent(frame, 'the gate frame');
+    });
+
+    test('gate matches the hand encoder, and is not the pre-motion frame', async ({ page }) => {
+      test.setTimeout(240_000);
+      const handEncoded = await captureFrame(page, url('0', { scene: GATE_SCENE }));
+      expectContent(handEncoded, 'the hand-encoded gate frame');
+      const graphEncoded = await captureFrame(page, url('1', { scene: GATE_SCENE }));
+      expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
+      expect(frameDifference(handEncoded, graphEncoded)).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+
+      const off = await captureFrame(page, url('1'));
+      expect(
+        frameDifference(graphEncoded, off).differingPixels,
+        'gate on a still image drew the stamps it should have removed',
+      ).toBeGreaterThan(0);
+    });
+
+    test('switching the term on and off compiles each variant once', async ({ page }) => {
+      test.setTimeout(120_000);
+      await primeOverlaySections(page, { tracer: true });
+      await openScene(page, url('1'));
+      expect(await page.evaluate(() => window.passGraphCompileCount)).toBe(1);
+
+      const select = page.getByTestId('tracer-motion-mode');
+      const term = () => page.evaluate(() => (window.passGraphPasses ?? []).includes('coincidence-motion'));
+      for (const mode of ['boost', 'off', 'gate', 'off', 'direction'] as const) {
+        await select.selectOption(mode);
+        // On SwiftShader the first switch on waits seconds for the motion-field
+        // lane's first field (the term needs one), and frames can stall while
+        // the motion variant's pipelines compile.
+        await expect.poll(term, { timeout: 30_000 }).toBe(mode !== 'off');
+        // The first switch on validates the motion variant's pipelines, which
+        // SwiftShader takes seconds to compile; every later switch is a cache hit.
+        await expect.poll(() => page.evaluate(() => window.passGraphExecuting), { timeout: 30_000 })
+          .toBe('default');
+      }
+      // Moving between boost, gate and direction is a uniform; only on/off is
+      // structural, and each of the two variants compiled exactly once.
+      expect(await page.evaluate(() => window.passGraphCompileCount)).toBe(2);
+    });
   });
 
   test('a parameter change does not recompile or rebuild the graph', async ({ page }) => {

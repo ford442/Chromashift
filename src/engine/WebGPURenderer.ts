@@ -1,8 +1,16 @@
 import { layerFragmentSources } from './shaders';
-import { publishGraphExecutorBreadcrumbs } from './graph';
+import {
+  compileGraph,
+  graphVariantKey,
+  passGraphRefusal,
+  publishGraphExecutorBreadcrumbs,
+  publishGraphVariant,
+  type GraphPresetName,
+  type GraphVariant,
+  type PassGraphSource,
+} from './graph';
 import { WebGpuGraphExecutor, type GraphRoleTextures } from './graph/exec/WebGpuGraphExecutor';
-import { PassGraphError } from './graph/errors';
-import type { GraphPresetName } from './graph/altGraphs';
+import { buildEncodePlan, motionFieldUse, type MotionFieldUse } from './graph/exec/plan';
 import type { CompiledGraph } from './graph/types';
 import { WebGPUPipelines, drawnLayerCount, encodeLayerClear, type LayerPipeline } from './WebGPUPipelines';
 import { MAIN_VIEW_MODES } from './viewModes';
@@ -49,6 +57,9 @@ import {
 /** Size contract for helpers that only need texture dimensions, not the GPU resource itself. */
 type TextureSize = { readonly width: number; readonly height: number };
 
+/** A frame whose graph reads no motion field and solves no flow. */
+const NO_MOTION_FIELD_USE: MotionFieldUse = { reads: false, needsFlow: false };
+
 export class WebGPURenderer {
   readonly backend = 'webgpu' as const;
   static readonly PREVIEW_SIZE = GpuReadback.PREVIEW_SIZE;
@@ -85,6 +96,10 @@ export class WebGPURenderer {
    * a genuinely new source apart from the next frame of the current one.
    */
   private motionResetPending = true;
+  /** Whether this frame ran the motion chore, so `afterSubmit` maps its stats only then. */
+  private motionFieldEncoded = false;
+  /** `motionFieldUse` per compiled graph — asked every frame, computed once. */
+  private readonly fieldUseByGraph = new WeakMap<CompiledGraph, MotionFieldUse>();
   private readonly compositor: CompositorPass;
   private readonly tracerInspect: TracerInspectPass;
   /**
@@ -115,21 +130,31 @@ export class WebGPURenderer {
   private averageRenderCpuMs = 0;
 
   /**
-   * Pass-graph executor (docs/PASS_GRAPH.md Phase 2). Non-null once
-   * `setPassGraph()` adopts a compiled graph; `render()` then encodes
-   * `compiled.passes` instead of the hand-written five-pass topology.
+   * Pass-graph executor (docs/PASS_GRAPH.md). Non-null once `setPassGraph()`
+   * adopts a graph source; `render()` then encodes the variant the frame asks
+   * for instead of the hand-written five-pass topology.
    */
   private graphExecutor: WebGpuGraphExecutor | null = null;
-  private graphName: GraphPresetName | null = null;
+  private graphSource: PassGraphSource | null = null;
+  /**
+   * The source's variants compiled so far, by `graphVariantKey` — or, for one
+   * that will not compile or encode, the refusal it produced. Remembered either
+   * way, so a frame never compiles twice and a refused variant is not retried
+   * every frame.
+   */
+  private readonly graphVariants = new Map<string, CompiledGraph | string>();
+  /** The variant the executor holds right now. */
+  private adoptedGraph: CompiledGraph | null = null;
   /**
    * Whether the graph executor — rather than the hand encoder — encoded the
    * most recent frame.
    *
-   * Adopting a graph is not the same as drawing with it: a motion mode or a
-   * `tracers` / `layers` export falls back to the hand encoder, which writes
-   * *its* layer and persistence textures. The preview, readback and export
-   * helpers below have to follow whichever path actually ran, or they publish a
-   * stale frame from the other one's targets.
+   * Adopting a graph is not the same as drawing with it: a `tracers` / `layers`
+   * export, an HDR canvas, or a variant the device has not validated yet falls
+   * back to the hand encoder, which writes *its* layer and persistence
+   * textures. The preview, readback and export helpers below have to follow
+   * whichever path actually ran, or they publish a stale frame from the other
+   * one's targets.
    */
   private executorEncodedLastFrame = false;
 
@@ -274,27 +299,32 @@ export class WebGPURenderer {
   }
 
   /**
-   * Adopt a compiled pass graph, or `null` to return to the hand encoder.
+   * Adopt a pass-graph source, or `null` to return to the hand encoder.
    *
-   * A graph that compiled but cannot be *encoded* — a `decay` reading the wrong
-   * number of stamp inputs, a `blend` with three tracers — is refused here with
-   * the node named, and the renderer stays on the hand encoder rather than
-   * drawing an approximation of what was asked for.
+   * The source names a shape; each frame then asks it for the *variant* that
+   * frame needs (the temporal term on or off, today) and the executor draws
+   * that. A variant that will not compile, or compiles but cannot be
+   * *encoded* — a `decay` reading the wrong number of stamp inputs, a `blend`
+   * with three tracers — is refused with the node named, and that variant
+   * draws with the hand encoder rather than an approximation of it.
    *
-   * Nor does an adopted graph draw straight away: the hand encoder keeps the
-   * canvas until the device has validated the graph's pipelines (see
+   * Nor does an adopted variant draw straight away: the hand encoder keeps the
+   * canvas until the device has validated its pipelines (see
    * `verifyGraphPipelines`), so emitted WGSL the device rejects is a refusal
    * too, rather than a black canvas.
    */
-  setPassGraph(compiled: CompiledGraph | null, name: GraphPresetName | null = null): void {
-    if (!compiled) {
+  setPassGraph(source: PassGraphSource | null): void {
+    this.graphVariants.clear();
+    this.adoptedGraph = null;
+    if (!source) {
       this.graphExecutor?.destroy();
       this.graphExecutor = null;
-      this.graphName = null;
+      this.graphSource = null;
       publishGraphExecutorBreadcrumbs(null, []);
       return;
     }
 
+    this.graphSource = source;
     this.graphExecutor ??= new WebGpuGraphExecutor(
       this.device,
       this.pipelines,
@@ -303,17 +333,53 @@ export class WebGPURenderer {
       this.sampler,
       this.compositorSampler,
     );
-    try {
-      this.graphExecutor.setGraph(compiled);
-      this.graphExecutor.setSampleCount(this.sampleCount);
-    } catch (error) {
-      this.refuseGraph(error instanceof PassGraphError
-        ? `${error.code}: ${error.message}`
-        : String(error));
-      return;
+    this.graphExecutor.setSampleCount(this.sampleCount);
+    // The variant a still session draws, adopted now so its pipelines are
+    // validating before the first frame asks for it.
+    this.adoptGraphVariant({ layerCount: this.pipelines.layerCount, motion: false });
+  }
+
+  /**
+   * The source's graph for `variant`, compiled on first request and cached —
+   * or `null` when that variant was refused. A refusal is published once, when
+   * it happens, and that variant then draws with the hand encoder.
+   */
+  private compiledGraphVariant(variant: GraphVariant): CompiledGraph | null {
+    const source = this.graphSource;
+    if (!source) return null;
+    const key = graphVariantKey(variant);
+    let entry = this.graphVariants.get(key);
+    if (entry === undefined) {
+      try {
+        entry = compileGraph(source.build(variant), 'webgpu');
+        // Planning is where an encodable-but-not-drawable graph is refused.
+        buildEncodePlan(entry);
+      } catch (error) {
+        entry = passGraphRefusal(error);
+        console.warn('[Chromashift:PassGraph] refused a graph variant —', key, entry);
+        publishGraphVariant(null, entry, source.name);
+      }
+      this.graphVariants.set(key, entry);
     }
-    this.graphName = name;
-    this.verifyGraphPipelines();
+    return typeof entry === 'string' ? null : entry;
+  }
+
+  /**
+   * Hand `variant` to the executor if it is not already holding it, and start
+   * the device validating its pipelines. Returns the compiled variant, or
+   * `null` when it was refused.
+   */
+  private adoptGraphVariant(variant: GraphVariant): CompiledGraph | null {
+    const compiled = this.compiledGraphVariant(variant);
+    const executor = this.graphExecutor;
+    if (!compiled || !executor || !this.graphSource) return null;
+    if (compiled !== this.adoptedGraph) {
+      executor.setGraph(compiled);
+      this.adoptedGraph = compiled;
+      publishGraphVariant(compiled, null, this.graphSource.name);
+      this.verifyGraphPipelines();
+    }
+    return compiled;
   }
 
   /**
@@ -326,10 +392,13 @@ export class WebGPURenderer {
    * failed uniformity analysis and the canvas went black, while every
    * breadcrumb said it was drawing. Waiting for the error scope turns that
    * into a named refusal, with the hand encoder still on screen.
+   *
+   * A variant the executor has validated before answers at once: its
+   * pipelines are cached on the structural hash, verdict and all.
    */
   private verifyGraphPipelines(): void {
     const executor = this.graphExecutor;
-    if (!executor) return;
+    if (!executor || !executor.active) return;
     let verdict: Promise<string | null>;
     try {
       verdict = executor.prepare();
@@ -340,14 +409,19 @@ export class WebGPURenderer {
     // The breadcrumb says what is drawing, and until the device answers that
     // is the hand encoder.
     if (!executor.ready) publishGraphExecutorBreadcrumbs(null, []);
+    const adopted = this.adoptedGraph;
     void verdict.then((error) => {
-      // Superseded by another graph, or torn down, while the device answered.
-      if (executor !== this.graphExecutor) return;
+      // Torn down, or superseded by another variant, while the device
+      // answered. A superseded variant's verdict stays cached with it, so
+      // adopting it again re-reads this one rather than losing it.
+      if (executor !== this.graphExecutor || adopted !== this.adoptedGraph) return;
       if (error !== null) {
         this.refuseGraph(`invalid-pipeline: ${error}`);
         return;
       }
-      if (executor.ready) publishGraphExecutorBreadcrumbs(this.graphName, executor.encodedPasses());
+      if (executor.ready) {
+        publishGraphExecutorBreadcrumbs(this.graphSource?.name ?? null, executor.encodedPasses());
+      }
     });
   }
 
@@ -356,27 +430,16 @@ export class WebGPURenderer {
     console.warn('[Chromashift:PassGraph] executor refused the graph —', message);
     this.graphExecutor?.destroy();
     this.graphExecutor = null;
-    this.graphName = null;
+    this.graphSource = null;
+    this.graphVariants.clear();
+    this.adoptedGraph = null;
     if (typeof window !== 'undefined') window.passGraphError = message;
     publishGraphExecutorBreadcrumbs(null, []);
   }
 
   /** Name of the graph shape the executor is drawing, or `null`. */
   get passGraphName(): GraphPresetName | null {
-    return this.graphName;
-  }
-
-  /**
-   * True when the graph executor draws this frame.
-   *
-   * The temporal (motion) term has no graph node yet, so a session that selects
-   * one falls back to the hand encoder rather than quietly dropping it.
-   */
-  private executorDrawsFrame(state: RendererState, passMode: ExportPassMode): boolean {
-    return this.graphExecutor !== null
-      && this.graphExecutor.ready
-      && passMode === 'composite'
-      && rendererStateValue(state, 'motionMode') === 0;
+    return this.graphSource?.name ?? null;
   }
 
   /** CPU-lane fallback for when `MotionFieldPass` declines; see its docs. */
@@ -631,9 +694,9 @@ export class WebGPURenderer {
       ? this.lastRenderCpuMs
       : this.averageRenderCpuMs * 0.9 + this.lastRenderCpuMs * 0.1;
     this.gpuProfiler?.afterSubmit();
-    // Only when a mode is selected: `off` must not map a stats buffer, or
-    // publish a breadcrumb, for a pass that never ran.
-    if (rendererStateValue(state, 'motionMode') !== 0) this.motionField.afterSubmit();
+    // Only when the chore ran: `off` must not map a stats buffer, or publish a
+    // breadcrumb, for a pass that never ran.
+    if (this.motionFieldEncoded) this.motionField.afterSubmit();
     this.readback.afterSubmit(readbackFlags);
   }
 
@@ -703,63 +766,73 @@ export class WebGPURenderer {
   ): void {
     profiler?.beginFrame(enc);
 
-    // Pass-graph executor (docs/PASS_GRAPH.md Phase 2). When a compiled graph
-    // is adopted it encodes `compiled.passes` — the default graph byte-for-byte
-    // the topology below, or a different shape entirely — and the hand-written
-    // encode path is skipped whole rather than partly reused.
-    // The graph executor's canvas pipelines are SDR-only; an HDR canvas frame
-    // takes the hand encoder, which has the HDR present variants.
-    if (!hdrCanvas && this.executorDrawsFrame(state, passMode) && this.currentTexture) {
-      this.executorEncodedLastFrame = true;
-      // The live-preview readback still runs through `CompositorPass`, so its
-      // uniform block has to be written even though the graph drew the frame.
-      this.compositor.writeUniforms(compositorUniforms(state, this.pipelines.layerCount));
-      // A graph that binds the motion field (a `displace` steered by it) runs
-      // the chore itself, with flow, whatever `motionMode` says — `motionMode`
-      // selects the *persistence* term, and any non-zero mode keeps the hand
-      // encoder (`executorDrawsFrame`), so boost/gate are untouched here. Same
-      // isolation as the hand path: its own command buffer, `null` on decline.
-      let motionField: GPUTexture | null = null;
-      if (this.graphExecutor!.wantsMotionField) {
-        motionField = this.motionField.encodeAndSubmit(
-          this.currentTexture,
-          this.currentTexture.width,
-          this.currentTexture.height,
+    // The motion field depends only on the source frame, so it is produced
+    // first, for whichever encoder draws. It is wanted when the temporal term
+    // is on (any mode but `off`), or when the graph itself reads it — a
+    // `displace` steered by it, which also needs the solved flow. Otherwise
+    // nothing runs: `motionMode: 'off'` leaves the frame exactly as it was
+    // before the temporal term existed, down to the command buffers.
+    //
+    // `encodeAndSubmit` records into (and submits) its own command buffer
+    // rather than this frame's `enc` — a validation failure in the
+    // frame-difference dispatch or, in `direction` mode, the two Lucas–Kanade
+    // dispatches on top of it, must not poison the composite `enc` draws. It is
+    // submitted ahead of `enc` wherever in the frame it is called, so producing
+    // it up front changes nothing on the queue.
+    const motionMode = rendererStateValue(state, 'motionMode');
+    const graphMayDraw = this.graphExecutor !== null && passMode === 'composite' && !hdrCanvas;
+    const graphField = graphMayDraw ? this.graphFieldUse() : NO_MOTION_FIELD_USE;
+    this.motionFieldEncoded = (motionMode !== 0 || graphField.reads) && this.currentTexture !== null;
+    const motionTexture = this.motionFieldEncoded
+      ? this.encodeMotionField(state, motionMode === MOTION_MODE_DIRECTION || graphField.needsFlow)
+      : null;
+
+    // Pass-graph executor (docs/PASS_GRAPH.md). It encodes the variant this
+    // frame needs — with the temporal term on (a mode selected *and* a field
+    // to read) the graph carries a `motion` node fused into its accumulators,
+    // and with it off it is the pre-motion graph — and the hand-written encode
+    // path is skipped whole rather than partly reused. The executor's canvas
+    // pipelines are SDR-only; an HDR canvas frame takes the hand encoder, which
+    // has the HDR present variants.
+    if (graphMayDraw && this.currentTexture) {
+      const compiled = this.adoptGraphVariant({
+        layerCount: this.pipelines.layerCount,
+        motion: motionMode !== 0 && motionTexture !== null,
+      });
+      const executor = this.graphExecutor;
+      if (compiled && executor?.ready) {
+        this.executorEncodedLastFrame = true;
+        // The live-preview readback still runs through `CompositorPass`, so its
+        // uniform block has to be written even though the graph drew the frame.
+        this.compositor.writeUniforms(compositorUniforms(state, this.pipelines.layerCount));
+        executor.encode(
+          enc,
           {
-            threshold: rendererStateValue(state, 'motionThreshold'),
-            reset: this.motionResetPending || rendererStateValue(state, 'paused'),
+            source: this.currentTexture,
+            classificationMask: this.classificationMaskTexture ?? this.fallbackMaskTexture,
+            hasClassificationMask: this.classificationMaskTexture !== null,
+            profileLut: this.updatedProfileLut(state),
+            motionField: motionTexture,
           },
-          true,
-        );
-        this.motionResetPending = false;
-      }
-      this.graphExecutor!.encode(
-        enc,
-        {
-          source: this.currentTexture,
-          classificationMask: this.classificationMaskTexture ?? this.fallbackMaskTexture,
-          hasClassificationMask: this.classificationMaskTexture !== null,
-          profileLut: this.updatedProfileLut(state),
-          motionField,
-        },
-        {
-          state,
-          outputView,
-          width,
-          height,
-          fps,
-          marks: {
-            layersEnd: () => {
-              profiler?.markLayersEnd(enc);
-              profiler?.markMotionEnd(enc);
-              profiler?.markMotionFlowEnd(enc);
+          {
+            state,
+            outputView,
+            width,
+            height,
+            fps,
+            marks: {
+              layersEnd: () => {
+                profiler?.markLayersEnd(enc);
+                profiler?.markMotionEnd(enc);
+                profiler?.markMotionFlowEnd(enc);
+              },
+              stampEnd: () => profiler?.markPersistenceEnd(enc),
+              compositorEnd: () => profiler?.markCompositorEnd(enc),
             },
-            stampEnd: () => profiler?.markPersistenceEnd(enc),
-            compositorEnd: () => profiler?.markCompositorEnd(enc),
           },
-        },
-      );
-      return;
+        );
+        return;
+      }
     }
 
     this.executorEncodedLastFrame = false;
@@ -769,37 +842,8 @@ export class WebGPURenderer {
 
     this.encodeLayerPasses(enc, state, canvasSize);
     profiler?.markLayersEnd(enc);
-
-    // The motion field depends only on the source frame, so it runs before the
-    // persistence pass that consumes it. Encoded only when a mode is selected:
-    // `motionMode: 'off'` leaves the frame exactly as it was before the
-    // temporal term existed, down to the command buffer.
-    //
-    // `encodeAndSubmit` records into (and submits) its own command buffer
-    // rather than this frame's `enc` — a validation failure in the
-    // frame-difference dispatch or, in `direction` mode, the two Lucas–Kanade
-    // dispatches on top of it, must not poison the composite this same `enc`
-    // draws below. The markers still bracket this call so an unaffected frame
-    // reads the same `motionMs`/`motionFlowMs` split as before; a declined or
-    // failed lane just collapses both to ~0, same as `motionMode: 'off'`.
-    const motionMode = rendererStateValue(state, 'motionMode');
-    let motionTexture: GPUTexture | null = null;
-    if (motionMode !== 0 && this.currentTexture) {
-      motionTexture = this.motionField.encodeAndSubmit(
-        this.currentTexture,
-        this.currentTexture.width,
-        this.currentTexture.height,
-        {
-          threshold: rendererStateValue(state, 'motionThreshold'),
-          // A paused session shows a frozen frame; differencing it against
-          // itself is zero anyway, but the explicit reset keeps the first frame
-          // after unpausing from stamping a whole-screen "change".
-          reset: this.motionResetPending || rendererStateValue(state, 'paused'),
-        },
-        motionMode === MOTION_MODE_DIRECTION,
-      );
-      this.motionResetPending = false;
-    }
+    // The motion field was produced above, in its own command buffer; the
+    // markers keep the HUD's motion rows where they have always been.
     profiler?.markMotionEnd(enc);
     profiler?.markMotionFlowEnd(enc);
 
@@ -875,6 +919,46 @@ export class WebGPURenderer {
       );
     }
     profiler?.markCompositorEnd(enc);
+  }
+
+  /**
+   * Run the motion chore for this frame and return its field (`null` when the
+   * lane declined and no CPU field exists).
+   */
+  private encodeMotionField(state: RendererState, wantFlow: boolean): GPUTexture | null {
+    const source = this.currentTexture!;
+    const field = this.motionField.encodeAndSubmit(
+      source,
+      source.width,
+      source.height,
+      {
+        threshold: rendererStateValue(state, 'motionThreshold'),
+        // A paused session shows a frozen frame; differencing it against
+        // itself is zero anyway, but the explicit reset keeps the first frame
+        // after unpausing from stamping a whole-screen "change".
+        reset: this.motionResetPending || rendererStateValue(state, 'paused'),
+      },
+      wantFlow,
+    );
+    this.motionResetPending = false;
+    return field;
+  }
+
+  /**
+   * How the source's graph reads the motion field before the temporal term
+   * is added — a `displace` steered by it, say. Asked of the still variant,
+   * because it decides whether the chore runs at all, and that decides which
+   * variant the frame gets.
+   */
+  private graphFieldUse(): MotionFieldUse {
+    const still = this.compiledGraphVariant({ layerCount: this.pipelines.layerCount, motion: false });
+    if (!still) return NO_MOTION_FIELD_USE;
+    let use = this.fieldUseByGraph.get(still);
+    if (!use) {
+      use = motionFieldUse(still);
+      this.fieldUseByGraph.set(still, use);
+    }
+    return use;
   }
 
   /** Upload the active colour profile LUT and hand back its texture. */

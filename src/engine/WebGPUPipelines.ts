@@ -125,7 +125,8 @@ export class WebGPUPipelines {
   }
 
   /**
-   * The fused persistence pass plus the motion field at binding 6.
+   * The fused persistence pass plus the motion field: 0 = sampler, 1..n =
+   * layers, n+1 = previous frame, n+2 = motion field, n+3 = uniforms.
    *
    * A second layout (rather than an optional entry) is what lets
    * `motionMode: 'off'` bind the original layout and the original program,
@@ -136,9 +137,8 @@ export class WebGPUPipelines {
     return this.device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
-        ...textureEntries(1, n + 1),
-        { binding: n + 2, visibility: fragmentStage(), buffer: { type: 'uniform' } },
-        { binding: n + 3, visibility: fragmentStage(), texture: { sampleType: 'float' } },
+        ...textureEntries(1, n + 2),
+        { binding: n + 3, visibility: fragmentStage(), buffer: { type: 'uniform' } },
       ],
     });
   }

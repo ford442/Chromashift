@@ -99,6 +99,7 @@ export function validateGraph(graph: PassGraph): ValidationResult {
       }
     }
     validateParams(node);
+    if (node.kind === 'motion') validateMotionField(node, byId);
   }
 
   const { reachable, feedbackEdges } = walk(graph, byId);
@@ -149,6 +150,23 @@ function validateParams(node: GraphNode): void {
       break;
     default:
       break;
+  }
+}
+
+/**
+ * A `motion` node's second input is the field it weights the stamp by, and the
+ * executor binds that by the producer's `role`. Anything else in that slot
+ * would bind an arbitrary texture as velocities, so it is refused by name.
+ */
+function validateMotionField(node: GraphNode, byId: Map<string, GraphNode>): void {
+  const field = byId.get(node.inputs[1])!;
+  if (field.kind !== 'source' || field.params.role !== 'motion-field') {
+    throw new PassGraphError(
+      'edge-type',
+      `Node '${node.id}' (motion) reads '${field.id}' (${field.kind}) as its field; `
+      + "it must read a 'source' node with role 'motion-field'.",
+      node.id,
+    );
   }
 }
 

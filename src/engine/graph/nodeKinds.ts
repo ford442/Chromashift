@@ -55,6 +55,21 @@ const SPECS: Record<NodeKind, NodeKindSpec> = {
     // Input count is baked into the unrolled overlap counter.
     structuralParams: ['minOverlap', 'emitDiagnostic'],
   },
+  motion: {
+    kind: 'motion',
+    // [stamp, field]: the stamp to weight, and a `source` with role
+    // 'motion-field' (checked by `validate.ts`). `boost`, `gate` and
+    // `direction`, the gain and the decay bias are uniforms read from
+    // `RendererState`, so moving between motion modes never recompiles; only
+    // switching the term on or off — adding or removing this node — does.
+    minInputs: 2,
+    maxInputs: 2,
+    inputType: 'texture',
+    outputType: 'texture',
+    resolution: 'tracer',
+    pingPong: false,
+    structuralParams: [],
+  },
   decay: {
     kind: 'decay',
     minInputs: 1,

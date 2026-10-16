@@ -1,5 +1,4 @@
-import type { GraphPresetName } from '../graph/altGraphs';
-import type { CompiledGraph } from '../graph/types';
+import type { PassGraphSource } from '../graph/variants';
 import type { CollisionStats, RendererState } from './RendererState';
 import type { ImageEntry } from '../TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
@@ -114,14 +113,15 @@ export interface ChromashiftRenderer {
    */
   wantsCpuMotionField?(): boolean;
   /**
-   * Adopt a compiled pass graph and encode `compiled.passes` instead of the
-   * hand-written topology, or `null` to go back to it.
+   * Adopt a pass-graph source and encode the variant each frame needs (the
+   * temporal term on or off) instead of the hand-written topology, or `null`
+   * to go back to it.
    *
    * Implemented by the WebGPU renderer. The WebGL diagnostic backend compiles
    * the graph — that is where `unsupported-node` refusals come from — but does
    * not execute it, so it does not implement this. See docs/PASS_GRAPH.md.
    */
-  setPassGraph?(compiled: CompiledGraph | null, name?: GraphPresetName | null): void;
+  setPassGraph?(source: PassGraphSource | null): void;
   render(state: RendererState, fps?: number): void;
   /** Stationary side previews at panel preset angles (Original/Separated/Tracer strip). */
   renderStationaryPreviews(

@@ -7,6 +7,8 @@
  * backend can emit).
  */
 
+import type { UniformLayout } from './templates/uniformLayout';
+
 /** Backends a graph can be compiled for. */
 export type GraphBackend = 'webgpu' | 'webgl';
 
@@ -25,6 +27,7 @@ export type NodeKind =
   | 'band-layer'    // luminance→colour band isolation, rotation, flip
   | 'lut'           // colorProfile 256×3 LUT sample
   | 'coincidence'   // N-input overlap detection (generalises today's persistence stamp)
+  | 'motion'        // the temporal tracer term: [stamp, motion field] → a motion-weighted stamp
   | 'decay'         // ping-pong accumulator with a per-frame multiplier
   | 'blend'         // alpha / add / subtract / multiply / screen
   | 'warp'          // UV transform: rotate, scale, feedback displacement
@@ -133,6 +136,13 @@ export interface EmittedPass {
   fragment: string;
   /** Texture binding names in binding order, for the renderer to wire up. */
   textureBindings: string[];
+  /**
+   * The uniform block `fragment` declares — the layout its struct was emitted
+   * from — or `null` when it has none of its own (`band-layer` keeps the
+   * shipped layer pipeline's buffers; passes with no shader have nothing).
+   * WebGPU only: the GLSL emitters bind uniforms by name.
+   */
+  uniformLayout: UniformLayout | null;
 }
 
 export interface CompiledGraph {

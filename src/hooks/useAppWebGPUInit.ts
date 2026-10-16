@@ -21,7 +21,7 @@ import {
 import { listLocalImages } from '../engine/LocalLibrary';
 import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/corpusManifest';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
-import { activatePassGraph, passGraphSelection } from '../engine/graph';
+import { activatePassGraph, passGraphSelection, presetGraphSource } from '../engine/graph';
 
 export interface UseAppWebGPUInitProps {
   mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
@@ -271,7 +271,10 @@ export function useAppWebGPUInit({
       const compiledGraph = activatePassGraph(bootstrapped.orchestrator.getBackend());
       const primaryRenderer = bootstrappedPrimaryRenderer(bootstrapped.orchestrator);
       if (compiledGraph) {
-        primaryRenderer.setPassGraph?.(compiledGraph, passGraphSelection().name);
+        // The renderer builds the variant each frame needs from the selected
+        // shape (the temporal term on or off); the still variant is the graph
+        // just compiled, so adopting it compiles nothing new.
+        primaryRenderer.setPassGraph?.(presetGraphSource(passGraphSelection().name));
       }
       // Apply the requested canvas colour space now: the standing effect below
       // only re-runs when `displayColorSpace` changes, so a preset URL that

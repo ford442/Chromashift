@@ -104,9 +104,7 @@ export function activatePassGraph(
     publish(true, compiled, null, selection.name);
     return compiled;
   } catch (error) {
-    const message = error instanceof PassGraphError
-      ? `${error.code}: ${error.message}`
-      : String(error);
+    const message = passGraphRefusal(error);
     console.warn('[Chromashift:PassGraph] refused to compile the graph —', message);
     publish(true, null, message, selection.name);
     return null;
@@ -129,6 +127,21 @@ export function publishGraphExecutorBreadcrumbs(
   window.passGraphExecutedPasses = encodedPasses;
 }
 
+/**
+ * Record the variant a renderer compiled for this frame — the temporal term
+ * switched on, say. `passGraphPasses` and friends describe the graph being
+ * drawn, so they follow it; `passGraphExecuting` is left to the renderer, which
+ * republishes it once the device has validated the variant's pipelines.
+ */
+export function publishGraphVariant(
+  compiled: CompiledGraph | null,
+  error: string | null,
+  name: GraphPresetName,
+): void {
+  if (typeof window === 'undefined') return;
+  publishCompile(true, compiled, error, name);
+}
+
 function publish(
   active: boolean,
   compiled: CompiledGraph | null,
@@ -136,6 +149,20 @@ function publish(
   name: GraphPresetName | null,
 ): void {
   if (typeof window === 'undefined') return;
+  publishCompile(active, compiled, error, name);
+  // Cleared for *every* result, not just a refusal: a successful WebGL compile
+  // draws with the hand encoder, so leaving a previous WebGPU session's
+  // `passGraphExecuting` in place would claim an executor that is not running.
+  // `setPassGraph` republishes after a WebGPU renderer adopts the graph.
+  publishGraphExecutorBreadcrumbs(null, []);
+}
+
+function publishCompile(
+  active: boolean,
+  compiled: CompiledGraph | null,
+  error: string | null,
+  name: GraphPresetName | null,
+): void {
   window.passGraphActive = active;
   window.passGraphCompileCount = graphCompileCount();
   window.passGraphPasses = compiled ? compiled.passes.map((pass) => pass.nodeId) : [];
@@ -143,9 +170,9 @@ function publish(
   window.passGraphRingFrames = compiled ? ringTexturesByResolution(compiled.allocation) : {};
   window.passGraphError = error;
   window.passGraphName = name;
-  // Cleared for *every* result, not just a refusal: a successful WebGL compile
-  // draws with the hand encoder, so leaving a previous WebGPU session's
-  // `passGraphExecuting` in place would claim an executor that is not running.
-  // `setPassGraph` republishes after a WebGPU renderer adopts the graph.
-  publishGraphExecutorBreadcrumbs(null, []);
+}
+
+/** Message for a refusal, as the breadcrumbs carry it. */
+export function passGraphRefusal(error: unknown): string {
+  return error instanceof PassGraphError ? `${error.code}: ${error.message}` : String(error);
 }

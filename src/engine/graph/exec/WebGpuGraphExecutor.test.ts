@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { WebGPUPipelines } from '../../WebGPUPipelines';
+import { PersistencePass } from '../../PersistencePass';
+import { createUniformData, packUniforms } from '../templates/uniformLayout';
+import { PERSIST_MOTION_UNIFORMS } from '../templates/wgsl';
+import { persistUniforms } from './uniforms';
 import { buildBlurGraph, buildGraphPreset, buildWarpGraph } from '../altGraphs';
 import { compileGraph, graphCompileCount, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph } from '../defaultGraph';
+import { withMotionTerm } from '../variants';
 import type { CompiledGraph } from '../types';
 import { createFakeGpu, fakeRendererState, type FakeGpu } from './__fixtures__/fakeDevice';
 import { WebGpuGraphExecutor } from './WebGpuGraphExecutor';
@@ -253,17 +258,37 @@ describe('WebGpuGraphExecutor', () => {
       expect(executor.ready).toBe(false);
     });
 
-    it('answers a superseded build with the verdict on the current one', async () => {
+    it('keeps each graph\'s verdict its own when one supersedes another mid-flight', async () => {
       gpu.rejectShadersContaining('WarpUniforms', 'rejected');
       executor.setGraph(compile(buildWarpGraph()));
       const stale = executor.prepare();
       executor.setGraph(compile());
       const current = executor.prepare();
-      // The warp graph's rejection must not refuse the default graph that
-      // replaced it before the device answered.
-      await expect(stale).resolves.toBeNull();
+      // The warp graph's rejection is the warp graph's: it must not make the
+      // default graph that replaced it before the device answered unready.
+      await expect(stale).resolves.toBe('rejected');
       await expect(current).resolves.toBeNull();
       expect(executor.ready).toBe(true);
+    });
+
+    it('answers a graph switched back to from its cached pipelines, verdict and all', async () => {
+      const still = compile();
+      executor.setGraph(still);
+      await executor.prepare();
+      const built = executor.pipelineBuildCount;
+
+      executor.setGraph(compileGraph(withMotionTerm(buildDefaultGraph()), 'webgpu'));
+      await executor.prepare();
+      expect(executor.pipelineBuildCount).toBeGreaterThan(built);
+      const withMotion = executor.pipelineBuildCount;
+
+      // Back and forth again: both variants are cached, so nothing is built
+      // and each is ready at once.
+      executor.setGraph(still);
+      expect(executor.ready).toBe(true);
+      executor.setGraph(compileGraph(withMotionTerm(buildDefaultGraph()), 'webgpu'));
+      expect(executor.ready).toBe(true);
+      expect(executor.pipelineBuildCount).toBe(withMotion);
     });
 
     it('re-verifies after a sample-count change, and the hand encoder draws meanwhile', async () => {
@@ -389,21 +414,25 @@ describe('WebGpuGraphExecutor', () => {
     });
 
     it('releases the ring when the graph switches back to the default', () => {
+      const live = () => gpu.textures.filter((t) => !t.destroyed && t.width > 1).length;
       executor.setGraph(smear());
       encode(executor);
-      const before = new Set(gpu.textures.map((t) => t.label));
       expect(executor.ringTextureCount()).toBe(4);
 
       executor.setGraph(compile());
       encode(executor);
       expect(executor.ringTextureCount()).toBe(0);
       expect(executor.wantsMotionField).toBe(false);
-      const stillLive = gpu.textures.filter(
-        (t) => before.has(t.label) && !t.destroyed && t.width > 1,
-      );
-      // Only the caller's source texture survives the switch (and the 1×1 zero
-      // field, which lives as long as the executor).
-      expect(stillLive.map((t) => t.label)).toEqual([label(source)]);
+      const afterSwitch = live();
+
+      // The pool keeps what the default graph still uses (its tracers, the
+      // band targets) and nothing else: a fresh executor drawing the default
+      // graph holds exactly as many textures. The 1×1 zero field is not counted.
+      const fresh = build();
+      fresh.setGraph(compile());
+      const beforeFresh = live();
+      encode(fresh);
+      expect(afterSwitch - 1 /* the caller's source */).toBe(live() - beforeFresh);
     });
 
     it('clears the ring with the tracers on reset', () => {
@@ -413,6 +442,83 @@ describe('WebGpuGraphExecutor', () => {
       executor.clearAccumulators();
       // Eight tracer clears (see above) plus the four ring slots.
       expect(gpu.passes).toHaveLength(12);
+    });
+  });
+
+  describe('the temporal term', () => {
+    const label = (texture: GPUTexture) => (texture as unknown as { label: string }).label;
+    const moving = () => compile(withMotionTerm(buildDefaultGraph()));
+    const MOTION_STATE = {
+      motionMode: 2, motionGain: 1.5, motionDecayBias: 0.25,
+      tracerAboveDuration: 300, tracerBelowDuration: 2000, stampBoost: 2.2,
+    };
+    const expectedBlock = (role: 'below' | 'above') => [...new Uint8Array(packUniforms(
+      PERSIST_MOTION_UNIFORMS,
+      persistUniforms(fakeRendererState(MOTION_STATE), { role, fps: 30 }),
+      createUniformData(PERSIST_MOTION_UNIFORMS),
+    ).buffer)];
+    const writtenBlocks = () => gpu.bufferWrites.map((write) => [...gpu.bufferContents.get(write.buffer)!]);
+
+    it('binds the field into both accumulators, after their previous frame', () => {
+      const field = gpu.device.createTexture({ size: [160, 120, 1], format: 'rgba16float', usage: 0 });
+      executor.setGraph(moving());
+      gpu.reset();
+      encode(executor, MOTION_STATE, field);
+      // Still the hand encoder's five passes: the term has none of its own.
+      expect(gpu.passes).toHaveLength(6);
+      const withField = gpu.bindGroups.filter((group) => group.textures.includes(label(field)));
+      expect(withField).toHaveLength(2);
+      for (const group of withField) {
+        // Three stamp layers, the previous frame, then the field.
+        expect(group.textures).toHaveLength(5);
+        expect(group.textures.at(-1)).toBe(label(field));
+      }
+    });
+
+    it('writes the motion uniform block the hand encoder writes', () => {
+      const field = gpu.device.createTexture({ size: [160, 120, 1], format: 'rgba16float', usage: 0 });
+      executor.setGraph(moving());
+      gpu.reset();
+      encode(executor, MOTION_STATE, field);
+      const graphBlocks = writtenBlocks();
+      expect(graphBlocks).toContainEqual(expectedBlock('below'));
+      expect(graphBlocks).toContainEqual(expectedBlock('above'));
+
+      // The hand encoder's fused motion pass — the fake device has no compute
+      // lane, so this is the fragment path the graph runs too.
+      const hand = new PersistencePass(
+        gpu.device,
+        new WebGPUPipelines(gpu.device, 'bgra8unorm', 'rgba16float'),
+        'rgba16float',
+        gpu.device.createSampler({}),
+      );
+      hand.ensureTextures(64, 64);
+      gpu.reset();
+      hand.encode(gpu.device.createCommandEncoder(), [source, source, source], {
+        state: fakeRendererState(MOTION_STATE),
+        fps: 30,
+        motionTexture: field,
+      });
+      expect(writtenBlocks()).toEqual([expectedBlock('below'), expectedBlock('above')]);
+      hand.destroy();
+    });
+
+    it('keeps the tracers when the term switches on and off', () => {
+      const field = gpu.device.createTexture({ size: [160, 120, 1], format: 'rgba16float', usage: 0 });
+      executor.setGraph(compile());
+      encode(executor);
+      const created = gpu.textures.length;
+      const destroyed = gpu.textures.filter((texture) => texture.destroyed).length;
+
+      executor.setGraph(moving());
+      encode(executor, MOTION_STATE, field);
+      executor.setGraph(compile());
+      encode(executor);
+
+      // Same nodes, same slots: the trails a user is looking at survive a
+      // motion-mode change, as they do on the hand encoder.
+      expect(gpu.textures.slice(created).filter((texture) => texture.width > 1)).toEqual([]);
+      expect(gpu.textures.filter((texture) => texture.destroyed)).toHaveLength(destroyed);
     });
   });
 });

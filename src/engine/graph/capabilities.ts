@@ -14,6 +14,7 @@ const SUPPORTED: Record<GraphBackend, ReadonlySet<NodeKind>> = {
     'band-layer',
     'lut',
     'coincidence',
+    'motion',
     'decay',
     'blend',
     'warp',
@@ -27,12 +28,14 @@ const SUPPORTED: Record<GraphBackend, ReadonlySet<NodeKind>> = {
   // Adding one here means adding the emitter in templates/glsl.ts — nothing
   // else. `history` and `displace` wait for the WebGL executor on purpose: a
   // GLSL template nothing executes would be dead code, and a refusal by name
-  // keeps the hand encoder (the classic look) on screen.
+  // keeps the hand encoder (the classic look) on screen. `motion` is fused
+  // into `decay`, whose GLSL template has the motion variant.
   webgl: new Set<NodeKind>([
     'source',
     'band-layer',
     'lut',
     'coincidence',
+    'motion',
     'decay',
     'blend',
     'output',

@@ -7,9 +7,9 @@ import {
   DISPLACE_UNIFORMS,
   HISTORY_UNIFORMS,
   LUT_UNIFORMS,
-  PERSIST_UNIFORMS,
   WARP_UNIFORMS,
   compositorUniformLayout,
+  persistUniformLayout,
 } from '../templates/wgsl';
 import { packUniforms, type UniformLayout, type UniformValues } from '../templates/uniformLayout';
 import {
@@ -118,14 +118,18 @@ export class WebGpuGraphExecutor {
 
   private compiled: CompiledGraph | null = null;
   private plan: EncodePlan | null = null;
-  private nodePipelines = new Map<string, NodePipeline>();
-  private builtForHash: string | null = null;
-  private builtForSampleCount = 1;
+  /** Encode plans by structural hash: a graph switched back to is not re-planned. */
+  private readonly plans = new Map<string, EncodePlan>();
   private sampleCount = 1;
-  /** Bumped per pipeline build, so a superseded build's verdict is not taken as the current one's. */
-  private buildGeneration = 0;
-  private pipelinesValid = false;
-  private verdict: Promise<string | null> = Promise.resolve(null);
+  /**
+   * Built pipelines by structural hash and sample count, least recently used
+   * first. A renderer moves between a handful of variants of one graph — the
+   * temporal term on and off, MSAA on and off, a few layer counts — and
+   * switching back to one it has drawn must not rebuild or revalidate it.
+   */
+  private readonly pipelineSets = new Map<string, PipelineSet>();
+  /** The set for the current graph and sample count, once built. */
+  private current: PipelineSet | null = null;
 
   /** Pipelines created since construction — the "no churn" probe for tests. */
   pipelineBuildCount = 0;
@@ -156,8 +160,14 @@ export class WebGpuGraphExecutor {
    */
   setGraph(compiled: CompiledGraph | null): void {
     if (compiled === this.compiled) return;
+    let plan: EncodePlan | null = null;
+    if (compiled) {
+      plan = this.plans.get(compiled.hash) ?? buildEncodePlan(compiled);
+      this.plans.set(compiled.hash, plan);
+    }
     this.compiled = compiled;
-    this.plan = compiled ? buildEncodePlan(compiled) : null;
+    this.plan = plan;
+    this.current = null;
   }
 
   get active(): boolean {
@@ -175,10 +185,9 @@ export class WebGpuGraphExecutor {
    * back, the renderer keeps drawing with the hand encoder.
    */
   get ready(): boolean {
-    return this.active
-      && this.pipelinesValid
-      && this.builtForHash === this.compiled!.hash
-      && this.builtForSampleCount === this.sampleCount;
+    if (!this.active) return false;
+    const set = this.pipelineSets.get(pipelineSetKey(this.compiled!, this.sampleCount));
+    return set?.valid === true;
   }
 
   /**
@@ -191,13 +200,17 @@ export class WebGpuGraphExecutor {
    */
   prepare(): Promise<string | null> {
     if (!this.compiled || !this.plan) return Promise.resolve(null);
-    this.ensurePipelines(this.compiled);
-    return this.verdict;
+    return this.ensurePipelines(this.compiled).verdict;
   }
 
   /** True when the adopted graph binds the motion field — the renderer runs the chore for it. */
   get wantsMotionField(): boolean {
     return this.plan?.wantsMotionField ?? false;
+  }
+
+  /** True when the adopted graph reads the field's velocity, so the chore must solve flow. */
+  get motionFieldNeedsFlow(): boolean {
+    return this.plan?.motionFieldNeedsFlow ?? false;
   }
 
   get graphHash(): string | null {
@@ -210,7 +223,9 @@ export class WebGpuGraphExecutor {
   }
 
   setSampleCount(sampleCount: number): void {
+    if (sampleCount === this.sampleCount) return;
     this.sampleCount = sampleCount;
+    this.current = null;
   }
 
   /**
@@ -253,7 +268,7 @@ export class WebGpuGraphExecutor {
     };
 
     this.pool.configure(compiled.allocation, sizes, this.sampleCount);
-    this.ensurePipelines(compiled);
+    if (!this.current) this.ensurePipelines(compiled);
 
     // Stage markers are fired by crossing a boundary, and flushed in order at
     // the end, so a graph that skips a stage (a paused frame encodes no
@@ -302,14 +317,10 @@ export class WebGpuGraphExecutor {
   }
 
   destroy(): void {
-    for (const node of this.nodePipelines.values()) destroyNodePipeline(node);
-    this.nodePipelines.clear();
-    this.builtForHash = null;
-    this.pipelinesValid = false;
-    // A build still awaiting its verdict now answers with this one, so it
-    // never resolves to itself.
-    this.buildGeneration += 1;
-    this.verdict = Promise.resolve(null);
+    for (const set of this.pipelineSets.values()) destroyPipelineSet(set);
+    this.pipelineSets.clear();
+    this.current = null;
+    this.plans.clear();
     this.pool.release();
     this.zeroField?.destroy();
     this.zeroField = null;
@@ -322,14 +333,20 @@ export class WebGpuGraphExecutor {
 
   // ─── pipelines ────────────────────────────────────────────────────────────
 
-  private ensurePipelines(compiled: CompiledGraph): void {
-    if (this.builtForHash === compiled.hash && this.builtForSampleCount === this.sampleCount) {
-      return;
+  /**
+   * The pipeline set for `compiled` at the current sample count, built on
+   * first use. A set switched back to is reused, verdict and all.
+   */
+  private ensurePipelines(compiled: CompiledGraph): PipelineSet {
+    const key = pipelineSetKey(compiled, this.sampleCount);
+    const cached = this.pipelineSets.get(key);
+    if (cached) {
+      // Most recently used goes last; eviction takes from the front.
+      this.pipelineSets.delete(key);
+      this.pipelineSets.set(key, cached);
+      this.current = cached;
+      return cached;
     }
-    for (const node of this.nodePipelines.values()) destroyNodePipeline(node);
-    this.nodePipelines = new Map();
-    this.pipelinesValid = false;
-    const generation = ++this.buildGeneration;
 
     const ctx: NodePipelineContext = {
       device: this.device,
@@ -342,6 +359,7 @@ export class WebGpuGraphExecutor {
     const emittedById = new Map<string, EmittedPass>(
       compiled.emitted.map((pass) => [pass.nodeId, pass]),
     );
+    const set: PipelineSet = { nodes: new Map(), valid: null, verdict: Promise.resolve(null) };
 
     // Every object the build creates is created inside these scopes, and
     // nothing else runs between the push and the pops, so an error they catch
@@ -352,25 +370,37 @@ export class WebGpuGraphExecutor {
       for (const step of this.plan!.steps) {
         const emitted = emittedById.get(step.nodeId);
         if (!emitted || emitted.fragment === '') continue;
-        this.nodePipelines.set(step.nodeId, createNodePipeline(ctx, emitted));
+        set.nodes.set(step.nodeId, createNodePipeline(ctx, emitted));
         this.pipelineBuildCount += 1;
       }
     } finally {
       const validation = this.device.popErrorScope();
       const internal = this.device.popErrorScope();
-      this.verdict = Promise.all([validation, internal]).then(([invalid, failed]) => {
-        if (generation !== this.buildGeneration) return this.verdict;
+      set.verdict = Promise.all([validation, internal]).then(([invalid, failed]) => {
         const error = invalid ?? failed;
-        this.pipelinesValid = error === null;
+        set.valid = error === null;
         return error ? error.message : null;
       });
     }
-    this.builtForHash = compiled.hash;
-    this.builtForSampleCount = this.sampleCount;
+
+    this.pipelineSets.set(key, set);
+    this.current = set;
+    this.evictPipelineSets();
+    return set;
+  }
+
+  /** Destroy the least recently used sets beyond {@link MAX_PIPELINE_SETS}. */
+  private evictPipelineSets(): void {
+    for (const [key, set] of this.pipelineSets) {
+      if (this.pipelineSets.size <= MAX_PIPELINE_SETS) return;
+      if (set === this.current) continue;
+      destroyPipelineSet(set);
+      this.pipelineSets.delete(key);
+    }
   }
 
   private nodePipeline(nodeId: string): NodePipeline {
-    const node = this.nodePipelines.get(nodeId);
+    const node = this.current?.nodes.get(nodeId);
     if (!node) throw new Error(`Graph node '${nodeId}' has no pipeline.`);
     return node;
   }
@@ -471,17 +501,22 @@ export class WebGpuGraphExecutor {
     const stampTextures = step.stampInputs.map((id) => this.textureFor(id, inputs));
     const history = this.pool.pingPong(step.nodeId);
     const diagnostic = this.pool.diagnostic(step.nodeId);
+    // The temporal term's variant binds the field after the previous frame and
+    // fills the uniform block's motion fields; without it this is the pass, the
+    // layout and the block that shipped before the term existed.
+    const field = step.motionField ? this.textureFor(step.motionField, inputs) : null;
 
-    this.writeUniforms(node, PERSIST_UNIFORMS, persistUniforms(state, { role: step.role, fps }));
+    this.writeUniforms(
+      node,
+      persistUniformLayout(field !== null),
+      persistUniforms(state, { role: step.role, fps }),
+    );
 
-    this.bindIfChanged(node, [...stampTextures, history.read], () => [
+    const bound = [...stampTextures, history.read, ...(field ? [field] : [])];
+    this.bindIfChanged(node, bound, () => [
       { binding: 0, resource: this.passSampler },
-      ...stampTextures.map((texture, i) => ({
-        binding: i + 1,
-        resource: texture.createView(),
-      })),
-      { binding: stampTextures.length + 1, resource: history.read.createView() },
-      { binding: stampTextures.length + 2, resource: { buffer: node.uniformBuffer! } },
+      ...bound.map((texture, i) => ({ binding: i + 1, resource: texture.createView() })),
+      { binding: bound.length + 1, resource: { buffer: node.uniformBuffer! } },
     ]);
 
     const pass = enc.beginRenderPass({
@@ -728,6 +763,29 @@ export class WebGpuGraphExecutor {
     });
     node.bindGroupKey = key;
   }
+}
+
+/**
+ * Pipeline sets kept per executor. Enough for every variant a session moves
+ * between in practice (two motion states × two MSAA states × a couple of layer
+ * counts); a slider swept through all ten layer counts evicts the oldest.
+ */
+const MAX_PIPELINE_SETS = 8;
+
+/** One graph's pipelines at one sample count, and the device's verdict on them. */
+interface PipelineSet {
+  readonly nodes: Map<string, NodePipeline>;
+  /** `null` until the device has answered. */
+  valid: boolean | null;
+  verdict: Promise<string | null>;
+}
+
+const pipelineSetKey = (compiled: CompiledGraph, sampleCount: number): string =>
+  `${compiled.hash}@${sampleCount}`;
+
+function destroyPipelineSet(set: PipelineSet): void {
+  for (const node of set.nodes.values()) destroyNodePipeline(node);
+  set.nodes.clear();
 }
 
 const clearAttachment = (view: GPUTextureView): GPURenderPassColorAttachment => ({

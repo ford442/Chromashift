@@ -42,6 +42,7 @@ type NodeKind =
   | 'band-layer'    // luminance→colour band isolation, rotation, flip
   | 'lut'           // colorProfile 256×N LUT sample
   | 'coincidence'   // N-input overlap detection (generalises the persistence stamp)
+  | 'motion'        // the temporal tracer term: [stamp, motion field] → a motion-weighted stamp
   | 'decay'         // ping-pong accumulator with a per-frame multiplier
   | 'blend'         // alpha / add / subtract / multiply / screen
   | 'warp'          // UV transform: rotate, scale, feedback displacement
@@ -64,6 +65,7 @@ emitted code) rather than *value* params (they change a uniform).
 | `band-layer` | 1 | layer | `layerIndex`, `layerCount` | angle, flip | ✓ |
 | `lut` | 1 | layer | `rows` | `row`, `mixAmount` | ✓ |
 | `coincidence` | 1–∞ | tracer | `minOverlap`, `emitDiagnostic` | thresholds | ✓ |
+| `motion` | 2: `[stamp, field]` | tracer | — | mode, gain, decay bias (from `RendererState`) | ✓ (fused into `decay`) |
 | `decay` | 1 | tracer (ping-pong) | — | duration | ✓ |
 | `blend` | 2–∞ | output | `layerInputs`, `tracerInputs` | opacities, modes | ✓ |
 | `warp` | 1 | layer | `mode` (`affine` \| `feedback`) | `angleDeg`, `scale`, `displace` | — |
@@ -193,8 +195,8 @@ For the default graph that changes the encode path, not the look: see
 | Breadcrumb | Meaning |
 |---|---|
 | `window.passGraphActive` | the gate is on for this session |
-| `window.passGraphCompileCount` | compilations so far — must not move on a parameter change |
-| `window.passGraphPasses` | scheduled pass order, as node ids |
+| `window.passGraphCompileCount` | compilations so far — must not move on a parameter change; a structural switch (the temporal term on) compiles each variant once |
+| `window.passGraphPasses` | scheduled pass order, as node ids — of the variant being drawn (the temporal term adds `motion-field` and a `…-motion` node) |
 | `window.passGraphSlots` | pool slot count per resolution class |
 | `window.passGraphRingFrames` | `history` ring textures per resolution class — VRAM that outlives the frame, so it is not in `passGraphSlots` |
 | `window.passGraphError` | a refusal, or `null`: `unsupported-node: …` names a node the backend has no template for; `invalid-pipeline: …` carries the device's own error for an emitted shader it rejected |
@@ -421,10 +423,60 @@ is structural, because the executor binds by it, and a value param could be a st
 from the first graph compiled for a topology. When the plan contains one, the renderer
 runs the motion chore itself, with flow (Lucas–Kanade), in its own command buffer, as the
 hand path does. This happens whatever `motionMode` says, because `motionMode` selects
-the *persistence* term. Any mode other than `off` still keeps the hand encoder, so
-boost/gate/direction are unchanged, and a graph without the role runs no chore at all.
-If the lane declines, the executor binds a 1×1 zero field and `displace` becomes the
-identity.
+the *persistence* term (see [The temporal term](#the-temporal-term-motion)), and a graph
+without the role runs no chore at all. If the lane declines, the executor binds a 1×1
+zero field and `displace` becomes the identity.
+
+## The temporal term (`motion`)
+
+`tracers.motionMode` used to be the reason the executor stepped aside: it had no node,
+so any mode but `off` drew with the hand encoder. It is now a node kind.
+
+```
+stamp ──┐
+        ├─► motion ─┬─► decay (below)
+field ──┘           └─► decay (above)
+```
+
+`motion` takes `[stamp, field]`, where `field` must be a `source` with
+`role: 'motion-field'` (`validate.ts` refuses anything else by name). The mode
+(`boost`, `gate`, `direction`), the gain and the decay bias are uniforms read from
+`RendererState`, so moving between modes never recompiles. The node is fused into
+the `decay` passes that read it, exactly as `coincidence` is: each accumulator runs
+the motion variant of the fused pass, `emitCoincidenceDecayWgsl(n, { motion: true })`,
+and binds the field after its previous frame. That is the hand encoder's motion
+persistence pass, program and uniform block — `PERSIST_MOTION_UNIFORMS` — included.
+A `motion` node read by anything but a `decay` is refused: its decay-rate bias acts
+on the accumulator, so a weighted stamp on its own would have lost half the term.
+
+**`off` is still the pre-motion program, not an equivalent of it.** The graph only
+has a `motion` node while the term is on, so `off` compiles the graph the goldens
+pin. That makes the term a *variant* of the graph rather than part of it:
+
+- **A source, built per variant.** The renderer adopts a `PassGraphSource` (a preset
+  name and a `build(variant)`; `graph/variants.ts`), not one compiled graph. Each
+  frame asks for `{ layerCount, motion }`, where `motion` means a mode is selected
+  *and* the chore produced a field this frame — a declined lane draws the pre-motion
+  graph, as the hand encoder falls back to its pre-motion pipelines.
+  `withMotionTerm(graph)` adds the term to any shape with accumulators, reusing a
+  motion-field source the graph already reads (the smear's).
+- **Cached per variant.** Variants compile once each (`compileGraph` memoises on the
+  structural hash) and the executor keeps their pipelines in a small LRU keyed on hash
+  and sample count, verdict included, so switching the term back on draws at once.
+  Only the first switch has to wait for the device to validate the new pipelines;
+  until it answers, the hand encoder keeps the canvas.
+- **Trails survive the switch.** When the plan changes at the same sizes, the pool
+  keeps every texture whose slot the new plan still has. Accumulator slots are named
+  after their node (`persist:tracer-above`), so the tracers a user is looking at
+  carry across a motion-mode change, as they do on the hand encoder.
+
+The motion variant binds `0 = sampler, 1..n = layers, n+1 = previous, n+2 = field,
+n+3 = uniforms` — textures first, uniforms last, the convention every executor
+layout is derived from. The hand encoder's motion layout moved to match.
+
+`e2e/graph-executor.spec.ts` draws `gate` through the executor and compares it with
+the hand encoder: on the frozen still scene the field is zero, gate removes every
+stamp, and the two frames are byte-identical (and differ from `off`).
 
 ## Phase 2 — shipped
 
@@ -508,13 +560,15 @@ path, one step per PR. Landed so far:
 
 - **One state → uniform mapping** (step 1). See
   [One state → uniform mapping](#one-state--uniform-mapping).
+- **The temporal term as a node** (step 2). A motion mode no longer keeps the
+  hand encoder. See [The temporal term](#the-temporal-term-motion).
 
 Still to do:
 
 - **The executor as the default path.** The gate is still off by default, so
   two topologies are live: the executor behind `?graph=1` and the hand encoder
   everywhere else. The hand encoder cannot simply be deleted yet — it is also
-  what draws a motion mode, the `layers`/`tracers` export passes, the compare
+  what draws an HDR canvas, the `layers`/`tracers` export passes, the compare
   slots and the stationary previews — but it can become the fallback for those
   cases once the graph is on by default. The parity above is the evidence for
   flipping it; the cost is the compute-fed stamp, which the graph does not use.
@@ -537,11 +591,6 @@ Still to do:
   textures (`persistBelow`, `persistAbove`), so a graph with three `decay`
   nodes is refused rather than approximated. Generalising the compositor
   template to N tracers is what unblocks it.
-- **The temporal (motion) term.** `motionMode` has no graph node, so a session
-  that selects one falls back to the hand encoder rather than quietly dropping
-  the term. The node kind is the fix, not a uniform. (The motion *field* is
-  already a graph input — `source` with `role: 'motion-field'` — it is the
-  persistence term that reads it which is not.)
 - **`history` feedback cycles.** A ring whose oldest slot could close a cycle
   would make true previous-frame feedback (a warp steered by its own last
   output) expressible.
@@ -566,6 +615,7 @@ src/engine/graph/
 ├── defaultGraph.ts   # today's pipeline as a graph, for any layer count
 ├── layerSpecs.ts     # the band table the band-layer templates read
 ├── gate.ts           # ?graph=1|blur|warp|smear|feedback + window.passGraph* breadcrumbs
+├── variants.ts       # GraphVariant, PassGraphSource, withMotionTerm (the temporal term)
 ├── altGraphs.ts      # the named graph shapes the gate can select, JSON starter parsing
 ├── starters/         # body-smear.json, feedback-warp.json
 ├── shaderText.ts     # shader normalisation used by the parity test

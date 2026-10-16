@@ -4,6 +4,7 @@ import { compileGraph, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from '../defaultGraph';
 import { PassGraphError } from '../errors';
 import type { PassGraph } from '../types';
+import { MOTION_FIELD_SOURCE_ID, withMotionTerm } from '../variants';
 import { buildEncodePlan, encodedPassOrder, historyWeights } from './plan';
 
 const compile = (graph: PassGraph) => {
@@ -205,6 +206,51 @@ describe('encode plan — refusals', () => {
       )),
     };
     expect(() => buildEncodePlan(compile(graph))).toThrow(/binds exactly two/);
+  });
+
+  it('refuses a motion term read by anything but an accumulator', () => {
+    // Its decay-rate bias acts on the accumulator, so a weighted stamp on its
+    // own would have lost half of the term.
+    const moving = withMotionTerm(buildDefaultGraph());
+    const term = moving.nodes.find((node) => node.kind === 'motion')!;
+    const graph: PassGraph = {
+      ...moving,
+      nodes: moving.nodes.map((node) => (
+        node.id === DEFAULT_GRAPH_IDS.composite
+          ? { ...node, inputs: [term.id, ...node.inputs.slice(1)] }
+          : node
+      )),
+    };
+    expect(() => buildEncodePlan(compile(graph))).toThrow(/temporal term is part of the accumulator pass/);
+  });
+});
+
+describe('encode plan — the temporal term', () => {
+  const plan = buildEncodePlan(compile(withMotionTerm(buildDefaultGraph())));
+
+  it('fuses the motion node and the coincidence it reads into both accumulators', () => {
+    expect(plan.fused.has(DEFAULT_GRAPH_IDS.coincidence)).toBe(true);
+    expect([...plan.fused].some((id) => id.endsWith('-motion'))).toBe(true);
+    expect(encodedPassOrder(plan)).toEqual([
+      'layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite',
+    ]);
+  });
+
+  it('hands each accumulator the stamp layers and the field to weight them by', () => {
+    for (const step of plan.steps) {
+      if (step.kind !== 'decay') continue;
+      expect(step.stampInputs).toEqual(['layer0', 'layer1', 'layer2']);
+      expect(step.motionField).toBe(MOTION_FIELD_SOURCE_ID);
+    }
+    expect(plan.wantsMotionField).toBe(true);
+    expect(plan.motionFieldNeedsFlow).toBe(false);
+  });
+
+  it('leaves the pre-motion accumulators reading no field', () => {
+    const still = buildEncodePlan(compile(buildDefaultGraph()));
+    for (const step of still.steps) {
+      if (step.kind === 'decay') expect(step.motionField).toBeNull();
+    }
   });
 });
 

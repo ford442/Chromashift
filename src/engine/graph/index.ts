@@ -67,10 +67,21 @@ export {
 } from './layerSpecs';
 export {
   activatePassGraph,
+  passGraphRefusal,
   passGraphRequested,
   passGraphSelection,
   publishGraphExecutorBreadcrumbs,
+  publishGraphVariant,
   setStoredPassGraphPreference,
   type PassGraphSelection,
 } from './gate';
+export {
+  MOTION_FIELD_SOURCE_ID,
+  applyGraphVariant,
+  graphVariantKey,
+  presetGraphSource,
+  withMotionTerm,
+  type GraphVariant,
+  type PassGraphSource,
+} from './variants';
 export { normaliseShaderSource } from './shaderText';

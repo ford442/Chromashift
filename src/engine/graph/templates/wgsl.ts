@@ -581,9 +581,12 @@ export function emitCoincidenceDecayWgsl(
     .map((i) => `  let c${i} = textureSample(layer${i}, cSampler, uv);`)
     .join('\n');
   const { counts, sums, variances, dominant } = parts;
+  // `0 = sampler, 1..n = textures, then the uniform block` — the convention
+  // every graph pass follows, so the executor can derive its layout. The motion
+  // field is one more texture, after the previous frame.
   const prevBinding = layerCount + 1;
-  const uniformBinding = layerCount + 2;
-  const motionBinding = layerCount + 3;
+  const motionBinding = layerCount + 2;
+  const uniformBinding = motion ? layerCount + 3 : layerCount + 2;
   const motionHelpers = motion ? WGSL_MOTION_HELPERS : '';
   const motionTexBinding = motion
     ? `@group(0) @binding(${motionBinding}) var motionTex : texture_2d<f32>;\n`

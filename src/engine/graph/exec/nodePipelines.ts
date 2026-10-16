@@ -1,15 +1,6 @@
 import { fullscreenVertexSource } from '../../shaders';
 import type { LayerPipeline, WebGPUPipelines } from '../../WebGPUPipelines';
-import {
-  BLUR_UNIFORMS,
-  DISPLACE_UNIFORMS,
-  HISTORY_UNIFORMS,
-  LUT_UNIFORMS,
-  PERSIST_UNIFORMS,
-  WARP_UNIFORMS,
-  compositorUniformLayout,
-  emitHistoryWriteWgsl,
-} from '../templates/wgsl';
+import { emitHistoryWriteWgsl } from '../templates/wgsl';
 import { createUniformData, type UniformData, type UniformLayout } from '../templates/uniformLayout';
 import type { EmittedPass, NodeKind } from '../types';
 
@@ -49,35 +40,16 @@ export interface NodePipelineContext {
 }
 
 /**
- * The uniform layout one node kind's emitted shader declares, or `null` for the
- * kinds without a block of their own (`band-layer` keeps the shipped layer
- * pipeline's two buffers; `source` and `output` emit nothing).
+ * The uniform layout one emitted pass is packed with: the one its shader's
+ * struct was emitted from, carried on the pass by the compiler.
  */
-export function uniformLayoutFor(kind: NodeKind, layerCount: number): UniformLayout | null {
-  switch (kind) {
-    case 'coincidence':
-    case 'decay':
-      return PERSIST_UNIFORMS;
-    case 'blend':
-      return compositorUniformLayout(layerCount);
-    case 'warp':
-      return WARP_UNIFORMS;
-    case 'blur':
-      return BLUR_UNIFORMS;
-    case 'lut':
-      return LUT_UNIFORMS;
-    case 'displace':
-      return DISPLACE_UNIFORMS;
-    case 'history':
-      return HISTORY_UNIFORMS;
-    default:
-      return null;
-  }
+export function uniformLayoutFor(emitted: EmittedPass): UniformLayout | null {
+  return emitted.uniformLayout;
 }
 
-/** Uniform block size, in bytes, for one node kind. */
-export function uniformBytes(kind: NodeKind, layerCount: number): number {
-  return uniformLayoutFor(kind, layerCount)?.bytes ?? 0;
+/** Uniform block size, in bytes, for one emitted pass. */
+export function uniformBytes(emitted: EmittedPass): number {
+  return emitted.uniformLayout?.bytes ?? 0;
 }
 
 const sampler = (binding: number): GPUBindGroupLayoutEntry => ({
@@ -116,17 +88,19 @@ export function bindGroupLayoutEntries(emitted: EmittedPass, layerCount: number)
 /**
  * How many textures the emitted pass binds.
  *
- * `decay` is the one kind whose binding count is not its input count: it binds
- * the fused stamp's `layerCount` inputs plus its own previous-frame texture.
+ * Not the input count: a `decay` binds the fused stamp's `layerCount` inputs
+ * plus its own previous-frame texture (and the motion field, if it carries the
+ * temporal term).
  */
 export function textureBindingCount(emitted: EmittedPass, layerCount: number): number {
   switch (emitted.kind) {
     case 'coincidence':
-    case 'decay':
       return layerCount + 1;
     case 'blend':
       return layerCount + 2;
     default:
+      // `decay` binds its stamp's layers, its previous frame and — in the
+      // motion variant — the field, which is exactly what it reports.
       return emitted.textureBindings.length;
   }
 }
@@ -183,7 +157,7 @@ export function createNodePipeline(
     targetFormats(emitted.kind, ctx.internalFormat, ctx.outputFormat),
   );
 
-  const layout = uniformLayoutFor(emitted.kind, ctx.layerCount);
+  const layout = uniformLayoutFor(emitted);
   return {
     ...base,
     pipeline,
