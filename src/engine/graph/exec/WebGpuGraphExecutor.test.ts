@@ -7,7 +7,7 @@ import { persistUniforms } from './uniforms';
 import { buildBlurGraph, buildGraphPreset, buildWarpGraph } from '../altGraphs';
 import { compileGraph, graphCompileCount, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph } from '../defaultGraph';
-import { withMotionTerm } from '../variants';
+import { presentingTo, withMotionTerm } from '../variants';
 import type { CompiledGraph } from '../types';
 import { createFakeGpu, fakeRendererState, type FakeGpu } from './__fixtures__/fakeDevice';
 import { WebGpuGraphExecutor } from './WebGpuGraphExecutor';
@@ -519,6 +519,30 @@ describe('WebGpuGraphExecutor', () => {
       // motion-mode change, as they do on the hand encoder.
       expect(gpu.textures.slice(created).filter((texture) => texture.width > 1)).toEqual([]);
       expect(gpu.textures.filter((texture) => texture.destroyed)).toHaveLength(destroyed);
+    });
+  });
+
+  describe('the hdr-extended present', () => {
+    const variant = (presentation: 'sdr' | 'hdr-extended') =>
+      compile(presentingTo(buildDefaultGraph(), presentation));
+
+    it('targets the float canvas with the compositor alone', () => {
+      executor.setGraph(variant('hdr-extended'));
+      const before = gpu.pipelineTargets.length;
+      encode(executor);
+      const built = gpu.pipelineTargets.slice(before);
+      // Three band layers and two accumulators keep their internal targets;
+      // only the pass that writes the canvas changes format.
+      expect(built.at(-1)).toEqual(['rgba16float']);
+      expect(built.slice(0, -1).flat()).not.toContain('bgra8unorm');
+      expect(gpu.fragments.at(-1)).toContain('sign(c) * select(hi, lo');
+    });
+
+    it('keeps the SDR canvas format for an SDR variant', () => {
+      executor.setGraph(variant('sdr'));
+      const before = gpu.pipelineTargets.length;
+      encode(executor);
+      expect(gpu.pipelineTargets.slice(before).at(-1)).toEqual(['bgra8unorm']);
     });
   });
 });

@@ -334,9 +334,9 @@ export class WebGPURenderer {
       this.compositorSampler,
     );
     this.graphExecutor.setSampleCount(this.sampleCount);
-    // The variant a still session draws, adopted now so its pipelines are
+    // The variant a still SDR session draws, adopted now so its pipelines are
     // validating before the first frame asks for it.
-    this.adoptGraphVariant({ layerCount: this.pipelines.layerCount, motion: false });
+    this.adoptGraphVariant({ layerCount: this.pipelines.layerCount, motion: false, presentation: 'sdr' });
   }
 
   /**
@@ -357,7 +357,7 @@ export class WebGPURenderer {
       } catch (error) {
         entry = passGraphRefusal(error);
         console.warn('[Chromashift:PassGraph] refused a graph variant —', key, entry);
-        publishGraphVariant(null, entry, source.name);
+        publishGraphVariant(null, entry, source.name, key);
       }
       this.graphVariants.set(key, entry);
     }
@@ -376,7 +376,7 @@ export class WebGPURenderer {
     if (compiled !== this.adoptedGraph) {
       executor.setGraph(compiled);
       this.adoptedGraph = compiled;
-      publishGraphVariant(compiled, null, this.graphSource.name);
+      publishGraphVariant(compiled, null, this.graphSource.name, graphVariantKey(variant));
       this.verifyGraphPipelines();
     }
     return compiled;
@@ -780,7 +780,7 @@ export class WebGPURenderer {
     // submitted ahead of `enc` wherever in the frame it is called, so producing
     // it up front changes nothing on the queue.
     const motionMode = rendererStateValue(state, 'motionMode');
-    const graphMayDraw = this.graphExecutor !== null && passMode === 'composite' && !hdrCanvas;
+    const graphMayDraw = this.graphExecutor !== null && passMode === 'composite';
     const graphField = graphMayDraw ? this.graphFieldUse() : NO_MOTION_FIELD_USE;
     this.motionFieldEncoded = (motionMode !== 0 || graphField.reads) && this.currentTexture !== null;
     const motionTexture = this.motionFieldEncoded
@@ -790,14 +790,15 @@ export class WebGPURenderer {
     // Pass-graph executor (docs/PASS_GRAPH.md). It encodes the variant this
     // frame needs — with the temporal term on (a mode selected *and* a field
     // to read) the graph carries a `motion` node fused into its accumulators,
-    // and with it off it is the pre-motion graph — and the hand-written encode
-    // path is skipped whole rather than partly reused. The executor's canvas
-    // pipelines are SDR-only; an HDR canvas frame takes the hand encoder, which
-    // has the HDR present variants.
+    // and with it off it is the pre-motion graph; on an HDR canvas its output
+    // presents `hdr-extended`, and the compositor writing it emits the
+    // unclamped OETF into the float canvas — and the hand-written encode path
+    // is skipped whole rather than partly reused.
     if (graphMayDraw && this.currentTexture) {
       const compiled = this.adoptGraphVariant({
         layerCount: this.pipelines.layerCount,
         motion: motionMode !== 0 && motionTexture !== null,
+        presentation: hdrCanvas ? 'hdr-extended' : 'sdr',
       });
       const executor = this.graphExecutor;
       if (compiled && executor?.ready) {
@@ -951,7 +952,11 @@ export class WebGPURenderer {
    * variant the frame gets.
    */
   private graphFieldUse(): MotionFieldUse {
-    const still = this.compiledGraphVariant({ layerCount: this.pipelines.layerCount, motion: false });
+    const still = this.compiledGraphVariant({
+      layerCount: this.pipelines.layerCount,
+      motion: false,
+      presentation: 'sdr',
+    });
     if (!still) return NO_MOTION_FIELD_USE;
     let use = this.fieldUseByGraph.get(still);
     if (!use) {

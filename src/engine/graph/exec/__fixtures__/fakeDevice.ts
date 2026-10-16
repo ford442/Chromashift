@@ -44,6 +44,8 @@ export interface FakeGpu {
   bufferContents: Map<string, Uint8Array>;
   /** Fragment source each created pipeline was built from, in creation order. */
   fragments: string[];
+  /** Colour-target formats of each created pipeline, parallel to `fragments`. */
+  pipelineTargets: string[][];
   /**
    * Make every shader module whose source contains `marker` a validation
    * error, the way a real device reports WGSL it rejects: not a throw, but an
@@ -75,6 +77,7 @@ export function createFakeGpu(): FakeGpu {
     bufferSizes: new Map<string, number>(),
     bufferContents: new Map<string, Uint8Array>(),
     fragments: [] as string[],
+    pipelineTargets: [] as string[][],
     bindGroups: [] as RecordedBindGroup[],
   };
   let ids = 0;
@@ -139,6 +142,9 @@ export function createFakeGpu(): FakeGpu {
       state.pipelineCount += 1;
       const code = (descriptor.fragment?.module as unknown as { __code?: string })?.__code ?? '';
       state.fragments.push(code);
+      state.pipelineTargets.push(
+        [...(descriptor.fragment?.targets ?? [])].map((target) => String(target?.format)),
+      );
       return { label: nextId('pipe'), __targets: descriptor.fragment?.targets } as unknown as GPURenderPipeline;
     },
     createComputePipeline: () => ({}) as unknown as GPUComputePipeline,
@@ -217,6 +223,7 @@ export function createFakeGpu(): FakeGpu {
     get bufferSizes() { return state.bufferSizes; },
     get bufferContents() { return state.bufferContents; },
     get fragments() { return state.fragments; },
+    get pipelineTargets() { return state.pipelineTargets; },
     rejectShadersContaining(marker: string, message: string) {
       rejected.push({ marker, message });
     },

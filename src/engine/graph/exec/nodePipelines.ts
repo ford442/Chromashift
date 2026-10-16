@@ -1,6 +1,7 @@
 import { fullscreenVertexSource } from '../../shaders';
 import type { LayerPipeline, WebGPUPipelines } from '../../WebGPUPipelines';
 import { emitHistoryWriteWgsl } from '../templates/wgsl';
+import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../../gpuOptions';
 import { createUniformData, type UniformData, type UniformLayout } from '../templates/uniformLayout';
 import type { EmittedPass, NodeKind } from '../types';
 
@@ -105,11 +106,16 @@ export function textureBindingCount(emitted: EmittedPass, layerCount: number): n
   }
 }
 
-/** Colour-attachment formats one emitted pass writes, in `@location` order. */
+/**
+ * Colour-attachment formats one emitted pass writes, in `@location` order.
+ * `outputFormat` is the SDR canvas format; a pass presenting `hdr-extended`
+ * targets the float canvas instead.
+ */
 export function targetFormats(
   kind: NodeKind,
   internalFormat: GPUTextureFormat,
   outputFormat: GPUTextureFormat,
+  presentation?: CanvasPresentation,
 ): GPUTextureFormat[] {
   switch (kind) {
     // The fused coincidence/decay shader always writes the stamp-diagnostic
@@ -118,7 +124,7 @@ export function targetFormats(
     case 'decay':
       return [internalFormat, 'rgba8unorm'];
     case 'blend':
-      return [outputFormat];
+      return [presentation === 'hdr-extended' ? HDR_CANVAS_FORMAT : outputFormat];
     default:
       return [internalFormat];
   }
@@ -154,7 +160,7 @@ export function createNodePipeline(
     ctx.device,
     bindGroupLayout,
     emitted.fragment,
-    targetFormats(emitted.kind, ctx.internalFormat, ctx.outputFormat),
+    targetFormats(emitted.kind, ctx.internalFormat, ctx.outputFormat, emitted.presentation),
   );
 
   const layout = uniformLayoutFor(emitted);

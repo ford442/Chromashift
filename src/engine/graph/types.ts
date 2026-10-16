@@ -7,6 +7,7 @@
  * backend can emit).
  */
 
+import type { CanvasPresentation } from '../gpuOptions';
 import type { UniformLayout } from './templates/uniformLayout';
 
 /** Backends a graph can be compiled for. */
@@ -143,6 +144,11 @@ export interface EmittedPass {
    * WebGPU only: the GLSL emitters bind uniforms by name.
    */
   uniformLayout: UniformLayout | null;
+  /**
+   * For a pass that writes the canvas: the presentation it encodes for, which
+   * also picks its target format. Absent for every pass that writes the pool.
+   */
+  presentation?: CanvasPresentation;
 }
 
 export interface CompiledGraph {

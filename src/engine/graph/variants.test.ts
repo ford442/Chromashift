@@ -3,23 +3,25 @@ import {
   persistenceFragmentSource,
   persistenceMotionFragmentSource,
 } from '../shaders/persistence';
+import { compositorFragmentSource } from '../shaders/compositor';
 import { buildGraphPreset } from './altGraphs';
 import { compileGraph, graphCompileCount, resetGraphCompileCache } from './compile';
 import { DEFAULT_GRAPH_IDS, buildDefaultGraph } from './defaultGraph';
 import { PassGraphError } from './errors';
 import { buildEncodePlan, motionFieldUse } from './exec/plan';
-import { PERSIST_MOTION_UNIFORMS, PERSIST_UNIFORMS } from './templates/wgsl';
+import { PERSIST_MOTION_UNIFORMS, PERSIST_UNIFORMS, toHdrPresentWgsl } from './templates/wgsl';
 import type { PassGraph } from './types';
 import { validateGraph } from './validate';
 import {
   MOTION_FIELD_SOURCE_ID,
   graphVariantKey,
+  presentingTo,
   presetGraphSource,
   withMotionTerm,
 } from './variants';
 
-const STILL = { layerCount: 3, motion: false } as const;
-const MOVING = { layerCount: 3, motion: true } as const;
+const STILL = { layerCount: 3, motion: false, presentation: 'sdr' } as const;
+const MOVING = { layerCount: 3, motion: true, presentation: 'sdr' } as const;
 
 const node = (graph: PassGraph, id: string) => graph.nodes.find((n) => n.id === id)!;
 
@@ -124,19 +126,62 @@ describe('graph variants', () => {
 
   it('keys variants by what they change', () => {
     expect(graphVariantKey(STILL)).not.toBe(graphVariantKey(MOVING));
-    expect(graphVariantKey({ layerCount: 5, motion: false })).not.toBe(graphVariantKey(STILL));
+    expect(graphVariantKey({ ...STILL, layerCount: 5 })).not.toBe(graphVariantKey(STILL));
+    expect(graphVariantKey({ ...STILL, presentation: 'hdr-extended' })).not.toBe(graphVariantKey(STILL));
   });
 });
 
 describe('motionFieldUse', () => {
   it('says when the chore must run, and when it must solve flow', () => {
     const use = (name: 'default' | 'smear', motion: boolean) =>
-      motionFieldUse(compileGraph(presetGraphSource(name).build({ layerCount: 3, motion }), 'webgpu'));
+      motionFieldUse(compileGraph(presetGraphSource(name).build({ ...STILL, motion }), 'webgpu'));
     expect(use('default', false)).toEqual({ reads: false, needsFlow: false });
     // The temporal term reads the field but needs flow only for `direction` —
     // the renderer's call, from the motion mode.
     expect(use('default', true)).toEqual({ reads: true, needsFlow: false });
     // The smear steers a `displace` by the velocity, whatever the mode.
     expect(use('smear', false)).toEqual({ reads: true, needsFlow: true });
+  });
+});
+
+describe('the hdr-extended present', () => {
+  beforeEach(() => resetGraphCompileCache());
+  const HDR = { ...STILL, presentation: 'hdr-extended' } as const;
+
+  it('emits the compositor the hand encoder presents HDR with, and nothing else changes', () => {
+    const sdr = compileGraph(presetGraphSource('default').build(STILL), 'webgpu');
+    const hdr = compileGraph(presetGraphSource('default').build(HDR), 'webgpu');
+    expect(hdr.hash).not.toBe(sdr.hash);
+    const blend = (compiled: typeof sdr) => compiled.emitted.find((pass) => pass.kind === 'blend')!;
+    // The SDR compositor is the golden-pinned source; HDR swaps its OETF block
+    // text for text, as `WebGPUPipelines` does for the hand encoder's HDR pass.
+    expect(blend(sdr).fragment).toBe(compositorFragmentSource);
+    expect(blend(sdr).presentation).toBe('sdr');
+    expect(blend(hdr).fragment).toBe(toHdrPresentWgsl(compositorFragmentSource));
+    expect(blend(hdr).fragment).not.toBe(compositorFragmentSource);
+    expect(blend(hdr).presentation).toBe('hdr-extended');
+    const rest = (compiled: typeof sdr) => compiled.emitted
+      .filter((pass) => pass.kind !== 'blend')
+      .map((pass) => [pass.nodeId, pass.fragment]);
+    expect(rest(hdr)).toEqual(rest(sdr));
+  });
+
+  it('composes with the temporal term', () => {
+    const both = compileGraph(presetGraphSource('default').build({ ...HDR, motion: true }), 'webgpu');
+    expect(both.emitted.find((pass) => pass.kind === 'blend')!.presentation).toBe('hdr-extended');
+    expect(both.emitted.filter((pass) => pass.kind === 'decay').every((pass) => pass.textureBindings.includes('motion')))
+      .toBe(true);
+  });
+
+  it('is refused by name on the WebGL backend, which presents SDR only', () => {
+    expect(() => compileGraph(presentingTo(buildDefaultGraph(), 'hdr-extended'), 'webgl'))
+      .toThrow(/no 'hdr-extended' present/);
+  });
+
+  it('refuses a presentation it does not know', () => {
+    const graph = buildDefaultGraph();
+    const output = graph.nodes.find((n) => n.kind === 'output')!;
+    output.params = { presentation: 'hdr10' };
+    expect(() => validateGraph(graph)).toThrow(/presentation "hdr10"/);
   });
 });

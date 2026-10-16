@@ -148,6 +148,9 @@ function validateParams(node: GraphNode): void {
     case 'displace':
       oneOf('field', ['motion', 'color'], 'motion');
       break;
+    case 'output':
+      oneOf('presentation', ['sdr', 'hdr-extended'], 'sdr');
+      break;
     default:
       break;
   }

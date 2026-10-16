@@ -28,8 +28,10 @@ import {
   emitLutWgsl,
   emitWarpWgsl,
   persistUniformLayout,
+  toHdrPresentWgsl,
 } from './templates/wgsl';
 import type { UniformLayout } from './templates/uniformLayout';
+import type { CanvasPresentation } from '../gpuOptions';
 import { WGSL_BLEND_HELPERS } from '../shaders/common';
 import type {
   CompiledGraph,
@@ -72,6 +74,7 @@ function emitPass(
   backend: GraphBackend,
   layerCount: number,
   byId: ReadonlyMap<string, GraphNode>,
+  canvas: CanvasPresentation | undefined,
 ): EmittedPass {
   const inputCount = pass.inputs.length;
   const base = { nodeId: node.id, kind: node.kind };
@@ -138,15 +141,30 @@ function emitPass(
 
     case 'blend': {
       const layerInputs = intParam(node, 'layerInputs', layerCount);
-      const fragment = webgpu
+      let fragment = webgpu
         ? emitCompositorWgsl(layerInputs, WGSL_BLEND_HELPERS)
         : emitCompositorGlsl(layerInputs);
+      // Presenting to an `hdr-extended` canvas swaps the clamping OETF for the
+      // extended one, text for text — the source the hand encoder's HDR
+      // present pass is built from (`toHdrPresentWgsl`), so the SDR emission
+      // and its golden are untouched.
+      if (canvas === 'hdr-extended') {
+        if (!webgpu) {
+          throw new PassGraphError(
+            'unsupported-node',
+            `The webgl backend has no 'hdr-extended' present for node '${node.id}'; it presents SDR only.`,
+            node.id,
+          );
+        }
+        fragment = toHdrPresentWgsl(fragment);
+      }
       const bindings = Array.from({ length: layerInputs }, (_, i) => `layer${i}`);
       return {
         ...base,
         fragment,
         textureBindings: [...bindings, 'tracerBelow', 'tracerAbove'],
         uniformLayout: block(compositorUniformLayout(layerInputs)),
+        ...(canvas ? { presentation: canvas } : {}),
       };
     }
 
@@ -201,8 +219,22 @@ export function compileGraph(graph: PassGraph, backend: GraphBackend): CompiledG
   const allocation = allocateTextures(schedule);
 
   const layerCount = graph.nodes.filter((node) => node.kind === 'band-layer').length;
+  // The canvas each `output` presents to, by the node it reads: the pass that
+  // writes the swapchain encodes for that canvas and targets its format.
+  const canvasOf = new Map<string, CanvasPresentation>();
+  for (const node of graph.nodes) {
+    if (node.kind !== 'output') continue;
+    canvasOf.set(node.inputs[0], node.params.presentation === 'hdr-extended' ? 'hdr-extended' : 'sdr');
+  }
   const emitted = schedule.passes.map((pass) =>
-    emitPass(validation.byId.get(pass.nodeId)!, pass, backend, layerCount, validation.byId),
+    emitPass(
+      validation.byId.get(pass.nodeId)!,
+      pass,
+      backend,
+      layerCount,
+      validation.byId,
+      canvasOf.get(pass.nodeId),
+    ),
   );
 
   const compiled: CompiledGraph = {

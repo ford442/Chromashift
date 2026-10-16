@@ -47,14 +47,19 @@ import { STRUCTURED_FIXTURE_PNG } from './helpers/structuredFixture';
  * pacing. Measured: ±1 on 5–43 of 731k pixels between two runs of the same
  * encoder. With the multiplier at 0 there is no history to disagree about.
  */
-function frozenScene(tracers: Record<string, unknown> = {}): string {
+function frozenScene(
+  tracers: Record<string, unknown> = {},
+  viewport?: Record<string, unknown>,
+): string {
   return encodePresetParam({
-    version: 1,
+    // Canvas HDR arrived in schema v8; everything else here is v1.
+    version: viewport ? 8 : 1,
     settings: {
       // `opacity` is here so a test can confirm the preset arrived: the Layers
       // panel renders it as "66%", a signal that does not depend on the canvas.
       layers: { angles: [0, 40, 80], extensions: [0, 0, 0], opacity: 0.66 },
       tracers: { aboveDuration: 0, belowDuration: 0, ...tracers },
+      ...(viewport ? { viewport } : {}),
     },
   });
 }
@@ -69,6 +74,9 @@ const FROZEN_SCENE = frozenScene();
  * exactly, since no stamp is left for the compute-fed lane to round.
  */
 const GATE_SCENE = frozenScene({ motionMode: 'gate' });
+
+/** The frozen scene presented on an `hdr-extended` canvas (opt-in Canvas HDR). */
+const HDR_SCENE = frozenScene({}, { canvasHdr: true });
 
 const SETTLE_MS = 2500;
 
@@ -345,6 +353,32 @@ test.describe('pass-graph executor', () => {
       // Moving between boost, gate and direction is a uniform; only on/off is
       // structural, and each of the two variants compiled exactly once.
       expect(await page.evaluate(() => window.passGraphCompileCount)).toBe(2);
+    });
+  });
+
+  test.describe('the hdr-extended present', () => {
+    test('an HDR canvas draws through the executor, as the hand encoder draws it', async ({ page }) => {
+      test.setTimeout(240_000);
+      const gpuErrors = collectGpuErrors(page);
+      const handEncoded = await captureFrame(page, url('0', { compute: false, scene: HDR_SCENE }));
+      // The UA honoured the request: the swap chain is the float format. A
+      // runner without extended tone mapping would present SDR, and this
+      // comparison would be of two SDR frames — so it says so instead.
+      expect(handEncoded.format, 'the canvas did not present hdr-extended').toBe('rgba16float');
+      expectContent(handEncoded, 'the hand-encoded HDR frame');
+
+      const graphEncoded = await captureFrame(page, url('1', { compute: false, scene: HDR_SCENE }));
+      const crumbs = await page.evaluate(() => ({
+        executing: window.passGraphExecuting,
+        variant: window.passGraphVariant,
+        error: window.passGraphError,
+      }));
+      expect(crumbs.error).toBeNull();
+      expect(crumbs.executing).toBe('default');
+      expect(crumbs.variant).toContain('hdr-extended');
+      expect(graphEncoded.format).toBe('rgba16float');
+      expect(frameDifference(handEncoded, graphEncoded)).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+      expect(gpuErrors).toEqual([]);
     });
   });
 

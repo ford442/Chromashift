@@ -145,7 +145,10 @@ const SPECS: Record<NodeKind, NodeKindSpec> = {
     outputType: null,
     resolution: 'output',
     pingPong: false,
-    structuralParams: [],
+    // `presentation` ('sdr' | 'hdr-extended') is the canvas this output
+    // presents to. It picks the OETF the pass writing it emits and that pass's
+    // target format, so it is structural.
+    structuralParams: ['presentation'],
   },
 };
 

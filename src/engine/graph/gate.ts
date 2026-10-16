@@ -25,6 +25,12 @@ declare global {
     passGraphError?: string | null;
     /** Which named graph shape the gate selected. */
     passGraphName?: GraphPresetName | null;
+    /**
+     * The variant of that shape a renderer last compiled for a frame
+     * (`graphVariantKey`: layer count, temporal term, presentation), or `null`
+     * when no renderer builds variants (the gate alone, the WebGL backend).
+     */
+    passGraphVariant?: string | null;
     /** Name of the graph a GPU executor is drawing, or `null` for the hand encoder. */
     passGraphExecuting?: GraphPresetName | null;
     /**
@@ -137,9 +143,11 @@ export function publishGraphVariant(
   compiled: CompiledGraph | null,
   error: string | null,
   name: GraphPresetName,
+  variant: string,
 ): void {
   if (typeof window === 'undefined') return;
   publishCompile(true, compiled, error, name);
+  window.passGraphVariant = variant;
 }
 
 function publish(
@@ -150,6 +158,7 @@ function publish(
 ): void {
   if (typeof window === 'undefined') return;
   publishCompile(active, compiled, error, name);
+  window.passGraphVariant = null;
   // Cleared for *every* result, not just a refusal: a successful WebGL compile
   // draws with the hand encoder, so leaving a previous WebGPU session's
   // `passGraphExecuting` in place would claim an executor that is not running.

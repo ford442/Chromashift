@@ -1,13 +1,15 @@
+import type { CanvasPresentation } from '../gpuOptions';
 import { buildGraphPreset, type GraphPresetName } from './altGraphs';
 import type { GraphNode, PassGraph } from './types';
 
 /**
  * The parts of a graph's *structure* a frame decides.
  *
- * A preset names a shape; the session decides how many band layers it has and
- * whether the temporal tracer term is on. Both change emitted code, so each
- * combination is its own compiled graph — cached on the structural hash, so a
- * variant switched back to compiles nothing and builds nothing.
+ * A preset names a shape; the session decides how many band layers it has,
+ * whether the temporal tracer term is on, and what canvas the frame presents
+ * to. Each changes emitted code, so each combination is its own compiled graph
+ * — cached on the structural hash, so a variant switched back to compiles
+ * nothing and builds nothing.
  */
 export interface GraphVariant {
   /** Band layers the frame draws. */
@@ -19,6 +21,12 @@ export interface GraphVariant {
    * equivalent of it.
    */
   readonly motion: boolean;
+  /**
+   * The canvas the frame presents to. `hdr-extended` (an `rgba16float` canvas
+   * with extended tone mapping) emits the compositor with the unclamped OETF
+   * and targets the float format; an export is always `sdr`.
+   */
+  readonly presentation: CanvasPresentation;
 }
 
 /** A selected graph shape, built for whichever variant a frame asks for. */
@@ -29,7 +37,7 @@ export interface PassGraphSource {
 
 /** Stable key for a variant, for memoising what is built from it. */
 export function graphVariantKey(variant: GraphVariant): string {
-  return `${variant.layerCount}:${variant.motion ? 'motion' : 'still'}`;
+  return `${variant.layerCount}:${variant.motion ? 'motion' : 'still'}:${variant.presentation}`;
 }
 
 /** The named preset as a source: its shape at the variant's layer count, plus the variant's terms. */
@@ -42,7 +50,26 @@ export function presetGraphSource(name: GraphPresetName): PassGraphSource {
 
 /** Add the terms a variant switches on to an already-built shape. */
 export function applyGraphVariant(graph: PassGraph, variant: GraphVariant): PassGraph {
-  return variant.motion ? withMotionTerm(graph) : graph;
+  const moving = variant.motion ? withMotionTerm(graph) : graph;
+  return variant.presentation === 'hdr-extended' ? presentingTo(moving, 'hdr-extended') : moving;
+}
+
+/**
+ * The graph with every `output` presenting to `presentation`. An `sdr` output
+ * is left without the param, so an SDR graph hashes exactly as it did before
+ * the param existed.
+ */
+export function presentingTo(graph: PassGraph, presentation: CanvasPresentation): PassGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      if (node.kind !== 'output') return node;
+      const params = { ...node.params };
+      if (presentation === 'sdr') delete params.presentation;
+      else params.presentation = presentation;
+      return { ...node, params };
+    }),
+  };
 }
 
 /** Id of the motion-field source `withMotionTerm` adds when the graph has none. */

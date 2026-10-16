@@ -72,7 +72,7 @@ emitted code) rather than *value* params (they change a uniform).
 | `blur` | 1 | layer | `radius` | `axis` | — |
 | `history` | 1 | layer, or tracer | `frames` (2–8), `resolution` | `mode` (`trail` \| `tap`), `delay`, `falloff` | — |
 | `displace` | 2: `[source, field]` | layer | `field` (`motion` \| `color`) | `gain`, `mode` (`inverse` \| `forward`) | — |
-| `output` | 1 | output | — | — | ✓ |
+| `output` | 1 | output | `presentation` (`sdr` \| `hdr-extended`) | — | ✓ (`sdr` only) |
 
 A structural param that selects code or a binding is checked by `validate.ts`:
 an unknown `role`, `field` or `resolution`, or a `frames` outside 2–8, is an
@@ -201,6 +201,7 @@ For the default graph that changes the encode path, not the look: see
 | `window.passGraphRingFrames` | `history` ring textures per resolution class — VRAM that outlives the frame, so it is not in `passGraphSlots` |
 | `window.passGraphError` | a refusal, or `null`: `unsupported-node: …` names a node the backend has no template for; `invalid-pipeline: …` carries the device's own error for an emitted shader it rejected |
 | `window.passGraphName` | which named shape the gate selected |
+| `window.passGraphVariant` | the variant of it a renderer last compiled for a frame: `layers:term:presentation`, e.g. `3:motion:sdr` |
 | `window.passGraphExecuting` | the shape a GPU executor is **drawing**, or `null` — published only once the device has validated its pipelines |
 | `window.passGraphExecutedPasses` | node ids the executor encodes, in order |
 
@@ -478,6 +479,28 @@ layout is derived from. The hand encoder's motion layout moved to match.
 the hand encoder: on the frozen still scene the field is zero, gate removes every
 stamp, and the two frames are byte-identical (and differ from `off`).
 
+## The hdr-extended present
+
+Opt-in Canvas HDR (`viewport.canvasHdr`, docs/gpu-bootstrap.md) presents to an
+`rgba16float` canvas with extended tone mapping. That used to keep the hand
+encoder too, because the executor's canvas pipeline was SDR-only. It is now the
+third part of the variant: `presentation`, a structural param of `output` — the
+present node — that the pass writing it reads.
+
+- **Same program as the hand encoder's.** A `blend` writing an `hdr-extended`
+  output emits `toHdrPresentWgsl(compositor)`: the clamping OETF block swapped for
+  the extended one, text for text, which is how `WebGPUPipelines` builds the hand
+  encoder's HDR compositor. The SDR emission (and its golden) is untouched.
+- **Its own target.** That pass's `EmittedPass.presentation` makes its pipeline
+  target `rgba16float`; every other pass keeps its internal format.
+- **SDR stays SDR.** An `sdr` output carries no param, so SDR graphs hash as they
+  always did. Export renders the `sdr` variant whatever the canvas presents.
+- **WebGL refuses it** by name: its compositor presents SDR only.
+
+On SwiftShader the browser grants extended tone mapping, so
+`e2e/graph-executor.spec.ts` reads the float swap chain back (decoded to 8 bits)
+and finds the executor's HDR frame byte-identical to the hand encoder's.
+
 ## Phase 2 — shipped
 
 - **A graph-driven executor.** `WebGpuGraphExecutor` encodes `compiled.passes`
@@ -562,14 +585,16 @@ path, one step per PR. Landed so far:
   [One state → uniform mapping](#one-state--uniform-mapping).
 - **The temporal term as a node** (step 2). A motion mode no longer keeps the
   hand encoder. See [The temporal term](#the-temporal-term-motion).
+- **The `hdr-extended` present** (step 3). An HDR canvas no longer keeps the hand
+  encoder. See [The hdr-extended present](#the-hdr-extended-present).
 
 Still to do:
 
 - **The executor as the default path.** The gate is still off by default, so
   two topologies are live: the executor behind `?graph=1` and the hand encoder
   everywhere else. The hand encoder cannot simply be deleted yet — it is also
-  what draws an HDR canvas, the `layers`/`tracers` export passes, the compare
-  slots and the stationary previews — but it can become the fallback for those
+  what draws the `layers`/`tracers` export passes, the compare slots and the
+  stationary previews — but it can become the fallback for those
   cases once the graph is on by default. The parity above is the evidence for
   flipping it; the cost is the compute-fed stamp, which the graph does not use.
 - **The WebGL executor.** The diagnostic / XR / screenshot backend still
