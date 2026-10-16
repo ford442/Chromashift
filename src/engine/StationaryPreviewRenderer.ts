@@ -19,6 +19,9 @@ import type { RendererState } from './types/RendererState';
 import { layerRotationUniforms } from './math/rotation';
 import { drawnLayerCount, encodeLayerClear, type WebGPUPipelines } from './WebGPUPipelines';
 import type { LayerTextures } from './BindGroupCache';
+import { bandLayerUniforms, compositorUniforms, tracerInspectSettings } from './graph/exec/uniforms';
+import { packUniforms } from './graph/templates/uniformLayout';
+import { BAND_LAYER_UNIFORMS } from './graph/templates/wgsl';
 
 /**
  * Isolated 128×128 GPU path for side-preview thumbnails at preset angles.
@@ -41,6 +44,8 @@ export class StationaryPreviewRenderer {
   private maskTexture: GPUTexture | null = null;
   private readonly fallbackMaskTexture: GPUTexture;
   private readonly profileLut: ProfileLutTexture;
+  /** Layers the compositor below was built for. */
+  private readonly compositorLayerCount: number;
 
   constructor(
     device: GPUDevice,
@@ -53,6 +58,7 @@ export class StationaryPreviewRenderer {
     this.internalFormat = internalFormat;
     this.outputFormat = outputFormat;
     this.sampler = sampler;
+    this.compositorLayerCount = pipelines.layerCount;
 
     this.fallbackMaskTexture = device.createTexture({
       size: [1, 1, 1],
@@ -116,26 +122,23 @@ export class StationaryPreviewRenderer {
     this.ensureResources(size);
     this.persistence.clear();
 
-    const globalLayerOpacity = state.layerOpacity ?? 1.0;
-    const sourceLayerOpacities = state.layerOpacities;
-    const layerOpacities: number[] = state.layers.map(
-      (_, i) => globalLayerOpacity * (sourceLayerOpacities?.[i] ?? 1),
-    );
-
     const separated = wantSeparated
-      ? await this.renderSeparatedPass(state, layerOpacities, size)
+      ? await this.renderSeparatedPass(state, size)
       : null;
 
     let tracer: Uint8ClampedArray<ArrayBuffer> | null = null;
     if (wantTracer) {
       this.persistence.clear();
+      // The preview state is a paused one (it is a still), but the warmup has
+      // to accumulate; and no motion field is bound, so the temporal term is off.
+      const warmup: RendererState = { ...state, paused: false };
       for (let frame = 0; frame < warmupFrames; frame += 1) {
         const enc = this.device.createCommandEncoder();
-        this.encodeLayerPasses(enc, state, layerOpacities);
-        this.encodePersistence(enc, state, fps);
+        this.encodeLayerPasses(enc, state);
+        this.persistence.encode(enc, this.getLayerTextures(), { state: warmup, fps });
         this.device.queue.submit([enc.finish()]);
       }
-      tracer = await this.renderTracerPass(state, layerOpacities, size);
+      tracer = await this.renderTracerPass(state, size);
     }
 
     return { separated, tracer };
@@ -172,17 +175,10 @@ export class StationaryPreviewRenderer {
   private encodeLayerPasses(
     enc: GPUCommandEncoder,
     state: RendererState,
-    layerOpacities: number[],
   ): void {
     const maskTexture = this.maskTexture ?? this.fallbackMaskTexture;
-    const colorMode = state.colorMode ?? 1.0;
-    const useMask = this.maskTexture && colorMode === 0 ? 1 : 0;
     // Non-classic colour profiles render from the baked LUT (docs/COLOR_PROFILES.md).
     this.profileLut.update(state.colorProfileLut);
-    const profileMode = state.colorProfileLut && state.colorProfileMode ? 1 : 0;
-    const profileLightDark = state.colorProfileLightDark ?? 1;
-    const sobelEnabled = state.sobelEnabled ? 1 : 0;
-    const softCropEnabled = state.softCropEnabled ? 1 : 0;
     const aspect = 1;
 
     const drawn = drawnLayerCount(this.layerPipelines.length, state.layers.length);
@@ -198,11 +194,11 @@ export class StationaryPreviewRenderer {
       lp.rotationData.set([rad, flipX, flipY, layerAspect]);
       this.device.queue.writeBuffer(lp.rotationBuffer, 0, lp.rotationData.buffer as ArrayBuffer, lp.rotationData.byteOffset, 16);
 
-      lp.fragData.set([
-        state.avgLuminance, layerOpacities[i], colorMode, useMask,
-        sobelEnabled, softCropEnabled, profileMode, profileLightDark,
-      ]);
-      this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 32);
+      packUniforms(BAND_LAYER_UNIFORMS, bandLayerUniforms(state, {
+        layerIndex: i,
+        hasClassificationMask: this.maskTexture !== null,
+      }), lp.fragUniforms);
+      this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragUniforms.buffer);
 
       const bindGroup = getOrCreateLayerBindGroup(
         this.device,
@@ -231,41 +227,20 @@ export class StationaryPreviewRenderer {
     }
   }
 
-  private encodePersistence(enc: GPUCommandEncoder, state: RendererState, fps: number): void {
-    this.persistence.encode(enc, this.getLayerTextures(), {
-      fps,
-      colorThresh: state.tracerThreshold ?? 0.05,
-      tracerMode: state.tracerMode ?? 0,
-      stampBoost: state.stampBoost ?? 1.8,
-      peakMode: state.peakCollisionsOnly ? 1 : 0,
-      belowDuration: state.tracerBelowDuration ?? 0,
-      aboveDuration: state.tracerAboveDuration ?? 1000,
-      paused: false,
-    });
-  }
-
   private async renderSeparatedPass(
     state: RendererState,
-    layerOpacities: number[],
     size: number,
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const enc = this.device.createCommandEncoder();
-    this.encodeLayerPasses(enc, state, layerOpacities);
+    this.encodeLayerPasses(enc, state);
 
+    // The bands alone: no tracers and no diagnostics overlay.
     this.compositor.writeUniforms({
-      tracerAboveOp: 0,
-      tracerBelowOp: 0,
-      layerBlendMode: state.layerBlendMode ?? 0,
-      tracerBlendMode: state.tracerBlendMode ?? 0,
-      layerOpacities,
+      ...compositorUniforms(state, this.compositorLayerCount),
+      tracerAboveOpacity: 0,
+      tracerBelowOpacity: 0,
       diagnosticsOpacity: 0,
-      stampBoost: state.stampBoost ?? 1.8,
-      outputMode: state.outputMode ?? 0,
-      tracerMode: state.tracerMode ?? 0,
-      diagnosticsMode: false,
-      viewportQuarterZoom: false,
-      halfOverlayAlpha: 0.5,
-      viewportHalfOverlay: false,
+      diagnosticsMode: 0,
     });
 
     const emptyBelow = this.persistence.belowTextures[this.persistence.pingPong]!;
@@ -286,24 +261,20 @@ export class StationaryPreviewRenderer {
 
   private async renderTracerPass(
     state: RendererState,
-    layerOpacities: number[],
     size: number,
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const enc = this.device.createCommandEncoder();
-    const tracerAboveOp = state.tracerAboveIntensity ?? 0.85;
-    const tracerBelowOp = state.tracerBelowIntensity ?? 0.30;
-    const layerBlendMode = state.layerBlendMode ?? 0;
-    const tracerBlendMode = state.tracerBlendMode ?? 0;
+    const settings = tracerInspectSettings(state);
 
     this.tracerInspect.encodeTracerView(
       enc,
       this.outputTexture!.createView(),
       {
+        // The thumbnail is the whole tracer, untoned: none of the inspect
+        // view's zoom, pan, heatmap or exposure settings apply to it.
+        ...settings,
         canvasWidth: size,
         canvasHeight: size,
-        tracerAboveOpacity: tracerAboveOp,
-        tracerBelowOpacity: tracerBelowOp,
-        tracerBlendMode,
         inspectZoom: 1,
         inspectPanX: 0,
         inspectPanY: 0,
@@ -311,8 +282,6 @@ export class StationaryPreviewRenderer {
         exposure: 1,
         applyTonemap: false,
         showLayers: false,
-        layerBlendMode,
-        layerOpacities,
       },
       {
         layerTextures: this.getLayerTextures(),

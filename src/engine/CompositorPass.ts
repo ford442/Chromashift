@@ -6,35 +6,35 @@ import {
 } from './BindGroupCache';
 import type { WebGPUPipelines } from './WebGPUPipelines';
 import { layerTextureEntries, type LayerTextures } from './BindGroupCache';
+import {
+  createUniformData,
+  packUniforms,
+  uniformOffset,
+  type UniformData,
+  type UniformLayout,
+  type UniformValues,
+} from './graph/templates/uniformLayout';
+import { compositorUniformLayout, type CompositorUniformName } from './graph/templates/wgsl';
 
-export interface CompositorUniformParams {
-  tracerAboveOp: number;
-  tracerBelowOp: number;
-  layerBlendMode: number;
-  tracerBlendMode: number;
-  layerOpacities: number[];
-  diagnosticsOpacity: number;
-  stampBoost: number;
-  outputMode: number;
-  tracerMode: number;
-  diagnosticsMode: boolean;
-  viewportQuarterZoom: boolean;
-  halfOverlayAlpha: number;
-  viewportHalfOverlay: boolean;
-}
+/** One frame's compositor uniforms — `compositorUniforms()` in graph/exec/uniforms.ts. */
+export type CompositorUniformValues = UniformValues<CompositorUniformName>;
 
 export class CompositorPass {
   private readonly device: GPUDevice;
   private readonly pipeline: GPURenderPipeline;
   private readonly bgl: GPUBindGroupLayout;
   private readonly sampler: GPUSampler;
+  /**
+   * The struct this pass's shader was emitted with. It grows by one opacity per
+   * layer, so every field after the opacities moves with `pipelines.layerCount`
+   * — writing it by index is how a non-three count used to land each of them
+   * in the wrong slot.
+   */
+  private readonly layout: UniformLayout<CompositorUniformName>;
   readonly uniformBuf: GPUBuffer;
   readonly previewUniformBuf: GPUBuffer;
-  private readonly uniformData = new ArrayBuffer(64);
-  private readonly uniformF32 = new Float32Array(this.uniformData);
-  private readonly uniformU32 = new Uint32Array(this.uniformData);
-  private readonly previewUniformData = new ArrayBuffer(64);
-  private readonly previewUniformU32 = new Uint32Array(this.previewUniformData);
+  private readonly uniforms: UniformData;
+  private readonly previewUniforms: UniformData;
   private readonly bindGroupCache: TexturePairBindGroupCacheEntry[];
   private readonly previewBindGroupCache: TexturePairBindGroupCacheEntry[];
 
@@ -43,12 +43,15 @@ export class CompositorPass {
     this.sampler = sampler;
     this.bgl = pipelines.compositorBGL;
     this.pipeline = pipelines.createCompositorPipeline();
+    this.layout = compositorUniformLayout(pipelines.layerCount);
+    this.uniforms = createUniformData(this.layout);
+    this.previewUniforms = createUniformData(this.layout);
     this.uniformBuf = device.createBuffer({
-      size: 64,
+      size: this.layout.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.previewUniformBuf = device.createBuffer({
-      size: 64,
+      size: this.layout.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.bindGroupCache = createTexturePairCache(2);
@@ -64,30 +67,15 @@ export class CompositorPass {
     invalidateTexturePairCache(this.previewBindGroupCache);
   }
 
-  writeUniforms(params: CompositorUniformParams): void {
-    this.uniformF32[0] = params.tracerAboveOp;
-    this.uniformF32[1] = params.tracerBelowOp;
-    this.uniformU32[2] = params.layerBlendMode;
-    this.uniformU32[3] = params.tracerBlendMode;
-    this.uniformF32[4] = params.layerOpacities[0] ?? 1;
-    this.uniformF32[5] = params.layerOpacities[1] ?? 1;
-    this.uniformF32[6] = params.layerOpacities[2] ?? 1;
-    this.uniformF32[7] = params.diagnosticsOpacity;
-    this.uniformF32[8] = params.stampBoost;
-    this.uniformU32[9] = params.outputMode;
-    this.uniformU32[10] = params.tracerMode;
-    this.uniformU32[11] = params.diagnosticsMode ? 1 : 0;
-    this.uniformU32[12] = params.viewportQuarterZoom ? 1 : 0;
-    this.uniformF32[13] = params.halfOverlayAlpha;
-    this.uniformU32[14] = params.viewportHalfOverlay ? 1 : 0;
-
-    this.device.queue.writeBuffer(this.uniformBuf, 0, this.uniformData);
+  writeUniforms(values: CompositorUniformValues): void {
+    packUniforms(this.layout, values, this.uniforms);
+    this.device.queue.writeBuffer(this.uniformBuf, 0, this.uniforms.buffer);
 
     // Preview pass shares compositor uniforms but disables viewport effects.
-    new Uint8Array(this.previewUniformData).set(new Uint8Array(this.uniformData));
-    this.previewUniformU32[12] = 0;
-    this.previewUniformU32[14] = 0;
-    this.device.queue.writeBuffer(this.previewUniformBuf, 0, this.previewUniformData);
+    new Uint8Array(this.previewUniforms.buffer).set(new Uint8Array(this.uniforms.buffer));
+    this.previewUniforms.u32[uniformOffset(this.layout, 'viewportQuarterZoom') / 4] = 0;
+    this.previewUniforms.u32[uniformOffset(this.layout, 'viewportHalfOverlay') / 4] = 0;
+    this.device.queue.writeBuffer(this.previewUniformBuf, 0, this.previewUniforms.buffer);
   }
 
   encode(

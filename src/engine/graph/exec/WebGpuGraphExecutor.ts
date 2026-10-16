@@ -1,8 +1,23 @@
-import { durationToDecay } from '../../math/decay';
 import { layerRotationUniforms } from '../../math/rotation';
 import type { WebGPUPipelines } from '../../WebGPUPipelines';
 import type { RendererState } from '../../types/RendererState';
-import { compositorUniformLayout } from '../templates/wgsl';
+import {
+  BAND_LAYER_UNIFORMS,
+  BLUR_UNIFORMS,
+  DISPLACE_UNIFORMS,
+  HISTORY_UNIFORMS,
+  LUT_UNIFORMS,
+  PERSIST_UNIFORMS,
+  WARP_UNIFORMS,
+  compositorUniformLayout,
+} from '../templates/wgsl';
+import { packUniforms, type UniformLayout, type UniformValues } from '../templates/uniformLayout';
+import {
+  bandLayerUniforms,
+  compositorUniforms,
+  persistUniforms,
+  rendererStateValue,
+} from './uniforms';
 import {
   buildEncodePlan,
   encodedPassOrder,
@@ -228,8 +243,8 @@ export class WebGpuGraphExecutor {
     if (!compiled || !plan) return;
 
     const { state, width, height } = params;
-    const layerScale = state.layerScale ?? 1.0;
-    const tracerScale = state.tracerScale ?? 1.0;
+    const layerScale = rendererStateValue(state, 'layerScale');
+    const tracerScale = rendererStateValue(state, 'tracerScale');
     const sizes: PoolSizes = {
       source: { width: inputs.source.width, height: inputs.source.height },
       layer: scaled(width, height, layerScale),
@@ -410,21 +425,11 @@ export class WebGpuGraphExecutor {
       lp.rotationData.buffer as ArrayBuffer, lp.rotationData.byteOffset, 16,
     );
 
-    const colorMode = state.colorMode ?? 1.0;
-    lp.fragData.set([
-      state.avgLuminance,
-      layerOpacity(state, step.layerIndex),
-      colorMode,
-      inputs.hasClassificationMask && colorMode === 0 ? 1 : 0,
-      state.sobelEnabled ? 1 : 0,
-      state.softCropEnabled ? 1 : 0,
-      state.colorProfileLut && state.colorProfileMode ? 1 : 0,
-      state.colorProfileLightDark ?? 1,
-    ]);
-    this.device.queue.writeBuffer(
-      lp.fragUniformBuffer, 0,
-      lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 32,
-    );
+    packUniforms(BAND_LAYER_UNIFORMS, bandLayerUniforms(state, {
+      layerIndex: step.layerIndex,
+      hasClassificationMask: inputs.hasClassificationMask,
+    }), lp.fragUniforms);
+    this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragUniforms.buffer);
 
     const source = this.textureFor(step.source, inputs);
     const target = this.pool.transient(step.nodeId);
@@ -464,21 +469,10 @@ export class WebGpuGraphExecutor {
     const node = this.nodePipeline(step.nodeId);
     const { state, fps } = params;
     const stampTextures = step.stampInputs.map((id) => this.textureFor(id, inputs));
-
-    const duration = step.role === 'below'
-      ? state.tracerBelowDuration ?? 0
-      : state.tracerAboveDuration ?? 1000;
     const history = this.pool.pingPong(step.nodeId);
     const diagnostic = this.pool.diagnostic(step.nodeId);
 
-    const f32 = new Float32Array(node.uniformData!);
-    const u32 = new Uint32Array(node.uniformData!);
-    f32[0] = durationToDecay(duration, fps);
-    f32[1] = state.tracerThreshold ?? 0.05;
-    f32[2] = state.stampBoost ?? 1.8;
-    u32[3] = state.tracerMode ?? 0;
-    u32[4] = state.peakCollisionsOnly ? 1 : 0;
-    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
+    this.writeUniforms(node, PERSIST_UNIFORMS, persistUniforms(state, { role: step.role, fps }));
 
     this.bindIfChanged(node, [...stampTextures, history.read], () => [
       { binding: 0, resource: this.passSampler },
@@ -514,25 +508,11 @@ export class WebGpuGraphExecutor {
     const layerTextures = step.layerInputs.map((id) => this.textureFor(id, inputs));
     const tracerTextures = step.tracerInputs.map((id) => this.textureFor(id, inputs));
 
-    const layout = compositorUniformLayout(plan.layerCount);
-    const f32 = new Float32Array(node.uniformData!);
-    const u32 = new Uint32Array(node.uniformData!);
-    f32[layout.tracerAboveOpacity] = state.tracerAboveIntensity ?? 0.85;
-    f32[layout.tracerBelowOpacity] = state.tracerBelowIntensity ?? 0.30;
-    u32[layout.layerBlendMode] = state.layerBlendMode ?? 0;
-    u32[layout.tracerBlendMode] = state.tracerBlendMode ?? 0;
-    for (let i = 0; i < plan.layerCount; i += 1) {
-      f32[layout[`layerOpacity${i}`]] = layerOpacity(state, i);
-    }
-    f32[layout.diagnosticsOpacity] = state.diagnosticsOpacity ?? 0.55;
-    f32[layout.stampBoost] = state.stampBoost ?? 1.8;
-    u32[layout.outputMode] = state.outputMode ?? 0;
-    u32[layout.tracerMode] = state.tracerMode ?? 0;
-    u32[layout.diagnosticsMode] = state.diagnosticsMode ? 1 : 0;
-    u32[layout.viewportQuarterZoom] = 0;
-    f32[layout.halfOverlayAlpha] = state.halfOverlayAlpha ?? 0.5;
-    u32[layout.viewportHalfOverlay] = 0;
-    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
+    this.writeUniforms(
+      node,
+      compositorUniformLayout(plan.layerCount),
+      compositorUniforms(state, plan.layerCount),
+    );
 
     this.bindIfChanged(node, [...layerTextures, ...tracerTextures], () => [
       { binding: 0, resource: this.passSampler },
@@ -601,10 +581,10 @@ export class WebGpuGraphExecutor {
       delay: numberParam(graphNode.params.delay, 0),
       falloff: numberParam(graphNode.params.falloff, 0.6),
     });
-    const f32 = new Float32Array(node.uniformData!);
-    f32.fill(0);
-    f32.set(weights);
-    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
+    // Slots past `frames` keep weight 0; the block is always the full eight.
+    const weightValues: Record<string, number> = {};
+    HISTORY_UNIFORMS.fields.forEach((field, i) => { weightValues[field.name] = weights[i] ?? 0; });
+    this.writeUniforms(node, HISTORY_UNIFORMS, weightValues);
 
     this.bindIfChanged(node, ring.textures, () => [
       { binding: 0, resource: this.passSampler },
@@ -635,29 +615,30 @@ export class WebGpuGraphExecutor {
     const source = this.textureFor(step.inputs[0], inputs);
     const target = this.pool.transient(step.nodeId);
     const graphNode = this.graphNode(step.nodeId);
-    const f32 = new Float32Array(node.uniformData!);
 
     if (step.kind === 'displace') {
-      f32[0] = numberParam(graphNode.params.gain, 1);
-      f32[1] = graphNode.params.mode === 'forward' ? 1 : -1;
-      f32[2] = 0;
-      f32[3] = 0;
+      this.writeUniforms(node, DISPLACE_UNIFORMS, {
+        gain: numberParam(graphNode.params.gain, 1),
+        sign: graphNode.params.mode === 'forward' ? 1 : -1,
+      });
     } else if (step.kind === 'warp') {
-      f32[0] = ((numberParam(graphNode.params.angleDeg, 0)) * Math.PI) / 180;
-      f32[1] = numberParam(graphNode.params.scale, 1);
-      f32[2] = params.width / params.height;
-      f32[3] = numberParam(graphNode.params.displace, 0);
+      this.writeUniforms(node, WARP_UNIFORMS, {
+        angleRad: (numberParam(graphNode.params.angleDeg, 0) * Math.PI) / 180,
+        scale: numberParam(graphNode.params.scale, 1),
+        aspect: params.width / params.height,
+        displace: numberParam(graphNode.params.displace, 0),
+      });
     } else if (step.kind === 'blur') {
-      const axis = graphNode.params.axis === 'y' ? [0, 1] : [1, 0];
-      f32[0] = axis[0];
-      f32[1] = axis[1];
+      const vertical = graphNode.params.axis === 'y';
+      this.writeUniforms(node, BLUR_UNIFORMS, { axisX: vertical ? 0 : 1, axisY: vertical ? 1 : 0 });
     } else {
-      f32[0] = numberParam(graphNode.params.row, 0);
-      f32[1] = params.state.colorProfileLightDark ?? 1;
-      f32[2] = params.state.avgLuminance;
-      f32[3] = numberParam(graphNode.params.mixAmount, 1);
+      this.writeUniforms(node, LUT_UNIFORMS, {
+        row: numberParam(graphNode.params.row, 0),
+        lightDark: rendererStateValue(params.state, 'colorProfileLightDark'),
+        avgLuminance: params.state.avgLuminance,
+        mixAmount: numberParam(graphNode.params.mixAmount, 1),
+      });
     }
-    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
 
     const bound = step.kind === 'lut'
       ? [source, inputs.profileLut]
@@ -706,6 +687,17 @@ export class WebGpuGraphExecutor {
     return this.compiled!.graph.nodes.find((n) => n.id === nodeId)!;
   }
 
+  /** Pack one node's uniform block with the layout its shader was emitted from, and upload it. */
+  private writeUniforms<N extends string>(
+    node: NodePipeline,
+    layout: UniformLayout<N>,
+    values: NoInfer<UniformValues<N>>,
+  ): void {
+    const data = node.uniforms!;
+    packUniforms(layout, values, data);
+    this.device.queue.writeBuffer(node.uniformBuffer!, 0, data.buffer);
+  }
+
   /** 1×1 zero velocity — what a `motion-field` source binds when the lane has no field. */
   private zeroMotionField(): GPUTexture {
     this.zeroField ??= this.device.createTexture({
@@ -752,13 +744,6 @@ const scaled = (width: number, height: number, scale: number) => ({
 
 const numberParam = (value: unknown, fallback: number): number =>
   typeof value === 'number' ? value : fallback;
-
-/** Global layer opacity times the per-layer one, as the hand encoder computes it. */
-function layerOpacity(state: RendererState, index: number): number {
-  const global = state.layerOpacity ?? 1.0;
-  const perLayer = state.layerOpacities?.[index] ?? 1.0;
-  return global * perLayer;
-}
 
 /**
  * Identity key for a texture. `GPUTexture` has no stable id, so a lazily

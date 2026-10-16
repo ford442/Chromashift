@@ -9,7 +9,7 @@ import {
   activateProgram,
 } from './programUtils';
 import type { RenderTarget } from './resources';
-import { MAIN_VIEW_MODES } from '../viewModes';
+import { compositorUniforms, rendererStateValue } from '../graph/exec/uniforms';
 import type { RendererState } from '../types/RendererState';
 import type { WebGLPersistencePass } from './WebGLPersistencePass';
 import type { WebGLRenderViewport } from './types';
@@ -23,6 +23,12 @@ export class WebGLCompositorPass {
     this.program = createProgram(gl, PASSTHROUGH_VERTEX_SOURCE, COMPOSITOR_FRAGMENT_SOURCE);
   }
 
+  /**
+   * Composite into `target` (the canvas when `null`). Layer opacities and every
+   * other value come from `compositorUniforms()` — the same block the WebGPU
+   * compositor packs — read here by name; this backend alone also runs the
+   * viewport transforms in the shader.
+   */
   render(
     target: RenderTarget | null,
     width: number,
@@ -30,7 +36,6 @@ export class WebGLCompositorPass {
     layerTextures: readonly RenderTarget[],
     persistence: WebGLPersistencePass,
     state: RendererState,
-    layerOpacities: number[],
     viewport?: WebGLRenderViewport,
   ): void {
     const gl = this.gl;
@@ -47,24 +52,21 @@ export class WebGLCompositorPass {
     bindTexture(gl, this.program, 'u_tracerBelow', 3, persistence.tracerBelow[persistence.pingPong]!.texture);
     bindTexture(gl, this.program, 'u_tracerAbove', 4, persistence.tracerAbove[persistence.pingPong]!.texture);
     // The compositor still blends the three canonical band targets.
-    uniform1f(gl, this.program, 'u_layerOpacity0', layerOpacities[0] ?? 1);
-    uniform1f(gl, this.program, 'u_layerOpacity1', layerOpacities[1] ?? 1);
-    uniform1f(gl, this.program, 'u_layerOpacity2', layerOpacities[2] ?? 1);
-    uniform1f(gl, this.program, 'u_tracerBelowOpacity', state.tracerBelowIntensity ?? 0.3);
-    uniform1f(gl, this.program, 'u_tracerAboveOpacity', state.tracerAboveIntensity ?? 0.85);
-    uniform1i(gl, this.program, 'u_layerBlendMode', state.layerBlendMode ?? 0);
-    uniform1i(gl, this.program, 'u_tracerBlendMode', state.tracerBlendMode ?? 0);
-    uniform1i(gl, this.program, 'u_outputMode', state.outputMode ?? 0);
-    uniform1i(gl, this.program, 'u_mainViewMode', state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
-    uniform1i(gl, this.program, 'u_diagnosticsMode', state.diagnosticsMode ? 1 : 0);
-    uniform1f(gl, this.program, 'u_diagnosticsOpacity', state.diagnosticsOpacity ?? 0.55);
-    const zoomEnabled = (state.viewportQuarterZoom ?? false)
-      && (state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE) === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
-    const overlayEnabled = (state.viewportHalfOverlay ?? false)
-      && (state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE) === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
-    uniform1i(gl, this.program, 'u_viewportQuarterZoom', zoomEnabled ? 1 : 0);
-    uniform1i(gl, this.program, 'u_viewportHalfOverlay', overlayEnabled ? 1 : 0);
-    uniform1f(gl, this.program, 'u_halfOverlayAlpha', state.halfOverlayAlpha ?? 0.5);
+    const values = compositorUniforms(state, layerTextures.length, { viewportTransforms: true });
+    for (let i = 0; i < layerTextures.length; i += 1) {
+      uniform1f(gl, this.program, `u_layerOpacity${i}`, values[`layerOpacity${i}`]);
+    }
+    uniform1f(gl, this.program, 'u_tracerBelowOpacity', values.tracerBelowOpacity);
+    uniform1f(gl, this.program, 'u_tracerAboveOpacity', values.tracerAboveOpacity);
+    uniform1i(gl, this.program, 'u_layerBlendMode', values.layerBlendMode);
+    uniform1i(gl, this.program, 'u_tracerBlendMode', values.tracerBlendMode);
+    uniform1i(gl, this.program, 'u_outputMode', values.outputMode);
+    uniform1i(gl, this.program, 'u_mainViewMode', rendererStateValue(state, 'mainViewMode'));
+    uniform1i(gl, this.program, 'u_diagnosticsMode', values.diagnosticsMode);
+    uniform1f(gl, this.program, 'u_diagnosticsOpacity', values.diagnosticsOpacity);
+    uniform1i(gl, this.program, 'u_viewportQuarterZoom', values.viewportQuarterZoom);
+    uniform1i(gl, this.program, 'u_viewportHalfOverlay', values.viewportHalfOverlay);
+    uniform1f(gl, this.program, 'u_halfOverlayAlpha', values.halfOverlayAlpha);
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 

@@ -1,4 +1,61 @@
 import { WGSL_BLEND_HELPERS, WGSL_OUTPUT_ENCODE } from './common';
+import { defineUniformLayout, emitUniformStructWgsl } from '../graph/templates/uniformLayout';
+
+/**
+ * Uniform layouts of the inspection passes below. These shaders still read the
+ * three canonical layers, so the per-layer opacities are three fixed fields.
+ */
+export const TRACER_VIEW_UNIFORMS = defineUniformLayout('TracerViewUniforms', [
+  { name: 'canvasAspect', kind: 'f32' },
+  { name: 'texAspect', kind: 'f32' },
+  { name: 'tracerAboveOpacity', kind: 'f32' },
+  { name: 'tracerBelowOpacity', kind: 'f32' },
+  { name: 'tracerBlendMode', kind: 'u32' },
+  { name: 'showHeatmap', kind: 'u32' },
+  { name: 'zoom', kind: 'f32' },
+  { name: 'panX', kind: 'f32' },
+  { name: 'panY', kind: 'f32' },
+  { name: 'heatmapOpacity', kind: 'f32' },
+  { name: 'exposure', kind: 'f32' },
+  { name: 'applyTonemap', kind: 'u32' },
+  { name: 'showLayers', kind: 'u32' },
+  { name: 'layerBlendMode', kind: 'u32' },
+  { name: 'layerOpacity0', kind: 'f32' },
+  { name: 'layerOpacity1', kind: 'f32' },
+  { name: 'layerOpacity2', kind: 'f32' },
+], { column: 19 });
+
+export const DISPLAY_UNIFORMS = defineUniformLayout('DisplayUniforms', [
+  { name: 'canvasAspect', kind: 'f32' },
+  { name: 'texAspect', kind: 'f32' },
+  // Was a "tonemap on/off" flag back when this pass carried its own Reinhard
+  // curve. Output is now just the sRGB OETF, which every source this pass
+  // shows needs unconditionally, so the slots are padding.
+  { name: '_pad0', kind: 'u32' },
+  { name: '_pad1', kind: 'u32' },
+], { column: 13 });
+
+export const HEATMAP_UNIFORMS = defineUniformLayout('HeatmapUniforms', [
+  { name: 'threshold', kind: 'f32' },
+  { name: '_pad0', kind: 'f32' },
+  { name: '_pad1', kind: 'u32' },
+  { name: '_pad2', kind: 'u32' },
+], { column: 10 });
+
+export const COMPARE_UNIFORMS = defineUniformLayout('CompareUniforms', [
+  { name: 'sourceAspect', kind: 'f32' },
+  { name: 'tracerAboveOpacity', kind: 'f32' },
+  { name: 'tracerBelowOpacity', kind: 'f32' },
+  { name: 'layerBlendMode', kind: 'u32' },
+  { name: 'tracerBlendMode', kind: 'u32' },
+  { name: 'layerOpacity0', kind: 'f32' },
+  { name: 'layerOpacity1', kind: 'f32' },
+  { name: 'layerOpacity2', kind: 'f32' },
+  { name: 'stampBoost', kind: 'f32' },
+  { name: 'dividerWidth', kind: 'f32' },
+  { name: 'outputMode', kind: 'u32' },
+  { name: 'tracerMode', kind: 'u32' },
+], { column: 19 });
 
 // ─── Tracer View (centered aspect-fit blit, issues #58/#59/#61) ──────────────
 // "Show Full Tracer" inspection path. Previously bypassed the compositor
@@ -17,25 +74,7 @@ ${WGSL_OUTPUT_ENCODE}
 @group(0) @binding(4) var layer1      : texture_2d<f32>;
 @group(0) @binding(5) var layer2      : texture_2d<f32>;
 
-struct TracerViewUniforms {
-  canvasAspect       : f32,
-  texAspect          : f32,
-  tracerAboveOpacity : f32,
-  tracerBelowOpacity : f32,
-  tracerBlendMode    : u32,
-  showHeatmap        : u32,
-  zoom               : f32,
-  panX               : f32,
-  panY               : f32,
-  heatmapOpacity     : f32,
-  exposure           : f32,
-  applyTonemap       : u32,
-  showLayers         : u32,
-  layerBlendMode     : u32,
-  layerOpacity0      : f32,
-  layerOpacity1      : f32,
-  layerOpacity2      : f32,
-};
+${emitUniformStructWgsl(TRACER_VIEW_UNIFORMS)}
 @group(0) @binding(6) var<uniform> tvu : TracerViewUniforms;
 
 @fragment
@@ -126,15 +165,7 @@ ${WGSL_OUTPUT_ENCODE}
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 
-struct DisplayUniforms {
-  canvasAspect : f32,
-  texAspect    : f32,
-  // Was a "tonemap on/off" flag back when this pass carried its own Reinhard
-  // curve. Output is now just the sRGB OETF, which every source this pass
-  // shows needs unconditionally, so the slots are padding.
-  _pad0        : u32,
-  _pad1        : u32,
-};
+${emitUniformStructWgsl(DISPLAY_UNIFORMS)}
 @group(0) @binding(2) var<uniform> du : DisplayUniforms;
 
 @fragment
@@ -172,12 +203,7 @@ ${WGSL_OUTPUT_ENCODE}
 @group(0) @binding(2) var layer1     : texture_2d<f32>;
 @group(0) @binding(3) var layer2     : texture_2d<f32>;
 
-struct HeatmapUniforms {
-  threshold : f32,
-  _pad0     : f32,
-  _pad1     : u32,
-  _pad2     : u32,
-};
+${emitUniformStructWgsl(HEATMAP_UNIFORMS)}
 @group(0) @binding(4) var<uniform> hu : HeatmapUniforms;
 
 @fragment
@@ -288,20 +314,7 @@ ${WGSL_OUTPUT_ENCODE}
 @group(0) @binding(5) var persistBelow   : texture_2d<f32>;
 @group(0) @binding(6) var persistAbove   : texture_2d<f32>;
 
-struct CompareUniforms {
-  sourceAspect       : f32,
-  tracerAboveOpacity : f32,
-  tracerBelowOpacity : f32,
-  layerBlendMode     : u32,
-  tracerBlendMode    : u32,
-  layerOpacity0      : f32,
-  layerOpacity1      : f32,
-  layerOpacity2      : f32,
-  stampBoost         : f32,
-  dividerWidth       : f32,
-  outputMode         : u32,
-  tracerMode         : u32,
-};
+${emitUniformStructWgsl(COMPARE_UNIFORMS)}
 @group(0) @binding(7) var<uniform> cu : CompareUniforms;
 
 fn compositeAt(uv : vec2<f32>) -> vec3<f32> {

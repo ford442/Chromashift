@@ -4,13 +4,10 @@
 // When layers overlap, we capture the blended color.
 // When they don't overlap, we decay the previous persistence.
 //
-// Uniforms layout (std140-ish, WGSL explicit offsets):
-//   0: decayFactor (f32) – 0.99 = slow fade, 0.5 = fast fade
-//   4: colorThresh  (f32) – minimum alpha to consider a "collision"
-//   8: stampBoost   (f32) – boost applied only to fresh collision stamps
-//  12: tracerMode   (u32)  – 0 = combined colors, 1 = grey highlight
-//
-// Keep the uniform definition in sync with WebGPURenderer.ts
+// Every uniform block here is declared as a layout (`PERSIST_UNIFORMS` in
+// graph/templates/wgsl.ts, `PERSIST_COMPOSITE_UNIFORMS` below) and the struct is
+// emitted from it, so the writer in graph/exec/uniforms.ts cannot disagree with
+// the shader about where a field lives.
 //
 // The decay-rate exponents are interpolated from the canonical table in
 // shared/decay.json (via DECAY_WGSL) — never hand-write them here; see
@@ -18,6 +15,7 @@
 
 import { CANONICAL_LAYER_COUNT } from '../graph/layerSpecs';
 import { WGSL_MOTION_HELPERS, emitCoincidenceDecayWgsl } from '../graph/templates/wgsl';
+import { defineUniformLayout, emitUniformStructWgsl } from '../graph/templates/uniformLayout';
 import { DECAY_WGSL } from './decayLiterals';
 
 export const persistenceFragmentSource = emitCoincidenceDecayWgsl(CANONICAL_LAYER_COUNT);
@@ -51,10 +49,25 @@ export const persistenceMotionFragmentSource = emitCoincidenceDecayWgsl(
 // `stampTex.b` doubles as the "2+ layers overlapping" flag whenever
 // `stampTex.a` is 0 (see the compute shader's doc comment for why that's
 // safe) — used here to reproduce the original decay-rate switch.
-//
-// Uniforms layout:
-//   0: decayFactor (f32)
-//   4: peakMode    (u32)
+
+/** Uniforms of the compute-fed composite pass: 16 bytes, or 32 with the temporal term. */
+export const PERSIST_COMPOSITE_UNIFORMS = defineUniformLayout('PersistCompositeUniforms', [
+  { name: 'decayFactor', kind: 'f32' },
+  { name: 'peakMode', kind: 'u32' },
+  { name: '_pad0', kind: 'u32' },
+  { name: '_pad1', kind: 'u32' },
+], { column: 12 });
+
+export const PERSIST_COMPOSITE_MOTION_UNIFORMS = defineUniformLayout('PersistCompositeUniforms', [
+  { name: 'decayFactor', kind: 'f32' },
+  { name: 'peakMode', kind: 'u32' },
+  { name: 'motionMode', kind: 'u32' },
+  { name: 'motionGain', kind: 'f32' },
+  { name: 'motionDecayBias', kind: 'f32' },
+  { name: '_pad0', kind: 'u32' },
+  { name: '_pad1', kind: 'u32' },
+  { name: '_pad2', kind: 'u32' },
+], { column: 12 });
 
 const persistCompositeBody = (motion: boolean) => /* wgsl */ `
 @group(0) @binding(0) var stampTex : texture_2d<f32>;
@@ -63,17 +76,7 @@ ${motion ? `
 @group(0) @binding(3) var motionSampler : sampler;
 @group(0) @binding(4) var motionTex : texture_2d<f32>;
 ` : ''}
-struct PersistCompositeUniforms {
-  decayFactor : f32,
-  peakMode    : u32,
-${motion ? `  motionMode  : u32,
-  motionGain  : f32,
-  motionDecayBias : f32,
-  _pad0       : u32,
-  _pad1       : u32,
-  _pad2       : u32,` : `  _pad0       : u32,
-  _pad1       : u32,`}
-};
+${emitUniformStructWgsl(motion ? PERSIST_COMPOSITE_MOTION_UNIFORMS : PERSIST_COMPOSITE_UNIFORMS)}
 @group(0) @binding(2) var<uniform> pu : PersistCompositeUniforms;
 ${motion ? WGSL_MOTION_HELPERS : ''}
 struct FragmentOutputs {

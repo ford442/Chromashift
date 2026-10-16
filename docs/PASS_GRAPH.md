@@ -225,7 +225,29 @@ WebGpuGraphExecutor.encode(...)     →  one render pass per step
 | `plan.ts` | `CompiledGraph` → encodable steps, with every input resolved to a producer. No WebGPU: this is where the fusion rule lives, so a unit test checks it rather than a screenshot. |
 | `pool.ts` | `AllocationPlan` → textures. Lazy, so a slot nothing writes costs nothing; ping-pong pairs for accumulators; one shared MSAA target for the band layers. |
 | `nodePipelines.ts` | One emitted pass → bind-group layout, pipeline, uniform block. The layout is *derived* from `EmittedPass.textureBindings`, not hand-written per kind. |
+| `uniforms.ts` | `RendererState` → uniform values, for every block and every encode path (see below). |
 | `WebGpuGraphExecutor.ts` | Walks the steps: writes uniforms, binds, encodes, flips the ping-pong. |
+
+### One state → uniform mapping
+
+Every uniform block is declared once, as a typed layout next to the emitter
+that uses it (`templates/uniformLayout.ts`: `{ name, offset, kind }` per field),
+and the WGSL `struct` is *emitted from* that layout. Writers pack by field name
+(`packUniforms`), so a misspelt field fails to compile and no pass can write a
+field into a slot the shader reads as something else. The compositor's layout
+grows by one opacity per layer, which is exactly what the hand encoder's
+`CompositorPass` used to get wrong: it wrote three opacities at slots 4–6 at any
+layer count.
+
+The values come from one module, `exec/uniforms.ts` (`bandLayerUniforms`,
+`persistUniforms`, `compositorUniforms`, …). The hand encoder, the executor, the
+stationary previews and the WebGL passes all call it, and an absent
+`RendererState` field means `RENDERER_STATE_DEFAULTS` in `state/defaults.ts` —
+read through `rendererStateValue()`, never a fallback spelled at the read. The
+backends had already drifted (WebGL read an absent tracer duration as
+500 / 2000 ms, WebGPU as 1000 / 0); `uniforms.test.ts` scans `src/engine` so
+that cannot come back, and checks that the hand compositor and the executor's
+`blend` write byte-identical blocks at 1, 3, 5 and 8 layers.
 
 ### Coincidence fusion is what makes the default graph identical
 
@@ -481,6 +503,14 @@ be observed:
 
 ## Phase 3 — what is not done yet
 
+Phase 3 is tracked as issue #203: the executor becomes the one WebGPU encode
+path, one step per PR. Landed so far:
+
+- **One state → uniform mapping** (step 1). See
+  [One state → uniform mapping](#one-state--uniform-mapping).
+
+Still to do:
+
 - **The executor as the default path.** The gate is still off by default, so
   two topologies are live: the executor behind `?graph=1` and the hand encoder
   everywhere else. The hand encoder cannot simply be deleted yet — it is also
@@ -543,8 +573,10 @@ src/engine/graph/
 │   ├── plan.ts                  # CompiledGraph → encodable steps (no WebGPU)
 │   ├── pool.ts                  # AllocationPlan → textures, lazily
 │   ├── nodePipelines.ts         # one emitted pass → layout + pipeline + uniforms
+│   ├── uniforms.ts              # RendererState → uniform values, for every encode path
 │   └── WebGpuGraphExecutor.ts   # walks the steps and encodes the frame
 ├── templates/
+│   ├── uniformLayout.ts  # typed uniform-block layouts; the WGSL structs are emitted from them
 │   ├── wgsl.ts       # band-layer, coincidence+decay, blend, lut, warp, blur, history, displace
 │   └── glsl.ts       # band-layer, coincidence+decay, blend, lut
 └── __golden__/       # pre-refactor shader sources — the pixel-identity baseline

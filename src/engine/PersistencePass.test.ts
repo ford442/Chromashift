@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PersistencePass, type PersistenceEncodeParams } from './PersistencePass';
+import { PersistencePass, type CoincidenceStampValues } from './PersistencePass';
 import type { LayerTextures } from './BindGroupCache';
 
 /**
@@ -31,7 +31,7 @@ interface CoincidenceHarness {
   encodeCoincidence(
     layerTextures: LayerTextures,
     writeIdx: 0 | 1,
-    params: PersistenceEncodeParams,
+    stamp: CoincidenceStampValues,
   ): void;
 }
 
@@ -60,15 +60,10 @@ function makeHarness() {
 }
 
 const layerTextures = [{}, {}, {}] as unknown as LayerTextures;
-const params: PersistenceEncodeParams = {
-  fps: 30,
+const params: CoincidenceStampValues = {
   colorThresh: 0.05,
   tracerMode: 0,
   stampBoost: 1.8,
-  peakMode: 0,
-  belowDuration: 500,
-  aboveDuration: 2000,
-  paused: false,
 };
 
 describe('PersistencePass coincidence isolation', () => {

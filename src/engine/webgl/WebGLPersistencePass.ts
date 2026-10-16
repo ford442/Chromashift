@@ -13,8 +13,9 @@ import {
   activateProgram,
 } from './programUtils';
 import { createTarget, destroyTarget, type RenderTarget } from './resources';
-import type { RendererState } from '../types/RendererState';
 import type { CpuMotionField } from '../types/RendererContracts';
+import type { UniformValues } from '../graph/templates/uniformLayout';
+import type { PersistUniformName } from '../graph/templates/wgsl';
 
 /**
  * Texture unit the motion field is bound to, both when uploading and at draw
@@ -168,17 +169,23 @@ export class WebGLPersistencePass {
     this.pingPong = 0;
   }
 
+  /**
+   * @param uniforms  `persistUniforms()` for this timescale — the values the
+   *   WebGPU passes pack into `PersistUniforms`, read by name here.
+   * @param paused  A paused frame re-renders with a decay of 1 (the trail holds)
+   *   rather than skipping the pass.
+   */
   render(
     write: RenderTarget,
     read: RenderTarget,
     layerTextures: readonly RenderTarget[],
-    decay: number,
-    state: RendererState,
+    uniforms: UniformValues<PersistUniformName>,
+    paused: boolean,
   ): void {
     const gl = this.gl;
     // The temporal term engages only when a mode is selected *and* a field
     // exists; otherwise this is byte for byte the pass that shipped before.
-    const motionMode = state.motionMode ?? 0;
+    const motionMode = uniforms.motionMode;
     const useMotion = motionMode !== 0 && this.motionTexture !== null;
     if (useMotion) {
       this.motionProgram ??= createProgram(
@@ -196,15 +203,15 @@ export class WebGLPersistencePass {
     bindTexture(gl, program, 'u_layer1', 1, layerTextures[1].texture);
     bindTexture(gl, program, 'u_layer2', 2, layerTextures[2].texture);
     bindTexture(gl, program, 'u_previous', 3, read.texture);
-    uniform1f(gl, program, 'u_decay', state.paused ? 1 : decay);
-    uniform1f(gl, program, 'u_stampBoost', state.stampBoost ?? 1.8);
-    uniform1i(gl, program, 'u_tracerMode', state.tracerMode ?? 0);
-    uniform1i(gl, program, 'u_peakMode', state.peakCollisionsOnly ? 1 : 0);
+    uniform1f(gl, program, 'u_decay', paused ? 1 : uniforms.decayFactor);
+    uniform1f(gl, program, 'u_stampBoost', uniforms.stampBoost);
+    uniform1i(gl, program, 'u_tracerMode', uniforms.tracerMode);
+    uniform1i(gl, program, 'u_peakMode', uniforms.peakMode);
     if (useMotion) {
       bindTexture(gl, program, 'u_motion', MOTION_TEXTURE_UNIT, this.motionTexture!);
       uniform1i(gl, program, 'u_motionMode', motionMode);
-      uniform1f(gl, program, 'u_motionGain', state.motionGain ?? 1);
-      uniform1f(gl, program, 'u_motionDecayBias', state.motionDecayBias ?? 0.5);
+      uniform1f(gl, program, 'u_motionGain', uniforms.motionGain);
+      uniform1f(gl, program, 'u_motionDecayBias', uniforms.motionDecayBias);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }

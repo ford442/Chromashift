@@ -14,6 +14,7 @@ import { WebGLDebugPasses } from './WebGLDebugPasses';
 import { WebGLProfileLut } from './WebGLProfileLut';
 import type { RendererState } from '../types/RendererState';
 import { layerRotationUniforms } from '../math/rotation';
+import { bandLayerUniforms } from '../graph/exec/uniforms';
 
 export class WebGLLayerPass {
   private readonly gl: WebGL2RenderingContext;
@@ -69,7 +70,6 @@ export class WebGLLayerPass {
     const gl = this.gl;
     // Non-classic colour profiles render from the baked LUT (docs/COLOR_PROFILES.md).
     this.profileLut.update(state.colorProfileLut);
-    const profileMode = state.colorProfileLut && state.colorProfileMode ? 1 : 0;
 
     // Still the canonical three targets: a session with fewer layers draws the
     // first `layers.length` and leaves the rest cleared (see `drawnLayerCount`).
@@ -88,6 +88,9 @@ export class WebGLLayerPass {
       }
 
       const layer = state.layers[layerIndex];
+      // The same `FragUniforms` values WebGPU packs. This backend has no
+      // classification mask, so `useMask` is never set.
+      const values = bandLayerUniforms(state, { layerIndex, hasClassificationMask: false });
       activateProgram(gl, this.program);
       bindTexture(gl, this.program, 'u_source', 0, sourceTexture);
       uniform1i(gl, this.program, 'u_layerIndex', layerIndex);
@@ -96,13 +99,16 @@ export class WebGLLayerPass {
       uniform1f(gl, this.program, 'u_flipX', flipX);
       uniform1f(gl, this.program, 'u_flipY', flipY);
       uniform1f(gl, this.program, 'u_aspect', layerAspect);
-      uniform1f(gl, this.program, 'u_avgLuminance', state.avgLuminance);
+      uniform1f(gl, this.program, 'u_avgLuminance', values.avgLuminance);
+      // The GLSL band shader multiplies its output alpha by this, and the
+      // compositor applies the layer opacity again — so the band pass stays
+      // opaque here, where the WGSL band shader ignores the field.
       uniform1f(gl, this.program, 'u_layerOpacity', 1);
-      uniform1f(gl, this.program, 'u_colorMode', state.colorMode ?? 1);
-      uniform1f(gl, this.program, 'u_sobelEnabled', state.sobelEnabled ? 1 : 0);
-      uniform1f(gl, this.program, 'u_softCropEnabled', state.softCropEnabled ? 1 : 0);
-      uniform1f(gl, this.program, 'u_profileMode', profileMode);
-      uniform1f(gl, this.program, 'u_profileLightDark', state.colorProfileLightDark ?? 1);
+      uniform1f(gl, this.program, 'u_colorMode', values.colorMode);
+      uniform1f(gl, this.program, 'u_sobelEnabled', values.sobelEnabled);
+      uniform1f(gl, this.program, 'u_softCropEnabled', values.softCropEnabled);
+      uniform1f(gl, this.program, 'u_profileMode', values.profileMode);
+      uniform1f(gl, this.program, 'u_profileLightDark', values.profileLightDark);
       bindTexture(gl, this.program, 'u_profileLut', 1, this.profileLut.texture);
       gl.activeTexture(gl.TEXTURE0);
       gl.drawArrays(gl.TRIANGLES, 0, 6);

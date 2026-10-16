@@ -1,6 +1,7 @@
 import { WebGLRenderer } from '../webgl/WebGLRenderer';
 import { WebGLTextureManager } from '../WebGLTextureManager';
 import type { RendererState } from '../types/RendererState';
+import { rendererStateValue } from '../graph/exec/uniforms';
 import { getWebGL2ContextAttributes } from '../gpuOptions';
 
 export const XR_RENDER_SCALE = 0.5;
@@ -155,8 +156,8 @@ export class WebXrPresenter {
 /** Renderer overrides for XR (half internal scale, no readback/HUD). */
 export function xrRendererStateOverrides(state: RendererState): Partial<RendererState> {
   return {
-    layerScale: (state.layerScale ?? 1) * XR_RENDER_SCALE,
-    tracerScale: (state.tracerScale ?? 1) * XR_RENDER_SCALE,
+    layerScale: rendererStateValue(state, 'layerScale') * XR_RENDER_SCALE,
+    tracerScale: rendererStateValue(state, 'tracerScale') * XR_RENDER_SCALE,
     livePreviewEnabled: false,
     profilePerformance: false,
     viewportQuarterZoom: false,

@@ -1,6 +1,13 @@
 import { DECAY_WGSL } from '../../shaders/decayLiterals';
 import { MOTION_FLOW_MIN_SPEED } from '../../compute/chores/motionKernel';
 import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
+import {
+  defineUniformLayout,
+  emitUniformStructWgsl,
+  type UniformFieldSpec,
+  type UniformLayout,
+  type UniformNames,
+} from './uniformLayout';
 
 /**
  * WGSL template library — one emitter per node kind.
@@ -299,6 +306,24 @@ function emitSoftArmsWgsl(spec: LayerSpec, depth: number): string {
   return arms.join('\n');
 }
 
+/**
+ * The `band-layer` fragment uniforms. Every field is an `f32` — the flags too —
+ * because the shipped shader declared them that way and the GLSL twin reads
+ * them as `float`.
+ */
+export const BAND_LAYER_UNIFORMS = defineUniformLayout('FragUniforms', [
+  { name: 'avgLuminance', kind: 'f32' },
+  { name: 'layerOpacity', kind: 'f32' },
+  { name: 'colorMode', kind: 'f32' },
+  { name: 'useMask', kind: 'f32' },
+  { name: 'sobelEnabled', kind: 'f32' },
+  { name: 'softCropEnabled', kind: 'f32' },
+  { name: 'profileMode', kind: 'f32', doc: '1 = sample the colour-profile LUT instead of the classic band branches.' },
+  { name: 'profileLightDark', kind: 'f32', doc: '1 = lift luminance by the classic lightDark term before LUT lookup.' },
+], { column: 17 });
+
+export type BandLayerUniformName = UniformNames<typeof BAND_LAYER_UNIFORMS>;
+
 /** Bindings + uniforms shared by every `band-layer` fragment shader. */
 export const BAND_LAYER_HEADER_WGSL = /* wgsl */ `
 @group(0) @binding(1) var texSampler : sampler;
@@ -306,18 +331,7 @@ export const BAND_LAYER_HEADER_WGSL = /* wgsl */ `
 @group(0) @binding(4) var classMask  : texture_2d<u32>;
 @group(0) @binding(5) var profileLut : texture_2d<f32>;
 
-struct FragUniforms {
-  avgLuminance     : f32,
-  layerOpacity     : f32,
-  colorMode        : f32,
-  useMask          : f32,
-  sobelEnabled     : f32,
-  softCropEnabled  : f32,
-  /** 1 = sample the colour-profile LUT instead of the classic band branches. */
-  profileMode      : f32,
-  /** 1 = lift luminance by the classic lightDark term before LUT lookup. */
-  profileLightDark : f32,
-};
+${emitUniformStructWgsl(BAND_LAYER_UNIFORMS)}
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
 
 /**
@@ -512,6 +526,40 @@ function coincidenceParts(layerCount: number, indent: string, names: Coincidence
   };
 }
 
+const PERSIST_FIELDS = [
+  { name: 'decayFactor', kind: 'f32' },
+  { name: 'colorThresh', kind: 'f32' },
+  { name: 'stampBoost', kind: 'f32' },
+  { name: 'tracerMode', kind: 'u32' },
+  { name: 'peakMode', kind: 'u32' },
+] as const;
+
+/**
+ * The fused pass's uniforms. The motion variant spends the three tail pads of
+ * the original 32-byte block, so both pipelines share one buffer size and one
+ * writer, and the non-motion struct stays the one that shipped.
+ */
+export const PERSIST_UNIFORMS = defineUniformLayout('PersistUniforms', [
+  ...PERSIST_FIELDS,
+  { name: '_pad0', kind: 'u32' },
+  { name: '_pad1', kind: 'u32' },
+  { name: '_pad2', kind: 'u32' },
+], { column: 12 });
+
+export const PERSIST_MOTION_UNIFORMS = defineUniformLayout('PersistUniforms', [
+  ...PERSIST_FIELDS,
+  { name: 'motionMode', kind: 'u32' },
+  { name: 'motionGain', kind: 'f32' },
+  { name: 'motionDecayBias', kind: 'f32' },
+], { column: 12 });
+
+export type PersistUniformName = UniformNames<typeof PERSIST_MOTION_UNIFORMS>;
+
+/** The fused pass's uniform layout, with or without the temporal term. */
+export function persistUniformLayout(motion: boolean): UniformLayout<PersistUniformName | '_pad0' | '_pad1' | '_pad2'> {
+  return motion ? PERSIST_MOTION_UNIFORMS : PERSIST_UNIFORMS;
+}
+
 /**
  * `coincidence` + `decay` fused into one pass — today's persistence shader.
  *
@@ -540,11 +588,6 @@ export function emitCoincidenceDecayWgsl(
   const motionTexBinding = motion
     ? `@group(0) @binding(${motionBinding}) var motionTex : texture_2d<f32>;\n`
     : '';
-  // The motion variant spends the three tail pads of the original 32-byte
-  // uniform block, so both pipelines share one buffer size and one writer.
-  const motionUniformFields = motion
-    ? '  motionMode  : u32,\n  motionGain  : f32,\n  motionDecayBias : f32,'
-    : '  _pad0       : u32,\n  _pad1       : u32,\n  _pad2       : u32,';
   const motionSample = motion
     ? '  let motionSample = textureSample(motionTex, cSampler, uv);\n'
       + '  let motion = clamp(motionSample.r, 0.0, 1.0);\n'
@@ -580,14 +623,7 @@ export function emitCoincidenceDecayWgsl(
 ${bindings}
 @group(0) @binding(${prevBinding}) var prevTex   : texture_2d<f32>;
 ${motionTexBinding}
-struct PersistUniforms {
-  decayFactor : f32,
-  colorThresh : f32,
-  stampBoost  : f32,
-  tracerMode  : u32,
-  peakMode    : u32,
-${motionUniformFields}
-};
+${emitUniformStructWgsl(persistUniformLayout(motion))}
 @group(0) @binding(${uniformBinding}) var<uniform> pu : PersistUniforms;
 ${motionHelpers}
 struct FragmentOutputs {
@@ -760,39 +796,58 @@ ${dominant}
 `;
 }
 
+/** One opacity per band layer — the part of `CompositorUniforms` that grows. */
+export type CompositorLayerOpacityName = `layerOpacity${number}`;
+
+export type CompositorUniformName =
+  | 'tracerAboveOpacity'
+  | 'tracerBelowOpacity'
+  | 'layerBlendMode'
+  | 'tracerBlendMode'
+  | CompositorLayerOpacityName
+  | 'diagnosticsOpacity'
+  | 'stampBoost'
+  | 'outputMode'
+  | 'tracerMode'
+  | 'diagnosticsMode'
+  | 'viewportQuarterZoom'
+  | 'halfOverlayAlpha'
+  | 'viewportHalfOverlay';
+
+const compositorLayouts = new Map<number, UniformLayout<CompositorUniformName>>();
+
 /**
- * Field order of `CompositorUniforms`, as 4-byte slots. The compositor uniform
- * struct grows with the layer count, so the renderer asks for the layout rather
- * than hard-coding indices.
+ * `CompositorUniforms` for `layerCount` layers. The struct grows by one opacity
+ * per layer, so every field after the opacities moves with the count — which
+ * is why nothing may write this block by index. Memoised: the executor asks
+ * for it every frame.
  */
-export function compositorUniformLayout(layerCount: number): Record<string, number> {
-  const layout: Record<string, number> = {
-    tracerAboveOpacity: 0,
-    tracerBelowOpacity: 1,
-    layerBlendMode: 2,
-    tracerBlendMode: 3,
-  };
-  let slot = 4;
-  for (let i = 0; i < layerCount; i += 1) layout[`layerOpacity${i}`] = slot++;
-  for (const name of [
-    'diagnosticsOpacity',
-    'stampBoost',
-    'outputMode',
-    'tracerMode',
-    'diagnosticsMode',
-    'viewportQuarterZoom',
-    'halfOverlayAlpha',
-    'viewportHalfOverlay',
-  ]) {
-    layout[name] = slot++;
-  }
+export function compositorUniformLayout(layerCount: number): UniformLayout<CompositorUniformName> {
+  const cached = compositorLayouts.get(layerCount);
+  if (cached) return cached;
+  const fields: UniformFieldSpec<CompositorUniformName>[] = [
+    { name: 'tracerAboveOpacity', kind: 'f32' },
+    { name: 'tracerBelowOpacity', kind: 'f32' },
+    { name: 'layerBlendMode', kind: 'u32' },
+    { name: 'tracerBlendMode', kind: 'u32' },
+    ...layerList(layerCount).map((i) => ({ name: `layerOpacity${i}` as const, kind: 'f32' as const })),
+    { name: 'diagnosticsOpacity', kind: 'f32' },
+    { name: 'stampBoost', kind: 'f32' },
+    { name: 'outputMode', kind: 'u32' },
+    { name: 'tracerMode', kind: 'u32' },
+    { name: 'diagnosticsMode', kind: 'u32' },
+    { name: 'viewportQuarterZoom', kind: 'u32' },
+    { name: 'halfOverlayAlpha', kind: 'f32' },
+    { name: 'viewportHalfOverlay', kind: 'u32' },
+  ];
+  const layout = defineUniformLayout('CompositorUniforms', fields, { column: 19 });
+  compositorLayouts.set(layerCount, layout);
   return layout;
 }
 
 /** Uniform buffer size in bytes for a compositor with `layerCount` layers. */
 export function compositorUniformBytes(layerCount: number): number {
-  const slots = Object.keys(compositorUniformLayout(layerCount)).length;
-  return Math.ceil((slots * 4) / 16) * 16;
+  return compositorUniformLayout(layerCount).bytes;
 }
 
 /**
@@ -807,7 +862,6 @@ export function emitCompositorWgsl(layerCount: number, blendHelpers: string): st
   const belowBinding = layerCount + 1;
   const aboveBinding = layerCount + 2;
   const uniformBinding = layerCount + 3;
-  const opacityFields = layers.map((i) => `  layerOpacity${i}      : f32,`).join('\n');
   const samples = layers
     .map((i) => `  let c${i}      = textureSample(layer${i},       cSampler, sampleUV);`)
     .join('\n');
@@ -844,21 +898,7 @@ ${bindings}
 @group(0) @binding(${belowBinding}) var persistBelow   : texture_2d<f32>;
 @group(0) @binding(${aboveBinding}) var persistAbove   : texture_2d<f32>;
 
-struct CompositorUniforms {
-  tracerAboveOpacity : f32,
-  tracerBelowOpacity : f32,
-  layerBlendMode     : u32,
-  tracerBlendMode    : u32,
-${opacityFields}
-  diagnosticsOpacity : f32,
-  stampBoost         : f32,
-  outputMode         : u32,
-  tracerMode         : u32,
-  diagnosticsMode    : u32,
-  viewportQuarterZoom: u32,
-  halfOverlayAlpha   : f32,
-  viewportHalfOverlay: u32,
-};
+${emitUniformStructWgsl(compositorUniformLayout(layerCount))}
 @group(0) @binding(${uniformBinding}) var<uniform> cu : CompositorUniforms;
 
 fn viewportSampleUV(uv: vec2<f32>) -> vec2<f32> {
@@ -978,20 +1018,20 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
  * when `profileMode` is set); this node exists for graphs that grade an
  * arbitrary texture, such as the colour-profile designer's live preview.
  */
+export const LUT_UNIFORMS = defineUniformLayout('LutUniforms', [
+  { name: 'row', kind: 'f32', doc: 'LUT row to sample.' },
+  { name: 'lightDark', kind: 'f32', doc: '0 = raw luminance, 1 = lift by the classic lightDark term first.' },
+  { name: 'avgLuminance', kind: 'f32' },
+  { name: 'mixAmount', kind: 'f32' },
+], { column: 12 });
+
 export function emitLutWgsl(rows: number): string {
   return /* wgsl */ `
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 @group(0) @binding(2) var lut        : texture_2d<f32>;
 
-struct LutUniforms {
-  /** LUT row to sample (0 .. ${rows - 1}). */
-  row      : f32,
-  /** 0 = raw luminance, 1 = lift by the classic lightDark term first. */
-  lightDark: f32,
-  avgLuminance : f32,
-  mixAmount    : f32,
-};
+${emitUniformStructWgsl(LUT_UNIFORMS)}
 @group(0) @binding(3) var<uniform> lu : LutUniforms;
 
 @fragment
@@ -1011,6 +1051,13 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 `;
 }
 
+export const WARP_UNIFORMS = defineUniformLayout('WarpUniforms', [
+  { name: 'angleRad', kind: 'f32' },
+  { name: 'scale', kind: 'f32' },
+  { name: 'aspect', kind: 'f32' },
+  { name: 'displace', kind: 'f32' },
+], { column: 9 });
+
 /** `warp` → a UV transform: rotate, scale, then optional feedback displacement. */
 export function emitWarpWgsl(mode: 'affine' | 'feedback'): string {
   const displace = mode === 'feedback'
@@ -1020,12 +1067,7 @@ export function emitWarpWgsl(mode: 'affine' | 'feedback'): string {
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 
-struct WarpUniforms {
-  angleRad : f32,
-  scale    : f32,
-  aspect   : f32,
-  displace : f32,
-};
+${emitUniformStructWgsl(WARP_UNIFORMS)}
 @group(0) @binding(2) var<uniform> wu : WarpUniforms;
 
 @fragment
@@ -1049,6 +1091,13 @@ ${displace}
 `;
 }
 
+export const BLUR_UNIFORMS = defineUniformLayout('BlurUniforms', [
+  { name: 'axisX', kind: 'f32', doc: '(1, 0) for the horizontal pass, (0, 1) for the vertical one.' },
+  { name: 'axisY', kind: 'f32' },
+  { name: '_pad0', kind: 'f32' },
+  { name: '_pad1', kind: 'f32' },
+], { column: 6 });
+
 /**
  * `blur` → one axis of a separable gaussian. The scheduler runs the node twice
  * (horizontal, then vertical) through a transient target, which is exactly the
@@ -1071,13 +1120,7 @@ export function emitBlurWgsl(radius: number): string {
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 
-struct BlurUniforms {
-  /** (1, 0) for the horizontal pass, (0, 1) for the vertical one. */
-  axisX : f32,
-  axisY : f32,
-  _pad0 : f32,
-  _pad1 : f32,
-};
+${emitUniformStructWgsl(BLUR_UNIFORMS)}
 @group(0) @binding(2) var<uniform> bu : BlurUniforms;
 
 @fragment
@@ -1110,8 +1153,24 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 `;
 }
 
-/** Bytes in the `history` taps uniform block: one weight per ring slot, padded. */
-export const HISTORY_UNIFORM_BYTES = 32;
+/** The most ring slots a `history` node can have — `validate.ts` holds `frames` to 2–8. */
+export const HISTORY_MAX_FRAMES = 8;
+
+export type HistoryWeightName = `weight${number}`;
+
+/**
+ * The `history` taps uniforms: one weight per ring slot, always the full eight
+ * so every ring length shares one block size. Unused slots stay zero.
+ */
+export const HISTORY_UNIFORMS = defineUniformLayout(
+  'HistoryUniforms',
+  Array.from({ length: HISTORY_MAX_FRAMES }, (_, i): UniformFieldSpec<HistoryWeightName> => ({
+    name: `weight${i}`,
+    kind: 'f32',
+    ...(i === 0 ? { doc: 'Weight of ring slot i, written per frame from the head.' } : {}),
+  })),
+  { column: 8 },
+);
 
 /**
  * `history`, read half → a weighted mix of every ring slot.
@@ -1129,17 +1188,14 @@ export function emitHistoryTapsWgsl(frames: number): string {
   ).join('\n');
   const taps = Array.from(
     { length: frames },
-    (_, i) => `  acc = acc + textureSample(ring${i}, texSampler, uv) * hu.weights[${i >> 2}][${i & 3}];`,
+    (_, i) => `  acc = acc + textureSample(ring${i}, texSampler, uv) * hu.weight${i};`,
   ).join('\n');
 
   return /* wgsl */ `
 @group(0) @binding(0) var texSampler : sampler;
 ${bindings}
 
-struct HistoryUniforms {
-  /** Weight of ring slot i at [i / 4][i % 4]; written per frame from the head. */
-  weights : array<vec4<f32>, 2>,
-};
+${emitUniformStructWgsl(HISTORY_UNIFORMS)}
 @group(0) @binding(${frames + 1}) var<uniform> hu : HistoryUniforms;
 
 @fragment
@@ -1150,6 +1206,13 @@ ${taps}
 }
 `;
 }
+
+export const DISPLACE_UNIFORMS = defineUniformLayout('DisplaceUniforms', [
+  { name: 'gain', kind: 'f32' },
+  { name: 'sign', kind: 'f32', doc: '-1 for `inverse`, +1 for `forward`.' },
+  { name: '_pad0', kind: 'f32' },
+  { name: '_pad1', kind: 'f32' },
+], { column: 6 });
 
 /**
  * `displace` → sample `tex` at UVs pushed by a field texture.
@@ -1173,12 +1236,7 @@ export function emitDisplaceWgsl(field: 'motion' | 'color'): string {
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 @group(0) @binding(2) var field      : texture_2d<f32>;
 
-struct DisplaceUniforms {
-  gain  : f32,
-  sign  : f32,
-  _pad0 : f32,
-  _pad1 : f32,
-};
+${emitUniformStructWgsl(DISPLACE_UNIFORMS)}
 @group(0) @binding(3) var<uniform> du : DisplaceUniforms;
 
 @fragment

@@ -15,6 +15,8 @@ import {
   toHdrPresentWgsl,
 } from './shaders';
 import { DEFAULT_LAYER_COUNT, assertLayerCount } from './graph';
+import { BAND_LAYER_UNIFORMS } from './graph/templates/wgsl';
+import { createUniformData, type UniformData } from './graph/templates/uniformLayout';
 import type { CanvasPresentation } from './gpuOptions';
 
 /**
@@ -39,7 +41,8 @@ export interface LayerPipeline {
   rotationBuffer    : GPUBuffer;
   fragUniformBuffer : GPUBuffer;
   rotationData      : Float32Array;
-  fragData          : Float32Array;
+  /** `BAND_LAYER_UNIFORMS` storage, packed by `bandLayerUniforms()`. */
+  fragUniforms      : UniformData;
 }
 
 export class WebGPUPipelines {
@@ -463,10 +466,17 @@ export class WebGPUPipelines {
       size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const fragUniformBuffer = device.createBuffer({
-      size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      size: BAND_LAYER_UNIFORMS.bytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    return { pipeline, bindGroupLayout, rotationBuffer, fragUniformBuffer, rotationData: new Float32Array(4), fragData: new Float32Array(8) };
+    return {
+      pipeline,
+      bindGroupLayout,
+      rotationBuffer,
+      fragUniformBuffer,
+      rotationData: new Float32Array(4),
+      fragUniforms: createUniformData(BAND_LAYER_UNIFORMS),
+    };
   }
 
 }

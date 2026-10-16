@@ -1,10 +1,16 @@
 import { fullscreenVertexSource } from '../../shaders';
 import type { LayerPipeline, WebGPUPipelines } from '../../WebGPUPipelines';
 import {
-  HISTORY_UNIFORM_BYTES,
-  compositorUniformBytes,
+  BLUR_UNIFORMS,
+  DISPLACE_UNIFORMS,
+  HISTORY_UNIFORMS,
+  LUT_UNIFORMS,
+  PERSIST_UNIFORMS,
+  WARP_UNIFORMS,
+  compositorUniformLayout,
   emitHistoryWriteWgsl,
 } from '../templates/wgsl';
+import { createUniformData, type UniformData, type UniformLayout } from '../templates/uniformLayout';
 import type { EmittedPass, NodeKind } from '../types';
 
 /** Pipeline + bind-group layout + uniform storage for one graph node. */
@@ -14,7 +20,8 @@ export interface NodePipeline {
   readonly bindGroupLayout: GPUBindGroupLayout;
   /** Single uniform block for every kind but `band-layer` (which has two). */
   readonly uniformBuffer: GPUBuffer | null;
-  readonly uniformData: ArrayBuffer | null;
+  /** CPU side of `uniformBuffer`, laid out by {@link uniformLayoutFor}. */
+  readonly uniforms: UniformData | null;
   /** `band-layer` reuses the shipped layer pipeline, buffers and all. */
   readonly layer: LayerPipeline | null;
   /** `history` only: the blit that writes this frame's input into the ring. */
@@ -41,24 +48,36 @@ export interface NodePipelineContext {
   readonly layerCount: number;
 }
 
-/** Uniform block size, in bytes, for one node kind. */
-export function uniformBytes(kind: NodeKind, layerCount: number): number {
+/**
+ * The uniform layout one node kind's emitted shader declares, or `null` for the
+ * kinds without a block of their own (`band-layer` keeps the shipped layer
+ * pipeline's two buffers; `source` and `output` emit nothing).
+ */
+export function uniformLayoutFor(kind: NodeKind, layerCount: number): UniformLayout | null {
   switch (kind) {
     case 'coincidence':
     case 'decay':
-      return 32;
+      return PERSIST_UNIFORMS;
     case 'blend':
-      return compositorUniformBytes(layerCount);
+      return compositorUniformLayout(layerCount);
     case 'warp':
+      return WARP_UNIFORMS;
     case 'blur':
+      return BLUR_UNIFORMS;
     case 'lut':
+      return LUT_UNIFORMS;
     case 'displace':
-      return 16;
+      return DISPLACE_UNIFORMS;
     case 'history':
-      return HISTORY_UNIFORM_BYTES;
+      return HISTORY_UNIFORMS;
     default:
-      return 0;
+      return null;
   }
+}
+
+/** Uniform block size, in bytes, for one node kind. */
+export function uniformBytes(kind: NodeKind, layerCount: number): number {
+  return uniformLayoutFor(kind, layerCount)?.bytes ?? 0;
 }
 
 const sampler = (binding: number): GPUBindGroupLayoutEntry => ({
@@ -148,7 +167,7 @@ export function createNodePipeline(
       pipeline: layer.pipeline,
       bindGroupLayout: layer.bindGroupLayout,
       uniformBuffer: null,
-      uniformData: null,
+      uniforms: null,
       layer,
     };
   }
@@ -164,18 +183,18 @@ export function createNodePipeline(
     targetFormats(emitted.kind, ctx.internalFormat, ctx.outputFormat),
   );
 
-  const bytes = uniformBytes(emitted.kind, ctx.layerCount);
+  const layout = uniformLayoutFor(emitted.kind, ctx.layerCount);
   return {
     ...base,
     pipeline,
     bindGroupLayout,
-    uniformBuffer: bytes > 0
+    uniformBuffer: layout
       ? ctx.device.createBuffer({
-        size: bytes,
+        size: layout.bytes,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       })
       : null,
-    uniformData: bytes > 0 ? new ArrayBuffer(bytes) : null,
+    uniforms: layout ? createUniformData(layout) : null,
     layer: null,
     ringWrite: emitted.kind === 'history' ? createRingWritePipeline(ctx) : null,
   };

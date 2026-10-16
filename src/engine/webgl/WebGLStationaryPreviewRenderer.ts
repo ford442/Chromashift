@@ -1,5 +1,5 @@
 import { MAIN_VIEW_MODES } from '../viewModes';
-import { durationToDecay } from '../math/decay';
+import { persistUniforms, rendererStateValue } from '../graph/exec/uniforms';
 import type { RendererState } from '../types/RendererState';
 import type { WebGlTextureHandle } from '../types/TextureHandle';
 import {
@@ -14,16 +14,6 @@ import { WebGLLayerPass } from './WebGLLayerPass';
 import { WebGLPersistencePass } from './WebGLPersistencePass';
 import { PixelPackRead } from './asyncReadback';
 import { createTarget, destroyTarget, type RenderTarget } from './resources';
-
-/**
- * Per-layer opacity, global multiplier folded in — one entry per layer the
- * state actually carries, not a fixed three.
- */
-function computeLayerOpacities(state: RendererState): number[] {
-  const globalLayerOpacity = state.layerOpacity ?? 1.0;
-  const perLayer = state.layerOpacities;
-  return state.layers.map((_, i) => globalLayerOpacity * (perLayer?.[i] ?? 1));
-}
 
 /** Isolated WebGL2 path for stationary side previews (does not touch main FBOs). */
 export class WebGLStationaryPreviewRenderer {
@@ -74,9 +64,8 @@ export class WebGLStationaryPreviewRenderer {
     this.persistencePass.ensureTextures(size, size);
     this.persistencePass.clear();
 
-    const layerOpacities = computeLayerOpacities(state);
     const separated = wantSeparated
-      ? await this.renderSeparated(state, size, layerOpacities)
+      ? await this.renderSeparated(state, size)
       : null;
 
     let tracer: Uint8ClampedArray<ArrayBuffer> | null = null;
@@ -85,7 +74,7 @@ export class WebGLStationaryPreviewRenderer {
       for (let frame = 0; frame < warmupFrames; frame += 1) {
         this.encodeLayersAndPersistence(state, fps);
       }
-      tracer = await this.renderTracer(state, size, layerOpacities);
+      tracer = await this.renderTracer(state, size);
     }
 
     return { separated, tracer };
@@ -101,21 +90,20 @@ export class WebGLStationaryPreviewRenderer {
     this.layerPass.render(this.sourceTexture!.texture, state, 0, 1);
     const readIndex = this.persistencePass.pingPong;
     const writeIndex = (1 - this.persistencePass.pingPong) as 0 | 1;
-    const aboveDecay = durationToDecay(state.tracerAboveDuration ?? 500, fps);
-    const belowDecay = durationToDecay(state.tracerBelowDuration ?? 2000, fps);
+    const paused = rendererStateValue(state, 'paused');
     this.persistencePass.render(
       this.persistencePass.tracerAbove[writeIndex]!,
       this.persistencePass.tracerAbove[readIndex]!,
       this.layerPass.targets,
-      aboveDecay,
-      state,
+      persistUniforms(state, { role: 'above', fps }),
+      paused,
     );
     this.persistencePass.render(
       this.persistencePass.tracerBelow[writeIndex]!,
       this.persistencePass.tracerBelow[readIndex]!,
       this.layerPass.targets,
-      belowDecay,
-      state,
+      persistUniforms(state, { role: 'below', fps }),
+      paused,
     );
     this.persistencePass.advancePingPong(false);
   }
@@ -123,7 +111,6 @@ export class WebGLStationaryPreviewRenderer {
   private async renderSeparated(
     state: RendererState,
     size: number,
-    layerOpacities: number[],
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     this.layerPass.render(this.sourceTexture!.texture, state, 0, 1);
     const separatedState: RendererState = {
@@ -142,7 +129,6 @@ export class WebGLStationaryPreviewRenderer {
       this.layerPass.targets,
       this.persistencePass,
       separatedState,
-      layerOpacities,
     );
     return this.readOutput(size);
   }
@@ -150,7 +136,6 @@ export class WebGLStationaryPreviewRenderer {
   private async renderTracer(
     state: RendererState,
     size: number,
-    layerOpacities: number[],
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const tracerState: RendererState = {
       ...state,
@@ -168,7 +153,6 @@ export class WebGLStationaryPreviewRenderer {
       this.layerPass.targets,
       this.persistencePass,
       tracerState,
-      layerOpacities,
     );
     return this.readOutput(size);
   }
