@@ -26,7 +26,7 @@ async function canvasDistinctColours(page: Page): Promise<number> {
 }
 
 /**
- * `?graph=1` gate (docs/PASS_GRAPH.md).
+ * The `?graph` gate (docs/PASS_GRAPH.md) — on by default, `?graph=0` to opt out.
  *
  * The default graph is the pipeline the renderer already runs, so these specs
  * assert the breadcrumbs — not the pixels. Pixel identity is pinned in
@@ -34,12 +34,26 @@ async function canvasDistinctColours(page: Page): Promise<number> {
  * against the pre-refactor source.
  */
 test.describe('pass graph', () => {
-  test('stays dark without the gate', async ({ page }) => {
-    await page.goto('/?renderer=webgl');
+  test('stays dark under ?graph=0', async ({ page }) => {
+    await page.goto('/?renderer=webgl&graph=0');
     await waitForWebGL(page);
 
     expect(await page.evaluate(() => window.passGraphActive)).toBe(false);
     expect(await page.evaluate(() => window.passGraphCompileCount)).toBe(0);
+  });
+
+  test('compiles with no ?graph at all, and the WebGL backend still draws it by hand', async ({ page }) => {
+    await page.goto('/?renderer=webgl');
+    await waitForWebGL(page);
+
+    const crumbs = await page.evaluate(() => ({
+      active: window.passGraphActive,
+      name: window.passGraphName,
+      compileCount: window.passGraphCompileCount,
+      error: window.passGraphError,
+      executing: window.passGraphExecuting ?? null,
+    }));
+    expect(crumbs).toEqual({ active: true, name: 'default', compileCount: 1, error: null, executing: null });
   });
 
   test('compiles the default graph and publishes the schedule', async ({ page }) => {

@@ -260,14 +260,15 @@ export function useAppWebGPUInit({
       const fallbackReason = bootstrapped.orchestrator.getFallbackReason();
       setRendererFallbackReason(fallbackReason);
       publishRendererBreadcrumbs(bootstrapped.orchestrator.getBackend(), fallbackReason);
-      // Pass-graph gate (?graph=1, ?graph=blur, ?graph=warp). Compiles the
-      // selected graph for the live backend and publishes the breadcrumbs. On
-      // WebGPU the compiled graph is then handed to the renderer's
-      // `GraphExecutor`, which encodes `compiled.passes` in place of the
-      // hand-written topology; the default graph is byte-for-byte that
-      // topology, so `?graph=1` changes the encode path and not the pixels.
-      // The WebGL diagnostic backend compiles but does not execute.
-      // See docs/PASS_GRAPH.md.
+      // Pass-graph gate — on by default; `?graph=blur`, `?graph=trails3`, …
+      // select another shape and `?graph=0` is the escape hatch to the hand
+      // encoder. Compiles the selected graph for the live backend and
+      // publishes the breadcrumbs. On WebGPU the graph source is then handed
+      // to every slot's renderer, whose `GraphExecutor` draws it in place of
+      // the hand-written topology; the default graph is that topology (to ±1
+      // against the compute-fed stamp), so the gate changes the encode path
+      // and not the look. The WebGL diagnostic backend compiles but does not
+      // execute. See docs/PASS_GRAPH.md.
       const compiledGraph = activatePassGraph(bootstrapped.orchestrator.getBackend());
       if (compiledGraph) {
         // Every slot's renderer builds the variant each frame needs from the

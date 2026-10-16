@@ -54,32 +54,48 @@ export interface PassGraphSelection {
   name: GraphPresetName;
 }
 
+/** What a session with no `?graph` and no stored preference gets. */
+const DEFAULT_SELECTION: PassGraphSelection = { enabled: true, name: 'default' };
+const OFF: PassGraphSelection = { enabled: false, name: 'default' };
+
+/** A `?graph=` value (or the stored preference) as a selection. */
+function selectionFor(value: string): PassGraphSelection {
+  if (value === '0' || value === 'false') return OFF;
+  // An unrecognised value is the default graph, not a refusal: the gate's job
+  // is to pick a shape, and "on with something unknown" means "on".
+  return { enabled: true, name: isGraphPresetName(value) ? value : 'default' };
+}
+
 /**
- * Pass-graph gate.
+ * Pass-graph gate — **on by default**.
  *
- * `?graph=1` compiles the default graph and, on WebGPU, hands it to the
- * `GraphExecutor` that draws it. `?graph=blur` / `?graph=warp` and the starter
- * graphs `?graph=smear` / `?graph=feedback` select a different *shape* — a
- * graph the hand-written encoder cannot express — and
- * `?graph=0` forces the hand encoder. The WebGL diagnostic backend compiles but
- * does not execute, so it stays on the hand encoder either way.
+ * Every session compiles the default graph and, on WebGPU, draws it with the
+ * `GraphExecutor`. `?graph=blur` / `?graph=warp`, the starter graphs
+ * `?graph=smear` / `?graph=feedback` and `?graph=trails3` select a different
+ * *shape* — a graph the hand-written encoder cannot express. `?graph=0` (or a
+ * stored `'0'`) is the escape hatch back to the hand encoder, for one release
+ * while the hand encoder still exists. The WebGL diagnostic backend compiles
+ * but does not execute, so it stays on its hand encoder either way.
+ *
+ * The URL wins over the stored preference, and storage a hardened browser
+ * blocks reads as "no preference".
  */
 export function passGraphSelection(search?: string): PassGraphSelection {
-  const off: PassGraphSelection = { enabled: false, name: 'default' };
+  let explicit: string | null = null;
   try {
-    const params = new URLSearchParams(search ?? window.location.search);
-    const explicit = params.get('graph');
-    if (explicit !== null) {
-      if (explicit === '0' || explicit === 'false') return off;
-      if (isGraphPresetName(explicit)) return { enabled: true, name: explicit };
-      return { enabled: true, name: 'default' };
-    }
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    if (stored === null || stored === '0') return off;
-    return { enabled: true, name: isGraphPresetName(stored) ? stored : 'default' };
+    explicit = new URLSearchParams(search ?? window.location.search).get('graph');
   } catch {
-    return off;
+    // No `window` (a worker, Node): no URL to read.
   }
+  if (explicit !== null) return selectionFor(explicit);
+
+  let stored: string | null = null;
+  try {
+    stored = window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    // Storage can be disabled in hardened browsers.
+  }
+  return stored === null ? DEFAULT_SELECTION : selectionFor(stored);
 }
 
 export function passGraphRequested(search?: string): boolean {

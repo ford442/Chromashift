@@ -38,13 +38,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('?graph=1 gate', () => {
-  it('is off by default', () => {
+describe('?graph gate', () => {
+  it('is on by default, drawing the default graph', () => {
     installBrowserGlobals('');
-    expect(passGraphRequested()).toBe(false);
+    expect(passGraphSelection()).toEqual({ enabled: true, name: 'default' });
   });
 
-  it.each(['?graph=1', '?graph', '?renderer=webgl&graph=1'])('is on for %s', (search) => {
+  it.each(['?graph=1', '?graph', '?renderer=webgl&graph=1', '?renderer=webgl'])('is on for %s', (search) => {
     installBrowserGlobals(search);
     expect(passGraphRequested()).toBe(true);
   });
@@ -56,17 +56,34 @@ describe('?graph=1 gate', () => {
 
   it('falls back to the stored preference', () => {
     const win = installBrowserGlobals('');
-    setStoredPassGraphPreference(true);
-    expect(win.localStorage.getItem(STORAGE_KEY)).toBe('1');
-    expect(passGraphRequested()).toBe(true);
-
     setStoredPassGraphPreference(false);
+    expect(win.localStorage.getItem(STORAGE_KEY)).toBe('0');
     expect(passGraphRequested()).toBe(false);
+
+    setStoredPassGraphPreference('trails3');
+    expect(passGraphSelection()).toEqual({ enabled: true, name: 'trails3' });
+
+    setStoredPassGraphPreference(true);
+    expect(passGraphSelection()).toEqual({ enabled: true, name: 'default' });
   });
 
-  it('survives an unusable localStorage', () => {
+  it('lets the URL override a stored opt-out', () => {
+    installBrowserGlobals('?graph=blur');
+    setStoredPassGraphPreference(false);
+    expect(passGraphSelection()).toEqual({ enabled: true, name: 'blur' });
+  });
+
+  it('reads an unusable localStorage as no preference', () => {
     vi.stubGlobal('window', {
       location: { search: '' },
+      get localStorage(): Storage { throw new Error('blocked'); },
+    });
+    expect(passGraphSelection()).toEqual({ enabled: true, name: 'default' });
+  });
+
+  it('still honours ?graph=0 when storage is unusable', () => {
+    vi.stubGlobal('window', {
+      location: { search: '?graph=0' },
       get localStorage(): Storage { throw new Error('blocked'); },
     });
     expect(passGraphRequested()).toBe(false);
@@ -85,6 +102,7 @@ describe('named graph shapes', () => {
     // An unrecognised name is the default graph, not a refusal: the gate's job
     // is to pick a shape, and "on with something unknown" means "on".
     ['?graph=nonsense', 'default'],
+    ['', 'default'],
   ])('%s selects the %s graph', (search, name) => {
     installBrowserGlobals(search);
     expect(passGraphSelection()).toEqual({ enabled: true, name });
@@ -133,8 +151,8 @@ describe('named graph shapes', () => {
 });
 
 describe('breadcrumbs', () => {
-  it('reports inactive without compiling anything', () => {
-    const win = installBrowserGlobals('');
+  it('reports inactive under ?graph=0 without compiling anything', () => {
+    const win = installBrowserGlobals('?graph=0');
     expect(activatePassGraph('webgpu')).toBeNull();
     expect(win.passGraphActive).toBe(false);
     expect(win.passGraphPasses).toEqual([]);

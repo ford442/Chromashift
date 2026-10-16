@@ -3,9 +3,9 @@
 A declarative intermediate representation the renderers **compile**, instead of a
 pipeline they hard-code.
 
-> **Status: Phase 2 — the graph *executes* on WebGPU behind `?graph=1`.**
+> **Status: Phase 3 under way — the graph is how WebGPU draws, by default.**
 > `WebGpuGraphExecutor` walks `compiled.passes`, binds the allocator's pool and
-> encodes the frame. On a GPU the default graph's frame is byte-identical to the
+> encodes the frame, for every session that does not opt out with `?graph=0`. On a GPU the default graph's frame is byte-identical to the
 > hand encoder's fused-fragment persistence path, and within ±1 on a handful of
 > pixels of its compute-fed one (see [Pixel parity](#pixel-parity-on-a-device));
 > `?graph=blur` and `?graph=warp` are different *shapes* that draw without a
@@ -13,7 +13,8 @@ pipeline they hard-code.
 > add temporal node kinds (`history`, `displace`) the hand encoder has no
 > equivalent for. The WebGL diagnostic backend compiles only, and refuses the
 > shapes it has no template for by name.
-> See [Phase 2](#phase-2--shipped) for what landed and what is left.
+> See [Phase 2](#phase-2--shipped) and [Phase 3](#phase-3--what-is-not-done-yet)
+> for what landed and what is left.
 
 ---
 
@@ -192,9 +193,10 @@ hand-written shader it replaced — see `__golden__/coincidence-compute.wgsl`.
 
 ## The gate
 
-`?graph=1` (or a stored `chromashift.passGraph` preference) turns on compilation
-and the breadcrumbs, and on WebGPU hands the compiled graph to the executor.
-For the default graph that changes the encode path, not the look: see
+The gate is **on by default**: every session compiles the default graph, publishes
+the breadcrumbs and, on WebGPU, hands the graph to the executor. `?graph=<name>`
+(or a stored `chromashift.passGraph` preference) selects another shape. For the
+default graph the executor changes the encode path, not the look: see
 [Pixel parity](#pixel-parity-on-a-device) for how close "not the look" is.
 
 | Breadcrumb | Meaning |
@@ -216,7 +218,9 @@ drawing what it produced. `passGraphExecutedPasses` is shorter than
 `passGraphPasses`: `source` and `output` own no pass, and a `coincidence` fused
 into its `decay` consumers is absorbed by them.
 
-`?graph=0` forces it off.
+`?graph=0` (or a stored `'0'`) forces it off and draws with the hand encoder —
+the escape hatch for the one release the hand encoder outlives the flip. The URL
+wins over the stored preference.
 
 ## The executor
 
@@ -383,7 +387,7 @@ same target back out instead of sizing 2N of them.
 The graphs the installation work builds on. They are selected with `?graph=` until
 the executor is on by default:
 
-1. **Classic** (`?graph=1`): `buildDefaultGraph(3)`, the control. It is also what
+1. **Classic** (`?graph=1`, or no `?graph` at all): `buildDefaultGraph(3)`, the control. It is also what
    every refusal falls back to. A graph that will not compile on this backend, or that
    the device rejects, leaves the hand encoder drawing this look with
    `window.passGraphError` naming the reason. You never get a black canvas.
@@ -678,15 +682,19 @@ path, one step per PR. Landed so far:
   [Pipelines are cached on the structural hash](#pipelines-are-cached-on-the-structural-hash).
   `e2e/graph-executor.spec.ts` opens the quad layout and checks every slot in
   `window.passGraphSlotsExecuting`.
+- **The executor is the default path** (step 8, first half). The gate is on
+  unless a session opts out with `?graph=0`, so the hand encoder draws only a
+  `?graph=0` session, a refused variant, and the frames before the device has
+  validated a variant's pipelines. Its layer and tracer targets are allocated
+  only by a frame it draws and released when the executor takes over, so a
+  default session does not hold two full-resolution sets.
 
 Still to do:
 
-- **The executor as the default path.** The gate is still off by default, so
-  two topologies are live: the executor behind `?graph=1` and the hand encoder
-  everywhere else. Nothing but the gate keeps the hand encoder now — every
-  view, export pass, preview and compare slot draws through the graph. The
-  parity above is the evidence for flipping it; the cost is the compute-fed
-  stamp, which the graph does not use.
+- **Deleting the hand encoder** (step 8, second half), once `?graph=0` has
+  been the escape hatch for a release: `PersistencePass`, `CompositorPass`,
+  `BindGroupCache`, the hand branch of `encodeFrameCore`, most of
+  `WebGPUPipelines`, and `drawnLayerCount` / `encodeLayerClear`.
 - **The WebGL executor.** The diagnostic / XR / screenshot backend still
   compiles only. It is second in line on purpose: it has no template for `warp`
   or `blur`, so the shapes worth executing are WebGPU's first.

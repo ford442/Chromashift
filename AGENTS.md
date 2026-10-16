@@ -88,7 +88,7 @@ src/
     │   ├── defaultGraph.ts            # Today's pipeline as a graph, for any layer count
     │   ├── layerSpecs.ts              # The band table the band-layer templates read
     │   ├── variants.ts                # GraphVariant / PassGraphSource: the graph built per frame (withMotionTerm)
-    │   ├── gate.ts                    # ?graph=1|blur|warp|smear|feedback|trails3 + window.passGraph* breadcrumbs
+    │   ├── gate.ts                    # ?graph (on by default; =0 opts out)|blur|warp|smear|feedback|trails3 + window.passGraph* breadcrumbs
     │   ├── altGraphs.ts               # Named graph shapes the gate can select (blur, warp)
     │   ├── exec/                      # Phase 2: walks compiled.passes and encodes the frame
     │   │   ├── plan.ts                # CompiledGraph → encodable steps (no WebGPU; owns coincidence fusion)
@@ -96,7 +96,7 @@ src/
     │   │   ├── nodePipelines.ts       # One emitted pass → shared program (layout + pipeline) + per-executor uniforms
     │   │   ├── programCache.ts        # Programs per device, shared by every slot's executor (keyed on the structural hash)
     │   │   ├── uniforms.ts            # RendererState → uniform values, for every encode path and both backends
-    │   │   └── WebGpuGraphExecutor.ts # The WebGPU encode path behind ?graph=1
+    │   │   └── WebGpuGraphExecutor.ts # The WebGPU encode path (default; ?graph=0 falls back to the hand encoder)
     │   ├── templates/                 # WGSL + GLSL emitter per node kind; uniformLayout.ts = typed uniform blocks
     │   └── __golden__/                # Pre-refactor shader sources (pixel-identity baseline)
     ├── shaders/              # WGSL modules assembled in TS (thin assembler)
@@ -219,7 +219,7 @@ WebGL-only debug helpers are in the Renderer panel:
 
 The WGSL and GLSL sources for the band layers, the coincidence/decay (persistence) pass and the compositor are **emitted** from the node templates in `src/engine/graph/templates/` rather than hand-written — one template plus a band table (`graph/layerSpecs.ts`) instead of three copies per backend. `src/engine/graph/shaderParity.test.ts` pins the emitted output against `graph/__golden__/`, the pre-refactor sources, so a template change that alters the rendered result fails loudly on both backends.
 
-On WebGPU the graph is also **executed**: `?graph=1` hands the compiled graph to `WebGpuGraphExecutor`, which walks `compiled.passes` and binds the allocator's pool instead of running the hand-written five-pass encode in `WebGPURenderer`. The default graph is that topology, and its frame is byte-identical to the hand encoder's on a GPU (±1 on a few pixels against the compute-fed stamp — see PASS_GRAPH.md § *Pixel parity*); `?graph=blur` and `?graph=warp` are different shapes that draw with no renderer edit, and the JSON starters `?graph=smear` (a `history` trail pushed along the motion field by `displace`) and `?graph=feedback` use node kinds the hand encoder has no equivalent for; `?graph=trails3` adds a third tracer timescale, which the hand encoder's two-tracer compositor could not draw. The renderer adopts a graph *source* and builds the variant each frame needs — the temporal term (`motionMode`) is a `motion` node present only while a mode is on, and on an HDR canvas the `output` presents `hdr-extended` — with each variant compiled, and its pipelines validated, once. The executor draws only once the device has validated its pipelines, so an emitted shader the device rejects is an `invalid-pipeline` refusal, not a black canvas. Every orchestrator slot (the main canvas, `compare-b`, the quad cells) owns an executor of its own, sharing the device's compiled programs (`graph/exec/programCache.ts`), so a compare layout compiles nothing the main canvas has not; `window.passGraphSlotsExecuting` reports each slot. The WebGL diagnostic backend compiles only. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
+On WebGPU the graph is also **executed**, by default: the gate is on unless a session opts out with `?graph=0`, and it hands the compiled graph to `WebGpuGraphExecutor`, which walks `compiled.passes` and binds the allocator's pool instead of running the hand-written five-pass encode in `WebGPURenderer`. The hand encoder now draws only a `?graph=0` session, a refused variant, and the frames before the device has validated a variant's pipelines; it allocates its targets only for those frames. The default graph is that topology, and its frame is byte-identical to the hand encoder's on a GPU (±1 on a few pixels against the compute-fed stamp — see PASS_GRAPH.md § *Pixel parity*); `?graph=blur` and `?graph=warp` are different shapes that draw with no renderer edit, and the JSON starters `?graph=smear` (a `history` trail pushed along the motion field by `displace`) and `?graph=feedback` use node kinds the hand encoder has no equivalent for; `?graph=trails3` adds a third tracer timescale, which the hand encoder's two-tracer compositor could not draw. The renderer adopts a graph *source* and builds the variant each frame needs — the temporal term (`motionMode`) is a `motion` node present only while a mode is on, and on an HDR canvas the `output` presents `hdr-extended` — with each variant compiled, and its pipelines validated, once. The executor draws only once the device has validated its pipelines, so an emitted shader the device rejects is an `invalid-pipeline` refusal, not a black canvas. Every orchestrator slot (the main canvas, `compare-b`, the quad cells) owns an executor of its own, sharing the device's compiled programs (`graph/exec/programCache.ts`), so a compare layout compiles nothing the main canvas has not; `window.passGraphSlotsExecuting` reports each slot. The WebGL diagnostic backend compiles only. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
 
 For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. The tracer-decay constants follow the same rule: the `DECAY` table in `src/engine/math/decay.ts` (from `shared/decay.json`) via `DECAY_WGSL` / `DECAY_GLSL` in `decayLiterals.ts`, guarded by `src/engine/shaders/decayTable.test.ts` — see [docs/wasm-engine.md](docs/wasm-engine.md#shared-decay-table-shareddecayjson). Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
@@ -230,8 +230,8 @@ Uniforms follow the same single-source rule. A uniform block is declared as a ty
 1. `fetchCorpusManifest('./images.json')` (`src/engine/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
 2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
-   - one independent `GPURenderPipeline` per colour layer (each can use 4× MSAA). Under `?graph`
-     the executor draws exactly `layers.count` of them (1–10). The hand encoder still compiles the
+   - one independent `GPURenderPipeline` per colour layer (each can use 4× MSAA). The executor
+     draws exactly `layers.count` of them (1–10). The hand encoder (`?graph=0`) still compiles the
      canonical three: a session with fewer layers draws the first `layers.count` and clears the
      rest, one with more draws all three (`drawnLayerCount` / `encodeLayerClear` in
      `WebGPUPipelines.ts`; `WebGLLayerPass` mirrors it).
@@ -329,7 +329,7 @@ Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser
 
 Both are disabled while viewing the full-res tracer or any non-composite view mode.
 
-On WebGPU every view mode but the composite is drawn by `TracerInspectPass` from whichever encoder drew the frame — under `?graph` from the graph's named outputs, at the frame's layer count (docs/PASS_GRAPH.md § *Named outputs*). The live frame draws `mainViewMode`; an export draws the processed composite (`composite`), the full-res tracer (`tracers`) or the session's view with its tracers zeroed (`layers`).
+On WebGPU every view mode but the composite is drawn by `TracerInspectPass` from whichever encoder drew the frame — by default from the graph's named outputs, at the frame's layer count (docs/PASS_GRAPH.md § *Named outputs*). The live frame draws `mainViewMode`; an export draws the processed composite (`composite`), the full-res tracer (`tracers`) or the session's view with its tracers zeroed (`layers`).
 
 ### Preview strip & view hierarchy
 

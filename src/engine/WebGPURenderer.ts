@@ -54,7 +54,10 @@ import {
 } from './gpuOptions';
 
 /**
- * WebGPURenderer — thin orchestrator over the 5-pass GPU pipeline.
+ * WebGPURenderer — one canvas's WebGPU frame. The pass-graph executor draws it
+ * (the gate is on by default; docs/PASS_GRAPH.md); the hand-written five-pass
+ * encoder below is what `?graph=0`, a refused variant, and the frames before
+ * the device has validated a variant's pipelines get.
  */
 
 /** Size contract for helpers that only need texture dimensions, not the GPU resource itself. */
@@ -167,12 +170,11 @@ export class WebGPURenderer {
    * Whether the graph executor — rather than the hand encoder — encoded the
    * most recent frame.
    *
-   * Adopting a graph is not the same as drawing with it: a `tracers` / `layers`
-   * export, an HDR canvas, or a variant the device has not validated yet falls
-   * back to the hand encoder, which writes *its* layer and persistence
-   * textures. The preview, readback and export helpers below have to follow
-   * whichever path actually ran, or they publish a stale frame from the other
-   * one's targets.
+   * Adopting a graph is not the same as drawing with it: a variant the device
+   * has not validated yet, a refused one, or a `?graph=0` session draws with
+   * the hand encoder, which writes *its* layer and persistence textures. The
+   * readback, inspect and export helpers below have to follow whichever path
+   * actually ran, or they publish a stale frame from the other one's targets.
    */
   private executorEncodedLastFrame = false;
 
@@ -274,6 +276,15 @@ export class WebGPURenderer {
     return this.hdrPresent;
   }
 
+  /**
+   * The hand encoder's layer, MSAA and tracer targets, at `w`×`h`.
+   *
+   * Allocated only by a frame the hand encoder draws — under the default
+   * `?graph` gate that is the few frames before the device has validated the
+   * executor's pipelines — and released as soon as the executor takes over
+   * (`releaseHandTextures`), so a session does not hold two sets of
+   * full-resolution targets for the one it draws.
+   */
   private ensureTextures(w: number, h: number): void {
     const layerCount = this.layerPipelines.length;
     if (this.texW === w && this.texH === h &&
@@ -314,6 +325,19 @@ export class WebGPURenderer {
 
     this.texW = w;
     this.texH = h;
+    this.invalidateBindGroupCaches();
+  }
+
+  /** Free the hand encoder's targets: the executor's pool draws the frame now. */
+  private releaseHandTextures(): void {
+    if (this.texW === 0 && this.layerTextures.length === 0) return;
+    for (const t of this.layerTextures) t.destroy();
+    this.layerTextures = [];
+    this.msaaTexture?.destroy();
+    this.msaaTexture = null;
+    this.persistence.resetTextures();
+    this.texW = 0;
+    this.texH = 0;
     this.invalidateBindGroupCaches();
   }
 
@@ -659,7 +683,6 @@ export class WebGPURenderer {
     }
     this.layerScale = rendererStateValue(state, 'layerScale');
     this.tracerScale = rendererStateValue(state, 'tracerScale');
-    this.ensureTextures(canvasTex.width, canvasTex.height);
 
     const hdrCanvas = canvasTex.format === HDR_CANVAS_FORMAT;
     if (hdrCanvas !== this.presentedHdr) {
@@ -728,9 +751,13 @@ export class WebGPURenderer {
     return this.persistence.getDiagnosticTextureForReadback(paused);
   }
 
-  /** Rebuild GPU targets after export at a different resolution. */
+  /**
+   * Rebuild GPU targets after export at a different resolution. Only the hand
+   * encoder's, and only if it has any: the executor's pool resizes on the
+   * next frame it encodes.
+   */
   restoreRenderSize(width: number, height: number): void {
-    if (width > 0 && height > 0) {
+    if (width > 0 && height > 0 && this.texW > 0) {
       this.ensureTextures(width, height);
     }
   }
@@ -745,7 +772,6 @@ export class WebGPURenderer {
 
     this.layerScale = rendererStateValue(state, 'layerScale');
     this.tracerScale = rendererStateValue(state, 'tracerScale');
-    this.ensureTextures(width, height);
 
     // Always the SDR pipelines' format, never the live canvas's: export stays
     // SDR (`encode_display` + clip) even while the canvas presents HDR.
@@ -833,6 +859,7 @@ export class WebGPURenderer {
       const executor = this.graphExecutor;
       if (compiled && executor?.ready) {
         this.executorEncodedLastFrame = true;
+        this.releaseHandTextures();
         const { outputs } = compiled;
         const inspectView = mainView !== MAIN_VIEW_MODES.PROCESSED_COMPOSITE
           && outputs.layers.length > 0
@@ -882,6 +909,7 @@ export class WebGPURenderer {
     }
 
     this.executorEncodedLastFrame = false;
+    this.ensureTextures(width, height);
     const layerTextures = this.getLayerTextures();
     const { below: persistBelow, above: persistAbove } = this.getTracerTextures();
     const canvasSize: TextureSize = { width, height };

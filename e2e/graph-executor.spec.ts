@@ -180,6 +180,24 @@ test.describe('pass-graph executor', () => {
     expect(await page.evaluate(() => window.passGraphExecuting ?? null)).toBeNull();
   });
 
+  test('draws through the executor with no ?graph at all', async ({ page }) => {
+    // The gate is on by default: a session that names no graph gets the
+    // executor drawing the default one, the frame `?graph=1` draws.
+    test.setTimeout(180_000);
+    const byDefault = await captureFrame(page, `/?renderer=webgpu&preset=${FROZEN_SCENE}`);
+    expectContent(byDefault, 'the default session’s frame');
+    expect(await page.evaluate(() => ({
+      active: window.passGraphActive,
+      name: window.passGraphName,
+      executing: window.passGraphExecuting,
+      slots: window.passGraphSlotsExecuting,
+      error: window.passGraphError,
+    }))).toEqual({ active: true, name: 'default', executing: 'default', slots: { main: 'default' }, error: null });
+
+    const gated = await captureFrame(page, url('1'));
+    expect(frameDifference(byDefault, gated)).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+  });
+
   test('default graph via the executor is byte-identical to the hand encoder', async ({ page }) => {
     test.setTimeout(180_000);
     const handEncoded = await captureFrame(page, url('0', { compute: false }));

@@ -222,7 +222,7 @@ past the camera drags their colour behind them.
 
 That graph binds the field through a `source` node with `role: 'motion-field'`. The renderer runs
 the chore with flow on whenever the graph wants it, whatever `motionMode` says. `motionMode`
-still selects only the *persistence* term: under `?graph` it is a `motion` node fused into the
+still selects only the *persistence* term: through the graph executor (the default) it is a `motion` node fused into the
 accumulators, the same program and uniforms as the hand encoder's motion pass, so
 `boost`/`gate`/`direction` behave exactly as above on either encoder (see
 [PASS_GRAPH.md](PASS_GRAPH.md#the-temporal-term-motion)). If the lane declines (no WebGPU compute),
