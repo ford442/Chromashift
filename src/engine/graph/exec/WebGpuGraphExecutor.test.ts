@@ -21,10 +21,8 @@ describe('WebGpuGraphExecutor', () => {
   let source: GPUTexture;
 
   const build = (sampleCount = 1): WebGpuGraphExecutor => {
-    const pipelines = new WebGPUPipelines(gpu.device, 'bgra8unorm', 'rgba16float');
     const created = new WebGpuGraphExecutor(
       gpu.device,
-      pipelines,
       'rgba16float',
       'bgra8unorm',
       gpu.device.createSampler({}),
@@ -550,9 +548,8 @@ describe('WebGpuGraphExecutor', () => {
     const layers = (count: number) => Array.from({ length: count }, (_, i) => ({ angleDeg: i * 9 }));
 
     it.each([1, 5, 7, 10])('draws exactly %i band passes, and composites every one', (count) => {
-      const pipelines = new WebGPUPipelines(gpu.device, 'bgra8unorm', 'rgba16float', count);
       const sized = new WebGpuGraphExecutor(
-        gpu.device, pipelines, 'rgba16float', 'bgra8unorm',
+        gpu.device, 'rgba16float', 'bgra8unorm',
         gpu.device.createSampler({}), gpu.device.createSampler({}),
       );
       sized.setGraph(compile(buildDefaultGraph(count)));
@@ -629,6 +626,34 @@ describe('WebGpuGraphExecutor', () => {
       const outputs = executor.outputTextures()!;
       expect(outputs.tracers).toHaveLength(3);
       expect(outputs.tracers.slice(0, 2)).toEqual([outputs.tracerBelow, outputs.tracerAbove]);
+    });
+  });
+
+  describe('programs shared across executors', () => {
+    it('compiles a graph once per device, however many executors draw it', async () => {
+      executor.setGraph(compile());
+      await executor.prepare();
+      expect(executor.pipelineBuildCount).toBeGreaterThan(0);
+
+      // A second slot on the same device: its own pool and buffers, no compile.
+      const slot = build();
+      slot.setGraph(compileGraph(buildDefaultGraph(), 'webgpu'));
+      const pipelines = gpu.pipelineCount;
+      await slot.prepare();
+      expect(slot.pipelineBuildCount).toBe(0);
+      expect(gpu.pipelineCount).toBe(pipelines);
+      expect(slot.ready).toBe(true);
+      encode(slot);
+      expect(slot.encodedPasses()).toEqual(executor.encodedPasses());
+    });
+
+    it('compiles separately for a different sample count', async () => {
+      executor.setGraph(compile());
+      await executor.prepare();
+      const multisampled = build(4);
+      multisampled.setGraph(compileGraph(buildDefaultGraph(), 'webgpu'));
+      await multisampled.prepare();
+      expect(multisampled.pipelineBuildCount).toBeGreaterThan(0);
     });
   });
 });

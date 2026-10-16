@@ -106,7 +106,7 @@ describe('the hand encoder and the graph executor write the same bytes', () => {
     const handBytes = gpu.bufferContents.get(hand.uniformBuf.label)!;
 
     resetGraphCompileCache();
-    const executor = new WebGpuGraphExecutor(gpu.device, pipelines, 'rgba16float', 'bgra8unorm', sampler, sampler);
+    const executor = new WebGpuGraphExecutor(gpu.device, 'rgba16float', 'bgra8unorm', sampler, sampler);
     executor.setGraph(compileGraph(buildDefaultGraph(layerCount), 'webgpu'));
     executor.encode(
       gpu.device.createCommandEncoder(),

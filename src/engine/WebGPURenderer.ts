@@ -6,6 +6,7 @@ import {
   passGraphRefusal,
   publishGraphExecutorBreadcrumbs,
   publishGraphVariant,
+  publishSlotExecuting,
   type GraphPresetName,
   type GraphVariant,
   type PassGraphSource,
@@ -38,7 +39,7 @@ import { GpuReadback } from './GpuReadback';
 import { GpuTimestampProfiler, publishGpuTimestampBreadcrumbs } from './GpuTimestampProfiler';
 import { StationaryPreviewRenderer } from './StationaryPreviewRenderer';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from './stationaryPreview';
-import type { CpuMotionField, ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, GpuRenderTiming, RenderTiming } from './types/RendererContracts';
+import type { CpuMotionField, ExportFrameOptions, ExportFrameResult, ExportPassMode, ExportTracerOptions, ExportTracerResult, GpuRenderTiming, PassGraphSlotOptions, RenderTiming } from './types/RendererContracts';
 import { EMPTY_GPU_RENDER_TIMING } from './types/RendererContracts';
 import type { CollisionStats, RendererState } from './types/RendererState';
 import type { ChromashiftTextureHandle } from './types/TextureHandle';
@@ -159,6 +160,9 @@ export class WebGPURenderer {
   private readonly graphVariants = new Map<string, CompiledGraph | string>();
   /** The variant the executor holds right now. */
   private adoptedGraph: CompiledGraph | null = null;
+  /** The orchestrator slot this renderer draws, and whether it is the primary canvas. */
+  private graphSlot = 'main';
+  private graphPrimary = true;
   /**
    * Whether the graph executor — rather than the hand encoder — encoded the
    * most recent frame.
@@ -328,21 +332,24 @@ export class WebGPURenderer {
    * `verifyGraphPipelines`), so emitted WGSL the device rejects is a refusal
    * too, rather than a black canvas.
    */
-  setPassGraph(source: PassGraphSource | null): void {
+  setPassGraph(source: PassGraphSource | null, options?: PassGraphSlotOptions): void {
+    if (options) {
+      this.graphSlot = options.slot;
+      this.graphPrimary = options.primary;
+    }
     this.graphVariants.clear();
     this.adoptedGraph = null;
     if (!source) {
       this.graphExecutor?.destroy();
       this.graphExecutor = null;
       this.graphSource = null;
-      publishGraphExecutorBreadcrumbs(null, []);
+      this.publishExecuting(null, []);
       return;
     }
 
     this.graphSource = source;
     this.graphExecutor ??= new WebGpuGraphExecutor(
       this.device,
-      this.pipelines,
       this.internalFormat,
       this.pipelines.format,
       this.sampler,
@@ -372,7 +379,7 @@ export class WebGPURenderer {
       } catch (error) {
         entry = passGraphRefusal(error);
         console.warn('[Chromashift:PassGraph] refused a graph variant —', key, entry);
-        publishGraphVariant(null, entry, source.name, key);
+        if (this.graphPrimary) publishGraphVariant(null, entry, source.name, key);
       }
       this.graphVariants.set(key, entry);
     }
@@ -391,7 +398,9 @@ export class WebGPURenderer {
     if (compiled !== this.adoptedGraph) {
       executor.setGraph(compiled);
       this.adoptedGraph = compiled;
-      publishGraphVariant(compiled, null, this.graphSource.name, graphVariantKey(variant));
+      if (this.graphPrimary) {
+        publishGraphVariant(compiled, null, this.graphSource.name, graphVariantKey(variant));
+      }
       this.verifyGraphPipelines();
     }
     return compiled;
@@ -423,7 +432,7 @@ export class WebGPURenderer {
     }
     // The breadcrumb says what is drawing, and until the device answers that
     // is the hand encoder.
-    if (!executor.ready) publishGraphExecutorBreadcrumbs(null, []);
+    if (!executor.ready) this.publishExecuting(null, []);
     const adopted = this.adoptedGraph;
     void verdict.then((error) => {
       // Torn down, or superseded by another variant, while the device
@@ -435,7 +444,7 @@ export class WebGPURenderer {
         return;
       }
       if (executor.ready) {
-        publishGraphExecutorBreadcrumbs(this.graphSource?.name ?? null, executor.encodedPasses());
+        this.publishExecuting(this.graphSource?.name ?? null, executor.encodedPasses());
       }
     });
   }
@@ -448,8 +457,17 @@ export class WebGPURenderer {
     this.graphSource = null;
     this.graphVariants.clear();
     this.adoptedGraph = null;
-    if (typeof window !== 'undefined') window.passGraphError = message;
-    publishGraphExecutorBreadcrumbs(null, []);
+    if (typeof window !== 'undefined' && this.graphPrimary) window.passGraphError = message;
+    this.publishExecuting(null, []);
+  }
+
+  /**
+   * What this renderer's executor is drawing: always into its slot's entry,
+   * and into the session-wide breadcrumbs only from the primary canvas.
+   */
+  private publishExecuting(name: GraphPresetName | null, encodedPasses: string[]): void {
+    publishSlotExecuting(this.graphSlot, name);
+    if (this.graphPrimary) publishGraphExecutorBreadcrumbs(name, encodedPasses);
   }
 
   /** Name of the graph shape the executor is drawing, or `null`. */
@@ -1047,6 +1065,7 @@ export class WebGPURenderer {
   }
 
   destroy(): void {
+    if (this.graphSource) publishSlotExecuting(this.graphSlot, undefined);
     this.graphExecutor?.destroy();
     this.graphExecutor = null;
     for (const lp of this.layerPipelines) {

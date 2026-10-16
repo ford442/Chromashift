@@ -1,11 +1,34 @@
-import { fullscreenVertexSource } from '../../shaders';
-import type { LayerPipeline, WebGPUPipelines } from '../../WebGPUPipelines';
-import { emitHistoryWriteWgsl } from '../templates/wgsl';
+import { fullscreenVertexSource, vertexShaderSource } from '../../shaders';
+import { BAND_LAYER_UNIFORMS, emitHistoryWriteWgsl } from '../templates/wgsl';
 import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../../gpuOptions';
 import { createUniformData, type UniformData, type UniformLayout } from '../templates/uniformLayout';
 import type { EmittedPass, NodeKind } from '../types';
 
-/** Pipeline + bind-group layout + uniform storage for one graph node. */
+/**
+ * One node's compiled program: its pipeline and bind-group layout.
+ *
+ * Immutable, so every executor on a device can share it — the compare slots,
+ * the stationary previews and the main canvas all draw the default graph, and
+ * compiling its shaders once instead of once per renderer is most of what
+ * opening a compare layout costs. See `programCache.ts`.
+ */
+export interface NodeProgram {
+  readonly kind: NodeKind;
+  readonly pipeline: GPURenderPipeline;
+  readonly bindGroupLayout: GPUBindGroupLayout;
+  /** `history` only: the blit that writes this frame's input into the ring. */
+  readonly ringWrite: { readonly pipeline: GPURenderPipeline; readonly bindGroupLayout: GPUBindGroupLayout } | null;
+}
+
+/** A band layer's two uniform blocks: the vertex rotation and `BAND_LAYER_UNIFORMS`. */
+export interface BandLayerBuffers {
+  readonly rotationBuffer: GPUBuffer;
+  readonly fragUniformBuffer: GPUBuffer;
+  readonly rotationData: Float32Array;
+  readonly fragUniforms: UniformData;
+}
+
+/** One executor's instance of a node's program: its uniform storage and bind groups. */
 export interface NodePipeline {
   readonly kind: NodeKind;
   readonly pipeline: GPURenderPipeline;
@@ -14,9 +37,9 @@ export interface NodePipeline {
   readonly uniformBuffer: GPUBuffer | null;
   /** CPU side of `uniformBuffer`, laid out by {@link uniformLayoutFor}. */
   readonly uniforms: UniformData | null;
-  /** `band-layer` reuses the shipped layer pipeline, buffers and all. */
-  readonly layer: LayerPipeline | null;
-  /** `history` only: the blit that writes this frame's input into the ring. */
+  /** `band-layer` only: the shipped layer pass's two buffers. */
+  readonly layer: BandLayerBuffers | null;
+  /** `history` only: the ring-write blit and its bind group. */
   readonly ringWrite: RingWritePipeline | null;
   /** Cached views so a bind group is only rebuilt when a texture changes. */
   bindGroup: GPUBindGroup | null;
@@ -31,9 +54,8 @@ export interface RingWritePipeline {
   bindGroupKey: string;
 }
 
-export interface NodePipelineContext {
+export interface NodeProgramContext {
   readonly device: GPUDevice;
-  readonly pipelines: WebGPUPipelines;
   readonly internalFormat: GPUTextureFormat;
   readonly outputFormat: GPUTextureFormat;
   readonly sampleCount: number;
@@ -129,68 +151,109 @@ export function targetFormats(
   }
 }
 
-/** Create the pipeline for one emitted pass. */
-export function createNodePipeline(
-  ctx: NodePipelineContext,
-  emitted: EmittedPass,
-): NodePipeline {
-  const base = { kind: emitted.kind, bindGroup: null, bindGroupKey: '', ringWrite: null };
+/**
+ * The band-layer bind-group layout: the vertex rotation, the sampler and
+ * source, the fragment uniforms, the classification mask and the profile LUT
+ * — the layout the shipped layer pipeline has always used.
+ */
+function bandLayerLayoutEntries(): GPUBindGroupLayoutEntry[] {
+  return [
+    { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+    { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+    { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+    { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+    { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
+    // 256×N colour-profile LUT (textureLoad only — never sampled/filtered).
+    { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+  ];
+}
 
+/** Compile one emitted pass's program. */
+export function createNodeProgram(ctx: NodeProgramContext, emitted: EmittedPass): NodeProgram {
   if (emitted.kind === 'band-layer') {
-    // Identical to the shipped layer pipeline — same layout, same MSAA count,
-    // same two uniform buffers. The only thing the graph changes is which
-    // fragment source goes in, and for the default graph that is the same text.
-    const layer = ctx.pipelines.createLayerPipeline(emitted.fragment, ctx.sampleCount);
-    return {
-      ...base,
-      pipeline: layer.pipeline,
-      bindGroupLayout: layer.bindGroupLayout,
-      uniformBuffer: null,
-      uniforms: null,
-      layer,
-    };
+    // The shipped layer pipeline: the rotating vertex stage, the same layout,
+    // MSAA at the session's sample count. Only the fragment source is the
+    // graph's, and for the default graph that is the same text.
+    const bindGroupLayout = ctx.device.createBindGroupLayout({ entries: bandLayerLayoutEntries() });
+    const pipeline = ctx.device.createRenderPipeline({
+      layout: ctx.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      vertex: { module: ctx.device.createShaderModule({ code: vertexShaderSource }), entryPoint: 'main' },
+      fragment: {
+        module: ctx.device.createShaderModule({ code: emitted.fragment }),
+        entryPoint: 'main',
+        targets: [{ format: ctx.internalFormat }],
+      },
+      primitive: { topology: 'triangle-list' },
+      multisample: { count: ctx.sampleCount },
+    });
+    return { kind: emitted.kind, pipeline, bindGroupLayout, ringWrite: null };
   }
 
   const bindGroupLayout = ctx.device.createBindGroupLayout({
     entries: bindGroupLayoutEntries(emitted, ctx.layerCount),
   });
-
   const pipeline = fullscreenPipeline(
     ctx.device,
     bindGroupLayout,
     emitted.fragment,
     targetFormats(emitted.kind, ctx.internalFormat, ctx.outputFormat, emitted.presentation),
   );
+  return {
+    kind: emitted.kind,
+    pipeline,
+    bindGroupLayout,
+    ringWrite: emitted.kind === 'history' ? createRingWriteProgram(ctx) : null,
+  };
+}
+
+/** One executor's buffers and bind-group slots for a program. */
+export function instantiateNodePipeline(
+  device: GPUDevice,
+  emitted: EmittedPass,
+  program: NodeProgram,
+): NodePipeline {
+  const base = {
+    kind: program.kind,
+    pipeline: program.pipeline,
+    bindGroupLayout: program.bindGroupLayout,
+    bindGroup: null,
+    bindGroupKey: '',
+  };
+  const uniformBuffer = (size: number) => device.createBuffer({
+    size,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  if (program.kind === 'band-layer') {
+    return {
+      ...base,
+      uniformBuffer: null,
+      uniforms: null,
+      layer: {
+        rotationBuffer: uniformBuffer(16),
+        fragUniformBuffer: uniformBuffer(BAND_LAYER_UNIFORMS.bytes),
+        rotationData: new Float32Array(4),
+        fragUniforms: createUniformData(BAND_LAYER_UNIFORMS),
+      },
+      ringWrite: null,
+    };
+  }
 
   const layout = uniformLayoutFor(emitted);
   return {
     ...base,
-    pipeline,
-    bindGroupLayout,
-    uniformBuffer: layout
-      ? ctx.device.createBuffer({
-        size: layout.bytes,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      })
-      : null,
+    uniformBuffer: layout ? uniformBuffer(layout.bytes) : null,
     uniforms: layout ? createUniformData(layout) : null,
     layer: null,
-    ringWrite: emitted.kind === 'history' ? createRingWritePipeline(ctx) : null,
+    ringWrite: program.ringWrite ? { ...program.ringWrite, bindGroup: null, bindGroupKey: '' } : null,
   };
 }
 
-function createRingWritePipeline(ctx: NodePipelineContext): RingWritePipeline {
+function createRingWriteProgram(ctx: NodeProgramContext): NonNullable<NodeProgram['ringWrite']> {
   const bindGroupLayout = ctx.device.createBindGroupLayout({ entries: [sampler(0), texture(1)] });
   return {
-    pipeline: fullscreenPipeline(
-      ctx.device,
-      bindGroupLayout,
-      emitHistoryWriteWgsl(),
-      [ctx.internalFormat],
-    ),
+    pipeline: fullscreenPipeline(ctx.device, bindGroupLayout, emitHistoryWriteWgsl(), [ctx.internalFormat]),
     bindGroupLayout,
-    bindGroup: null,
-    bindGroupKey: '',
   };
 }
 
@@ -216,7 +279,7 @@ function fullscreenPipeline(
   });
 }
 
-/** Release the GPU resources one node pipeline owns. */
+/** Release the GPU resources one executor's instance owns. The program is shared and stays. */
 export function destroyNodePipeline(node: NodePipeline): void {
   node.uniformBuffer?.destroy();
   node.layer?.rotationBuffer.destroy();

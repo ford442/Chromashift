@@ -66,7 +66,7 @@ export class StationaryPreviewRenderer {
     this.profileLut = new ProfileLutTexture(device);
     // One sampler for the bands and the passes reading them, as the hand-encoded
     // thumbnails used.
-    this.executor = new WebGpuGraphExecutor(device, pipelines, internalFormat, outputFormat, sampler, sampler);
+    this.executor = new WebGpuGraphExecutor(device, internalFormat, outputFormat, sampler, sampler);
     this.readback = new GpuReadback(device, outputFormat, pipelines);
   }
 

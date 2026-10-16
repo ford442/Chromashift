@@ -209,6 +209,7 @@ For the default graph that changes the encode path, not the look: see
 | `window.passGraphVariant` | the variant of it a renderer last compiled for a frame: `layers:term:presentation`, e.g. `3:motion:sdr` |
 | `window.passGraphExecuting` | the shape a GPU executor is **drawing**, or `null` — published only once the device has validated its pipelines |
 | `window.passGraphExecutedPasses` | node ids the executor encodes, in order |
+| `window.passGraphSlotsExecuting` | per orchestrator slot (`main`, `compare-b`, the quad cells): the shape that slot's executor is drawing, or `null` while its hand encoder draws. Every other breadcrumb here is the primary canvas's alone |
 
 `passGraphActive` says the compiler ran; `passGraphExecuting` says something is
 drawing what it produced. `passGraphExecutedPasses` is shorter than
@@ -232,7 +233,8 @@ WebGpuGraphExecutor.encode(...)     →  one render pass per step
 |---|---|
 | `plan.ts` | `CompiledGraph` → encodable steps, with every input resolved to a producer. No WebGPU: this is where the fusion rule lives, so a unit test checks it rather than a screenshot. |
 | `pool.ts` | `AllocationPlan` → textures. Lazy, so a slot nothing writes costs nothing; ping-pong pairs for accumulators; one shared MSAA target for the band layers. |
-| `nodePipelines.ts` | One emitted pass → bind-group layout, pipeline, uniform block. The layout is *derived* from `EmittedPass.textureBindings`, not hand-written per kind. |
+| `nodePipelines.ts` | One emitted pass → a shared `NodeProgram` (bind-group layout + pipeline) and one executor's `NodePipeline` over it (uniform block, bind groups). The layout is *derived* from `EmittedPass.textureBindings`, not hand-written per kind. |
+| `programCache.ts` | The device's `NodeProgram`s, shared by every executor on it, keyed on the structural hash (see below). |
 | `uniforms.ts` | `RendererState` → uniform values, for every block and every encode path (see below). |
 | `WebGpuGraphExecutor.ts` | Walks the steps: writes uniforms, binds, encodes, flips the ping-pong. |
 
@@ -309,6 +311,19 @@ exists to avoid on the hand-encoded path.
 
 `window.passGraphCompileCount` makes the first half observable and
 `WebGpuGraphExecutor.pipelineBuildCount` the second.
+
+The compiled programs are cached once per **device**, not per executor
+(`GraphProgramCache.for(device)`). Every orchestrator slot — the main canvas,
+`compare-b`, the quad cells — owns an executor of its own, because its pool,
+uniform buffers and bind groups are its canvas's; but they mostly draw the same
+graph, so the second slot to adopt a variant gets the first one's pipelines,
+and its device verdict, without compiling a shader. That is what keeps opening
+a compare layout cheap now that every slot draws through the graph, and it is
+the "slots are the unit of output" seam #178 builds on. The stationary
+previews' executor shares the cache too. The orchestrator hands each slot's
+renderer the session's graph source as it creates the slot
+(`RendererOrchestrator.setPassGraph`), and `window.passGraphSlotsExecuting`
+says which slots are drawing it.
 
 ### Named outputs
 
@@ -658,16 +673,20 @@ path, one step per PR. Landed so far:
   outputs instead of the hand encoder's textures, at any layer count. See
   [Named outputs](#named-outputs). The deprecated live-preview readback
   (`requestPreviewReadback`, no callers) is gone.
+- **Compare slots** (step 7). Every orchestrator slot draws through an executor
+  of its own over the device's shared program cache — see
+  [Pipelines are cached on the structural hash](#pipelines-are-cached-on-the-structural-hash).
+  `e2e/graph-executor.spec.ts` opens the quad layout and checks every slot in
+  `window.passGraphSlotsExecuting`.
 
 Still to do:
 
 - **The executor as the default path.** The gate is still off by default, so
   two topologies are live: the executor behind `?graph=1` and the hand encoder
-  everywhere else. The hand encoder cannot simply be deleted yet — it is also
-  what draws the `layers`/`tracers` export passes, the compare slots and the
-  stationary previews — but it can become the fallback for those
-  cases once the graph is on by default. The parity above is the evidence for
-  flipping it; the cost is the compute-fed stamp, which the graph does not use.
+  everywhere else. Nothing but the gate keeps the hand encoder now — every
+  view, export pass, preview and compare slot draws through the graph. The
+  parity above is the evidence for flipping it; the cost is the compute-fed
+  stamp, which the graph does not use.
 - **The WebGL executor.** The diagnostic / XR / screenshot backend still
   compiles only. It is second in line on purpose: it has no template for `warp`
   or `blur`, so the shapes worth executing are WebGPU's first.
@@ -706,7 +725,8 @@ src/engine/graph/
 ├── exec/
 │   ├── plan.ts                  # CompiledGraph → encodable steps (no WebGPU)
 │   ├── pool.ts                  # AllocationPlan → textures, lazily
-│   ├── nodePipelines.ts         # one emitted pass → layout + pipeline + uniforms
+│   ├── nodePipelines.ts         # one emitted pass → shared program + per-executor uniforms
+│   ├── programCache.ts          # the device's programs, shared by every slot's executor
 │   ├── uniforms.ts              # RendererState → uniform values, for every encode path
 │   └── WebGpuGraphExecutor.ts   # walks the steps and encodes the frame
 ├── templates/

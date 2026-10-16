@@ -1,4 +1,16 @@
 import type { PassGraphSource } from '../graph/variants';
+
+/** Which orchestrator slot a renderer draws, for the pass-graph breadcrumbs. */
+export interface PassGraphSlotOptions {
+  /** The slot id, keying `window.passGraphSlotsExecuting`. */
+  slot: string;
+  /**
+   * Whether this is the primary canvas. Only it publishes the session-wide
+   * `window.passGraph*` breadcrumbs; a compare slot drawing preset B with the
+   * temporal term on must not describe the main canvas's graph.
+   */
+  primary: boolean;
+}
 import type { CollisionStats, RendererState } from './RendererState';
 import type { ImageEntry } from '../TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
@@ -121,7 +133,7 @@ export interface ChromashiftRenderer {
    * the graph — that is where `unsupported-node` refusals come from — but does
    * not execute it, so it does not implement this. See docs/PASS_GRAPH.md.
    */
-  setPassGraph?(source: PassGraphSource | null): void;
+  setPassGraph?(source: PassGraphSource | null, options?: PassGraphSlotOptions): void;
   render(state: RendererState, fps?: number): void;
   /** Stationary side previews at panel preset angles (Original/Separated/Tracer strip). */
   renderStationaryPreviews(

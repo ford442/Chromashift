@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import { setE2eViewport, stubMinimalCorpus } from './helpers/mockCorpus';
 import { encodePresetParam } from './helpers/presetParam';
 import { primeOverlaySections } from './helpers/overlaySections';
+import { domClick } from './helpers/domClick';
 import { waitForWebGPU } from './helpers/renderer';
 import {
   frameDifference,
@@ -510,6 +511,34 @@ test.describe('pass-graph executor', () => {
       // The thumbnails are frames of the default graph at the session's count,
       // so the seventh band alone still paints the Separated preview.
       await expect.poll(() => thumbnailColours(page, 'Separated'), { timeout: 60_000 }).toBeGreaterThan(1);
+    });
+  });
+
+  test.describe('compare slots', () => {
+    test('every compare slot draws through its own executor', async ({ page }) => {
+      test.setTimeout(180_000);
+      const gpuErrors = collectGpuErrors(page);
+      await primeOverlaySections(page, { viewport: true });
+      await openScene(page, url('1'));
+
+      await domClick(page.getByRole('button', { name: '▢▢ Dual', exact: true }));
+      await expect.poll(() => page.evaluate(() => window.compareLayout)).toBe('dual');
+      await expect.poll(
+        () => page.evaluate(() => window.passGraphSlotsExecuting ?? {}),
+        { timeout: 60_000 },
+      ).toEqual({ main: 'default', 'compare-b': 'default' });
+
+      await domClick(page.getByRole('button', { name: /Quad/i }));
+      await expect.poll(() => page.evaluate(() => window.compareLayout)).toBe('quad');
+      // The four quad cells (Original, Layers, Tracer, Composite) are slots too;
+      // each one's executor reaches the same compiled programs.
+      await expect.poll(async () => {
+        const slots = await page.evaluate(() => window.passGraphSlotsExecuting ?? {});
+        return Object.values(slots).filter((name) => name === 'default').length;
+      }, { timeout: 60_000 }).toBeGreaterThanOrEqual(4);
+      // Only the primary canvas describes the session's graph.
+      expect(await page.evaluate(() => window.passGraphExecuting)).toBe('default');
+      expect(gpuErrors).toEqual([]);
     });
   });
 

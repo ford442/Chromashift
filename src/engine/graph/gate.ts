@@ -39,6 +39,12 @@ declare global {
      * fused into its `decay` consumers is absorbed by them.
      */
     passGraphExecutedPasses?: string[];
+    /**
+     * Per orchestrator slot (`main`, `compare-b`, the quad cells): the graph
+     * shape that slot's executor is drawing, or `null` while it draws with the
+     * hand encoder. Absent for a slot that has no renderer.
+     */
+    passGraphSlotsExecuting?: Record<string, GraphPresetName | null>;
   }
 }
 
@@ -148,6 +154,15 @@ export function publishGraphVariant(
   if (typeof window === 'undefined') return;
   publishCompile(true, compiled, error, name);
   window.passGraphVariant = variant;
+}
+
+/** Record what one slot's executor is drawing; `undefined` drops the slot. */
+export function publishSlotExecuting(slot: string, name: GraphPresetName | null | undefined): void {
+  if (typeof window === 'undefined') return;
+  const slots = { ...(window.passGraphSlotsExecuting ?? {}) };
+  if (name === undefined) delete slots[slot];
+  else slots[slot] = name;
+  window.passGraphSlotsExecuting = slots;
 }
 
 function publish(

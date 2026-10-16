@@ -1,5 +1,4 @@
 import { layerRotationUniforms } from '../../math/rotation';
-import type { WebGPUPipelines } from '../../WebGPUPipelines';
 import type { RendererState } from '../../types/RendererState';
 import {
   BAND_LAYER_UNIFORMS,
@@ -27,12 +26,15 @@ import {
   type EncodeStep,
 } from './plan';
 import {
-  createNodePipeline,
+  createNodeProgram,
+  instantiateNodePipeline,
   destroyNodePipeline,
   type NodePipeline,
-  type NodePipelineContext,
+  type NodeProgram,
+  type NodeProgramContext,
 } from './nodePipelines';
 import { GraphTexturePool, type PoolSizes } from './pool';
+import { GraphProgramCache, type ProgramSet } from './programCache';
 import type { CompiledGraph, EmittedPass } from '../types';
 
 /** Externally supplied textures a `source` node and the band layers bind. */
@@ -115,7 +117,7 @@ const EXTRA_TRACER_INTENSITY = 0.4;
  * Phase 1 compiled a graph and drew nothing with it. This walks
  * `compiled.passes` in schedule order, binds each pass's inputs out of the
  * allocator's pool, writes its uniforms and encodes it — so a graph with a
- * different *shape* draws without anyone editing `WebGPUPipelines.ts`.
+ * different *shape* draws without anyone editing a renderer.
  *
  * Two invariants are load-bearing:
  *
@@ -131,12 +133,12 @@ const EXTRA_TRACER_INTENSITY = 0.4;
  */
 export class WebGpuGraphExecutor {
   private readonly device: GPUDevice;
-  private readonly pipelines: WebGPUPipelines;
   private readonly internalFormat: GPUTextureFormat;
   private readonly outputFormat: GPUTextureFormat;
   private readonly layerSampler: GPUSampler;
   private readonly passSampler: GPUSampler;
   private readonly pool: GraphTexturePool;
+  private readonly programs: GraphProgramCache;
   private zeroField: GPUTexture | null = null;
 
   private compiled: CompiledGraph | null = null;
@@ -159,19 +161,18 @@ export class WebGpuGraphExecutor {
 
   constructor(
     device: GPUDevice,
-    pipelines: WebGPUPipelines,
     internalFormat: GPUTextureFormat,
     outputFormat: GPUTextureFormat,
     layerSampler: GPUSampler,
     passSampler: GPUSampler,
   ) {
     this.device = device;
-    this.pipelines = pipelines;
     this.internalFormat = internalFormat;
     this.outputFormat = outputFormat;
     this.layerSampler = layerSampler;
     this.passSampler = passSampler;
     this.pool = new GraphTexturePool(device, internalFormat);
+    this.programs = GraphProgramCache.for(device);
   }
 
   /**
@@ -210,7 +211,7 @@ export class WebGpuGraphExecutor {
   get ready(): boolean {
     if (!this.active) return false;
     const set = this.pipelineSets.get(pipelineSetKey(this.compiled!, this.sampleCount));
-    return set?.valid === true;
+    return set?.programs.valid === true;
   }
 
   /**
@@ -223,7 +224,7 @@ export class WebGpuGraphExecutor {
    */
   prepare(): Promise<string | null> {
     if (!this.compiled || !this.plan) return Promise.resolve(null);
-    return this.ensurePipelines(this.compiled).verdict;
+    return this.ensurePipelines(this.compiled).programs.verdict;
   }
 
   /** True when the adopted graph binds the motion field — the renderer runs the chore for it. */
@@ -377,9 +378,8 @@ export class WebGpuGraphExecutor {
       return cached;
     }
 
-    const ctx: NodePipelineContext = {
+    const ctx: NodeProgramContext = {
       device: this.device,
-      pipelines: this.pipelines,
       internalFormat: this.internalFormat,
       outputFormat: this.outputFormat,
       sampleCount: this.sampleCount,
@@ -388,28 +388,25 @@ export class WebGpuGraphExecutor {
     const emittedById = new Map<string, EmittedPass>(
       compiled.emitted.map((pass) => [pass.nodeId, pass]),
     );
-    const set: PipelineSet = { nodes: new Map(), valid: null, verdict: Promise.resolve(null) };
 
-    // Every object the build creates is created inside these scopes, and
-    // nothing else runs between the push and the pops, so an error they catch
-    // belongs to this graph's pipelines.
-    this.device.pushErrorScope('internal');
-    this.device.pushErrorScope('validation');
-    try {
-      for (const step of this.plan!.steps) {
-        const emitted = emittedById.get(step.nodeId);
-        if (!emitted || emitted.fragment === '') continue;
-        set.nodes.set(step.nodeId, createNodePipeline(ctx, emitted));
-        this.pipelineBuildCount += 1;
-      }
-    } finally {
-      const validation = this.device.popErrorScope();
-      const internal = this.device.popErrorScope();
-      set.verdict = Promise.all([validation, internal]).then(([invalid, failed]) => {
-        const error = invalid ?? failed;
-        set.valid = error === null;
-        return error ? error.message : null;
-      });
+    // The programs are shared by every executor on the device (see
+    // `programCache.ts`); this executor's buffers and bind groups are its own.
+    const { set: programs, built } = this.programs.obtain(
+      `${key}@${this.internalFormat}@${this.outputFormat}`,
+      () => {
+        const compiledPrograms = new Map<string, NodeProgram>();
+        for (const step of this.plan!.steps) {
+          const emitted = emittedById.get(step.nodeId);
+          if (!emitted || emitted.fragment === '') continue;
+          compiledPrograms.set(step.nodeId, createNodeProgram(ctx, emitted));
+        }
+        return compiledPrograms;
+      },
+    );
+    this.pipelineBuildCount += built;
+    const set: PipelineSet = { programs, nodes: new Map() };
+    for (const [nodeId, program] of programs.programs) {
+      set.nodes.set(nodeId, instantiateNodePipeline(this.device, emittedById.get(nodeId)!, program));
     }
 
     this.pipelineSets.set(key, set);
@@ -810,12 +807,11 @@ export class WebGpuGraphExecutor {
  */
 const MAX_PIPELINE_SETS = 8;
 
-/** One graph's pipelines at one sample count, and the device's verdict on them. */
+/** One graph's programs at one sample count, and this executor's instances of them. */
 interface PipelineSet {
+  /** Shared with every other executor on the device, verdict included. */
+  readonly programs: ProgramSet;
   readonly nodes: Map<string, NodePipeline>;
-  /** `null` until the device has answered. */
-  valid: boolean | null;
-  verdict: Promise<string | null>;
 }
 
 const pipelineSetKey = (compiled: CompiledGraph, sampleCount: number): string =>

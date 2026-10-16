@@ -73,6 +73,7 @@ export {
   passGraphSelection,
   publishGraphExecutorBreadcrumbs,
   publishGraphVariant,
+  publishSlotExecuting,
   setStoredPassGraphPreference,
   type PassGraphSelection,
 } from './gate';

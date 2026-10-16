@@ -1,3 +1,4 @@
+import type { PassGraphSource } from './graph/variants';
 import { WebGPURenderer } from './WebGPURenderer';
 import { WebGLRenderer } from './webgl/WebGLRenderer';
 import { TextureManager } from './TextureManager';
@@ -128,6 +129,8 @@ export class RendererOrchestrator {
   private destroyed = false;
   private resizePending = false;
   private canvasOptions: WebGpuCanvasOptions = {};
+  /** The pass-graph source every slot draws, or `null` for the hand encoder. */
+  private passGraphSource: PassGraphSource | null = null;
 
   private constructor(
     backend: RendererBackend,
@@ -270,6 +273,27 @@ export class RendererOrchestrator {
     this.canvasOptions = { ...this.canvasOptions, presentation };
     this.session?.setCanvasOptions(this.canvasOptions);
     this.resizeAll();
+  }
+
+  /**
+   * Adopt a pass-graph source for every slot — the main canvas, the compare
+   * slot, the quad cells — now and as slots are created. Each slot's renderer
+   * owns an executor of its own (its pool, buffers and bind groups); their
+   * compiled programs are shared per device, keyed on the structural hash, so a
+   * second slot drawing the same graph compiles nothing. WebGPU only: the WebGL
+   * diagnostic backend compiles graphs but does not execute them.
+   */
+  setPassGraph(source: PassGraphSource | null): void {
+    this.passGraphSource = source;
+    for (const slot of this.slots.values()) this.applyPassGraph(slot);
+  }
+
+  private applyPassGraph(slot: RendererSlot): void {
+    if (this.backend !== 'webgpu') return;
+    slot.renderer.setPassGraph?.(this.passGraphSource, {
+      slot: slot.id,
+      primary: slot.canvas === this.primaryCanvas,
+    });
   }
 
   getSlot(id: string): RendererSlot | undefined {
@@ -475,6 +499,7 @@ export class RendererOrchestrator {
 
     const slot: RendererSlot = { id, canvas, renderer, webgpuContext: context };
     this.slots.set(id, slot);
+    if (this.passGraphSource) this.applyPassGraph(slot);
     return slot;
   }
 
@@ -493,6 +518,7 @@ export class RendererOrchestrator {
 
     const slot: RendererSlot = { id, canvas, renderer, webgpuContext: context };
     this.slots.set(id, slot);
+    if (this.passGraphSource) this.applyPassGraph(slot);
     return slot;
   }
 
