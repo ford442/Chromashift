@@ -290,6 +290,9 @@ function reduceSlices(
         tracers: {
           ...state.tracers,
           scale: nextTracerScale,
+          // `direction` is the costliest motion mode (the Stage 2 flow solve). `boost` keeps the
+          // same field as a magnitude-only trail. Never `off`/`gate`: those read as a missing trail.
+          motionMode: state.tracers.motionMode === 'direction' ? 'boost' : state.tracers.motionMode,
         },
       };
     }
