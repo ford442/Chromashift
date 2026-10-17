@@ -1,4 +1,5 @@
 import { fullscreenVertexSource, vertexShaderSource } from '../../shaders';
+import { layoutFromReflection } from '../../shaders/bindingReflection';
 import { BAND_LAYER_UNIFORMS, emitHistoryWriteWgsl } from '../templates/wgsl';
 import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../../gpuOptions';
 import { createUniformData, type UniformData, type UniformLayout } from '../templates/uniformLayout';
@@ -59,7 +60,6 @@ export interface NodeProgramContext {
   readonly internalFormat: GPUTextureFormat;
   readonly outputFormat: GPUTextureFormat;
   readonly sampleCount: number;
-  readonly layerCount: number;
 }
 
 /**
@@ -75,56 +75,27 @@ export function uniformBytes(emitted: EmittedPass): number {
   return emitted.uniformLayout?.bytes ?? 0;
 }
 
-const sampler = (binding: number): GPUBindGroupLayoutEntry => ({
-  binding,
-  visibility: GPUShaderStage.FRAGMENT,
-  sampler: { type: 'filtering' },
-});
-const texture = (binding: number): GPUBindGroupLayoutEntry => ({
-  binding,
-  visibility: GPUShaderStage.FRAGMENT,
-  texture: { sampleType: 'float' },
-});
-const uniform = (binding: number): GPUBindGroupLayoutEntry => ({
-  binding,
-  visibility: GPUShaderStage.FRAGMENT,
-  buffer: { type: 'uniform' },
-});
-
-/**
- * Bind-group layout for one emitted pass.
- *
- * The bindings are not guessed: `templates/wgsl.ts` lays every kind out as
- * `0 = sampler, 1..n = textures, n+1.. = uniforms`, and the emitter reports the
- * texture names in binding order as `EmittedPass.textureBindings`. So the
- * layout is derived from the shader the compiler produced, which is what makes
- * "a new node kind needs no renderer edit" true rather than aspirational.
- */
-export function bindGroupLayoutEntries(emitted: EmittedPass, layerCount: number): GPUBindGroupLayoutEntry[] {
-  const textures = textureBindingCount(emitted, layerCount);
-  const entries: GPUBindGroupLayoutEntry[] = [sampler(0)];
-  for (let i = 0; i < textures; i += 1) entries.push(texture(i + 1));
-  entries.push(uniform(textures + 1));
-  return entries;
+/** The vertex stage a pass of `kind` runs: the rotating layer quad, or the fullscreen triangle. */
+function vertexSourceFor(kind: NodeKind): string {
+  return kind === 'band-layer' ? vertexShaderSource : fullscreenVertexSource;
 }
 
 /**
- * How many textures the emitted pass binds.
+ * Bind-group layout for one emitted pass, read off the shaders it runs.
  *
- * Not the input count: a `decay` binds the fused stamp's `layerCount` inputs
- * plus its own previous-frame texture (and the motion field, if it carries the
- * temporal term).
+ * Not a convention and not a table: every binding the vertex and fragment
+ * modules declare becomes an entry of the type they declare it as
+ * (`shaders/bindingReflection.ts`). So whatever the compiler emits — a node
+ * kind added later, a graph from the editor, a `decay` whose `prevTex` moved
+ * with the layer count — gets the layout its shader needs, and the band layer
+ * (rotation uniform in the vertex stage, a `uint` mask, the profile LUT) is no
+ * longer a hand-written exception.
  */
-export function textureBindingCount(emitted: EmittedPass, layerCount: number): number {
-  switch (emitted.kind) {
-    case 'coincidence':
-      return layerCount + 1;
-    default:
-      // `decay` binds its stamp's layers, its previous frame and — in the
-      // motion variant — the field; `blend` its layers and every tracer.
-      // Each reports exactly that.
-      return emitted.textureBindings.length;
-  }
+export function nodeLayoutEntries(emitted: EmittedPass): GPUBindGroupLayoutEntry[] {
+  return layoutFromReflection([
+    { code: vertexSourceFor(emitted.kind), visibility: GPUShaderStage.VERTEX },
+    { code: emitted.fragment, visibility: GPUShaderStage.FRAGMENT },
+  ]);
 }
 
 /**
@@ -151,30 +122,13 @@ export function targetFormats(
   }
 }
 
-/**
- * The band-layer bind-group layout: the vertex rotation, the sampler and
- * source, the fragment uniforms, the classification mask and the profile LUT
- * — the layout the shipped layer pipeline has always used.
- */
-function bandLayerLayoutEntries(): GPUBindGroupLayoutEntry[] {
-  return [
-    { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
-    { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-    { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-    { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-    { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
-    // 256×N colour-profile LUT (textureLoad only — never sampled/filtered).
-    { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-  ];
-}
-
 /** Compile one emitted pass's program. */
 export function createNodeProgram(ctx: NodeProgramContext, emitted: EmittedPass): NodeProgram {
+  const bindGroupLayout = ctx.device.createBindGroupLayout({ entries: nodeLayoutEntries(emitted) });
   if (emitted.kind === 'band-layer') {
-    // The shipped layer pipeline: the rotating vertex stage, the same layout,
-    // MSAA at the session's sample count. Only the fragment source is the
-    // graph's, and for the default graph that is the same text.
-    const bindGroupLayout = ctx.device.createBindGroupLayout({ entries: bandLayerLayoutEntries() });
+    // The shipped layer pipeline: the rotating vertex stage, MSAA at the
+    // session's sample count. Only the fragment source is the graph's, and for
+    // the default graph that is the same text.
     const pipeline = ctx.device.createRenderPipeline({
       layout: ctx.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
       vertex: { module: ctx.device.createShaderModule({ code: vertexShaderSource }), entryPoint: 'main' },
@@ -189,9 +143,6 @@ export function createNodeProgram(ctx: NodeProgramContext, emitted: EmittedPass)
     return { kind: emitted.kind, pipeline, bindGroupLayout, ringWrite: null };
   }
 
-  const bindGroupLayout = ctx.device.createBindGroupLayout({
-    entries: bindGroupLayoutEntries(emitted, ctx.layerCount),
-  });
   const pipeline = fullscreenPipeline(
     ctx.device,
     bindGroupLayout,
@@ -250,9 +201,15 @@ export function instantiateNodePipeline(
 }
 
 function createRingWriteProgram(ctx: NodeProgramContext): NonNullable<NodeProgram['ringWrite']> {
-  const bindGroupLayout = ctx.device.createBindGroupLayout({ entries: [sampler(0), texture(1)] });
+  const fragment = emitHistoryWriteWgsl();
+  const bindGroupLayout = ctx.device.createBindGroupLayout({
+    entries: layoutFromReflection([
+      { code: fullscreenVertexSource, visibility: GPUShaderStage.VERTEX },
+      { code: fragment, visibility: GPUShaderStage.FRAGMENT },
+    ]),
+  });
   return {
-    pipeline: fullscreenPipeline(ctx.device, bindGroupLayout, emitHistoryWriteWgsl(), [ctx.internalFormat]),
+    pipeline: fullscreenPipeline(ctx.device, bindGroupLayout, fragment, [ctx.internalFormat]),
     bindGroupLayout,
   };
 }

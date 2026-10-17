@@ -7,7 +7,7 @@
  * to the GPU via `copyExternalImageToTexture`.
  */
 
-import type { ChromashiftTextureManager } from './RendererTypes';
+import type { ChromashiftTextureManager } from './types/RendererContracts';
 import { shouldRecreateVideoTexture, videoFrameSizeKey } from './liveSourceTexture';
 import { publishTextureCacheBreadcrumbs } from './textureCacheBreadcrumbs';
 import {

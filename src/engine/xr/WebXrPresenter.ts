@@ -86,7 +86,8 @@ export class WebXrPresenter {
     await this.gl.makeXRCompatible();
     const layer = new XRWebGLLayer(session, this.gl);
     this.layer = layer;
-    session.updateRenderState({ baseLayer: layer });
+    // The spec returns undefined; @types/webxr says Promise. Nothing to await either way.
+    void session.updateRenderState({ baseLayer: layer });
     this.refSpace = await session.requestReferenceSpace('local-floor');
 
     const handleEnd = () => {

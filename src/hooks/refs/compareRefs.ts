@@ -3,10 +3,10 @@ import type { CompareRefs } from './types';
 
 export function useCompareRefs(): CompareRefs {
   const canvasBRef = useRef<HTMLCanvasElement>(null);
-  const rendererBRef = useRef<import('../../engine/RendererTypes').ChromashiftRenderer | null>(null);
+  const rendererBRef = useRef<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>(null);
   const canvasARef = useRef<HTMLCanvasElement>(null);
   const canvasCRef = useRef<HTMLCanvasElement>(null);
-  const quadRenderersRef = useRef<Record<'a' | 'b' | 'c', import('../../engine/RendererTypes').ChromashiftRenderer | null>>({
+  const quadRenderersRef = useRef<Record<'a' | 'b' | 'c', import('../../engine/types/RendererContracts').ChromashiftRenderer | null>>({
     a: null,
     b: null,
     c: null,

@@ -13,6 +13,7 @@ npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
 npm test          # Vitest unit tests
+npm run shaders:validate  # naga + glslangValidator over every shader variant (needs naga-cli, glslang)
 npm run test:e2e  # Playwright smoke (WebGL)
 npm run test:cpp  # C++ host tests (:werror is the CI gate, :asan is opt-in)
 npm run compile-commands  # cpp/compile_commands.json for clangd (gitignored)
@@ -25,14 +26,17 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md). Testing detail: [AGENTS.md](AGENTS.
 
 `@tailwindcss/vite` v4 supports **vite `^5-7` only** — do **not** upgrade vite to v8 or higher until Tailwind's Vite plugin publishes support for it. Similarly, `@vitejs/plugin-react` v5 is required for Vite 7 compatibility; v6 requires Vite 8.
 
+`package.json` `overrides` pins `@webgpu/types` to our own version: `@tensorflow/tfjs-core` depends on 0.1.38, and with two copies TypeScript resolves the *older* global WebGPU types. Keep the override until TF.js is gone (#206).
+
 ## TypeScript Config Notes
 
-Two project references are used:
+Three project references are used:
 
 - `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`
-- `tsconfig.node.json` — compiles `vite.config.ts`, includes `@types/node`
+- `tsconfig.node.json` — compiles `vite.config.ts` and `vitest.config.ts`, includes `@types/node`
+- `tsconfig.e2e.json` — type-checks `e2e/` against the app's types (breadcrumbs come from `src/engine/diagnostics.ts`)
 
-Both use strict mode. `skipLibCheck: true` avoids noise from `.d.ts` files in `node_modules`.
+All use strict mode. `skipLibCheck: true` avoids noise from `.d.ts` files in `node_modules`.
 
 ## Verifying changes to the lazy-loaded upscaler workers
 

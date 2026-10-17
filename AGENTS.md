@@ -30,6 +30,7 @@ npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
 npm test          # Vitest unit tests (src/**/*.test.ts)
+npm run shaders:validate  # Dump every WGSL/GLSL variant; naga + glslangValidator over each
 npm run test:e2e  # Playwright E2E (all projects; install browsers first)
 npm run test:e2e:webgl   # Playwright chromium: explicit WebGL diagnostic backend
 npm run test:e2e:webgpu  # WebGPU smoke + compare layouts (chromium-webgpu project)
@@ -113,12 +114,13 @@ src/
     ├── WebGLTextureManager.ts # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
     ├── LocalLibrary.ts       # IndexedDB-backed local image library (drag-and-drop uploads)
     ├── fileDrop.ts           # Flattens a drop's DataTransfer (incl. folders) into File[]
+    ├── workers/              # rpc.ts: the one typed main-thread ↔ worker channel all four workers use
     ├── Upscaler.ts           # Lazy Web Worker wrapper for the two upscale backends below
     ├── upscaler.worker.ts    # TF.js Real-ESRGAN / Real-CUGAN
     ├── nunif.worker.ts       # onnxruntime-web swin_unet (waifu2x)
     ├── viewModes.ts          # MAIN_VIEW_MODES enum (composite, tracer, layers, quarter-zoom, …)
     ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
-    ├── RendererTypes.ts / types/RendererContracts.ts  # Shared renderer/texture contracts
+    ├── types/                # RendererState, RendererContracts (renderer/texture-manager interfaces), TextureHandle — import the module directly
     ├── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
     ├── WebGLRenderer.ts      # Re-export shim → webgl/WebGLRenderer.ts
     ├── webgl/                # WebGL2 diagnostic renderer (mirrors WebGPU pass layout)
@@ -223,6 +225,8 @@ On WebGPU the graph is also **executed** — it is the renderer: `WebGpuGraphExe
 
 For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into the node templates (`src/engine/graph/templates/`). Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. The tracer-decay constants follow the same rule: the `DECAY` table in `src/engine/math/decay.ts` (from `shared/decay.json`) via `DECAY_WGSL` / `DECAY_GLSL` in `decayLiterals.ts`, guarded by `src/engine/shaders/decayTable.test.ts` — see [docs/wasm-engine.md](docs/wasm-engine.md#shared-decay-table-shareddecayjson). Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
+Bind-group layouts follow it too: the graph executor and the inspect views (`WebGPUPipelines.ts`) build each layout **from** the WGSL it serves (`layoutFromReflection` in `src/engine/shaders/bindingReflection.ts` — every `@group(0) @binding(n)` declaration becomes the entry its type requires, with the declaring stage's visibility), so never hand-write a layout next to an emitted shader. Reflection cannot infer intent — a `texture_2d<f32>` bound to an `r32float` plane must be `unfilterable-float` — so pass an override for that binding; the gpu-chores kernels keep hand layouts for exactly that reason. `src/engine/shaders/shaderBindings.test.ts` drives every pipeline builder in the app against a recording device and checks each layout against the full `wgsl_reflect` parser (binding, type, sample type, storage format and access, stage visibility), and holds the runtime reflector to the same parser. `npm run shaders:validate` (`scripts/validate-shaders.mjs`, the `shaders` CI job) dumps that corpus to `test-results/shaders/` and runs `naga` over every WGSL module and `glslangValidator` over the WebGL GLSL; install them with `cargo install naga-cli --locked` and `apt-get install glslang-tools`. On WebGL, `webgl/programUtils.ts` caches every uniform location (a missing one too) and, in development, throws on a uniform name neither source declares — a typo used to be a silent no-op.
+
 Uniforms follow the same single-source rule. A uniform block is declared as a typed layout next to its emitter (`graph/templates/uniformLayout.ts`) and its WGSL `struct` is emitted from that layout, so never write a block by index — pack it by field name (`packUniforms`). The values come from `graph/exec/uniforms.ts`, which every encode path on both backends calls, and an absent optional `RendererState` field means `RENDERER_STATE_DEFAULTS` in `state/defaults.ts`, read through `rendererStateValue()`. Never spell a fallback at the read (`state.stampBoost ?? 1.8`): `graph/exec/uniforms.test.ts` scans `src/engine` for one. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md#one-state--uniform-mapping).
 
 ### Rendering Pipeline (Detailed)
@@ -282,7 +286,7 @@ Dropping image files (or whole folders) anywhere on `#chromashift-container` per
 
 `public/images.json` ships ~3.1k entries, so the panel is windowed rather than flat (issue #168 — it used to mount 3137 DOM subtrees and fire 3137 image requests the moment it opened):
 
-- **Virtualized.** `@tanstack/react-virtual`'s `useVirtualizer({ horizontal: true })` renders the visible window plus `OVERSCAN` cards on each side. The virtualizer lives in the `VirtualCardRow` leaf because `useVirtualizer` makes the React Compiler skip memoizing its caller; keeping it there leaves the header and search index compiler-optimized. It receives the scroll element *through state* (a callback ref), not a ref object: a child's mount effect runs before an ancestor's ref is attached, so a ref object is still `null` when the virtualizer first looks for something to observe.
+- **Virtualized.** `@tanstack/react-virtual`'s `useVirtualizer({ horizontal: true })` renders the visible window plus `OVERSCAN` cards on each side. The virtualizer lives in the `VirtualCardRow` leaf because `useVirtualizer` is a library the React Compiler cannot memoize around (`react-hooks/incompatible-library`); keeping it there would leave the header and search index compilable. The compiler itself is **not** enabled — only the `react-hooks` v7 lint rules are — so today the memoization is the manual discipline under "Subscription model". Enabling it needs `render-churn.spec.ts` stable first, and an audit of components that read mutable `window` breadcrumbs during render (`CanvasHdrNote`, the HDR toggle in `ViewportPanel`), which the compiler would be free to memoize. It receives the scroll element *through state* (a callback ref), not a ref object: a child's mount effect runs before an ancestor's ref is attached, so a ref object is still `null` when the virtualizer first looks for something to observe.
 - **Mounted only while open.** `ImageStrip` renders `CorpusBrowser` only when the strip is open, so a closed browser costs no observers and no index — and `ImageStrip` itself keeps rendering as rarely as `e2e/render-churn.spec.ts` demands.
 - **Thumbnails are guarded, not just lazy.** Every `<img>` carries `loading="lazy" decoding="async"`, but the actual `src` is withheld until an `IntersectionObserver` says the card has stayed on screen for `THUMB_SETTLE_MS`. Flinging the strip therefore does not queue a request per card swept past.
 - **Searchable.** `engine/corpusIndex.ts` precomputes a display label and a lowercased `label + url` haystack per entry once per corpus identity (`buildCorpusIndex`, memoized on the array); `filterCorpusIndex` then does one pass of AND-ed substring terms. It returns *corpus* indices, so a click in a filtered view still selects the right entry.
@@ -317,7 +321,11 @@ requests camera/screen access. See [LIVE_SOURCE.md](docs/LIVE_SOURCE.md).
 - **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not** bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
 - **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Model ONNX files default to `NUNIF_DEFAULT_BASE` in `Upscaler.ts`; override with `VITE_NUNIF_BASE` to self-host `models/swin_unet/` and `models/utils/`. The ORT wasm runtime is **not** bundled in `dist/` — Vite resolves `onnxruntime-web-use-extern-wasm` (see `vite.config.ts`) and the worker loads `ort-wasm-simd-threaded.{mjs,wasm}` at runtime from `VITE_NUNIF_ORT_WASM_BASE` (default `https://test.1ink.us/nunif/ort`). Mirror those two files from `node_modules/onnxruntime-web/dist/` on the server once per ORT version upgrade; for local dev without the mirror, point `VITE_NUNIF_ORT_WASM_BASE` at jsDelivr in `.env.local`.
 
-Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on an actual first-time fetch, not on cache hits.
+Both workers speak `UpscaleWorkerProtocol` (`src/engine/workers/upscaleProtocol.ts`) over the shared worker channel (see *Worker RPC* below), so a job always settles: a worker that crashes mid-job (an OOM on a large tile, a chunk that failed to load) rejects the job and clears `isBusy()`, and the next click spawns a fresh worker. `upscaler.worker.ts` picks its TF.js backend once per worker and keeps one model resident, disposing it when the model changes. Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on an actual first-time fetch, not on cache hits.
+
+### Worker RPC (`engine/workers/rpc.ts`)
+
+All four workers — `analysis.worker`, `motion.worker`, `upscaler.worker`, `nunif.worker` — sit behind one typed channel rather than four hand-rolled `postMessage` protocols. Each worker exports a protocol type (`{ method: (req) => res }`, e.g. `MotionProtocol`) and registers handlers with `exposeWorkerRpc(self, handlers)`; its host calls `createWorkerRpc<Protocol>(factory, { label })` and `rpc.call(method, req, { transfer, onProgress, timeoutMs })`. The channel owns id correlation, typed progress, transfer lists in both directions (`ctx.transfer(…)` in a handler), and settlement: a handler that throws rejects that call alone; a worker-level `error` rejects every call in flight and drops the worker, so the next call spawns a fresh one; a `messageerror` rejects every call in flight; `terminate()` rejects what is pending. The worker is constructed on the first call, so creating a host never fetches its chunk. The hosts keep their own policy on top — `analysisWorkerHost` / `motionWorkerHost` still fall back to the in-process lane permanently after the first failure, which is what the `wasm-worker` → `wasm-inline` breadcrumbs report. Tests drive hosts through `workers/testing.ts` (`ScriptedWorker` to script replies and crashes, `LoopbackWorker` to run real handlers over a `MessageChannel`).
 
 ### Viewport Modes
 
@@ -511,10 +519,12 @@ Edit `public/images.json` to change the image list:
 
 ## Code Style & Conventions
 
-- **Linting**: ESLint v9 flat config (`eslint.config.js`). Extends `@eslint/js/recommended`, `typescript-eslint/recommended`, `react-hooks/flat/recommended`, and `react-refresh/vite`.
-- **TypeScript**: Strict mode is enabled. Two project references are used:
+- **Linting**: ESLint v9 flat config (`eslint.config.js`). Extends `@eslint/js/recommended`, `typescript-eslint/recommended`, `react-hooks/flat/recommended`, and `react-refresh/vite`, plus four type-aware rules (`parserOptions.projectService`, so every linted file must belong to one of the tsconfig projects): `no-floating-promises`, `no-misused-promises`, `await-thenable`, and `switch-exhaustiveness-check`. GPU lifecycle is promise-shaped (`requestDevice`, `mapAsync`, `onSubmittedWorkDone`, `device.lost`), and a dropped promise is a dropped error — mark a deliberate fire-and-forget with `void`. An async handler a component calls from a DOM event is typed `() => Promise<void>` in its props and voided at the DOM edge (`onClick={() => void onExportVideo()}`), not wrapped in `buildOverlayProps.ts` (that would break reference stability), and must catch and report its own errors.
+- **TypeScript**: Strict mode is enabled. Three project references are used:
   - `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`.
-  - `tsconfig.node.json` — compiles `vite.config.ts`, includes `@types/node`.
+  - `tsconfig.node.json` — compiles `vite.config.ts` and `vitest.config.ts`, includes `@types/node`.
+  - `tsconfig.e2e.json` — type-checks `e2e/` and `playwright.config.ts` (Playwright itself only strips types), so a spec reading a renamed breadcrumb fails `tsc -b`.
+- **Breadcrumbs**: every `window.*` breadcrumb is declared once, in `ChromashiftDiagnostics` (`src/engine/diagnostics.ts`), and the `Window` type is augmented from it. Publish with `publishDiagnostic(key, value)` / `publishDiagnostics({…})` (no-ops without a `window`, so no guard is needed); never cast `window` to add a field. A new breadcrumb must also be listed in `DIAGNOSTIC_KEYS` (the build fails until it is), and `diagnostics.test.ts` fails on a cast, a direct `window.<key> =` assignment or a `declare global` `Window` block anywhere else in `src/`. Specs read them as plain `window.x` inside `page.evaluate` (typed) or through `e2e/helpers/diagnostics.ts` (`readDiagnostic`, `waitForDiagnostic`). Test-only globals a spec installs itself (`__longTasks`, `__readMainCanvasFrame`) are declared in that spec.
 - **Styling**: Tailwind CSS utility classes are used inline in JSX. Custom gold/glass theme variables and animations live in `src/index.css`.
 - **File naming**: PascalCase for components and engine classes (`App.tsx`, `WebGPURenderer.ts`), camelCase for utilities and hooks.
 - **Imports**: `type` imports are used where appropriate (`verbatimModuleSyntax` is enabled).
@@ -537,6 +547,7 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | `guard` | Blocks `dist/` and accidental secrets in PR diffs |
 | `web` | `npm run lint`, `npx tsc -b`, `npm run build` |
 | `unit` | `npm test` (Vitest) |
+| `shaders` | `node scripts/validate-shaders.mjs --require-glslang`: dumps every WGSL/GLSL variant (`shaderBindings.test.ts`), then `naga` + `glslangValidator` (naga-cli pinned and cached) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu` + SwiftShader Vulkan) |
 | `wasm` | `npm run test:cpp:werror` + emsdk pin check (`make -C cpp check`) + `make -C cpp verify-exports` + `npm run build:wasm` + artifact check + `npm run bench:wasm -- --assert` |

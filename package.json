@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "shaders:validate": "node scripts/validate-shaders.mjs",
     "test:e2e": "playwright test",
     "test:e2e:webgl": "playwright test --project=chromium",
     "test:e2e:webgpu": "playwright test --project=chromium-webgpu",
@@ -59,6 +60,10 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^7.0.0",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "wgsl_reflect": "1.6.0"
+  },
+  "overrides": {
+    "@webgpu/types": "$@webgpu/types"
   }
 }

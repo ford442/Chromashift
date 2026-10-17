@@ -7,9 +7,10 @@ import {
   useRenderCpuTiming,
   useRenderGpuTiming,
 } from '../../engine/telemetryStore';
-import type { RendererBackend } from '../../engine/RendererTypes';
+import type { RendererBackend } from '../../engine/types/RendererContracts';
 import type { DiagnosticsPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
+import { readDiagnostic } from '../../engine/diagnostics';
 
 function formatPassMs(value: number | undefined): string {
   return value === undefined ? '—' : value.toFixed(2);
@@ -111,7 +112,7 @@ function CollisionStatsReadout() {
  */
 function CanvasHdrNote() {
   useRenderCpuTiming();
-  const note = typeof window === 'undefined' ? null : window.canvasHdrNote;
+  const note = readDiagnostic('canvasHdrNote');
   if (!note) return null;
   return (
     <div className="text-[10px] font-mono text-amber-300/90" role="note">
@@ -277,7 +278,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           </button>
           <button
             type="button"
-            onClick={onExportTracer}
+            onClick={() => void onExportTracer()}
             disabled={exportingTracer}
             className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-200 disabled:opacity-50"
             title="Export the current tracer inspection view as a PNG at the main canvas resolution"

@@ -4,7 +4,7 @@ import type { RefObject } from 'react';
 import type { ChromashiftRefs } from '../hooks/useChromashiftStore';
 import type { ImageEntry } from '../engine/TextureManager';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';
-import type { RendererBackend } from '../engine/RendererTypes';
+import type { RendererBackend } from '../engine/types/RendererContracts';
 import type { CompareLayoutMode } from '../engine/compareViews';
 import type { MainViewMode } from '../engine/viewModes';
 import type { ExportPassMode } from '../engine/types/RendererContracts';

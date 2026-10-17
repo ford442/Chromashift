@@ -3,7 +3,7 @@ import { emitCoincidenceHeatmapWgsl, emitCompareWgsl, emitTracerViewWgsl } from 
 import { WebGPUPipelines } from './WebGPUPipelines';
 import { compileGraph } from './graph/compile';
 import { buildDefaultGraph } from './graph/defaultGraph';
-import { bindGroupLayoutEntries } from './graph/exec/nodePipelines';
+import { nodeLayoutEntries } from './graph/exec/nodePipelines';
 import { buildRendererState } from './buildRendererState';
 import { MAX_LAYER_COUNT, assertLayerCount, clampLayerCount } from './graph/layerSpecs';
 import { sameLayerTextures } from './bindGroups';
@@ -210,7 +210,7 @@ describe('WebGPU bind-group layouts are generated from the layer count', () => {
       const passes = compiled.emitted.filter((pass) => pass.kind === 'decay' || pass.kind === 'blend');
       expect(passes).toHaveLength(3);
       for (const pass of passes) {
-        expect(bindGroupLayoutEntries(pass, layerCount)).toHaveLength(maxShaderBinding(pass.fragment) + 1);
+        expect(nodeLayoutEntries(pass)).toHaveLength(maxShaderBinding(pass.fragment) + 1);
       }
     },
   );

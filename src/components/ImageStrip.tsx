@@ -14,7 +14,7 @@ interface Props {
   onToggleOpen: () => void;
   onSelectSource: (index: number) => void;
   onSelectReference: (index: number) => void;
-  onClearLibrary: () => void;
+  onClearLibrary: () => Promise<void>;
   liveSource: LiveSourceState;
   onStartCamera: () => void;
   onStartScreenShare: () => void;

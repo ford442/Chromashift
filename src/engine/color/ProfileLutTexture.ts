@@ -14,7 +14,7 @@ export class ProfileLutTexture {
   private readonly device: GPUDevice;
   private current: GPUTexture;
   private rows = PROFILE_LUT_MIN_ROWS;
-  private uploaded: Uint8Array | null = null;
+  private uploaded: Uint8Array<ArrayBuffer> | null = null;
 
   constructor(device: GPUDevice) {
     this.device = device;
@@ -25,7 +25,7 @@ export class ProfileLutTexture {
     return this.current;
   }
 
-  update(lut: Uint8Array | null | undefined): void {
+  update(lut: Uint8Array<ArrayBuffer> | null | undefined): void {
     if (!lut || lut === this.uploaded) return;
     const rows = lut.length / (PROFILE_LUT_WIDTH * 4);
     if (rows !== this.rows) {
@@ -35,7 +35,7 @@ export class ProfileLutTexture {
     }
     this.device.queue.writeTexture(
       { texture: this.current },
-      lut as unknown as BufferSource,
+      lut,
       { bytesPerRow: PROFILE_LUT_WIDTH * 4, rowsPerImage: rows },
       [PROFILE_LUT_WIDTH, rows, 1],
     );

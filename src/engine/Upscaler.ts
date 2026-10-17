@@ -1,13 +1,24 @@
 /**
- * Upscaler — main-thread API around the TF.js Real-ESRGAN / Real-CUGAN worker.
+ * Upscaler — main-thread API around the two upscale workers: TF.js
+ * Real-ESRGAN / Real-CUGAN (`upscaler.worker.ts`) and onnxruntime-web
+ * swin_unet (`nunif.worker.ts`).
  *
- * Lazily spawns a single worker on first use. The worker handles model
- * download + IndexedDB caching, tile-based inference, and posts progress
- * messages back. Configure the model base URL via VITE_UPSCALER_BASE.
+ * Each worker is spawned lazily on first use. The workers handle model
+ * download + caching, tile-based inference, and report progress back. Configure
+ * the model base URLs via VITE_UPSCALER_BASE / VITE_NUNIF_BASE.
+ *
+ * Both speak `UpscaleWorkerProtocol` over the shared rpc channel, so a job
+ * always settles: a worker that crashes mid-job (an OOM on a large tile, a
+ * script that failed to load) rejects the job and clears `busy`, and the next
+ * job spawns a fresh worker instead of posting into a dead one.
  */
 
-import type { UpscalerRequest, UpscalerResponse } from './upscaler.worker';
-import type { NunifRequest, NunifResponse, NunifStyle } from './nunif.worker';
+import type { TfUpscalerProtocol, UpscalerRequest } from './upscaler.worker';
+import type { NunifProtocol, NunifRequest, NunifStyle } from './nunif.worker';
+import { createWorkerRpc } from './workers/rpc';
+import type { UpscaleProgress } from './workers/upscaleProtocol';
+
+export type { UpscaleProgress } from './workers/upscaleProtocol';
 
 // Default host for the waifu2x/swin_unet ONNX models (reuses the nunif app's
 // model tree). Override with VITE_NUNIF_BASE to self-host.
@@ -24,17 +35,29 @@ export interface UpscaleResult {
   height: number;
 }
 
-export interface UpscaleProgress {
-  progress: number; // 0-100
-  info: string;
+/** Overridable for tests — Vitest has no `Worker`. */
+export interface UpscalerWorkerFactories {
+  tf: () => Worker;
+  onnx: () => Worker;
 }
+
+const defaultWorkerFactories: UpscalerWorkerFactories = {
+  tf: () => new Worker(new URL('./upscaler.worker.ts', import.meta.url), { type: 'module' }),
+  onnx: () => new Worker(new URL('./nunif.worker.ts', import.meta.url), { type: 'module' }),
+};
 
 const TILE_SIZE = 64;
 
 export class Upscaler {
-  private tfWorker: Worker | null = null;     // TF.js Real-ESRGAN / Real-CUGAN
-  private onnxWorker: Worker | null = null;    // onnxruntime-web swin_unet
+  private readonly tfWorker;   // TF.js Real-ESRGAN / Real-CUGAN
+  private readonly onnxWorker; // onnxruntime-web swin_unet
   private busy = false;
+
+  constructor(workers: UpscalerWorkerFactories = defaultWorkerFactories) {
+    // Lazy: neither worker (nor its TF.js / ORT chunk) loads until a job needs it.
+    this.tfWorker = createWorkerRpc<TfUpscalerProtocol, UpscaleProgress>(workers.tf, { label: 'upscaler' });
+    this.onnxWorker = createWorkerRpc<NunifProtocol, UpscaleProgress>(workers.onnx, { label: 'nunif' });
+  }
 
   /** True if a job is currently running. */
   isBusy(): boolean { return this.busy; }
@@ -52,63 +75,44 @@ export class Upscaler {
   ): Promise<UpscaleResult> {
     if (this.busy) throw new Error('Upscaler is already running a job');
     this.busy = true;
+    try {
+      const buffer = pixels.buffer.slice(pixels.byteOffset, pixels.byteOffset + pixels.byteLength) as ArrayBuffer;
+      const options = { transfer: [buffer], onProgress };
 
-    const buffer = pixels.buffer.slice(pixels.byteOffset, pixels.byteOffset + pixels.byteLength) as ArrayBuffer;
-
-    let worker: Worker;
-    let req: UpscalerRequest | NunifRequest;
-    if (model.kind === 'swin_unet') {
-      const baseUrl = ((import.meta.env.VITE_NUNIF_BASE as string | undefined) ?? NUNIF_DEFAULT_BASE).replace(/\/$/, '');
-      this.onnxWorker ??= new Worker(new URL('./nunif.worker.ts', import.meta.url), { type: 'module' });
-      worker = this.onnxWorker;
-      req = {
-        kind: 'swin_unet', style: model.style, scale: model.scale, noise: model.noise,
-        tileSize: model.tileSize, width, height, pixels: buffer, baseUrl,
-      };
-    } else {
-      const baseUrl = (import.meta.env.VITE_UPSCALER_BASE as string | undefined)?.replace(/\/$/, '') ?? '';
-      if (!baseUrl) {
-        this.busy = false;
-        throw new Error(
-          'VITE_UPSCALER_BASE is not set. Configure it to the URL hosting realesrgan/ and realcugan/ model files.',
-        );
-      }
-      this.tfWorker ??= new Worker(new URL('./upscaler.worker.ts', import.meta.url), { type: 'module' });
-      worker = this.tfWorker;
-      req = model.kind === 'realesrgan'
-        ? { kind: 'realesrgan', variant: model.variant, tileSize: TILE_SIZE, width, height, pixels: buffer, baseUrl }
-        : { kind: 'realcugan', factor: model.factor, denoise: model.denoise, tileSize: TILE_SIZE, width, height, pixels: buffer, baseUrl };
-    }
-
-    return new Promise<UpscaleResult>((resolve, reject) => {
-      const onMsg = (e: MessageEvent<UpscalerResponse | NunifResponse>) => {
-        const msg = e.data;
-        if (msg.kind === 'progress') {
-          onProgress?.({ progress: msg.progress, info: msg.info });
-        } else if (msg.kind === 'done') {
-          worker.removeEventListener('message', onMsg);
-          this.busy = false;
-          resolve({
-            pixels: new Uint8ClampedArray(msg.pixels),
-            width: msg.width,
-            height: msg.height,
-          });
-        } else if (msg.kind === 'error') {
-          worker.removeEventListener('message', onMsg);
-          this.busy = false;
-          reject(new Error(msg.message));
+      let result;
+      if (model.kind === 'swin_unet') {
+        const baseUrl = ((import.meta.env.VITE_NUNIF_BASE as string | undefined) ?? NUNIF_DEFAULT_BASE).replace(/\/$/, '');
+        const req: NunifRequest = {
+          kind: 'swin_unet', style: model.style, scale: model.scale, noise: model.noise,
+          tileSize: model.tileSize, width, height, pixels: buffer, baseUrl,
+        };
+        result = await this.onnxWorker.call('upscale', req, options);
+      } else {
+        const baseUrl = (import.meta.env.VITE_UPSCALER_BASE as string | undefined)?.replace(/\/$/, '') ?? '';
+        if (!baseUrl) {
+          throw new Error(
+            'VITE_UPSCALER_BASE is not set. Configure it to the URL hosting realesrgan/ and realcugan/ model files.',
+          );
         }
+        const req: UpscalerRequest = model.kind === 'realesrgan'
+          ? { kind: 'realesrgan', variant: model.variant, tileSize: TILE_SIZE, width, height, pixels: buffer, baseUrl }
+          : { kind: 'realcugan', factor: model.factor, denoise: model.denoise, tileSize: TILE_SIZE, width, height, pixels: buffer, baseUrl };
+        result = await this.tfWorker.call('upscale', req, options);
+      }
+
+      return {
+        pixels: new Uint8ClampedArray(result.pixels),
+        width: result.width,
+        height: result.height,
       };
-      worker.addEventListener('message', onMsg);
-      worker.postMessage(req, [req.pixels]);
-    });
+    } finally {
+      this.busy = false;
+    }
   }
 
   destroy(): void {
-    this.tfWorker?.terminate();
-    this.onnxWorker?.terminate();
-    this.tfWorker = null;
-    this.onnxWorker = null;
+    this.tfWorker.terminate('upscaler destroyed');
+    this.onnxWorker.terminate('upscaler destroyed');
     this.busy = false;
   }
 }

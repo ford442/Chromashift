@@ -19,17 +19,13 @@
 
 import { createChromashiftCpuHost } from './chromashiftHost';
 import type { CpuChoreHost, CpuImageAnalysisResult } from './types';
-import type { AnalysisRequest, AnalysisResponse } from '../analysis.worker';
+import type { AnalysisProtocol } from '../analysis.worker';
+import { createWorkerRpc } from '../../workers/rpc';
 
 export type AnalysisWorkerFactory = () => Worker;
 
 const defaultWorkerFactory: AnalysisWorkerFactory = () =>
   new Worker(new URL('../analysis.worker.ts', import.meta.url), { type: 'module' });
-
-interface PendingRequest {
-  resolve: (response: AnalysisResponse) => void;
-  reject: (error: unknown) => void;
-}
 
 /**
  * @param wasmEnabled   Mirrors the engine-mode toggle (same contract as
@@ -43,35 +39,10 @@ export function createWorkerChromashiftCpuHost(
   workerFactory: AnalysisWorkerFactory = defaultWorkerFactory,
 ): CpuChoreHost {
   const inlineHost = createChromashiftCpuHost(wasmEnabled);
-
-  let worker: Worker | null = null;
+  // Correlation, and failing every in-flight request on a worker-level error
+  // (which would otherwise hang it forever), live in the rpc channel.
+  const rpc = createWorkerRpc<AnalysisProtocol>(workerFactory, { label: 'analysis' });
   let workerFailed = false;
-  let nextId = 1;
-  const pending = new Map<number, PendingRequest>();
-
-  function failAllPending(error: unknown): void {
-    for (const [id, entry] of pending) {
-      pending.delete(id);
-      entry.reject(error);
-    }
-  }
-
-  function getWorker(): Worker {
-    if (worker) return worker;
-    worker = workerFactory();
-    worker.addEventListener('message', (e: MessageEvent<AnalysisResponse>) => {
-      const entry = pending.get(e.data.id);
-      if (!entry) return;
-      pending.delete(e.data.id);
-      entry.resolve(e.data);
-    });
-    // A worker-level error (e.g. a script error outside the message handler's
-    // own try/catch) would otherwise hang every in-flight request forever.
-    worker.addEventListener('error', (e: ErrorEvent) => {
-      failAllPending(e.error instanceof Error ? e.error : new Error(e.message || 'analysis worker error'));
-    });
-    return worker;
-  }
 
   async function runInWorker(
     image: HTMLImageElement,
@@ -79,30 +50,8 @@ export function createWorkerChromashiftCpuHost(
     useWasm: boolean,
   ): Promise<CpuImageAnalysisResult | null> {
     const bitmap = await createImageBitmap(image);
-    const id = nextId++;
-    const request: AnalysisRequest = { id, op: 'image-analysis', bitmap, avgLumHint, useWasm };
-
-    const response = await new Promise<AnalysisResponse>((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      try {
-        getWorker().postMessage(request, [bitmap]);
-      } catch (error) {
-        pending.delete(id);
-        reject(error);
-      }
-    });
-
-    if (response.kind === 'error') throw new Error(response.message);
-    if (response.kind !== 'image-analysis') {
-      throw new Error(`analysis worker: unexpected response kind "${response.kind}"`);
-    }
-    return {
-      avgLuminance: response.avgLuminance,
-      mask: response.mask,
-      width: response.width,
-      height: response.height,
-      mode: 'worker',
-    };
+    const response = await rpc.call('image-analysis', { bitmap, avgLumHint, useWasm }, { transfer: [bitmap] });
+    return { ...response, mode: 'worker' };
   }
 
   async function runLuminanceInWorker(
@@ -110,23 +59,7 @@ export function createWorkerChromashiftCpuHost(
     useWasm: boolean,
   ): Promise<{ avgLuminance: number; mode: 'worker' }> {
     const bitmap = await createImageBitmap(image);
-    const id = nextId++;
-    const request: AnalysisRequest = { id, op: 'average-luminance', bitmap, useWasm };
-
-    const response = await new Promise<AnalysisResponse>((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      try {
-        getWorker().postMessage(request, [bitmap]);
-      } catch (error) {
-        pending.delete(id);
-        reject(error);
-      }
-    });
-
-    if (response.kind === 'error') throw new Error(response.message);
-    if (response.kind !== 'average-luminance') {
-      throw new Error(`analysis worker: unexpected response kind "${response.kind}"`);
-    }
+    const response = await rpc.call('average-luminance', { bitmap, useWasm }, { transfer: [bitmap] });
     return { avgLuminance: response.avgLuminance, mode: 'worker' };
   }
 

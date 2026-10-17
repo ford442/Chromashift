@@ -459,7 +459,6 @@ export class WebGpuGraphExecutor {
       internalFormat: this.internalFormat,
       outputFormat: this.outputFormat,
       sampleCount: this.sampleCount,
-      layerCount: compiled.layerCount,
     };
     const emittedById = new Map<string, EmittedPass>(
       compiled.emitted.map((pass) => [pass.nodeId, pass]),

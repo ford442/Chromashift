@@ -9,7 +9,7 @@ export interface ExportPanelProps {
   videoExportProgress: number;
   videoExportSettings: VideoExportSettings;
   codecSupport: VideoCodecSupport;
-  onExportVideo: () => void;
+  onExportVideo: () => Promise<void>;
   onCancelVideoExport: () => void;
   onVideoExportDurationChange: (seconds: number) => void;
   onVideoExportFpsChange: (fps: number) => void;
@@ -215,7 +215,7 @@ export const ExportPanel = memo(function ExportPanel({
         <div className="grid grid-cols-2 gap-1">
           <button
             type="button"
-            onClick={onExportVideo}
+            onClick={() => void onExportVideo()}
             disabled={!canExport}
             className="text-[10px] px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50 border border-emerald-500/40"
           >

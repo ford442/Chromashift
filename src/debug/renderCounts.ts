@@ -19,6 +19,9 @@
  * Note: React StrictMode double-invokes render in dev, so dev counts are 2x
  * the commit count. Only the *zero vs. non-zero* distinction matters here.
  */
+
+import { publishDiagnostic } from '../engine/diagnostics';
+
 export interface RenderCountsApi {
   /** Raw per-component render tallies since the last `reset()`. */
   readonly counts: Record<string, number>;
@@ -26,10 +29,6 @@ export interface RenderCountsApi {
   snapshot(): Record<string, number>;
   /** Zero every counter (keeps the keys, so an idle window reads as all-zero). */
   reset(): void;
-}
-
-declare global {
-  var __renderCounts: RenderCountsApi | undefined;
 }
 
 function readFlag(): boolean {
@@ -60,9 +59,7 @@ export function isRenderCountDebugEnabled(): boolean {
   return enabled;
 }
 
-if (enabled && typeof window !== 'undefined') {
-  window.__renderCounts = renderCounts;
-}
+if (enabled) publishDiagnostic('__renderCounts', renderCounts);
 
 /**
  * Tally a render of `name` on `window.__renderCounts` when the debug flag is on.

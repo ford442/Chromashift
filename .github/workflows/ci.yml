@@ -32,7 +32,7 @@ jobs:
     name: Lint, typecheck, build
     runs-on: ubuntu-latest
     needs: [guard]
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,6 +43,34 @@ jobs:
       - run: npm run lint
       - run: npx tsc -b
       - run: npm run build
+
+  shaders:
+    name: Shader validation (naga, glslang)
+    runs-on: ubuntu-latest
+    needs: [guard]
+    timeout-minutes: 15
+    env:
+      NAGA_VERSION: 29.0.3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        id: naga-cache
+        with:
+          path: ~/.cargo/bin/naga
+          key: naga-cli-${{ runner.os }}-${{ env.NAGA_VERSION }}
+      - name: Install naga-cli
+        if: steps.naga-cache.outputs.cache-hit != 'true'
+        run: cargo install naga-cli --locked --version "$NAGA_VERSION"
+      - name: Install glslangValidator
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends glslang-tools
+      - run: npm ci
+      # Dumps every WGSL/GLSL variant the app can build (shaderBindings.test.ts)
+      # and validates each one: the WGSL validator Node cannot run otherwise.
+      - run: node scripts/validate-shaders.mjs --require-glslang
 
   unit:
     name: Unit tests

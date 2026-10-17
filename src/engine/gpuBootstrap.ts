@@ -7,6 +7,7 @@ import {
   type CanvasPresentation,
   type RendererCanvasOptions,
 } from './gpuOptions';
+import { publishDiagnostics } from './diagnostics';
 
 export type GpuErrorKind = 'bootstrap' | 'device-lost' | 'uncaptured';
 
@@ -372,13 +373,20 @@ export function buildWebGpuCapabilityReport(
   };
 }
 
+/**
+ * `requestAdapterInfo()` was removed from the spec in favour of `adapter.info`,
+ * so `@webgpu/types` no longer declares it — but Chromium before `info` has
+ * only this.
+ */
+type LegacyInfoAdapter = GPUAdapter & { requestAdapterInfo?: () => Promise<GPUAdapterInfo> };
+
 export async function readAdapterInfo(adapter: GPUAdapter): Promise<GPUAdapterInfo> {
-  if ('info' in adapter) {
-    const info = (adapter as GPUAdapter & { info?: GPUAdapterInfo }).info;
-    if (info) return info;
-  }
-  if (typeof adapter.requestAdapterInfo === 'function') {
-    return adapter.requestAdapterInfo();
+  // Typed as always present; absent on browsers that predate it.
+  const info = adapter.info as GPUAdapterInfo | undefined;
+  if (info) return info;
+  const legacy = adapter as LegacyInfoAdapter;
+  if (typeof legacy.requestAdapterInfo === 'function') {
+    return legacy.requestAdapterInfo();
   }
   return {
     vendor: 'unknown',
@@ -711,21 +719,8 @@ export function probeCanvasHdr(
   };
 }
 
-declare global {
-  interface Window {
-    /** Whether `hdr-extended` canvas presentation is available this session. */
-    canvasHdrAvailable?: boolean;
-    /** Why (or why not), for diagnostics and E2E. */
-    canvasHdrReason?: string;
-    /** Set while HDR presents over 8-bit internal targets (see `canvasHdrInternalNote`). */
-    canvasHdrNote?: string | null;
-  }
-}
-
 export function publishCanvasHdrBreadcrumbs(available: boolean, reason: string): void {
-  if (typeof window === 'undefined') return;
-  window.canvasHdrAvailable = available;
-  window.canvasHdrReason = reason;
+  publishDiagnostics({ canvasHdrAvailable: available, canvasHdrReason: reason });
 }
 
 export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<WebGpuSession> {

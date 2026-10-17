@@ -121,7 +121,8 @@ export function useWasmEngineLoader(
   setWasmAvailable: (available: boolean) => void,
 ): void {
   useEffect(() => {
-    loadWasmEngine().then((ok) => {
+    // Never rejects: a module that fails to load resolves false.
+    void loadWasmEngine().then((ok) => {
       setWasmAvailable(ok);
       if (ok) console.info('[Chromashift] C++ WASM engine loaded successfully.');
       else console.info('[Chromashift] C++ WASM engine unavailable — using TypeScript engine.');

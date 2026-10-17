@@ -32,8 +32,8 @@ import { waitForWebGL } from './helpers/renderer';
 
 declare global {
   interface Window {
+    /** Installed by this spec, not the app. */
     __longTasks?: Array<{ name: string; duration: number }>;
-    gpuChoreBackend?: string | null;
   }
 }
 

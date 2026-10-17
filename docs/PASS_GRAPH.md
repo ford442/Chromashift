@@ -178,7 +178,8 @@ The count is also a *session* parameter, not just a compile-time one:
 `assertLayerCount` / `clampLayerCount`, with the reducer keeping `angles`,
 `extensions` and `opacities` at exactly that length. `layerCount.test.ts` covers
 the state contract and checks the generated WebGPU bind-group layouts against
-the emitted shaders' binding numbers at 1, 2, 3, 5, 8 and 10 layers.
+the emitted shaders' binding numbers at 1, 2, 3, 5, 8 and 10 layers;
+`shaders/shaderBindings.test.ts` checks every binding's type at every count.
 
 And it is an *execution* parameter: under `?graph` the renderer compiles the
 frame's variant at `state.layers.length` (see
@@ -240,7 +241,7 @@ WebGpuGraphExecutor.encode(...)     →  one render pass per step
 |---|---|
 | `plan.ts` | `CompiledGraph` → encodable steps, with every input resolved to a producer. No WebGPU: this is where the fusion rule lives, so a unit test checks it rather than a screenshot. |
 | `pool.ts` | `AllocationPlan` → textures. Lazy, so a slot nothing writes costs nothing; ping-pong pairs for accumulators; one shared MSAA target for the band layers. |
-| `nodePipelines.ts` | One emitted pass → a shared `NodeProgram` (bind-group layout + pipeline) and one executor's `NodePipeline` over it (uniform block, bind groups). The layout is *derived* from `EmittedPass.textureBindings`, not hand-written per kind. |
+| `nodePipelines.ts` | One emitted pass → a shared `NodeProgram` (bind-group layout + pipeline) and one executor's `NodePipeline` over it (uniform block, bind groups). The layout is *reflected* from the pass's vertex and fragment WGSL (`shaders/bindingReflection.ts` → `layoutFromReflection`), not hand-written per kind and not inferred from a binding-order convention — so a new node kind, or a graph from the editor, gets the layout its shader declares. |
 | `programCache.ts` | The device's `NodeProgram`s, shared by every executor on it, keyed on the structural hash (see below). |
 | `uniforms.ts` | `RendererState` → uniform values, for every block and every encode path (see below). |
 | `WebGpuGraphExecutor.ts` | Walks the steps: writes uniforms, binds, encodes, flips the ping-pong. |
@@ -329,9 +330,15 @@ A rejection is a refusal like any other: `window.passGraphError` carries
 `invalid-pipeline:` and the device's message, and that variant of the shape
 draws the default graph instead (`window.passGraphExecuting` says `default`).
 
-Node cannot run the WGSL validator, so this is the only place such a bug can be
-caught *before* a user sees it. `passGraph.test.ts` additionally holds every
-sampling emitter to "no branch around `textureSample`".
+This is the last line of defence, not the only one. `npm run shaders:validate`
+(the `shaders` CI job) dumps every WGSL module the app can build — every preset
+at every layer count, with and without the temporal term, SDR and HDR, plus the
+inspect views and the chore kernels — and runs `naga` over each, and
+`glslangValidator` over the WebGL GLSL. `shaders/shaderBindings.test.ts` parses
+the same corpus with `wgsl_reflect` in Vitest and checks every pipeline's
+layout against the bindings its shaders declare. `passGraph.test.ts`
+additionally holds every sampling emitter to "no branch around
+`textureSample`".
 
 ### Pipelines are cached on the structural hash
 
@@ -551,8 +558,9 @@ pin. That makes the term a *variant* of the graph rather than part of it:
   carry across a motion-mode change, as they did on the hand encoder.
 
 The motion variant binds `0 = sampler, 1..n = layers, n+1 = previous, n+2 = field,
-n+3 = uniforms` — textures first, uniforms last, the convention every executor
-layout is derived from.
+n+3 = uniforms` — textures first, uniforms last. That order is the emitter's
+choice, not a contract the executor relies on: the layout is reflected from the
+emitted shader, so an emitter may lay its bindings out however it likes.
 
 `e2e/graph-executor.spec.ts` draws `gate` through the executor and compares it with
 the hand encoder's frame: on the frozen still scene the field is zero, gate removes

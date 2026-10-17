@@ -436,6 +436,10 @@ export function useTracerExport(
         link.click();
         URL.revokeObjectURL(href);
       }, 'image/png');
+    } catch (error) {
+      // The button's click handler drops this promise: report here or nowhere.
+      console.error('Tracer export failed:', error);
+      alert(error instanceof Error ? error.message : 'Tracer export failed.');
     } finally {
       actions.setExportingTracer(false);
     }

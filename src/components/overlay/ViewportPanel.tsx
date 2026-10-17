@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { ViewportPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
+import { readDiagnostic } from '../../engine/diagnostics';
 
 export const ViewportPanel = memo(function ViewportPanel({
   squareCanvas,
@@ -172,17 +173,17 @@ export const ViewportPanel = memo(function ViewportPanel({
       </button>
 
       {/* Probed once at WebGPU bootstrap; undefined on the WebGL backend. */}
-      {typeof window !== 'undefined' && window.canvasHdrAvailable !== undefined && (
+      {readDiagnostic('canvasHdrAvailable') !== undefined && (
         <button
           type="button"
           onClick={() => onCanvasHdrToggle(!canvasHdr)}
-          disabled={!window.canvasHdrAvailable && !canvasHdr}
+          disabled={!readDiagnostic('canvasHdrAvailable') && !canvasHdr}
           className={`w-full text-xs px-2 py-0.5 rounded transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
             canvasHdr
               ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
               : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
           }`}
-          title={`Extended-range canvas so additive highlights can exceed SDR white on an HDR display. Exports stay SDR. (${window.canvasHdrReason ?? ''})`}
+          title={`Extended-range canvas so additive highlights can exceed SDR white on an HDR display. Exports stay SDR. (${readDiagnostic('canvasHdrReason') ?? ''})`}
         >
           {canvasHdr ? '☀ Canvas HDR' : '☀ SDR canvas'}
         </button>

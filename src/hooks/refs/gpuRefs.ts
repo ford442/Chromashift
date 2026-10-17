@@ -3,8 +3,8 @@ import type { GpuRefs } from './types';
 
 export function useGpuRefs(): GpuRefs {
   const orchestratorRef = useRef<import('../../engine/RendererOrchestrator').RendererOrchestrator | null>(null);
-  const rendererRef = useRef<import('../../engine/RendererTypes').ChromashiftRenderer | null>(null);
-  const textureManagerRef = useRef<import('../../engine/RendererTypes').ChromashiftTextureManager | null>(null);
+  const rendererRef = useRef<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>(null);
+  const textureManagerRef = useRef<import('../../engine/types/RendererContracts').ChromashiftTextureManager | null>(null);
   const deviceRef = useRef<GPUDevice | null>(null);
   const webGpuSessionRef = useRef<import('../../engine/gpuBootstrap').WebGpuSession | null>(null);
   const maskTextureRef = useRef<GPUTexture | null>(null);

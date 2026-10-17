@@ -24,7 +24,7 @@ export function useReactiveInput(refs: ChromashiftRefs, store: ChromashiftStore)
     reactiveModRef.current = null;
     let cancelled = false;
 
-    (async () => {
+    void (async () => {
       await audioRef.current?.stop();
       audioRef.current = null;
       await midiRef.current?.stop();
@@ -45,7 +45,7 @@ export function useReactiveInput(refs: ChromashiftRefs, store: ChromashiftStore)
   // Microphone capture when audio reactive is on.
   useEffect(() => {
     if (!reactive.enabled || !reactive.audioEnabled) {
-      (async () => {
+      void (async () => {
         await audioRef.current?.stop();
         audioRef.current = null;
         dispatch({ type: 'reactive/patch', patch: { micActive: false } });

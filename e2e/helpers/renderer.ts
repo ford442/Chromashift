@@ -1,7 +1,8 @@
 import type { Page } from '@playwright/test';
+import { waitForDiagnostic } from './diagnostics';
 
 export async function waitForWebGL(page: Page, timeout = 30_000): Promise<void> {
-  await page.waitForFunction(() => window.usingWebGL === true, undefined, { timeout });
+  await waitForDiagnostic(page, 'usingWebGL', true, timeout);
 }
 
 export async function waitForWebGPU(page: Page, timeout = 45_000): Promise<void> {

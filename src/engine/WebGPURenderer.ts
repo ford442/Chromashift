@@ -38,6 +38,7 @@ import {
   internalColorFormatBytesPerPixel,
   selectInternalColorFormat,
 } from './gpuOptions';
+import { publishDiagnostic } from './diagnostics';
 
 /**
  * WebGPURenderer — one canvas's WebGPU frame, drawn by the pass-graph
@@ -343,7 +344,7 @@ export class WebGPURenderer {
       }
     }
     if (this.adoptedGraph === compiled) this.adoptedGraph = null;
-    if (typeof window !== 'undefined' && this.graphPrimary) window.passGraphError = message;
+    if (this.graphPrimary) publishDiagnostic('passGraphError', message);
   }
 
   /**
@@ -448,7 +449,7 @@ export class WebGPURenderer {
     if (hdrCanvas !== this.presentedHdr) {
       this.presentedHdr = hdrCanvas;
       if (typeof window !== 'undefined') {
-        window.canvasHdrNote = canvasHdrInternalNote(hdrCanvas, this.internalFormat);
+        publishDiagnostic('canvasHdrNote', canvasHdrInternalNote(hdrCanvas, this.internalFormat));
       }
     }
 

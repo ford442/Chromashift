@@ -5,7 +5,7 @@ import {
   type RendererOrchestratorDeps,
   type RendererSlot,
 } from './RendererOrchestrator';
-import type { ChromashiftRenderer } from './RendererTypes';
+import type { ChromashiftRenderer } from './types/RendererContracts';
 import { presetGraphSource } from './graph/variants';
 import type { GpuRuntimeError, WebGpuSession } from './gpuBootstrap';
 import type { TextureManager } from './TextureManager';

@@ -1,4 +1,4 @@
-import type { RendererBackend } from '../../engine/RendererTypes';
+import type { RendererBackend } from '../../engine/types/RendererContracts';
 import type { EngineKind } from '../../engine/WasmEngine';
 import type { GpuRuntimeError } from '../../engine/gpuBootstrap';
 import type { ChromashiftDispatch } from './types';

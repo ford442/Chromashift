@@ -1,3 +1,5 @@
+import { publishDiagnostic, publishDiagnostics, readDiagnostic } from '../diagnostics';
+
 export interface XrSupportSnapshot {
   /** `navigator.xr` is present. */
   apiPresent: boolean;
@@ -34,22 +36,13 @@ export async function detectXrSupport(): Promise<XrSupportSnapshot> {
 
 /** Automation breadcrumb — true when immersive-vr is supported. */
 export function publishXrBreadcrumbs(supported: boolean, reason: string | null = null): void {
-  if (typeof window === 'undefined') return;
-  const w = window as Window & {
-    xrAvailable?: boolean;
-    xrImmersiveReason?: string | null;
-    xrImmersive?: boolean;
-  };
-  w.xrAvailable = supported;
-  w.xrImmersiveReason = reason;
+  publishDiagnostics({ xrAvailable: supported, xrImmersiveReason: reason });
 }
 
 export function publishXrImmersiveBreadcrumb(active: boolean): void {
-  if (typeof window === 'undefined') return;
-  (window as Window & { xrImmersive?: boolean }).xrImmersive = active;
+  publishDiagnostic('xrImmersive', active);
 }
 
 export function isXrImmersiveActive(): boolean {
-  if (typeof window === 'undefined') return false;
-  return (window as Window & { xrImmersive?: boolean }).xrImmersive === true;
+  return readDiagnostic('xrImmersive') === true;
 }

@@ -63,7 +63,8 @@ export async function installGpuCanvasReadback(page: Page): Promise<void> {
 
     const devices = new WeakMap<GPUCanvasContext, GPUDevice>();
     let lost: string | null = null;
-    let drawn: { context: GPUCanvasContext; texture: GPUTexture } | null = null;
+    type Drawn = { context: GPUCanvasContext; texture: GPUTexture };
+    let drawn: Drawn | null = null;
     const waiting: Waiter[] = [];
 
     const proto = GPUCanvasContext.prototype;
@@ -89,7 +90,9 @@ export async function installGpuCanvasReadback(page: Page): Promise<void> {
       try {
         callback(time);
       } finally {
-        if (drawn && waiting.length > 0) copyOut(drawn.context, drawn.texture, waiting.splice(0));
+        // `callback` may have set `drawn`; flow analysis cannot see that.
+        const current = drawn as Drawn | null;
+        if (current && waiting.length > 0) copyOut(current.context, current.texture, waiting.splice(0));
         drawn = null;
       }
     });

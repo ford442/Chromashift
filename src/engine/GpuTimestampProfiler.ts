@@ -1,3 +1,13 @@
+import { publishDiagnostics } from './diagnostics';
+
+/**
+ * Dawn's encoder-level timestamp extension. Not core WebGPU — the spec only has
+ * pass-level `timestampWrites` — so `@webgpu/types` does not declare it.
+ */
+interface DawnTimestampEncoder extends GPUCommandEncoder {
+  writeTimestamp(querySet: GPUQuerySet, queryIndex: number): void;
+}
+
 /** Per-pass GPU timings derived from WebGPU timestamp queries (nanoseconds → ms). */
 export interface GpuPassTimings {
   layersMs: number;
@@ -157,7 +167,7 @@ export class GpuTimestampProfiler {
     // *after* the swap-chain texture was acquired — i.e. present a black
     // frame — so the profiler opts out up front instead.
     if (typeof GPUCommandEncoder !== 'undefined'
-        && typeof GPUCommandEncoder.prototype.writeTimestamp !== 'function') {
+        && typeof (GPUCommandEncoder.prototype as Partial<DawnTimestampEncoder>).writeTimestamp !== 'function') {
       return { profiler: null, reason: 'encoder timestamps unavailable; using CPU timing' };
     }
 
@@ -222,14 +232,19 @@ export class GpuTimestampProfiler {
     this.bandwidthInput = input;
   }
 
+  /** `create()` checked the extension exists before enabling the profiler. */
+  private mark(enc: GPUCommandEncoder, index: number): void {
+    (enc as DawnTimestampEncoder).writeTimestamp(this.querySet, index);
+  }
+
   beginFrame(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
-    enc.writeTimestamp(this.querySet, 0);
+    this.mark(enc, 0);
   }
 
   markLayersEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
-    enc.writeTimestamp(this.querySet, 1);
+    this.mark(enc, 1);
   }
 
   /**
@@ -240,7 +255,7 @@ export class GpuTimestampProfiler {
    */
   markMotionEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
-    enc.writeTimestamp(this.querySet, 2);
+    this.mark(enc, 2);
   }
 
   /**
@@ -250,22 +265,22 @@ export class GpuTimestampProfiler {
    */
   markMotionFlowEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
-    enc.writeTimestamp(this.querySet, 3);
+    this.mark(enc, 3);
   }
 
   markPersistenceEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
-    enc.writeTimestamp(this.querySet, 4);
+    this.mark(enc, 4);
   }
 
   markCompositorEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
-    enc.writeTimestamp(this.querySet, 5);
+    this.mark(enc, 5);
   }
 
   finishFrame(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
-    enc.writeTimestamp(this.querySet, 6);
+    this.mark(enc, 6);
     const slot = this.writeSlot;
     const offset = slot * SLOT_STRIDE_BYTES;
     enc.resolveQuerySet(
@@ -340,12 +355,8 @@ export class GpuTimestampProfiler {
 }
 
 export function publishGpuTimestampBreadcrumbs(available: boolean, reason?: string): void {
-  if (typeof window === 'undefined') return;
-  (window as Window & {
-    gpuTimestampAvailable?: boolean;
-    gpuTimestampReason?: string;
-  }).gpuTimestampAvailable = available;
-  (window as Window & { gpuTimestampReason?: string }).gpuTimestampReason = available
-    ? 'timestamp-query enabled'
-    : (reason ?? 'timestamp-query not supported');
+  publishDiagnostics({
+    gpuTimestampAvailable: available,
+    gpuTimestampReason: available ? 'timestamp-query enabled' : (reason ?? 'timestamp-query not supported'),
+  });
 }
