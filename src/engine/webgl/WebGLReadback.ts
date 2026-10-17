@@ -6,27 +6,16 @@ import type { WebGLCompositorPass } from './WebGLCompositorPass';
 import type { WebGLPersistencePass } from './WebGLPersistencePass';
 
 export class WebGLReadback {
-  static readonly PREVIEW_SIZE = 128;
   static readonly DIAGNOSTIC_SIZE = 64;
 
   private readonly gl: WebGL2RenderingContext;
-  private previewTarget: RenderTarget | null = null;
   private diagnosticTarget: RenderTarget | null = null;
-  private previewQueued: ((data: Uint8ClampedArray<ArrayBuffer>) => void) | null = null;
   private statsQueued: ((stats: CollisionStats) => void) | null = null;
-  private readonly previewPack: PixelPackRead;
   private readonly statsPack: PixelPackRead;
 
   constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
-    this.previewPack = new PixelPackRead(gl);
     this.statsPack = new PixelPackRead(gl);
-  }
-
-  requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean {
-    if (this.previewQueued) return false;
-    this.previewQueued = callback;
-    return true;
   }
 
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean {
@@ -41,17 +30,7 @@ export class WebGLReadback {
     persistence: WebGLPersistencePass,
     state: RendererState,
   ): void {
-    this.collectPreview();
     this.collectStats();
-    if (this.previewQueued && !this.previewPack.busy) {
-      this.previewTarget ??= createTarget(this.gl, WebGLReadback.PREVIEW_SIZE, WebGLReadback.PREVIEW_SIZE);
-      compositor.render(this.previewTarget, WebGLReadback.PREVIEW_SIZE, WebGLReadback.PREVIEW_SIZE, layerTextures, persistence, {
-        ...state,
-        viewportQuarterZoom: false,
-        viewportHalfOverlay: false,
-      });
-      this.previewPack.start(this.previewTarget, WebGLReadback.PREVIEW_SIZE, WebGLReadback.PREVIEW_SIZE);
-    }
     if (this.statsQueued && !this.statsPack.busy) {
       this.diagnosticTarget ??= createTarget(this.gl, WebGLReadback.DIAGNOSTIC_SIZE, WebGLReadback.DIAGNOSTIC_SIZE);
       compositor.render(this.diagnosticTarget, WebGLReadback.DIAGNOSTIC_SIZE, WebGLReadback.DIAGNOSTIC_SIZE, layerTextures, persistence, {
@@ -85,25 +64,11 @@ export class WebGLReadback {
   }
 
   destroy(): void {
-    this.previewPack.destroy();
     this.statsPack.destroy();
-    if (this.previewTarget) {
-      destroyTarget(this.gl, this.previewTarget);
-      this.previewTarget = null;
-    }
     if (this.diagnosticTarget) {
       destroyTarget(this.gl, this.diagnosticTarget);
       this.diagnosticTarget = null;
     }
-  }
-
-  private collectPreview(): void {
-    if (!this.previewQueued) return;
-    const pixels = this.previewPack.poll();
-    if (!pixels) return;
-    const callback = this.previewQueued;
-    this.previewQueued = null;
-    callback(pixels);
   }
 
   private collectStats(): void {

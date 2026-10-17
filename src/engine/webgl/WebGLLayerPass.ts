@@ -72,7 +72,8 @@ export class WebGLLayerPass {
     this.profileLut.update(state.colorProfileLut);
 
     // Still the canonical three targets: a session with fewer layers draws the
-    // first `layers.length` and leaves the rest cleared (see `drawnLayerCount`).
+    // first `layers.length` and leaves the rest cleared, and one with more
+    // draws three — WebGL has no executor yet (docs/PASS_GRAPH.md).
     const drawn = Math.min(this.layerTargets.length, state.layers.length);
     for (let layerIndex = 0; layerIndex < this.layerTargets.length; layerIndex += 1) {
       const target = this.layerTargets[layerIndex];

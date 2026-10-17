@@ -4,7 +4,7 @@ import type { ChromashiftRenderer } from './RendererTypes';
 import type { RendererState } from './types/RendererState';
 import { MAIN_VIEW_MODES } from './viewModes';
 
-/** Thumbnail edge length for side previews (matches GpuReadback.PREVIEW_SIZE). */
+/** Thumbnail edge length for side previews. */
 export const STATIONARY_PREVIEW_SIZE = 128;
 
 /** Persistence frames at preset angles before capturing the tracer thumbnail. */

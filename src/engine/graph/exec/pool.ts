@@ -75,8 +75,15 @@ export class GraphTexturePool {
 
   /**
    * Point the pool at a plan and a set of sizes. Re-configuring with the same
-   * plan and sizes is a no-op, so a per-frame call costs nothing; anything else
-   * drops every texture, because a pooled target's size *is* its identity.
+   * plan and sizes is a no-op, so a per-frame call costs nothing.
+   *
+   * New sizes drop every texture, because a pooled target's size *is* its
+   * identity. A new plan at the same sizes — the graph changed shape, say the
+   * temporal term was switched on — keeps every texture whose slot the new plan
+   * still has, along with the ping-pong phase and the ring heads. Accumulator
+   * and ring slots are named after their node (`persist:tracer-above`), so a
+   * tracer survives a topology change that leaves its node in place, exactly
+   * as the hand encoder's trails survive a motion-mode change.
    */
   configure(plan: AllocationPlan, sizes: PoolSizes, sampleCount: number): void {
     if (
@@ -88,7 +95,15 @@ export class GraphTexturePool {
       return;
     }
 
-    this.release();
+    const keep = this.plan !== null && this.sizes !== null && sameSizes(this.sizes, sizes);
+    if (keep) {
+      this.retainFor(plan, sampleCount);
+    } else {
+      this.release();
+      this.phase = 0;
+      this.ringFrame = 0;
+      this.ringFilled = 0;
+    }
     this.plan = plan;
     this.sizes = sizes;
     this.sampleCount = sampleCount;
@@ -96,9 +111,41 @@ export class GraphTexturePool {
     for (const slot of plan.slots) this.slotById.set(slot.id, slot);
     this.ringByNode.clear();
     for (const ring of plan.rings) this.ringByNode.set(ring.nodeId, ring);
-    this.phase = 0;
-    this.ringFrame = 0;
-    this.ringFilled = 0;
+  }
+
+  /** Drop the textures `plan` has no slot for (or a ring of another length). */
+  private retainFor(plan: AllocationPlan, sampleCount: number): void {
+    const slots = new Map(plan.slots.map((slot) => [slot.id, slot]));
+    const rings = new Map(plan.rings.map((ring) => [ring.id, ring]));
+    const prune = <T>(map: Map<string, T>, alive: (id: string) => boolean, destroy: (value: T) => void) => {
+      for (const [id, value] of map) {
+        if (alive(id)) continue;
+        destroy(value);
+        map.delete(id);
+      }
+    };
+    const sameSlot = (id: string) => {
+      const before = this.slotById.get(id);
+      const after = slots.get(id);
+      return before !== undefined && after !== undefined && before.resolution === after.resolution;
+    };
+    prune(this.transients, sameSlot, (texture) => texture.destroy());
+    prune(this.pairs, sameSlot, ([a, b]) => { a.destroy(); b.destroy(); });
+    prune(this.diagnostics, sameSlot, ([a, b]) => { a.destroy(); b.destroy(); });
+    prune(
+      this.rings,
+      (id) => {
+        const before = [...this.ringByNode.values()].find((ring) => ring.id === id);
+        const after = rings.get(id);
+        return before !== undefined && after !== undefined
+          && before.frames === after.frames && before.resolution === after.resolution;
+      },
+      (textures) => { for (const texture of textures) texture.destroy(); },
+    );
+    if (sampleCount !== this.sampleCount) {
+      this.msaa?.destroy();
+      this.msaa = null;
+    }
   }
 
   /**
@@ -191,7 +238,7 @@ export class GraphTexturePool {
    * The stamp-diagnostic attachment for a fused coincidence/decay pass. The
    * emitted shader always writes `@location(1)`, so the attachment is not
    * optional — but it ping-pongs with the tracer so a readback can name the
-   * frame it came from, exactly as `PersistencePass` does.
+   * frame it came from, exactly as the shipped persistence pass did.
    */
   diagnostic(nodeId: string): { read: GPUTexture; write: GPUTexture } {
     const slot = this.requireSlot(nodeId);
@@ -215,9 +262,7 @@ export class GraphTexturePool {
    * Every accumulator texture the pool owns — both sides of each ping-pong
    * pair and their diagnostic attachments.
    *
-   * `clearPersistence()` has to reach these: when the executor draws, they are
-   * the tracer state, and clearing only the hand encoder's `PersistencePass`
-   * would leave the next graph frame accumulating from the old trails. The
+   * `clearPersistence()` clears these: they are the tracer state. The
    * `history` rings are trails too, so they are cleared with them.
    */
   accumulatorTextures(): GPUTexture[] {

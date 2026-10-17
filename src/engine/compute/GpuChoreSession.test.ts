@@ -62,7 +62,7 @@ describe('GpuChoreSession', () => {
     const orchestrator = acquireGpuChoreSession(device);
     const persistence = acquireGpuChoreSession(device);
 
-    // Tearing down PersistencePass must not pull the backend out from under
+    // Tearing down one lane must not pull the backend out from under
     // analysis — that coupling is the thing ref-counting exists to prevent.
     persistence.release();
     expect(destroyed).not.toHaveBeenCalled();

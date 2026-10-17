@@ -12,9 +12,10 @@ import type {
 /**
  * `RendererState` → uniform values, once, for every encode path.
  *
- * The hand encoder, the graph executor, the stationary previews and the WebGL
- * passes each used to translate state into uniforms themselves, with their own
- * copy of every default. They now all call the functions below and pack the
+ * The hand encoder (since deleted), the graph executor, the stationary
+ * previews and the WebGL passes each used to translate state into uniforms
+ * themselves, with their own copy of every default. Every encode path now
+ * calls the functions below and pack the
  * result with the layout the shader's emitter declares (`packUniforms`), so a
  * renderer can neither pick a different fallback nor put a field in the wrong
  * slot.
@@ -90,6 +91,24 @@ export function tracerDurationMs(state: RendererState, role: TracerRole): number
 export interface PersistUniformContext {
   role: TracerRole;
   fps: number;
+  /**
+   * The accumulator's duration in renderer units, when it is not one of the
+   * session's two (an extra timescale reads its node's `durationMs` through
+   * {@link graphTracerDuration}). Overrides `role` for the decay factor.
+   */
+  durationMs?: number;
+}
+
+/**
+ * A tracer duration authored on a graph node, in the renderer's units.
+ *
+ * `buildRendererState` hands the renderers the panel's tracer durations scaled
+ * by `60 / fps`, so a duration written on a node in the panel's milliseconds
+ * gets the same scaling: `durationMs: 2000` on a third tracer lasts exactly as
+ * long as a 2000 ms panel setting would.
+ */
+export function graphTracerDuration(durationMs: number, fps: number): number {
+  return durationMs * (60 / fps);
 }
 
 /**
@@ -103,7 +122,10 @@ export function persistUniforms(
   context: PersistUniformContext,
 ): UniformValues<PersistUniformName> {
   return {
-    decayFactor: durationToDecay(tracerDurationMs(state, context.role), context.fps),
+    decayFactor: durationToDecay(
+      context.durationMs ?? tracerDurationMs(state, context.role),
+      context.fps,
+    ),
     colorThresh: rendererStateValue(state, 'tracerThreshold'),
     stampBoost: rendererStateValue(state, 'stampBoost'),
     tracerMode: rendererStateValue(state, 'tracerMode'),
@@ -116,10 +138,10 @@ export function persistUniforms(
 
 export interface CompositorUniformOptions {
   /**
-   * Run the quarter-zoom / half-overlay transforms in the shader. Only the
-   * WebGL compositor honours them; every WebGPU encode path writes 0.
+   * Opacities of the tracer timescales past the shipped two, in input order —
+   * a graph's own, from each extra accumulator's `intensity`.
    */
-  viewportTransforms?: boolean;
+  extraTracerOpacities?: readonly number[];
 }
 
 /** `CompositorUniforms` for a `layerCount`-layer compositor. */
@@ -128,10 +150,10 @@ export function compositorUniforms(
   layerCount: number,
   options: CompositorUniformOptions = {},
 ): UniformValues<CompositorUniformName> {
-  // The WebGL compositor applies the viewport transforms to the processed
-  // composite only, never over an alternate main view.
-  const transforms = options.viewportTransforms === true
-    && rendererStateValue(state, 'mainViewMode') === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
+  // The quarter-zoom / half-overlay transforms apply to the processed
+  // composite only, never over an alternate main view. Exports, previews and
+  // the quad cells switch them off in the state they render.
+  const transforms = rendererStateValue(state, 'mainViewMode') === MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
   const values: Record<string, number> = {
     tracerAboveOpacity: rendererStateValue(state, 'tracerAboveIntensity'),
     tracerBelowOpacity: rendererStateValue(state, 'tracerBelowIntensity'),
@@ -147,6 +169,7 @@ export function compositorUniforms(
     viewportHalfOverlay: flag(transforms && rendererStateValue(state, 'viewportHalfOverlay')),
   };
   for (let i = 0; i < layerCount; i += 1) values[`layerOpacity${i}`] = frameLayerOpacity(state, i);
+  options.extraTracerOpacities?.forEach((opacity, k) => { values[`tracerOpacity${k + 2}`] = opacity; });
   return values as UniformValues<CompositorUniformName>;
 }
 

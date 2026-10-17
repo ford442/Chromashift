@@ -1,22 +1,12 @@
 import {
-  vertexShaderSource,
   fullscreenVertexSource,
-  persistenceFragmentSource,
-  persistenceMotionFragmentSource,
-  persistenceCompositeFragmentSource,
-  persistenceCompositeMotionFragmentSource,
-  compositorFragmentSource,
-  tracerViewFragmentSource,
   displayTextureFragmentSource,
-  coincidenceHeatmapFragmentSource,
-  compareFragmentSource,
   persistDiagnosticBlitFragmentSource,
   stampDiagnosticViewFragmentSource,
   toHdrPresentWgsl,
 } from './shaders';
 import { DEFAULT_LAYER_COUNT, assertLayerCount } from './graph';
-import { BAND_LAYER_UNIFORMS } from './graph/templates/wgsl';
-import { createUniformData, type UniformData } from './graph/templates/uniformLayout';
+import { emitCoincidenceHeatmapWgsl, emitCompareWgsl, emitTracerViewWgsl } from './shaders/diagnostics';
 import type { CanvasPresentation } from './gpuOptions';
 
 /**
@@ -35,29 +25,26 @@ function textureEntries(first: number, count: number): GPUBindGroupLayoutEntry[]
   }));
 }
 
-export interface LayerPipeline {
-  pipeline          : GPURenderPipeline;
-  bindGroupLayout   : GPUBindGroupLayout;
-  rotationBuffer    : GPUBuffer;
-  fragUniformBuffer : GPUBuffer;
-  rotationData      : Float32Array;
-  /** `BAND_LAYER_UNIFORMS` storage, packed by `bandLayerUniforms()`. */
-  fragUniforms      : UniformData;
-}
-
+/**
+ * The pipelines that read a frame rather than draw one: the inspect views
+ * (`TracerInspectPass`) and the collision-stats blit (`GpuReadback`).
+ *
+ * The frame itself is the pass graph's — `graph/exec/nodePipelines.ts` builds
+ * those pipelines from the compiled graph. What used to live here alongside
+ * these (the hand encoder's layer, persistence and compositor pipelines) went
+ * with the hand encoder (docs/PASS_GRAPH.md, Phase 3).
+ */
 export class WebGPUPipelines {
   public device: GPUDevice;
   public format: GPUTextureFormat;
-  public internalFormat: GPUTextureFormat;
 
   /**
    * How many band-layer textures every layout below is sized for.
    *
-   * The persist, compositor and tracer-view passes each bind one texture per
+   * The tracer-view, heatmap and compare passes each bind one texture per
    * layer, so their binding numbers shift with the count — which is why they
-   * are generated here rather than written out. The emitted WGSL uses the same
-   * arithmetic (`emitCoincidenceDecayWgsl`, `emitCompositorWgsl`), so a layout
-   * and its shader can never disagree about where `prevTex` lives.
+   * are generated here rather than written out, with the same arithmetic
+   * their emitters use (`emitTracerViewWgsl(n)` and friends).
    */
   public readonly layerCount: number;
 
@@ -68,11 +55,6 @@ export class WebGPUPipelines {
    */
   public readonly presentation: CanvasPresentation;
 
-  public persistBGL: GPUBindGroupLayout;
-  public persistMotionBGL: GPUBindGroupLayout;
-  public persistCompositeBGL: GPUBindGroupLayout;
-  public persistCompositeMotionBGL: GPUBindGroupLayout;
-  public compositorBGL: GPUBindGroupLayout;
   public tracerViewBGL: GPUBindGroupLayout;
   public displayBGL: GPUBindGroupLayout;
   public heatmapBGL: GPUBindGroupLayout;
@@ -83,21 +65,14 @@ export class WebGPUPipelines {
   constructor(
     device: GPUDevice,
     format: GPUTextureFormat,
-    internalFormat: GPUTextureFormat,
     layerCount: number = DEFAULT_LAYER_COUNT,
     presentation: CanvasPresentation = 'sdr',
   ) {
     this.device = device;
     this.format = format;
-    this.internalFormat = internalFormat;
     this.layerCount = assertLayerCount(layerCount);
     this.presentation = presentation;
 
-    this.persistBGL = this.createPersistBGL();
-    this.persistMotionBGL = this.createPersistMotionBGL();
-    this.persistCompositeBGL = this.createPersistCompositeBGL();
-    this.persistCompositeMotionBGL = this.createPersistCompositeMotionBGL();
-    this.compositorBGL = this.createCompositorBGL();
     this.tracerViewBGL = this.createTracerViewBGL();
     this.displayBGL = this.createDisplayBGL();
     this.heatmapBGL = this.createHeatmapBGL();
@@ -109,77 +84,6 @@ export class WebGPUPipelines {
   /** A canvas-target fragment source, encoded for this pipeline set's presentation. */
   private canvasSource(source: string): string {
     return this.presentation === 'hdr-extended' ? toHdrPresentWgsl(source) : source;
-  }
-
-  public createPersistBGL(): GPUBindGroupLayout {
-    // 0 = sampler, 1..n = layers, n+1 = previous frame, n+2 = uniforms — the
-    // binding numbers `emitCoincidenceDecayWgsl(n)` emits.
-    const n = this.layerCount;
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
-        ...textureEntries(1, n + 1),
-        { binding: n + 2, visibility: fragmentStage(), buffer: { type: 'uniform' } },
-      ],
-    });
-  }
-
-  /**
-   * The fused persistence pass plus the motion field at binding 6.
-   *
-   * A second layout (rather than an optional entry) is what lets
-   * `motionMode: 'off'` bind the original layout and the original program,
-   * with no motion texture in the frame at all.
-   */
-  public createPersistMotionBGL(): GPUBindGroupLayout {
-    const n = this.layerCount;
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
-        ...textureEntries(1, n + 1),
-        { binding: n + 2, visibility: fragmentStage(), buffer: { type: 'uniform' } },
-        { binding: n + 3, visibility: fragmentStage(), texture: { sampleType: 'float' } },
-      ],
-    });
-  }
-
-  /** Lighter compute-fed composite pass — no sampler, exact-resolution `textureLoad` reads. */
-  public createPersistCompositeBGL(): GPUBindGroupLayout {
-
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-      ],
-    });
-  }
-
-  /** Compute-fed composite pass plus a sampled (quarter-resolution) motion field. */
-  public createPersistCompositeMotionBGL(): GPUBindGroupLayout {
-
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-      ],
-    });
-  }
-
-  public createCompositorBGL(): GPUBindGroupLayout {
-    // 0 = sampler, 1..n = layers, n+1 = tracer below, n+2 = tracer above,
-    // n+3 = uniforms — matching `emitCompositorWgsl(n)`.
-    const n = this.layerCount;
-    return this.device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: fragmentStage(), sampler: { type: 'filtering' } },
-        ...textureEntries(1, n + 2),
-        { binding: n + 3, visibility: fragmentStage(), buffer: { type: 'uniform' } },
-      ],
-    });
   }
 
   public createTracerViewBGL(): GPUBindGroupLayout {
@@ -251,98 +155,6 @@ export class WebGPUPipelines {
     });
   }
 
-  public createPersistPipeline(): GPURenderPipeline {
-
-    const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: persistenceFragmentSource }),
-        entryPoint : 'main',
-        targets    : [
-          { format: this.internalFormat },   // @location(0) persistence colour
-          { format: 'rgba8unorm' },          // @location(1) diagnostic stamp info
-        ],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
-
-  /** Motion-aware twin of {@link createPersistPipeline}. */
-  public createPersistMotionPipeline(): GPURenderPipeline {
-
-    const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistMotionBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: persistenceMotionFragmentSource }),
-        entryPoint : 'main',
-        targets    : [
-          { format: this.internalFormat },   // @location(0) persistence colour
-          { format: 'rgba8unorm' },          // @location(1) diagnostic stamp info
-        ],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
-
-  public createPersistCompositePipeline(): GPURenderPipeline {
-
-    const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistCompositeBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: persistenceCompositeFragmentSource }),
-        entryPoint : 'main',
-        targets    : [
-          { format: this.internalFormat },   // @location(0) persistence colour
-        ],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
-
-  /** Motion-aware twin of {@link createPersistCompositePipeline}. */
-  public createPersistCompositeMotionPipeline(): GPURenderPipeline {
-
-    const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.persistCompositeMotionBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: persistenceCompositeMotionFragmentSource }),
-        entryPoint : 'main',
-        targets    : [
-          { format: this.internalFormat },   // @location(0) persistence colour
-        ],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
-
-  public createCompositorPipeline(): GPURenderPipeline {
-
-    const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.compositorBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: this.canvasSource(compositorFragmentSource) }),
-        entryPoint : 'main',
-        targets    : [{ format: this.format }],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
-
   public createTracerViewPipeline(): GPURenderPipeline {
 
     const device = this.device;
@@ -350,7 +162,7 @@ export class WebGPUPipelines {
       layout  : device.createPipelineLayout({ bindGroupLayouts: [this.tracerViewBGL] }),
       vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module     : device.createShaderModule({ code: this.canvasSource(tracerViewFragmentSource) }),
+        module     : device.createShaderModule({ code: this.canvasSource(emitTracerViewWgsl(this.layerCount)) }),
         entryPoint : 'main',
         targets    : [{ format: this.format }],
       },
@@ -380,7 +192,7 @@ export class WebGPUPipelines {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.heatmapBGL] }),
       vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module: this.device.createShaderModule({ code: this.canvasSource(coincidenceHeatmapFragmentSource) }),
+        module: this.device.createShaderModule({ code: this.canvasSource(emitCoincidenceHeatmapWgsl(this.layerCount)) }),
         entryPoint: 'main',
         targets: [{ format: this.format }],
       },
@@ -395,7 +207,7 @@ export class WebGPUPipelines {
       layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.compareBGL] }),
       vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
       fragment: {
-        module: this.device.createShaderModule({ code: this.canvasSource(compareFragmentSource) }),
+        module: this.device.createShaderModule({ code: this.canvasSource(emitCompareWgsl(this.layerCount)) }),
         entryPoint: 'main',
         targets: [{ format: this.format }],
       },
@@ -433,72 +245,4 @@ export class WebGPUPipelines {
       multisample: { count: 1 },
     });
   }
-
-  public createLayerPipeline(fragmentSource: string, sampleCount = 1): LayerPipeline {
-
-    const device = this.device;
-
-    const bindGroupLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: { type: 'uniform' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'uint' } },
-        // 256×3 colour-profile LUT (textureLoad only — never sampled/filtered).
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
-      ],
-    });
-
-    const pipeline = device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-      vertex  : { module: device.createShaderModule({ code: vertexShaderSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: fragmentSource }),
-        entryPoint : 'main',
-        targets    : [{ format: this.internalFormat }],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: sampleCount },
-    });
-
-    const rotationBuffer = device.createBuffer({
-      size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const fragUniformBuffer = device.createBuffer({
-      size: BAND_LAYER_UNIFORMS.bytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    return {
-      pipeline,
-      bindGroupLayout,
-      rotationBuffer,
-      fragUniformBuffer,
-      rotationData: new Float32Array(4),
-      fragUniforms: createUniformData(BAND_LAYER_UNIFORMS),
-    };
-  }
-
-}
-
-/**
- * How many of the compiled band passes a frame draws. The hand-written encode
- * path still compiles the canonical three; a session with fewer layers draws
- * the first `layerCount` and {@link encodeLayerClear}s the rest, and one with
- * more draws all three until the pass-graph executor owns the band passes.
- */
-export function drawnLayerCount(pipelineCount: number, layerCount: number): number {
-  return Math.min(pipelineCount, layerCount);
-}
-
-/** Clears a band-layer target to transparent without drawing into it. */
-export function encodeLayerClear(enc: GPUCommandEncoder, texture: GPUTexture): void {
-  enc.beginRenderPass({
-    colorAttachments: [{
-      view: texture.createView(),
-      loadOp: 'clear',
-      storeOp: 'store',
-      clearValue: { r: 0, g: 0, b: 0, a: 0 },
-    }],
-  }).end();
 }

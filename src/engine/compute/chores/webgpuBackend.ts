@@ -26,7 +26,7 @@ import {
   MOTION_FLOW_REFINE_COMPUTE_SHADER,
 } from './kernels';
 import { EMPTY_MOTION_FIELD_STATS, motionFieldSize, type MotionFieldStats } from './motionKernel';
-import { layerTextureEntries, sameLayerTextures, type LayerTextures } from '../../BindGroupCache';
+import { layerTextureEntries, sameLayerTextures, type LayerTextures } from '../../bindGroups';
 import { CANONICAL_LAYER_COUNT } from '../../graph/layerSpecs';
 import { emitCoincidenceComputeWgsl } from '../../graph/templates/wgsl';
 import type {
@@ -183,8 +183,9 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   private cachedCoincidenceWidth = 0;
   private cachedCoincidenceHeight = 0;
   /**
-   * Two slots so a caller ping-ponging its output texture (as `PersistencePass`
-   * does for its diagnostic texture) still gets a cache hit every frame
+   * Two slots so a caller ping-ponging its output texture (as the hand
+   * encoder's persistence pass did for its diagnostic texture) still gets a
+   * cache hit every frame
    * instead of a fresh bind group — and the 5 texture views inside it —
    * every single call. `cacheSlot` in `encodeCoincidenceInto()` selects which.
    */
@@ -250,9 +251,11 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
 
   /**
    * One-shot coincidence job for the async kit facade (sibling apps, tests).
-   * Chromashift's own per-frame render loop calls `encodeCoincidence()`
-   * directly instead, to stay inside the same `GPUCommandEncoder` as the
-   * rest of the frame rather than paying for an extra queue submission.
+   *
+   * Chromashift itself no longer runs this kernel: the pass graph's
+   * accumulators run the fused fragment stamp (docs/PASS_GRAPH.md § *The
+   * compute-fed stamp*). It stays because the facade is the sibling apps'
+   * module boundary, and removing an op is a breaking change to it.
    */
   private async runCoincidence(job: CoincidenceJob): Promise<GpuCoincidenceOutput | null> {
     const layers = job.layers;
@@ -274,11 +277,10 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   /**
    * Encode the coincidence compute pass into a caller-owned encoder and
    * caller-owned output textures — no submit, no internal texture caching.
-   * This is what `PersistencePass` calls directly: it already owns a
-   * ping-ponged diagnostic texture pair and a reused stamp texture, and it
-   * wants the compute dispatch inside the same command buffer as the
-   * composite/decay draws that immediately follow it, not a separate queue
-   * submission.
+   * For a caller that owns a ping-ponged diagnostic texture pair and a reused
+   * stamp texture and wants the dispatch inside the same command buffer as
+   * the draws that follow it (Chromashift's hand encoder was one), not a
+   * separate queue submission.
    *
    * `cacheSlot` picks which of the two bind-group cache entries to check —
    * pass the same ping-pong index the caller uses for its own output

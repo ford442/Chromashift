@@ -6,7 +6,6 @@ import {
   buildDefaultGraph,
   compileGraph,
   graphCompileCount,
-  passGraphRequested,
   resetGraphCompileCache,
   setStoredPassGraphPreference,
 } from './index';
@@ -38,38 +37,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('?graph=1 gate', () => {
-  it('is off by default', () => {
+describe('?graph gate', () => {
+  it('draws the default graph with no ?graph and no preference', () => {
     installBrowserGlobals('');
-    expect(passGraphRequested()).toBe(false);
+    expect(passGraphSelection()).toEqual({ name: 'default' });
   });
 
-  it.each(['?graph=1', '?graph', '?renderer=webgl&graph=1'])('is on for %s', (search) => {
+  it.each(['?graph=0', '?graph=false'])('reads the retired opt-out %s as the default graph', (search) => {
+    // `?graph=0` selected the hand encoder for the release it outlived the
+    // flip; with the hand encoder gone it draws the default graph, and says so.
     installBrowserGlobals(search);
-    expect(passGraphRequested()).toBe(true);
-  });
-
-  it.each(['?graph=0', '?graph=false'])('stays off for %s', (search) => {
-    installBrowserGlobals(search);
-    expect(passGraphRequested()).toBe(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(passGraphSelection()).toEqual({ name: 'default' });
+    warn.mockRestore();
   });
 
   it('falls back to the stored preference', () => {
     const win = installBrowserGlobals('');
-    setStoredPassGraphPreference(true);
-    expect(win.localStorage.getItem(STORAGE_KEY)).toBe('1');
-    expect(passGraphRequested()).toBe(true);
+    setStoredPassGraphPreference('trails3');
+    expect(win.localStorage.getItem(STORAGE_KEY)).toBe('trails3');
+    expect(passGraphSelection()).toEqual({ name: 'trails3' });
 
-    setStoredPassGraphPreference(false);
-    expect(passGraphRequested()).toBe(false);
+    setStoredPassGraphPreference(null);
+    expect(win.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(passGraphSelection()).toEqual({ name: 'default' });
   });
 
-  it('survives an unusable localStorage', () => {
+  it('lets the URL override the stored preference', () => {
+    installBrowserGlobals('?graph=blur');
+    setStoredPassGraphPreference('trails3');
+    expect(passGraphSelection()).toEqual({ name: 'blur' });
+  });
+
+  it('reads an unusable localStorage as no preference', () => {
     vi.stubGlobal('window', {
       location: { search: '' },
       get localStorage(): Storage { throw new Error('blocked'); },
     });
-    expect(passGraphRequested()).toBe(false);
+    expect(passGraphSelection()).toEqual({ name: 'default' });
   });
 });
 
@@ -81,12 +86,14 @@ describe('named graph shapes', () => {
     ['?graph=warp', 'warp'],
     ['?graph=smear', 'smear'],
     ['?graph=feedback', 'feedback'],
+    ['?graph=trails3', 'trails3'],
     // An unrecognised name is the default graph, not a refusal: the gate's job
     // is to pick a shape, and "on with something unknown" means "on".
     ['?graph=nonsense', 'default'],
+    ['', 'default'],
   ])('%s selects the %s graph', (search, name) => {
     installBrowserGlobals(search);
-    expect(passGraphSelection()).toEqual({ enabled: true, name });
+    expect(passGraphSelection()).toEqual({ name });
   });
 
   it('compiles the selected shape and names it', () => {
@@ -132,12 +139,12 @@ describe('named graph shapes', () => {
 });
 
 describe('breadcrumbs', () => {
-  it('reports inactive without compiling anything', () => {
+  it('compiles the default graph with no ?graph at all', () => {
     const win = installBrowserGlobals('');
-    expect(activatePassGraph('webgpu')).toBeNull();
-    expect(win.passGraphActive).toBe(false);
-    expect(win.passGraphPasses).toEqual([]);
-    expect(graphCompileCount()).toBe(0);
+    expect(activatePassGraph('webgpu')).not.toBeNull();
+    expect(win.passGraphActive).toBe(true);
+    expect(win.passGraphName).toBe('default');
+    expect(graphCompileCount()).toBe(1);
   });
 
   it('publishes the compiled pass order and pool slots when gated on', () => {

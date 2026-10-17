@@ -25,10 +25,10 @@ export interface MotionFieldEncodeOptions {
  * Per-frame motion field for the WebGPU renderer.
  *
  * A thin owner around the `motion-field` chore's WebGPU lane. Unlike
- * `coincidence` (still encoded into the caller's own frame encoder), the
- * dispatches here get their own `GPUCommandEncoder` and an immediate
- * `queue.submit()` — see {@link MotionFieldPass.encodeAndSubmit} for why. The
- * resulting field stays a `GPUTexture` that `PersistencePass` binds directly.
+ * the hand encoder's old per-frame `coincidence` dispatch, the dispatches
+ * here get their own `GPUCommandEncoder` and an immediate `queue.submit()` —
+ * see {@link MotionFieldPass.encodeAndSubmit} for why. The resulting field
+ * stays a `GPUTexture` that the graph's accumulators bind directly.
  *
  * The only thing that ever crosses back to the CPU is the summary statistic
  * behind `window.motionFieldEnergy`, mapped at {@link STATS_INTERVAL_MS}
@@ -38,8 +38,8 @@ export interface MotionFieldEncodeOptions {
  * oversize source), `useLiveSource` runs the chore's CPU lane instead and
  * hands the result to {@link MotionFieldPass.setCpuField}, which uploads it
  * into an `rgba16float` texture with the same channel layout the GPU lane
- * writes. `encodeAndSubmit` returns that texture on decline, so
- * `PersistencePass` needs no separate variant for it.
+ * writes. `encodeAndSubmit` returns that texture on decline, so the graph
+ * needs no separate variant for it.
  */
 export class MotionFieldPass {
   private readonly device: GPUDevice;
@@ -126,8 +126,8 @@ export class MotionFieldPass {
    * passes, the entire visible frame went black even though only the motion
    * lane was actually broken. Recording and submitting here instead means a
    * failure can only ever cost this frame's motion update — `fieldTexture`
-   * stays whatever it was (or `null`), `PersistencePass` takes its existing
-   * no-motion path, and the colour passes the caller records afterward are
+   * stays whatever it was (or `null`), the frame draws the graph's no-motion
+   * variant, and the colour passes the caller records afterward are
    * unaffected. The `try`/`catch` covers a synchronous throw for the same
    * reason: nothing about a declined motion lane may propagate into the
    * caller's encode path.

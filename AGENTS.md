@@ -87,14 +87,16 @@ src/
     │   ├── capabilities.ts            # Which node kinds each backend can emit (WebGL: no warp/blur)
     │   ├── defaultGraph.ts            # Today's pipeline as a graph, for any layer count
     │   ├── layerSpecs.ts              # The band table the band-layer templates read
-    │   ├── gate.ts                    # ?graph=1|blur|warp|smear|feedback + window.passGraph* breadcrumbs
+    │   ├── variants.ts                # GraphVariant / PassGraphSource: the graph built per frame (withMotionTerm)
+    │   ├── gate.ts                    # ?graph=blur|warp|smear|feedback|trails3 (the shape) + window.passGraph* breadcrumbs
     │   ├── altGraphs.ts               # Named graph shapes the gate can select (blur, warp)
     │   ├── exec/                      # Phase 2: walks compiled.passes and encodes the frame
     │   │   ├── plan.ts                # CompiledGraph → encodable steps (no WebGPU; owns coincidence fusion)
     │   │   ├── pool.ts                # AllocationPlan → textures, lazily; ping-pong + MSAA targets
-    │   │   ├── nodePipelines.ts       # One emitted pass → bind-group layout, pipeline, uniform block
+    │   │   ├── nodePipelines.ts       # One emitted pass → shared program (layout + pipeline) + per-executor uniforms
+    │   │   ├── programCache.ts        # Programs per device, shared by every slot's executor (keyed on the structural hash)
     │   │   ├── uniforms.ts            # RendererState → uniform values, for every encode path and both backends
-    │   │   └── WebGpuGraphExecutor.ts # The WebGPU encode path behind ?graph=1
+    │   │   └── WebGpuGraphExecutor.ts # The WebGPU encode path — every frame, every view, every slot
     │   ├── templates/                 # WGSL + GLSL emitter per node kind; uniformLayout.ts = typed uniform blocks
     │   └── __golden__/                # Pre-refactor shader sources (pixel-identity baseline)
     ├── shaders/              # WGSL modules assembled in TS (thin assembler)
@@ -124,12 +126,12 @@ src/
     │   │   WebGLCompositorPass.ts, WebGLDebugPasses.ts, WebGLReadback.ts
     │   ├── resources.ts, programUtils.ts
     │   └── shaders/          # GLSL sources — layers/persistence/compositor emitted from graph/templates/glsl.ts
-    ├── WebGPURenderer.ts     # 5-pass GPU renderer orchestration (delegates to the below)
+    ├── WebGPURenderer.ts     # One canvas's WebGPU frame: picks the graph variant, the executor draws it
     ├── motionModes.ts         # MotionMode enum + defaults for the temporal tracer term
     ├── MotionFieldPass.ts     # WebGPU motion field (borrows the shared chore backend)
     ├── liveMotionField.ts     # CPU-lane motion sampler for the WebGL diagnostic backend
-    ├── WebGPUPipelines.ts, BindGroupCache.ts, PersistencePass.ts, CompositorPass.ts,
-    │   TracerInspectPass.ts, GpuReadback.ts, GpuTimestampProfiler.ts  # pass/readback + WebGPU perf HUD
+    ├── WebGPUPipelines.ts, TracerInspectPass.ts, GpuReadback.ts  # inspect views + readback (they read the graph's outputs)
+    ├── bindGroups.ts, GpuTimestampProfiler.ts  # identity-keyed bind-group slots; WebGPU perf HUD
     ├── telemetryStore.ts     # useSyncExternalStore telemetry (angles, CPU/GPU timing, collision stats) — outside React state
     ├── videoExport/          # Offline frame-by-frame WebM/MP4 export (WebCodecs + mediabunny, MediaRecorder fallback) — see docs/VIDEO_EXPORT.md
     ├── color/               # Named colour profiles — schema, validation, LUT baking
@@ -217,9 +219,9 @@ WebGL-only debug helpers are in the Renderer panel:
 
 The WGSL and GLSL sources for the band layers, the coincidence/decay (persistence) pass and the compositor are **emitted** from the node templates in `src/engine/graph/templates/` rather than hand-written — one template plus a band table (`graph/layerSpecs.ts`) instead of three copies per backend. `src/engine/graph/shaderParity.test.ts` pins the emitted output against `graph/__golden__/`, the pre-refactor sources, so a template change that alters the rendered result fails loudly on both backends.
 
-On WebGPU the graph is also **executed**: `?graph=1` hands the compiled graph to `WebGpuGraphExecutor`, which walks `compiled.passes` and binds the allocator's pool instead of running the hand-written five-pass encode in `WebGPURenderer`. The default graph is that topology, and its frame is byte-identical to the hand encoder's on a GPU (±1 on a few pixels against the compute-fed stamp — see PASS_GRAPH.md § *Pixel parity*); `?graph=blur` and `?graph=warp` are different shapes that draw with no renderer edit, and the JSON starters `?graph=smear` (a `history` trail pushed along the motion field by `displace`) and `?graph=feedback` use node kinds the hand encoder has no equivalent for. The executor draws only once the device has validated its pipelines, so an emitted shader the device rejects is an `invalid-pipeline` refusal, not a black canvas. The WebGL diagnostic backend compiles only. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
+On WebGPU the graph is also **executed** — it is the renderer: `WebGpuGraphExecutor` walks `compiled.passes` and binds the allocator's pool for every frame, view, export, stationary preview and compare slot. The hand-written five-pass encoder (`PersistencePass`, `CompositorPass`, `BindGroupCache`) is gone; `?graph=` only selects a shape (`?graph=0`, its one-release escape hatch, now draws the default graph). The default graph is that topology, and it still draws the hand encoder's frames, which are pinned in `e2e/__golden__/` (the compute-fed stamp's ±1 was accepted — see PASS_GRAPH.md § *Pixel parity* and § *The compute-fed stamp*); `?graph=blur` and `?graph=warp` are different shapes that draw with no renderer edit, and the JSON starters `?graph=smear` (a `history` trail pushed along the motion field by `displace`) and `?graph=feedback` use node kinds the hand encoder had no equivalent for; `?graph=trails3` adds a third tracer timescale, which its two-tracer compositor could not draw. The renderer adopts a graph *source* and builds the variant each frame needs — the temporal term (`motionMode`) is a `motion` node present only while a mode is on, and on an HDR canvas the `output` presents `hdr-extended` — with each variant compiled, and its pipelines validated, once. A variant draws only once the device has validated its pipelines — until then the last validated variant keeps the canvas — so an emitted shader the device rejects is an `invalid-pipeline` refusal, and that variant draws the default graph, not a black canvas. Every orchestrator slot (the main canvas, `compare-b`, the quad cells) owns an executor of its own, sharing the device's compiled programs (`graph/exec/programCache.ts`), so a compare layout compiles nothing the main canvas has not; `window.passGraphSlotsExecuting` reports each slot. The WebGL diagnostic backend compiles only. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
 
-For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. The tracer-decay constants follow the same rule: the `DECAY` table in `src/engine/math/decay.ts` (from `shared/decay.json`) via `DECAY_WGSL` / `DECAY_GLSL` in `decayLiterals.ts`, guarded by `src/engine/shaders/decayTable.test.ts` — see [docs/wasm-engine.md](docs/wasm-engine.md#shared-decay-table-shareddecayjson). Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
+For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into the node templates (`src/engine/graph/templates/`). Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. The tracer-decay constants follow the same rule: the `DECAY` table in `src/engine/math/decay.ts` (from `shared/decay.json`) via `DECAY_WGSL` / `DECAY_GLSL` in `decayLiterals.ts`, guarded by `src/engine/shaders/decayTable.test.ts` — see [docs/wasm-engine.md](docs/wasm-engine.md#shared-decay-table-shareddecayjson). Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
 
 Uniforms follow the same single-source rule. A uniform block is declared as a typed layout next to its emitter (`graph/templates/uniformLayout.ts`) and its WGSL `struct` is emitted from that layout, so never write a block by index — pack it by field name (`packUniforms`). The values come from `graph/exec/uniforms.ts`, which every encode path on both backends calls, and an absent optional `RendererState` field means `RENDERER_STATE_DEFAULTS` in `state/defaults.ts`, read through `rendererStateValue()`. Never spell a fallback at the read (`state.stampBoost ?? 1.8`): `graph/exec/uniforms.test.ts` scans `src/engine` for one. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md#one-state--uniform-mapping).
 
@@ -228,14 +230,14 @@ Uniforms follow the same single-source rule. A uniform block is declared as a ty
 1. `fetchCorpusManifest('./images.json')` (`src/engine/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
 2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
-   - one independent `GPURenderPipeline` per colour layer (each can use 4× MSAA) — the three
-     canonical passes today, and `layers.count` once the graph executor owns the band passes.
-     A session with fewer layers draws the first `layers.count` and clears the rest
-     (`drawnLayerCount` / `encodeLayerClear` in `WebGPUPipelines.ts`; `WebGLLayerPass` mirrors it).
-   - 1 persistence pipeline that reads the layer textures + previous tracer texture. Its
-     bind-group layout is generated from the layer count, so the binding `prevTex` lives at
-     moves with it (see `docs/PASS_GRAPH.md`, "Layer counts").
-   - 1 compositor pipeline that blends tracers + live layers and writes to the swap-chain.
+   a `WebGpuGraphExecutor`, which builds — from the compiled graph, cached per device on its
+   structural hash — one band-layer pipeline per colour layer (each can use 4× MSAA), exactly
+   `layers.count` of them (1–10); one fused coincidence+decay pipeline per tracer timescale,
+   reading the layer textures and its previous frame (bind-group layouts derived from the
+   emitted shader, so the binding `prevTex` lives at moves with the count — see
+   `docs/PASS_GRAPH.md`, "Layer counts"); and a compositor pipeline that blends tracers + live
+   layers and writes to the swap-chain. The WebGL backend still compiles the canonical three
+   band passes and draws the first `layers.count` (`WebGLLayerPass`).
 4. Each frame, `renderer.render(state)` receives the shared `RendererState`. WebGPU encodes all passes into a single command buffer; WebGL runs equivalent GLSL/FBO passes for debugging/reference output.
 
 ### Named Colour Profiles
@@ -326,6 +328,8 @@ Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser
 
 Both are disabled while viewing the full-res tracer or any non-composite view mode.
 
+On WebGPU every view mode but the composite is drawn by `TracerInspectPass` from whichever encoder drew the frame — by default from the graph's named outputs, at the frame's layer count (docs/PASS_GRAPH.md § *Named outputs*). The live frame draws `mainViewMode`; an export draws the processed composite (`composite`), the full-res tracer (`tracers`) or the session's view with its tracers zeroed (`layers`).
+
 ### Preview strip & view hierarchy
 
 The floating **Original / Separated / Tracer** thumbnails (`PreviewStrip.tsx`) are
@@ -335,7 +339,7 @@ The floating **Original / Separated / Tracer** thumbnails (`PreviewStrip.tsx`) a
 | Preview | Objective | Implementation |
 |---------|-----------|----------------|
 | **Original** | Raw decoded source | 2D `drawImage` (`previewOriginalRef`) |
-| **Separated** | Colour-band mapping, no tracers | `StationaryPreviewRenderer` / `useStationaryPreviews` |
+| **Separated** | Colour-band mapping, no tracers | `StationaryPreviewRenderer` (a pass-graph executor of its own, at the session's layer count) / `useStationaryPreviews` |
 | **Tracer** | Coincidence map at preset angles | Isolated persistence warmup + tracers pass (`previewTracerRef`) |
 | **Main canvas** | Live rotating composite + tracers | `mainCanvasRef` swapchain render |
 
@@ -354,9 +358,9 @@ Optional WebGPU compute shaders accelerate load-time analysis for large (4K–8K
 2. **Classification pass** — writes an `r8uint` band-index mask texture (thresholds in `chores/kernels.ts`, matching `chromashift_engine.cpp` / `bandClassification.ts`).
 3. **Layer binding** — mask is fed into existing layer pipelines via `setClassificationMaskTexture()` when `colorMode === 0` (Original CR0P fixed).
 
-**One backend per device.** All three ops share a single `WebGpuChoreBackend` per `GPUDevice`, handed out as ref-counted leases by `src/engine/compute/GpuChoreSession.ts`. `GpuImageAnalysis`, `PersistencePass` (coincidence), and `MotionFieldPass` each *borrow* it rather than constructing one, so the compute pipelines, staging buffers, and bind-group caches exist once instead of three times; `RendererOrchestrator` holds a session-lifetime lease, and the backend is destroyed only when the last holder releases. See `docs/gpu-bootstrap.md` § *gpu-chores*.
+**One backend per device.** All three ops share a single `WebGpuChoreBackend` per `GPUDevice`, handed out as ref-counted leases by `src/engine/compute/GpuChoreSession.ts`. `GpuImageAnalysis` and `MotionFieldPass` each *borrow* it rather than constructing one, so the compute pipelines, staging buffers, and bind-group caches exist once per device; `RendererOrchestrator` holds a session-lifetime lease, and the backend is destroyed only when the last holder releases. See `docs/gpu-bootstrap.md` § *gpu-chores*.
 
-The facade dispatches three ops: `image-analysis` (above), `coincidence` (the tracer overlap stamp — GPU-only, the CPU lanes decline it outright), and `motion-field` (the temporal tracer term — see **Persistence / Tracer System** below, and `docs/LIVE_SOURCE.md`). `motion-field` is the one op with a real implementation on *both* lane families: the `webgpu` lane keeps the field a `GPUTexture`, and the `wasm`/`ts` lanes return a small `Float32Array` so the WebGL diagnostic backend and headless CI exercise the same maths (`chores/motionKernel.ts` is the portable reference the WGSL kernel and the C++ `computeMotionFlow` both mirror). It is also the one op with a second, opt-in stage: `motionMode: 'direction'` sets `flow` on the job and the lane solves coarse-to-fine Lucas–Kanade on top of the frame difference. The CPU lanes run that solve in `motion.worker.ts` rather than on the animation thread — lane selection and the breadcrumbs stay on the main thread, only the arithmetic moves.
+The facade dispatches three ops: `image-analysis` (above), `coincidence` (the tracer overlap stamp — GPU-only, the CPU lanes decline it outright; kept for the sibling apps, since Chromashift's own frame no longer runs it — docs/PASS_GRAPH.md § *The compute-fed stamp*), and `motion-field` (the temporal tracer term — see **Persistence / Tracer System** below, and `docs/LIVE_SOURCE.md`). `motion-field` is the one op with a real implementation on *both* lane families: the `webgpu` lane keeps the field a `GPUTexture`, and the `wasm`/`ts` lanes return a small `Float32Array` so the WebGL diagnostic backend and headless CI exercise the same maths (`chores/motionKernel.ts` is the portable reference the WGSL kernel and the C++ `computeMotionFlow` both mirror). It is also the one op with a second, opt-in stage: `motionMode: 'direction'` sets `flow` on the job and the lane solves coarse-to-fine Lucas–Kanade on top of the frame difference. The CPU lanes run that solve in `motion.worker.ts` rather than on the animation thread — lane selection and the breadcrumbs stay on the main thread, only the arithmetic moves.
 
 **Selection order** — encoded once in `CHORE_BACKEND_ORDER` and walked by `runJob({ op: 'image-analysis', prefer: 'auto' })`; `useClassificationMask.ts` calls the facade rather than branching itself:
 
@@ -407,7 +411,7 @@ Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, C
 3. **Motion flow** — the two Lucas–Kanade dispatches, `motionMode: 'direction'` only. Split from **Motion** so switching into `direction` reads as new work rather than as the frame-difference pass regressing.
 4. **Persistence** — dual tracer ping-pong + diagnostic texture.
 5. **Compositor** — final blend or alternate main-view pass (tracer inspect, layer isolation, etc.).
-6. **Readback** — preview thumbnail + collision-stats blit/copy when queued.
+6. **Readback** — collision-stats blit/copy when queued.
 
 Timestamps resolve into a `QUERY_RESOLVE | COPY_SRC` buffer, then `copyBufferToBuffer` into a `MAP_READ | COPY_DST` readback (`MAP_READ` may only pair with `COPY_DST`). Results appear one frame later. If query/buffer allocation fails or the timestamp period is 0, GPU timing is skipped and the HUD uses CPU `performance.now()` — renderer init must not fail. The Diagnostics panel **Perf HUD** toggle (`output.performanceHudEnabled`) gates all query writes and resolves — when off, there is zero timestamp cost. The HUD shows CPU ms, per-pass GPU ms, an approximate bandwidth model, a 120-frame sparkline, budget warnings (`1000 / fps` ms), and optional auto-degrade (disable MSAA, tracer scale ×0.75, live preview readback off).
 
@@ -481,7 +485,10 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
   with `off` the renderers bind the original program, the original bind-group layout, and no
   motion texture at all, on both backends. `graph/__golden__/` pins the non-motion emission and
   `shaders/motionPersistence.test.ts` pins the other half — that the variant is opt-in and
-  leaves the default emission byte-identical.
+  leaves the default emission byte-identical. In the pass graph the term is a `motion` node
+  (`[stamp, motion-field source] → decay`), fused into the accumulators; the renderer builds the
+  graph per frame with the node only while a mode is selected and a field exists, so `off`
+  compiles the golden graph (docs/PASS_GRAPH.md § *The temporal term*).
 
 ### State & Animation Loop (`App.tsx`)
 

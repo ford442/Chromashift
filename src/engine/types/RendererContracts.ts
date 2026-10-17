@@ -1,5 +1,16 @@
-import type { GraphPresetName } from '../graph/altGraphs';
-import type { CompiledGraph } from '../graph/types';
+import type { PassGraphSource } from '../graph/variants';
+
+/** Which orchestrator slot a renderer draws, for the pass-graph breadcrumbs. */
+export interface PassGraphSlotOptions {
+  /** The slot id, keying `window.passGraphSlotsExecuting`. */
+  slot: string;
+  /**
+   * Whether this is the primary canvas. Only it publishes the session-wide
+   * `window.passGraph*` breadcrumbs; a compare slot drawing preset B with the
+   * temporal term on must not describe the main canvas's graph.
+   */
+  primary: boolean;
+}
 import type { CollisionStats, RendererState } from './RendererState';
 import type { ImageEntry } from '../TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
@@ -114,22 +125,21 @@ export interface ChromashiftRenderer {
    */
   wantsCpuMotionField?(): boolean;
   /**
-   * Adopt a compiled pass graph and encode `compiled.passes` instead of the
-   * hand-written topology, or `null` to go back to it.
+   * Adopt a pass-graph source and encode the variant each frame needs (the
+   * temporal term on or off) instead of the hand-written topology, or `null`
+   * to go back to it.
    *
    * Implemented by the WebGPU renderer. The WebGL diagnostic backend compiles
    * the graph — that is where `unsupported-node` refusals come from — but does
    * not execute it, so it does not implement this. See docs/PASS_GRAPH.md.
    */
-  setPassGraph?(compiled: CompiledGraph | null, name?: GraphPresetName | null): void;
+  setPassGraph?(source: PassGraphSource | null, options?: PassGraphSlotOptions): void;
   render(state: RendererState, fps?: number): void;
   /** Stationary side previews at panel preset angles (Original/Separated/Tracer strip). */
   renderStationaryPreviews(
     state: RendererState,
     options?: StationaryPreviewOptions,
   ): Promise<StationaryPreviewResult>;
-  /** @deprecated Side previews use {@link renderStationaryPreviews}. */
-  requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean;
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean;
   getRenderTiming(): RenderTiming;
   exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null>;

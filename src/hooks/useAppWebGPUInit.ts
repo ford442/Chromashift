@@ -21,7 +21,7 @@ import {
 import { listLocalImages } from '../engine/LocalLibrary';
 import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/corpusManifest';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
-import { activatePassGraph, passGraphSelection } from '../engine/graph';
+import { activatePassGraph, passGraphSelection, presetGraphSource } from '../engine/graph';
 
 export interface UseAppWebGPUInitProps {
   mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
@@ -260,19 +260,15 @@ export function useAppWebGPUInit({
       const fallbackReason = bootstrapped.orchestrator.getFallbackReason();
       setRendererFallbackReason(fallbackReason);
       publishRendererBreadcrumbs(bootstrapped.orchestrator.getBackend(), fallbackReason);
-      // Pass-graph gate (?graph=1, ?graph=blur, ?graph=warp). Compiles the
-      // selected graph for the live backend and publishes the breadcrumbs. On
-      // WebGPU the compiled graph is then handed to the renderer's
-      // `GraphExecutor`, which encodes `compiled.passes` in place of the
-      // hand-written topology; the default graph is byte-for-byte that
-      // topology, so `?graph=1` changes the encode path and not the pixels.
-      // The WebGL diagnostic backend compiles but does not execute.
+      // Pass-graph gate: which shape the session draws (`?graph=blur`,
+      // `?graph=trails3`, …; the default graph otherwise). Compiles it for the
+      // live backend and publishes the breadcrumbs. On WebGPU the graph source
+      // is then handed to every slot's renderer, whose `GraphExecutor` draws
+      // each frame — a variant the shape refuses draws the default graph. The
+      // WebGL diagnostic backend compiles but does not execute.
       // See docs/PASS_GRAPH.md.
-      const compiledGraph = activatePassGraph(bootstrapped.orchestrator.getBackend());
-      const primaryRenderer = bootstrappedPrimaryRenderer(bootstrapped.orchestrator);
-      if (compiledGraph) {
-        primaryRenderer.setPassGraph?.(compiledGraph, passGraphSelection().name);
-      }
+      activatePassGraph(bootstrapped.orchestrator.getBackend());
+      bootstrapped.orchestrator.setPassGraph(presetGraphSource(passGraphSelection().name));
       // Apply the requested canvas colour space now: the standing effect below
       // only re-runs when `displayColorSpace` changes, so a preset URL that
       // selects display-p3 before boot would otherwise never reach the canvas.

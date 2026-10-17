@@ -581,9 +581,12 @@ export function emitCoincidenceDecayWgsl(
     .map((i) => `  let c${i} = textureSample(layer${i}, cSampler, uv);`)
     .join('\n');
   const { counts, sums, variances, dominant } = parts;
+  // `0 = sampler, 1..n = textures, then the uniform block` — the convention
+  // every graph pass follows, so the executor can derive its layout. The motion
+  // field is one more texture, after the previous frame.
   const prevBinding = layerCount + 1;
-  const uniformBinding = layerCount + 2;
-  const motionBinding = layerCount + 3;
+  const motionBinding = layerCount + 2;
+  const uniformBinding = motion ? layerCount + 3 : layerCount + 2;
   const motionHelpers = motion ? WGSL_MOTION_HELPERS : '';
   const motionTexBinding = motion
     ? `@group(0) @binding(${motionBinding}) var motionTex : texture_2d<f32>;\n`
@@ -796,8 +799,15 @@ ${dominant}
 `;
 }
 
-/** One opacity per band layer — the part of `CompositorUniforms` that grows. */
+/** One opacity per band layer — the part of `CompositorUniforms` that grows with the layers. */
 export type CompositorLayerOpacityName = `layerOpacity${number}`;
+
+/**
+ * One opacity per tracer timescale beyond the shipped two (`tracer2`, …) —
+ * appended at the *end* of the block, so a two-tracer compositor's struct and
+ * every offset in it stay the ones that shipped.
+ */
+export type CompositorExtraTracerName = `tracerOpacity${number}`;
 
 export type CompositorUniformName =
   | 'tracerAboveOpacity'
@@ -812,18 +822,27 @@ export type CompositorUniformName =
   | 'diagnosticsMode'
   | 'viewportQuarterZoom'
   | 'halfOverlayAlpha'
-  | 'viewportHalfOverlay';
+  | 'viewportHalfOverlay'
+  | CompositorExtraTracerName;
 
-const compositorLayouts = new Map<number, UniformLayout<CompositorUniformName>>();
+const compositorLayouts = new Map<string, UniformLayout<CompositorUniformName>>();
+
+/** The tracer timescales the shipped compositor blends: one below the layers, one above. */
+export const SHIPPED_TRACER_COUNT = 2;
 
 /**
- * `CompositorUniforms` for `layerCount` layers. The struct grows by one opacity
- * per layer, so every field after the opacities moves with the count — which
- * is why nothing may write this block by index. Memoised: the executor asks
- * for it every frame.
+ * `CompositorUniforms` for `layerCount` layers and `tracerCount` tracers. The
+ * struct grows by one opacity per layer, so every field after the opacities
+ * moves with the count — which is why nothing may write this block by index.
+ * Tracers beyond the shipped two add an opacity each at the end. Memoised: the
+ * executor asks for it every frame.
  */
-export function compositorUniformLayout(layerCount: number): UniformLayout<CompositorUniformName> {
-  const cached = compositorLayouts.get(layerCount);
+export function compositorUniformLayout(
+  layerCount: number,
+  tracerCount: number = SHIPPED_TRACER_COUNT,
+): UniformLayout<CompositorUniformName> {
+  const key = `${layerCount}x${tracerCount}`;
+  const cached = compositorLayouts.get(key);
   if (cached) return cached;
   const fields: UniformFieldSpec<CompositorUniformName>[] = [
     { name: 'tracerAboveOpacity', kind: 'f32' },
@@ -839,29 +858,63 @@ export function compositorUniformLayout(layerCount: number): UniformLayout<Compo
     { name: 'viewportQuarterZoom', kind: 'u32' },
     { name: 'halfOverlayAlpha', kind: 'f32' },
     { name: 'viewportHalfOverlay', kind: 'u32' },
+    ...extraTracers(tracerCount).map((j) => ({ name: `tracerOpacity${j}` as const, kind: 'f32' as const })),
   ];
   const layout = defineUniformLayout('CompositorUniforms', fields, { column: 19 });
-  compositorLayouts.set(layerCount, layout);
+  compositorLayouts.set(key, layout);
   return layout;
 }
 
 /** Uniform buffer size in bytes for a compositor with `layerCount` layers. */
-export function compositorUniformBytes(layerCount: number): number {
-  return compositorUniformLayout(layerCount).bytes;
+export function compositorUniformBytes(
+  layerCount: number,
+  tracerCount: number = SHIPPED_TRACER_COUNT,
+): number {
+  return compositorUniformLayout(layerCount, tracerCount).bytes;
 }
+
+/** Indices of the tracers past the shipped below / above pair. */
+const extraTracers = (tracerCount: number): number[] =>
+  Array.from({ length: Math.max(0, tracerCount - SHIPPED_TRACER_COUNT) }, (_, k) => k + SHIPPED_TRACER_COUNT);
 
 /**
  * `blend` → the final compositor pass: tracers below, live layers, tracers
  * above, tonemap, optional diagnostics overlay and viewport transforms.
+ *
+ * `tracerCount` is how many tracer timescales it blends. The first two are the
+ * shipped pair — `persistBelow` under the layers, `persistAbove` over them —
+ * and two emits exactly the shipped compositor. Every one after them (a third
+ * timescale, `tracer2`, …) is an extra accumulator, blended deepest first in
+ * input order, beneath the `below` tracer.
  */
-export function emitCompositorWgsl(layerCount: number, blendHelpers: string): string {
+export function emitCompositorWgsl(
+  layerCount: number,
+  blendHelpers: string,
+  tracerCount: number = SHIPPED_TRACER_COUNT,
+): string {
+  if (!Number.isInteger(tracerCount) || tracerCount < SHIPPED_TRACER_COUNT) {
+    throw new RangeError(`A compositor blends at least ${SHIPPED_TRACER_COUNT} tracers, got ${tracerCount}.`);
+  }
   const layers = layerList(layerCount);
+  const extras = extraTracers(tracerCount);
   const bindings = layers
     .map((i) => `@group(0) @binding(${i + 1}) var layer${i}         : texture_2d<f32>;`)
     .join('\n');
   const belowBinding = layerCount + 1;
   const aboveBinding = layerCount + 2;
-  const uniformBinding = layerCount + 3;
+  const extraBindings = extras
+    .map((j, k) => `@group(0) @binding(${layerCount + 3 + k}) var tracer${j}        : texture_2d<f32>;`)
+    .join('\n');
+  const uniformBinding = layerCount + 1 + tracerCount;
+  const extraSamples = extras
+    .map((j) => `  let pTracer${j} = textureSample(tracer${j}, cSampler, sampleUV);`)
+    .join('\n');
+  const extraScaled = extras
+    .map((j) => `  let pTracer${j}Scaled = scale_premultiplied(pTracer${j}, cu.tracerOpacity${j});`)
+    .join('\n');
+  const extraBlend = extras
+    .map((j) => `    finalCol = blend(finalCol, pTracer${j}Scaled, cu.tracerBlendMode);`)
+    .join('\n');
   const samples = layers
     .map((i) => `  let c${i}      = textureSample(layer${i},       cSampler, sampleUV);`)
     .join('\n');
@@ -897,8 +950,9 @@ ${WGSL_OUTPUT_ENCODE}
 ${bindings}
 @group(0) @binding(${belowBinding}) var persistBelow   : texture_2d<f32>;
 @group(0) @binding(${aboveBinding}) var persistAbove   : texture_2d<f32>;
+${extraBindings}
 
-${emitUniformStructWgsl(compositorUniformLayout(layerCount))}
+${emitUniformStructWgsl(compositorUniformLayout(layerCount, tracerCount))}
 @group(0) @binding(${uniformBinding}) var<uniform> cu : CompositorUniforms;
 
 fn viewportSampleUV(uv: vec2<f32>) -> vec2<f32> {
@@ -916,6 +970,8 @@ ${samples}
 
   let pBelowScaled = scale_premultiplied(pBelow, cu.tracerBelowOpacity);
   let pAboveScaled = scale_premultiplied(pAbove, cu.tracerAboveOpacity);
+${extraSamples}
+${extraScaled}
 
 ${opaque}
 
@@ -954,16 +1010,19 @@ ${variances}
   if (cu.outputMode == 1u) {
     // Tracer Focus: layers first, then both tracers on top.
     finalCol = alpha_blend(finalCol, layerCol);
+${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 2u) {
     // Tracer Only: suppress live layers.
+${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 3u) {
     finalCol = stamp;
   } else {
-    // Mixed (default): Below -> Layers -> Above.
+    // Mixed (default): [extra timescales ->] Below -> Layers -> Above.
+${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = alpha_blend(finalCol, layerCol);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);

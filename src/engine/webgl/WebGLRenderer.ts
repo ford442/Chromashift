@@ -110,11 +110,6 @@ export class WebGLRenderer implements ChromashiftRenderer {
     return this.stationaryPreview.render(state, options);
   }
 
-  /** @deprecated Side previews use {@link renderStationaryPreviews}. */
-  requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean {
-    return this.readback.requestPreviewReadback(callback);
-  }
-
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean {
     return this.readback.requestCollisionStats(callback);
   }

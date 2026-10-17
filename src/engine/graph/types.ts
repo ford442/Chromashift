@@ -7,6 +7,9 @@
  * backend can emit).
  */
 
+import type { CanvasPresentation } from '../gpuOptions';
+import type { UniformLayout } from './templates/uniformLayout';
+
 /** Backends a graph can be compiled for. */
 export type GraphBackend = 'webgpu' | 'webgl';
 
@@ -25,6 +28,7 @@ export type NodeKind =
   | 'band-layer'    // luminance→colour band isolation, rotation, flip
   | 'lut'           // colorProfile 256×3 LUT sample
   | 'coincidence'   // N-input overlap detection (generalises today's persistence stamp)
+  | 'motion'        // the temporal tracer term: [stamp, motion field] → a motion-weighted stamp
   | 'decay'         // ping-pong accumulator with a per-frame multiplier
   | 'blend'         // alpha / add / subtract / multiply / screen
   | 'warp'          // UV transform: rotate, scale, feedback displacement
@@ -133,6 +137,38 @@ export interface EmittedPass {
   fragment: string;
   /** Texture binding names in binding order, for the renderer to wire up. */
   textureBindings: string[];
+  /**
+   * The uniform block `fragment` declares — the layout its struct was emitted
+   * from — or `null` when it has none of its own (`band-layer` keeps the
+   * shipped layer pipeline's buffers; passes with no shader have nothing).
+   * WebGPU only: the GLSL emitters bind uniforms by name.
+   */
+  uniformLayout: UniformLayout | null;
+  /**
+   * For a pass that writes the canvas: the presentation it encodes for, which
+   * also picks its target format. Absent for every pass that writes the pool.
+   */
+  presentation?: CanvasPresentation;
+}
+
+/**
+ * What the rest of the renderer reads out of a graph, by what it is — the
+ * inspect views, the readbacks, the exports and the stationary previews. Node
+ * ids; the executor resolves them to this frame's textures.
+ */
+export interface GraphOutputs {
+  /** The pass whose result reaches the swapchain (the `blend`), or `null`. */
+  composite: string | null;
+  /** `band-layer` nodes, in `layerIndex` order. */
+  layers: string[];
+  /**
+   * The accumulators, in the compositor's input order: the shipped below /
+   * above pair first, then any extra timescales. Schedule order for a graph
+   * whose accumulators reach no compositor.
+   */
+  tracers: string[];
+  /** The accumulator whose stamp diagnostic the readbacks sample (the `above` tracer). */
+  diagnostic: string | null;
 }
 
 export interface CompiledGraph {
@@ -145,4 +181,5 @@ export interface CompiledGraph {
   emitted: EmittedPass[];
   /** Number of `band-layer` nodes, i.e. the colour-band count this graph renders. */
   layerCount: number;
+  outputs: GraphOutputs;
 }

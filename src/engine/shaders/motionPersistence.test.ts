@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  persistenceCompositeFragmentSource,
-  persistenceCompositeMotionFragmentSource,
   persistenceFragmentSource,
   persistenceMotionFragmentSource,
 } from './persistence';
@@ -38,11 +36,6 @@ describe('motion is opt-in', () => {
     expect(PERSISTENCE_FRAGMENT_SOURCE).not.toContain('motionDecayScale');
   });
 
-  it('the compute-fed composite pass is equally untouched by default', () => {
-    expect(persistenceCompositeFragmentSource).not.toContain('motionTex');
-    expect(persistenceCompositeFragmentSource).not.toContain('motionMode');
-  });
-
   it('passing motion: false is identical to passing nothing', () => {
     expect(normaliseShaderSource(emitCoincidenceDecayWgsl(CANONICAL_LAYER_COUNT, { motion: false })))
       .toBe(normaliseShaderSource(persistenceFragmentSource));
@@ -52,9 +45,13 @@ describe('motion is opt-in', () => {
 });
 
 describe('motion variants', () => {
-  it('WGSL binds the field after the uniform block and spends the pads', () => {
+  it('WGSL binds the field after the previous frame, before the uniforms, and spends the pads', () => {
+    // 0 = sampler, 1..3 = layers, 4 = previous frame, 5 = field, 6 = uniforms:
+    // textures first, uniforms last, the convention every graph pass follows.
     expect(persistenceMotionFragmentSource)
-      .toContain('@group(0) @binding(6) var motionTex : texture_2d<f32>;');
+      .toContain('@group(0) @binding(5) var motionTex : texture_2d<f32>;');
+    expect(persistenceMotionFragmentSource)
+      .toContain('@group(0) @binding(6) var<uniform> pu : PersistUniforms;');
     expect(persistenceMotionFragmentSource).toContain('motionMode  : u32,');
     expect(persistenceMotionFragmentSource).toContain('motionGain  : f32,');
     expect(persistenceMotionFragmentSource).toContain('motionDecayBias : f32,');
@@ -67,13 +64,6 @@ describe('motion variants', () => {
     expect(persistenceMotionFragmentSource).toContain('motionDirectionRgb(motionSample.gb');
     expect(persistenceMotionFragmentSource).toContain('1.0 + pu.motionGain * motion');
     expect(persistenceMotionFragmentSource)
-      .toContain('motionDecayScale(motion, pu.motionDecayBias, pu.motionMode != 0u)');
-  });
-
-  it('the compute-fed composite variant carries the same term', () => {
-    expect(persistenceCompositeMotionFragmentSource).toContain('motionTex');
-    expect(persistenceCompositeMotionFragmentSource).toContain('pu.motionMode == 2u && motion <= 0.0');
-    expect(persistenceCompositeMotionFragmentSource)
       .toContain('motionDecayScale(motion, pu.motionDecayBias, pu.motionMode != 0u)');
   });
 

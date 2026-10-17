@@ -26,8 +26,7 @@ export class WebGLCompositorPass {
   /**
    * Composite into `target` (the canvas when `null`). Layer opacities and every
    * other value come from `compositorUniforms()` — the same block the WebGPU
-   * compositor packs — read here by name; this backend alone also runs the
-   * viewport transforms in the shader.
+   * compositor packs — read here by name.
    */
   render(
     target: RenderTarget | null,
@@ -52,7 +51,7 @@ export class WebGLCompositorPass {
     bindTexture(gl, this.program, 'u_tracerBelow', 3, persistence.tracerBelow[persistence.pingPong]!.texture);
     bindTexture(gl, this.program, 'u_tracerAbove', 4, persistence.tracerAbove[persistence.pingPong]!.texture);
     // The compositor still blends the three canonical band targets.
-    const values = compositorUniforms(state, layerTextures.length, { viewportTransforms: true });
+    const values = compositorUniforms(state, layerTextures.length);
     for (let i = 0; i < layerTextures.length; i += 1) {
       uniform1f(gl, this.program, `u_layerOpacity${i}`, values[`layerOpacity${i}`]);
     }

@@ -31,8 +31,6 @@ export {
 export {
   persistenceFragmentSource,
   persistenceMotionFragmentSource,
-  persistenceCompositeFragmentSource,
-  persistenceCompositeMotionFragmentSource,
 } from './persistence';
 export { compositorFragmentSource } from './compositor';
 export {

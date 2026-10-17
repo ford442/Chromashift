@@ -6,6 +6,7 @@ import {
   type RendererSlot,
 } from './RendererOrchestrator';
 import type { ChromashiftRenderer } from './RendererTypes';
+import { presetGraphSource } from './graph/variants';
 import type { GpuRuntimeError, WebGpuSession } from './gpuBootstrap';
 import type { TextureManager } from './TextureManager';
 import type { WebGLTextureManager } from './WebGLTextureManager';
@@ -22,7 +23,6 @@ function mockRenderer(): ChromashiftRenderer {
     setAntialiasing: vi.fn(),
     getRenderTiming: vi.fn(),
     renderStationaryPreviews: vi.fn(async () => ({ separated: null, tracer: null })),
-    requestPreviewReadback: vi.fn(),
     requestCollisionStats: vi.fn(),
     exportTracerView: vi.fn(async () => null),
     exportFrame: vi.fn(async () => null),
@@ -172,6 +172,35 @@ describe('RendererOrchestrator', () => {
     expect(orchestrator.slotIds()).toEqual(['main']);
     expect(slotB.renderer.destroy).toHaveBeenCalledOnce();
     expect(secondaryContext.unconfigure).toHaveBeenCalledOnce();
+  });
+
+  it('hands the pass-graph source to every slot, existing and future, naming the primary', async () => {
+    const renderers: ChromashiftRenderer[] = [];
+    const withGraph = () => {
+      const renderer = { ...mockRenderer(), setPassGraph: vi.fn() } as unknown as ChromashiftRenderer;
+      renderers.push(renderer);
+      return renderer;
+    };
+    const deps = createMockDeps({
+      createWebGPURenderer: vi.fn(async () => withGraph()),
+      createSecondaryWebGPURenderer: vi.fn(() => withGraph()),
+    });
+    const { orchestrator } = await RendererOrchestrator.bootstrap({
+      primaryCanvas: mockCanvas('main'),
+      antialias: false,
+      backend: 'webgpu',
+    }, deps);
+    const source = presetGraphSource('default');
+
+    orchestrator.setPassGraph(source);
+    expect(renderers[0].setPassGraph).toHaveBeenCalledWith(source, { slot: PRIMARY_SLOT_ID, primary: true });
+
+    // A compare slot opened later draws the same graph, with its own executor.
+    orchestrator.createSlot('compare-b', mockCanvas('compare-b'));
+    expect(renderers[1].setPassGraph).toHaveBeenCalledWith(source, { slot: 'compare-b', primary: false });
+
+    orchestrator.setPassGraph(null);
+    for (const renderer of renderers) expect(renderer.setPassGraph).toHaveBeenLastCalledWith(null, expect.anything());
   });
 
   it('hard-fails instead of falling back to WebGL when WebGPU bootstrap fails', async () => {

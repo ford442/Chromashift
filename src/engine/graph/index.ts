@@ -9,6 +9,7 @@ export type {
   EmittedPass,
   GraphBackend,
   GraphNode,
+  GraphOutputs,
   HistoryRing,
   NodeKind,
   NodeKindSpec,
@@ -67,10 +68,21 @@ export {
 } from './layerSpecs';
 export {
   activatePassGraph,
-  passGraphRequested,
+  passGraphRefusal,
   passGraphSelection,
   publishGraphExecutorBreadcrumbs,
+  publishGraphVariant,
+  publishSlotExecuting,
   setStoredPassGraphPreference,
   type PassGraphSelection,
 } from './gate';
+export {
+  MOTION_FIELD_SOURCE_ID,
+  applyGraphVariant,
+  graphVariantKey,
+  presetGraphSource,
+  withMotionTerm,
+  type GraphVariant,
+  type PassGraphSource,
+} from './variants';
 export { normaliseShaderSource } from './shaderText';
