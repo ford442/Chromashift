@@ -1,12 +1,6 @@
-type TextureCacheWindow = Window & {
-  textureCacheSize?: number;
-  textureCacheBytes?: number;
-};
+import { publishDiagnostics } from './diagnostics';
 
 /** Publish texture cache stats for automation / diagnostics. */
 export function publishTextureCacheBreadcrumbs(entryCount: number, estimatedBytes: number): void {
-  if (typeof window === 'undefined') return;
-  const target = window as TextureCacheWindow;
-  target.textureCacheSize = entryCount;
-  target.textureCacheBytes = estimatedBytes;
+  publishDiagnostics({ textureCacheSize: entryCount, textureCacheBytes: estimatedBytes });
 }

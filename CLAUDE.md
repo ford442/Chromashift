@@ -27,10 +27,11 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md). Testing detail: [AGENTS.md](AGENTS.
 
 ## TypeScript Config Notes
 
-Two project references are used:
+Three project references are used:
 
 - `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`
 - `tsconfig.node.json` — compiles `vite.config.ts`, includes `@types/node`
+- `tsconfig.e2e.json` — type-checks `e2e/` against the app's types (breadcrumbs come from `src/engine/diagnostics.ts`)
 
 Both use strict mode. `skipLibCheck: true` avoids noise from `.d.ts` files in `node_modules`.
 

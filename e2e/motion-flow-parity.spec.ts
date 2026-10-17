@@ -65,7 +65,7 @@ test.describe('Motion flow WGSL parity', () => {
       const coarseWidth = Math.ceil(size / 2);
       const coarseHeight = Math.ceil(size / 2);
 
-      const lumTexture = (data: Float32Array) => {
+      const lumTexture = (data: Float32Array<ArrayBuffer>) => {
         const texture = device.createTexture({
           size: [size, size, 1],
           format: 'r32float',

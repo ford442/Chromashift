@@ -5,21 +5,6 @@ import { waitForWebGL, waitForWebGPU } from './helpers/renderer';
 import { setE2eViewport, stubMinimalCorpus } from './helpers/mockCorpus';
 import { primeOverlaySections } from './helpers/overlaySections';
 
-declare global {
-  interface Window {
-    motionFieldBackend?: string | null;
-    motionFieldReason?: string | null;
-    motionFieldEnergy?: number;
-    motionFieldHasFlow?: boolean;
-    motionFieldFlow?: {
-      meanVx: number;
-      meanVy: number;
-      meanSpeed: number;
-      movingCells: number;
-    } | null;
-  }
-}
-
 const fixtureDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures');
 const fixtureVideo = path.join(fixtureDir, 'live-source-test.webm');
 /** A white disc tracking across a static checkerboard — genuinely different frames. */

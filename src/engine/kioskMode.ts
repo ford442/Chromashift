@@ -1,3 +1,5 @@
+import { publishDiagnostic } from './diagnostics';
+
 export const KIOSK_URL_PARAM = 'kiosk';
 
 /** True when `?kiosk=1`, `?kiosk=true`, or `?kiosk` is present. */
@@ -14,6 +16,5 @@ export function isKioskModeSearch(search: string): boolean {
 }
 
 export function publishKioskBreadcrumbs(enabled: boolean): void {
-  if (typeof window === 'undefined') return;
-  (window as Window & { kioskMode?: boolean }).kioskMode = enabled;
+  publishDiagnostic('kioskMode', enabled);
 }

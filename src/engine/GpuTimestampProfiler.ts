@@ -1,3 +1,5 @@
+import { publishDiagnostics } from './diagnostics';
+
 /** Per-pass GPU timings derived from WebGPU timestamp queries (nanoseconds → ms). */
 export interface GpuPassTimings {
   layersMs: number;
@@ -340,12 +342,8 @@ export class GpuTimestampProfiler {
 }
 
 export function publishGpuTimestampBreadcrumbs(available: boolean, reason?: string): void {
-  if (typeof window === 'undefined') return;
-  (window as Window & {
-    gpuTimestampAvailable?: boolean;
-    gpuTimestampReason?: string;
-  }).gpuTimestampAvailable = available;
-  (window as Window & { gpuTimestampReason?: string }).gpuTimestampReason = available
-    ? 'timestamp-query enabled'
-    : (reason ?? 'timestamp-query not supported');
+  publishDiagnostics({
+    gpuTimestampAvailable: available,
+    gpuTimestampReason: available ? 'timestamp-query enabled' : (reason ?? 'timestamp-query not supported'),
+  });
 }

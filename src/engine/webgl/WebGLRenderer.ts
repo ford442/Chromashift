@@ -28,6 +28,7 @@ import {
 import { createTarget, destroyTarget, type RenderTarget } from './resources';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { WebGLRenderViewport } from './types';
+import { publishDiagnostic } from '../diagnostics';
 
 export type { WebGLRenderViewport } from './types';
 
@@ -346,6 +347,5 @@ function fullFrame(width: number, height: number, compositeTarget: RenderTarget)
 }
 
 function publishWebglInternalScale(scale: number): void {
-  const target = window as Window & { webglInternalScale?: number };
-  target.webglInternalScale = scale;
+  publishDiagnostic('webglInternalScale', scale);
 }

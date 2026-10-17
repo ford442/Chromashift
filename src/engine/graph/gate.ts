@@ -3,60 +3,9 @@ import { buildGraphPreset, isGraphPresetName, type GraphPresetName } from './alt
 import { compileGraph, graphCompileCount } from './compile';
 import { PassGraphError } from './errors';
 import type { CompiledGraph, GraphBackend } from './types';
+import { publishDiagnostic, publishDiagnostics, readDiagnostic } from '../diagnostics';
 
 const STORAGE_KEY = 'chromashift.passGraph';
-
-declare global {
-  interface Window {
-    /** True when the pass-graph compiler ran for this session. */
-    passGraphActive?: boolean;
-    /** Compilations so far — must not move when a parameter changes. */
-    passGraphCompileCount?: number;
-    /** Scheduled pass order, for E2E assertions. */
-    passGraphPasses?: string[];
-    /** Pool slot count per resolution class. */
-    passGraphSlots?: Record<string, number>;
-    /**
-     * `history` ring textures per resolution class — VRAM that outlives the
-     * frame and so is not in `passGraphSlots`. Empty when no graph compiled.
-     */
-    passGraphRingFrames?: Record<string, number>;
-    /** Set when compilation refused the graph, naming the node. */
-    passGraphError?: string | null;
-    /** Which named graph shape the gate selected. */
-    passGraphName?: GraphPresetName | null;
-    /**
-     * The variant of that shape a renderer last compiled for a frame
-     * (`graphVariantKey`: layer count, temporal term, presentation), or `null`
-     * when no renderer builds variants (the gate alone, the WebGL backend).
-     */
-    passGraphVariant?: string | null;
-    /**
-     * Name of the graph shape the primary canvas's executor drew last frame —
-     * the selected one, or `default` standing in for a variant it refused —
-     * or `null` for a frame nothing validated could draw.
-     */
-    passGraphExecuting?: GraphPresetName | null;
-    /**
-     * The variant (`graphVariantKey`) that frame drew. It trails
-     * `passGraphVariant` while the device validates a new variant, since the
-     * last one keeps drawing until then.
-     */
-    passGraphDrawnVariant?: string | null;
-    /**
-     * Node ids the executor actually encodes, in order. Shorter than
-     * `passGraphPasses`: `source` and `output` own no pass, and a `coincidence`
-     * fused into its `decay` consumers is absorbed by them.
-     */
-    passGraphExecutedPasses?: string[];
-    /**
-     * Per orchestrator slot (`main`, `compare-b`, the quad cells): the graph
-     * shape that slot's executor drew last frame, or `null` while nothing
-     * validated could draw it. Absent for a slot that has no renderer.
-     */
-    passGraphSlotsExecuting?: Record<string, GraphPresetName | null>;
-  }
-}
 
 /** The shape the gate resolved from the URL or the stored preference. */
 export interface PassGraphSelection {
@@ -160,10 +109,11 @@ export function publishGraphExecutorBreadcrumbs(
   encodedPasses: string[],
   variant: string | null = null,
 ): void {
-  if (typeof window === 'undefined') return;
-  window.passGraphExecuting = name;
-  window.passGraphExecutedPasses = encodedPasses;
-  window.passGraphDrawnVariant = variant;
+  publishDiagnostics({
+    passGraphExecuting: name,
+    passGraphExecutedPasses: encodedPasses,
+    passGraphDrawnVariant: variant,
+  });
 }
 
 /**
@@ -178,18 +128,16 @@ export function publishGraphVariant(
   name: GraphPresetName,
   variant: string,
 ): void {
-  if (typeof window === 'undefined') return;
   publishCompile(true, compiled, error, name);
-  window.passGraphVariant = variant;
+  publishDiagnostic('passGraphVariant', variant);
 }
 
 /** Record what one slot's executor is drawing; `undefined` drops the slot. */
 export function publishSlotExecuting(slot: string, name: GraphPresetName | null | undefined): void {
-  if (typeof window === 'undefined') return;
-  const slots = { ...(window.passGraphSlotsExecuting ?? {}) };
+  const slots = { ...(readDiagnostic('passGraphSlotsExecuting') ?? {}) };
   if (name === undefined) delete slots[slot];
   else slots[slot] = name;
-  window.passGraphSlotsExecuting = slots;
+  publishDiagnostic('passGraphSlotsExecuting', slots);
 }
 
 function publish(
@@ -198,9 +146,8 @@ function publish(
   error: string | null,
   name: GraphPresetName | null,
 ): void {
-  if (typeof window === 'undefined') return;
   publishCompile(active, compiled, error, name);
-  window.passGraphVariant = null;
+  publishDiagnostic('passGraphVariant', null);
   // Cleared for *every* result, not just a refusal: a WebGL compile draws
   // nothing with it, so leaving a previous WebGPU session's
   // `passGraphExecuting` in place would claim an executor that is not running.
@@ -214,13 +161,15 @@ function publishCompile(
   error: string | null,
   name: GraphPresetName | null,
 ): void {
-  window.passGraphActive = active;
-  window.passGraphCompileCount = graphCompileCount();
-  window.passGraphPasses = compiled ? compiled.passes.map((pass) => pass.nodeId) : [];
-  window.passGraphSlots = compiled ? { ...compiled.allocation.slotsByResolution } : {};
-  window.passGraphRingFrames = compiled ? ringTexturesByResolution(compiled.allocation) : {};
-  window.passGraphError = error;
-  window.passGraphName = name;
+  publishDiagnostics({
+    passGraphActive: active,
+    passGraphCompileCount: graphCompileCount(),
+    passGraphPasses: compiled ? compiled.passes.map((pass) => pass.nodeId) : [],
+    passGraphSlots: compiled ? { ...compiled.allocation.slotsByResolution } : {},
+    passGraphRingFrames: compiled ? ringTexturesByResolution(compiled.allocation) : {},
+    passGraphError: error,
+    passGraphName: name,
+  });
 }
 
 /** Message for a refusal, as the breadcrumbs carry it. */

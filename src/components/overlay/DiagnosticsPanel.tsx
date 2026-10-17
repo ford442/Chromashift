@@ -10,6 +10,7 @@ import {
 import type { RendererBackend } from '../../engine/RendererTypes';
 import type { DiagnosticsPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
+import { readDiagnostic } from '../../engine/diagnostics';
 
 function formatPassMs(value: number | undefined): string {
   return value === undefined ? '—' : value.toFixed(2);
@@ -111,7 +112,7 @@ function CollisionStatsReadout() {
  */
 function CanvasHdrNote() {
   useRenderCpuTiming();
-  const note = typeof window === 'undefined' ? null : window.canvasHdrNote;
+  const note = readDiagnostic('canvasHdrNote');
   if (!note) return null;
   return (
     <div className="text-[10px] font-mono text-amber-300/90" role="note">

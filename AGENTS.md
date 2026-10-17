@@ -517,9 +517,11 @@ Edit `public/images.json` to change the image list:
 ## Code Style & Conventions
 
 - **Linting**: ESLint v9 flat config (`eslint.config.js`). Extends `@eslint/js/recommended`, `typescript-eslint/recommended`, `react-hooks/flat/recommended`, and `react-refresh/vite`.
-- **TypeScript**: Strict mode is enabled. Two project references are used:
+- **TypeScript**: Strict mode is enabled. Three project references are used:
   - `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`.
   - `tsconfig.node.json` — compiles `vite.config.ts`, includes `@types/node`.
+  - `tsconfig.e2e.json` — type-checks `e2e/` and `playwright.config.ts` (Playwright itself only strips types), so a spec reading a renamed breadcrumb fails `tsc -b`.
+- **Breadcrumbs**: every `window.*` breadcrumb is declared once, in `ChromashiftDiagnostics` (`src/engine/diagnostics.ts`), and the `Window` type is augmented from it. Publish with `publishDiagnostic(key, value)` / `publishDiagnostics({…})` (no-ops without a `window`, so no guard is needed); never cast `window` to add a field. A new breadcrumb must also be listed in `DIAGNOSTIC_KEYS` (the build fails until it is), and `diagnostics.test.ts` fails on a cast, a direct `window.<key> =` assignment or a `declare global` `Window` block anywhere else in `src/`. Specs read them as plain `window.x` inside `page.evaluate` (typed) or through `e2e/helpers/diagnostics.ts` (`readDiagnostic`, `waitForDiagnostic`). Test-only globals a spec installs itself (`__longTasks`, `__readMainCanvasFrame`) are declared in that spec.
 - **Styling**: Tailwind CSS utility classes are used inline in JSX. Custom gold/glass theme variables and animations live in `src/index.css`.
 - **File naming**: PascalCase for components and engine classes (`App.tsx`, `WebGPURenderer.ts`), camelCase for utilities and hooks.
 - **Imports**: `type` imports are used where appropriate (`verbatimModuleSyntax` is enabled).

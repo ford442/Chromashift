@@ -1,4 +1,5 @@
 import type { RendererBackend } from './RendererTypes';
+import { publishDiagnostics } from './diagnostics';
 
 const STORAGE_KEY = 'chromashift.renderer';
 
@@ -77,16 +78,12 @@ export function publishRendererBreadcrumbs(
   backend: RendererBackend,
   fallbackReason: string | null = null,
 ): void {
-  const target = window as Window & {
-    rendererType?: RendererBackend;
-    usingWebGPU?: boolean;
-    usingWebGL?: boolean;
-    rendererFallbackReason?: string | null;
-  };
-  target.rendererType = backend;
-  target.usingWebGPU = backend === 'webgpu';
-  target.usingWebGL = backend === 'webgl';
-  target.rendererFallbackReason = fallbackReason;
+  publishDiagnostics({
+    rendererType: backend,
+    usingWebGPU: backend === 'webgpu',
+    usingWebGL: backend === 'webgl',
+    rendererFallbackReason: fallbackReason,
+  });
 }
 
 /**
@@ -95,16 +92,12 @@ export function publishRendererBreadcrumbs(
  * successful fallback.
  */
 export function publishRendererBootFailure(reason: string): void {
-  const target = window as Window & {
-    rendererType?: RendererBackend | null;
-    usingWebGPU?: boolean;
-    usingWebGL?: boolean;
-    rendererFallbackReason?: string | null;
-  };
-  target.rendererType = null;
-  target.usingWebGPU = false;
-  target.usingWebGL = false;
-  target.rendererFallbackReason = reason;
+  publishDiagnostics({
+    rendererType: null,
+    usingWebGPU: false,
+    usingWebGL: false,
+    rendererFallbackReason: reason,
+  });
 }
 
 export function switchRendererPreference(backend: RendererBackend): void {

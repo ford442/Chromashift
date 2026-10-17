@@ -21,6 +21,7 @@
  */
 
 import { readAdapterInfo, requestWebGpuAdapter } from './gpuBootstrap';
+import { publishDiagnostic } from './diagnostics';
 
 /** How far boot got before it stopped. */
 export type WebGpuProbeStage =
@@ -122,9 +123,7 @@ function emptyResult(stage: WebGpuProbeStage, reason: string | null): WebGpuProb
  * `waitForWebGPU`.
  */
 export function publishWebGpuProbe(result: WebGpuProbeResult): void {
-  if (typeof window === 'undefined') return;
-  const w = window as Window & { webgpuProbe?: WebGpuProbeResult };
-  w.webgpuProbe = result;
+  publishDiagnostic('webgpuProbe', result);
 }
 
 /**
