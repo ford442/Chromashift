@@ -45,3 +45,6 @@ cpp/compile_commands.json
 *.njsproj
 *.sln
 test-screenshots/
+
+# Shader corpus dumped by `npm run shaders:validate` (scripts/validate-shaders.mjs).
+test-results/shaders/
