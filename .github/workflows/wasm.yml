@@ -1,15 +1,28 @@
-name: C++ / WASM freshness
+name: C++ / WASM
 
+# The only workflow that builds or tests the C++ engine (ci.yml has no WASM job).
+# Path-filtered to everything that feeds the engine or its committed artifacts:
+# the sources, the shared tables and their codegen, and the bench that gates it.
 on:
   push:
     paths:
       - 'cpp/**'
+      - 'shared/*.json'
+      - 'scripts/codegen-*.mjs'
+      - 'scripts/bench-wasm.mjs'
+      - 'scripts/gen-compile-commands.mjs'
       - 'public/chromashift_engine.*'
+      - 'public/wasm-benchmark-core.mjs'
       - '.github/workflows/wasm.yml'
   pull_request:
     paths:
       - 'cpp/**'
+      - 'shared/*.json'
+      - 'scripts/codegen-*.mjs'
+      - 'scripts/bench-wasm.mjs'
+      - 'scripts/gen-compile-commands.mjs'
       - 'public/chromashift_engine.*'
+      - 'public/wasm-benchmark-core.mjs'
       - '.github/workflows/wasm.yml'
 
 permissions:
@@ -22,12 +35,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # -Werror, so a new conversion / unused-parameter warning fails the job
-      # rather than scrolling past. The shipped emcc build carries the same
-      # -Wall -Wextra (see cpp/Makefile EMFLAGS_COMMON).
+      # rather than scrolling past. Every engine compile shares the same flags
+      # (CXXFLAGS_COMMON in cpp/Makefile).
       - name: Host-side C++ unit tests (-Werror)
         run: npm run test:cpp:werror
 
-  wasm-freshness:
+  wasm:
+    name: WASM build, SIMD tests, freshness
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -52,6 +66,12 @@ jobs:
       - name: Verify export list matches header
         run: make -C cpp verify-exports
 
+      # The host job above never compiles a SIMD128 block. This runs the whole
+      # host suite against the em++ -msimd128 build, then the bit-exact
+      # SIMD-vs-scalar parity harness (cpp/tests/simd_parity.cpp), both -Werror.
+      - name: SIMD128 tests + SIMD/scalar parity (-Werror)
+        run: npm run test:cpp:simd
+
       # Force a clean recompile. Plain `make release` is a no-op when committed
       # public/chromashift_engine.* are newer than cpp sources (or share equal
       # checkout mtimes), which silently skips the freshness check.
@@ -61,9 +81,11 @@ jobs:
       - name: WASM kernel throughput gate
         run: npm run bench:wasm -- --assert
 
-      - name: Fail if committed WASM artifacts are stale
+      # build:wasm:force runs codegen first, so this also catches a
+      # cpp/*_table.h that is stale against shared/*.json.
+      - name: Fail if committed WASM artifacts or generated tables are stale
         run: |
-          if ! git diff --exit-code -- public/chromashift_engine.js public/chromashift_engine.wasm; then
-            echo "::error::WASM artifacts are out of date. Run 'npm run build:wasm:force' and commit public/chromashift_engine.{js,wasm}."
+          if ! git diff --exit-code -- public/chromashift_engine.js public/chromashift_engine.wasm 'cpp/*_table.h'; then
+            echo "::error::Generated files are out of date. Run 'npm run build:wasm:force' and commit public/chromashift_engine.{js,wasm} and cpp/*_table.h."
             exit 1
           fi

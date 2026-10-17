@@ -57,7 +57,7 @@ export async function* exportVideoFrameLoop(
 
     yield { frameResult, frameIndex: frame };
 
-    angles = advanceAnglesBy(angles, dims.frameSteps, dims.useWasm);
+    angles = advanceAnglesBy(angles, dims.frameSteps);
     request.onProgress?.(frame + 1, dims.totalFrames);
 
     if (frame % 2 === 1) {

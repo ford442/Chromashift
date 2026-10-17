@@ -15,7 +15,7 @@ npm run lint      # ESLint (flat config, v9+)
 npm test          # Vitest unit tests
 npm run shaders:validate  # naga + glslangValidator over every shader variant (needs naga-cli, glslang)
 npm run test:e2e  # Playwright smoke (WebGL)
-npm run test:cpp  # C++ host tests (:werror is the CI gate, :asan is opt-in)
+npm run test:cpp  # C++ host tests (:werror is the CI gate, :asan is opt-in, :simd needs emsdk)
 npm run compile-commands  # cpp/compile_commands.json for clangd (gitignored)
 npm run preview   # Preview the production build locally
 ```

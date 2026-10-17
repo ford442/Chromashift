@@ -29,6 +29,7 @@
     "test:cpp": "make -C cpp test",
     "test:cpp:werror": "make -C cpp test-werror",
     "test:cpp:asan": "make -C cpp test-asan",
+    "test:cpp:simd": "make -C cpp test-simd",
     "compile-commands": "make -C cpp compile-commands",
     "bench:wasm": "node scripts/bench-wasm.mjs"
   },

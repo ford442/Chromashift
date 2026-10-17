@@ -1,20 +1,17 @@
 # clangd configuration for the C++ engine.
 #
-# `compile_commands.json` in this directory describes the HOST (g++) test
-# compile. Generate it with `npm run compile-commands` (or
-# `make -C cpp compile-commands`); it is gitignored because it embeds an
-# absolute `directory` path.
+# Generate the database with `npm run compile-commands` (or
+# `make -C cpp compile-commands`). It is gitignored because it embeds absolute
+# paths. Its compilers and flags come straight from cpp/Makefile, so there is
+# nothing to repeat here.
 #
-# The SIMD kernels in chromashift_engine.cpp are guarded by `__wasm_simd128__`,
-# which the host target never defines — clangd greys those blocks out. That is
-# expected: the scalar bodies (classifyRgb, computeAverageLuminance, …) are what
-# the database is here to give diagnostics and jump-to-definition on.
+# With emsdk active ($EMSDK set, e.g. after `source emsdk_env.sh`), the engine's
+# translation units are described as the wasm32 + -msimd128 compile emcc does,
+# so clangd gives diagnostics inside the `#if CS_HAS_SIMD` blocks as well as the
+# scalar tails that follow them. Without emsdk it falls back to the host (g++)
+# compile, and those blocks grey out.
 CompileFlags:
   CompilationDatabase: .
-  Add:
-    - -std=c++17
-    - -Wall
-    - -Wextra
 
 Diagnostics:
   UnusedIncludes: Strict

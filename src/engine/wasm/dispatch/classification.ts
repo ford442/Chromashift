@@ -108,29 +108,22 @@ export function classifyImageMaskWith(
   const { data, width, height } = imageData;
   const pixelCount = width * height;
 
-  if (canUseWasmFn('_computeClassificationMaskLut', useWasm)) {
+  const kernel = canUseWasmFn('_computeClassificationMaskLut', useWasm)
+    ? '_computeClassificationMaskLut'
+    : canUseWasmFn('_computeClassificationMask', useWasm)
+      ? '_computeClassificationMask'
+      : null;
+  if (kernel) {
     const mod = getWasmModule()!;
-    const inPtr = mod._malloc(data.length);
-    const outPtr = mod._malloc(pixelCount);
+    // One persistent allocation holds the RGBA input and the mask after it, so
+    // an image the size of the last one costs no allocation at all — a full
+    // 8K frame is a quarter-gigabyte, and each malloc of it could grow the heap.
+    const inPtr = getPersistentBuf(data.length + pixelCount);
+    const outPtr = inPtr + data.length;
     mod.HEAPU8.set(data, inPtr);
-    mod._computeClassificationMaskLut(inPtr, width, height, avgLum, outPtr);
-    const mask = new Uint8Array(pixelCount);
-    mask.set(mod.HEAPU8.subarray(outPtr, outPtr + pixelCount));
-    mod._free(inPtr);
-    mod._free(outPtr);
-    return { mask, width, height };
-  }
-
-  if (canUseWasmFn('_computeClassificationMask', useWasm)) {
-    const mod = getWasmModule()!;
-    const inPtr = mod._malloc(data.length);
-    const outPtr = mod._malloc(pixelCount);
-    mod.HEAPU8.set(data, inPtr);
-    mod._computeClassificationMask(inPtr, width, height, avgLum, outPtr);
-    const mask = new Uint8Array(pixelCount);
-    mask.set(mod.HEAPU8.subarray(outPtr, outPtr + pixelCount));
-    mod._free(inPtr);
-    mod._free(outPtr);
+    mod[kernel](inPtr, width, height, avgLum, outPtr);
+    // Copied out: the next call reuses this very allocation.
+    const mask = mod.HEAPU8.slice(outPtr, outPtr + pixelCount);
     return { mask, width, height };
   }
 
