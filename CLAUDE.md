@@ -12,9 +12,10 @@ AGENTS.md wins.
 npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
-npm test          # Vitest unit tests
-npm run test:e2e  # Playwright smoke (WebGL)
+npm test          # Vitest unit tests (src/**/*.test.ts)
+npm run test:e2e  # Playwright, all projects (:webgl = chromium, :webgpu = chromium-webgpu)
 npm run test:cpp  # C++ host tests (:werror is the CI gate, :asan is opt-in)
+npm run bench:wasm # WASM kernel throughput (-- --assert enforces CI floors)
 npm run compile-commands  # cpp/compile_commands.json for clangd (gitignored)
 npm run preview   # Preview the production build locally
 ```
@@ -29,7 +30,7 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md). Testing detail: [AGENTS.md](AGENTS.
 
 Two project references are used:
 
-- `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`
+- `tsconfig.app.json` — compiles `src/` and `shared/`, includes `vite/client`, `@webgpu/types`, and `webxr`
 - `tsconfig.node.json` — compiles `vite.config.ts`, includes `@types/node`
 
 Both use strict mode. `skipLibCheck: true` avoids noise from `.d.ts` files in `node_modules`.

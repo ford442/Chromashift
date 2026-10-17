@@ -503,7 +503,7 @@ Edit `public/images.json` to change the image list:
 
 - **Linting**: ESLint v9 flat config (`eslint.config.js`). Extends `@eslint/js/recommended`, `typescript-eslint/recommended`, `react-hooks/flat/recommended`, and `react-refresh/vite`.
 - **TypeScript**: Strict mode is enabled. Two project references are used:
-  - `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`.
+  - `tsconfig.app.json` — compiles `src/` and `shared/`, includes `vite/client`, `@webgpu/types`, and `webxr`.
   - `tsconfig.node.json` — compiles `vite.config.ts`, includes `@types/node`.
 - **Styling**: Tailwind CSS utility classes are used inline in JSX. Custom gold/glass theme variables and animations live in `src/index.css`.
 - **File naming**: PascalCase for components and engine classes (`App.tsx`, `WebGPURenderer.ts`), camelCase for utilities and hooks.
