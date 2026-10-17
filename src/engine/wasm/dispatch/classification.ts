@@ -3,7 +3,7 @@
  * the call-site matrix and the production-vs-benchmark export split.
  */
 
-import { classifyBandIndex, classifyPixelBands, computeAdjustedRgb } from '../../math/bandClassification';
+import { classifyBandIndex, classifyPixelBandsF32, computeAdjustedRgb } from '../../math/bandClassification';
 import { canUseWasmFn, getPersistentBuf, getWasmModule } from '../loadEngine';
 import { getImageBytes, getImageDataAtNaturalSize, type PixelSource } from '../imageBytes';
 
@@ -52,7 +52,8 @@ export function classifyPixelWith(
  * buffer in a single C++ call avoids repeated JS↔WASM boundary crossings.
  *
  * @param imageData  Source pixel data (e.g. from `CanvasRenderingContext2D.getImageData`).
- * @param avgLum     Per-image average luminance [0–255].
+ * @param avgLum     Per-image average luminance [0–255]; rounded to the nearest
+ *                   integer first, as every classification-mask lane does.
  * @param useWasm    Attempt to use the C++ WASM engine.
  * @returns          `Int32Array` of length `imageData.width * imageData.height`,
  *                   one band index (0–10) per pixel.
@@ -79,13 +80,15 @@ export function classifyPixelsBulkWith(
     return result;
   }
 
-  // TypeScript fallback
+  // TypeScript fallback — byte-identical to the WASM branch above and to the
+  // WebGPU mask kernel: the same rounded avgLum, the same float32 arithmetic.
+  const roundedAvgLum = Math.round(avgLum);
   const result = new Int32Array(pixelCount);
   for (let i = 0; i < pixelCount; i++) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
-    result[i] = classifyPixelBands(r, g, b, avgLum);
+    result[i] = classifyPixelBandsF32(r, g, b, roundedAvgLum);
   }
   return result;
 }

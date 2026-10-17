@@ -94,6 +94,12 @@ export function isWasmSimdSupported(): boolean {
   try {
     // Minimal WASM binary: () -> v128, returns v128.const 0
     // Sections: type(1), function(1), code(1 function body with v128.const + end)
+    //
+    // The two size bytes must count exactly: a body of 20 bytes (local count,
+    // the 2-byte opcode, its 16-byte immediate, end) in a 22-byte section. They
+    // once read 0x0d / 0x0f, which made the module malformed — validate()
+    // returned false in every browser and the engine never loaded.
+    // loadEngine.test.ts runs this probe in Node, which has SIMD128.
     return WebAssembly.validate(new Uint8Array([
       0x00, 0x61, 0x73, 0x6d, // magic
       0x01, 0x00, 0x00, 0x00, // version
@@ -102,8 +108,8 @@ export function isWasmSimdSupported(): boolean {
       // function section: 1 function, type index 0
       0x03, 0x02, 0x01, 0x00,
       // code section: 1 body
-      0x0a, 0x0f, 0x01,       // section id, size, count
-      0x0d, 0x00,             // body size, local count
+      0x0a, 0x16, 0x01,       // section id, size (22), count
+      0x14, 0x00,             // body size (20), local count
       0xfd, 0x0c,             // v128.const
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
