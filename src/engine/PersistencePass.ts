@@ -13,33 +13,34 @@ import {
 import type { WebGPUPipelines } from './WebGPUPipelines';
 import type { WebGpuChoreBackend } from './compute/chores/webgpuBackend';
 import { acquireGpuChoreSession, type GpuChoreLease } from './compute/GpuChoreSession';
-import { durationToDecay } from './math/decay';
+import { persistUniforms, rendererStateValue } from './graph/exec/uniforms';
+import { createUniformData, packUniforms, type UniformValues } from './graph/templates/uniformLayout';
+import { PERSIST_MOTION_UNIFORMS, PERSIST_UNIFORMS, type PersistUniformName } from './graph/templates/wgsl';
+import { PERSIST_COMPOSITE_MOTION_UNIFORMS, PERSIST_COMPOSITE_UNIFORMS } from './shaders/persistence';
+import type { RendererState } from './types/RendererState';
 
 export interface PersistenceEncodeParams {
-  fps: number;
-  colorThresh: number;
-  tracerMode: number;
-  stampBoost: number;
-  peakMode: number;
-  belowDuration: number;
-  aboveDuration: number;
-  paused: boolean;
   /**
-   * Temporal term (see `engine/motionModes.ts`). `0` (`off`) is the default
-   * and takes the original code path: the original pipelines, the original
-   * bind group layouts, no motion texture bound anywhere in the frame.
+   * Read through `persistUniforms()` — the same tracer, stamp and motion values
+   * every other encode path writes. A paused state encodes nothing.
    */
-  motionMode?: number;
-  motionGain?: number;
-  motionDecayBias?: number;
+  state: RendererState;
+  fps: number;
   /**
-   * Quarter-resolution motion field from the `motion-field` chore. Absent (or
-   * a `motionMode` of 0) falls back to the non-motion pipelines, so a device
-   * that could not produce a field degrades to today's behaviour rather than
-   * to a blank tracer.
+   * Quarter-resolution motion field from the `motion-field` chore. The temporal
+   * term engages only when the state selects a motion mode *and* this exists;
+   * otherwise the frame takes the original code path — the original
+   * pipelines, the original bind group layouts, no motion texture bound
+   * anywhere — so a device that could not produce a field degrades to today's
+   * behaviour rather than to a blank tracer.
    */
   motionTexture?: GPUTexture | null;
 }
+
+type PersistValues = UniformValues<PersistUniformName>;
+
+/** The three values the coincidence compute kernel stamps with. */
+export type CoincidenceStampValues = Pick<PersistValues, 'colorThresh' | 'stampBoost' | 'tracerMode'>;
 
 /** One cached motion bind group plus the inputs it was built from. */
 interface MotionBindGroupCacheEntry {
@@ -72,9 +73,11 @@ export class PersistencePass {
   private readonly sampler: GPUSampler;
   private readonly aboveUniformBuf: GPUBuffer;
   private readonly belowUniformBuf: GPUBuffer;
-  private readonly uniformData = new ArrayBuffer(32);
-  private readonly uniformF32 = new Float32Array(this.uniformData);
-  private readonly uniformU32 = new Uint32Array(this.uniformData);
+  /** CPU scratch, one per layout; `writeBuffer` copies it out at once. */
+  private readonly uniformData = createUniformData(PERSIST_UNIFORMS);
+  private readonly motionUniformData = createUniformData(PERSIST_MOTION_UNIFORMS);
+  private readonly compositeUniformData = createUniformData(PERSIST_COMPOSITE_UNIFORMS);
+  private readonly compositeMotionUniformData = createUniformData(PERSIST_COMPOSITE_MOTION_UNIFORMS);
   private readonly belowBindGroupCache: TexturePairBindGroupCacheEntry[];
   private readonly aboveBindGroupCache: TexturePairBindGroupCacheEntry[];
 
@@ -92,9 +95,6 @@ export class PersistencePass {
   private readonly compositeBGL: GPUBindGroupLayout;
   private readonly belowCompositeUniformBuf: GPUBuffer;
   private readonly aboveCompositeUniformBuf: GPUBuffer;
-  private readonly compositeUniformData = new ArrayBuffer(16);
-  private readonly compositeUniformF32 = new Float32Array(this.compositeUniformData);
-  private readonly compositeUniformU32 = new Uint32Array(this.compositeUniformData);
   private readonly belowCompositeCache: TwoTextureBindGroupCacheEntry[];
   private readonly aboveCompositeCache: TwoTextureBindGroupCacheEntry[];
   private stampTexture: GPUTexture | null = null;
@@ -111,9 +111,6 @@ export class PersistencePass {
   private motionCompositePipeline: GPURenderPipeline | null = null;
   private readonly belowMotionUniformBuf: GPUBuffer;
   private readonly aboveMotionUniformBuf: GPUBuffer;
-  private readonly motionUniformData = new ArrayBuffer(32);
-  private readonly motionUniformF32 = new Float32Array(this.motionUniformData);
-  private readonly motionUniformU32 = new Uint32Array(this.motionUniformData);
   private readonly belowMotionCache = createMotionCache(2);
   private readonly aboveMotionCache = createMotionCache(2);
   private readonly belowMotionCompositeCache = createMotionCache(2);
@@ -132,11 +129,11 @@ export class PersistencePass {
     this.bgl = pipelines.persistBGL;
     this.pipeline = pipelines.createPersistPipeline();
     this.aboveUniformBuf = device.createBuffer({
-      size: 32,
+      size: PERSIST_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.belowUniformBuf = device.createBuffer({
-      size: 32,
+      size: PERSIST_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.belowBindGroupCache = createTexturePairCache(2);
@@ -148,23 +145,25 @@ export class PersistencePass {
     this.compositeBGL = pipelines.persistCompositeBGL;
     this.compositePipeline = pipelines.createPersistCompositePipeline();
     this.belowCompositeUniformBuf = device.createBuffer({
-      size: 16,
+      size: PERSIST_COMPOSITE_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.aboveCompositeUniformBuf = device.createBuffer({
-      size: 16,
+      size: PERSIST_COMPOSITE_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.belowCompositeCache = createTwoTextureCache(2);
     this.aboveCompositeCache = createTwoTextureCache(2);
-    // The motion variants reuse the original 32-byte block; the fused pass
-    // spends its three tail pads and the composite pass grows into a full one.
+    // One buffer per timescale serves both motion variants: the fused pass
+    // spends its block's three tail pads and the composite pass grows into a
+    // full 32 bytes, so the two layouts are the same size.
+    const motionBytes = Math.max(PERSIST_MOTION_UNIFORMS.bytes, PERSIST_COMPOSITE_MOTION_UNIFORMS.bytes);
     this.belowMotionUniformBuf = device.createBuffer({
-      size: 32,
+      size: motionBytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.aboveMotionUniformBuf = device.createBuffer({
-      size: 32,
+      size: motionBytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
@@ -275,14 +274,14 @@ export class PersistencePass {
   private encodeCoincidence(
     layerTextures: LayerTextures,
     writeIdx: 0 | 1,
-    params: PersistenceEncodeParams,
+    stamp: CoincidenceStampValues,
   ): void {
     try {
       const enc = this.device.createCommandEncoder();
       this.coincidenceBackend.encodeCoincidenceInto(
         enc, layerTextures, this.stampTexture!, this.diagnosticTextures[writeIdx]!,
         this.tracerWidth, this.tracerHeight,
-        { colorThresh: params.colorThresh, stampBoost: params.stampBoost, tracerMode: params.tracerMode },
+        { colorThresh: stamp.colorThresh, stampBoost: stamp.stampBoost, tracerMode: stamp.tracerMode },
         writeIdx,
       );
       this.device.queue.submit([enc.finish()]);
@@ -299,62 +298,60 @@ export class PersistencePass {
     layerTextures: LayerTextures,
     params: PersistenceEncodeParams,
   ): void {
-    if (params.paused) return;
+    const { state, fps } = params;
+    if (rendererStateValue(state, 'paused')) return;
 
     const readIdx: 0 | 1 = this.pingPong;
     const writeIdx: 0 | 1 = readIdx === 0 ? 1 : 0;
+    const below = persistUniforms(state, { role: 'below', fps });
+    const above = persistUniforms(state, { role: 'above', fps });
 
     // A motion term only engages when a mode is selected *and* a field
     // actually exists; otherwise every pipeline, layout and uniform in this
     // frame is the one that shipped before the temporal term did.
-    const motion = (params.motionMode ?? 0) !== 0 && Boolean(params.motionTexture);
+    const motionTexture = below.motionMode !== 0 ? params.motionTexture ?? null : null;
 
     if (this.useComputePersistence()) {
-      this.encodeCoincidence(layerTextures, writeIdx, params);
-      if (motion) {
+      // The stamp does not depend on the timescale, so either one's values do.
+      this.encodeCoincidence(layerTextures, writeIdx, below);
+      if (motionTexture) {
         this.encodeMotionCompositeSingle(
           enc, readIdx, writeIdx,
-          params.belowDuration, this.belowMotionUniformBuf, this.belowTextures,
-          this.belowMotionCompositeCache, params,
+          below, this.belowMotionUniformBuf, this.belowTextures,
+          this.belowMotionCompositeCache, motionTexture,
         );
         this.encodeMotionCompositeSingle(
           enc, readIdx, writeIdx,
-          params.aboveDuration, this.aboveMotionUniformBuf, this.aboveTextures,
-          this.aboveMotionCompositeCache, params,
+          above, this.aboveMotionUniformBuf, this.aboveTextures,
+          this.aboveMotionCompositeCache, motionTexture,
         );
       } else {
         this.encodeCompositeSingle(
           enc, readIdx, writeIdx,
-          params.belowDuration, this.belowCompositeUniformBuf, this.belowTextures, this.belowCompositeCache,
-          params,
+          below, this.belowCompositeUniformBuf, this.belowTextures, this.belowCompositeCache,
         );
         this.encodeCompositeSingle(
           enc, readIdx, writeIdx,
-          params.aboveDuration, this.aboveCompositeUniformBuf, this.aboveTextures, this.aboveCompositeCache,
-          params,
+          above, this.aboveCompositeUniformBuf, this.aboveTextures, this.aboveCompositeCache,
         );
       }
-    } else if (motion) {
+    } else if (motionTexture) {
       this.encodeMotionSingle(
         enc, layerTextures, readIdx, writeIdx,
-        params.belowDuration, this.belowMotionUniformBuf, this.belowTextures, this.belowMotionCache,
-        params,
+        below, this.belowMotionUniformBuf, this.belowTextures, this.belowMotionCache, motionTexture,
       );
       this.encodeMotionSingle(
         enc, layerTextures, readIdx, writeIdx,
-        params.aboveDuration, this.aboveMotionUniformBuf, this.aboveTextures, this.aboveMotionCache,
-        params,
+        above, this.aboveMotionUniformBuf, this.aboveTextures, this.aboveMotionCache, motionTexture,
       );
     } else {
       this.encodeSingle(
         enc, layerTextures, readIdx, writeIdx,
-        params.belowDuration, this.belowUniformBuf, this.belowTextures, this.belowBindGroupCache,
-        params,
+        below, this.belowUniformBuf, this.belowTextures, this.belowBindGroupCache,
       );
       this.encodeSingle(
         enc, layerTextures, readIdx, writeIdx,
-        params.aboveDuration, this.aboveUniformBuf, this.aboveTextures, this.aboveBindGroupCache,
-        params,
+        above, this.aboveUniformBuf, this.aboveTextures, this.aboveBindGroupCache,
       );
     }
 
@@ -417,19 +414,16 @@ export class PersistencePass {
     enc: GPUCommandEncoder,
     readIdx: 0 | 1,
     writeIdx: 0 | 1,
-    duration: number,
+    values: PersistValues,
     uniformBuf: GPUBuffer,
     textures: [GPUTexture | null, GPUTexture | null],
     cache: TwoTextureBindGroupCacheEntry[],
-    params: PersistenceEncodeParams,
   ): void {
     const prevTexture = textures[readIdx]!;
     const stampTexture = this.stampTexture!;
-    const decayFactor = durationToDecay(duration, params.fps);
 
-    this.compositeUniformF32[0] = decayFactor;
-    this.compositeUniformU32[1] = params.peakMode;
-    this.device.queue.writeBuffer(uniformBuf, 0, this.compositeUniformData);
+    packUniforms(PERSIST_COMPOSITE_UNIFORMS, values, this.compositeUniformData);
+    this.device.queue.writeBuffer(uniformBuf, 0, this.compositeUniformData.buffer);
 
     const bg = getOrCreateTwoTextureBindGroup(
       this.device,
@@ -465,21 +459,15 @@ export class PersistencePass {
     layerTextures: LayerTextures,
     readIdx: 0 | 1,
     writeIdx: 0 | 1,
-    duration: number,
+    values: PersistValues,
     uniformBuf: GPUBuffer,
     textures: [GPUTexture | null, GPUTexture | null],
     cache: TexturePairBindGroupCacheEntry[],
-    params: PersistenceEncodeParams,
   ): void {
     const prevTexture = textures[readIdx]!;
-    const decayFactor = durationToDecay(duration, params.fps);
 
-    this.uniformF32[0] = decayFactor;
-    this.uniformF32[1] = params.colorThresh;
-    this.uniformF32[2] = params.stampBoost;
-    this.uniformU32[3] = params.tracerMode;
-    this.uniformU32[4] = params.peakMode;
-    this.device.queue.writeBuffer(uniformBuf, 0, this.uniformData);
+    packUniforms(PERSIST_UNIFORMS, values, this.uniformData);
+    this.device.queue.writeBuffer(uniformBuf, 0, this.uniformData.buffer);
 
     const bg = getOrCreateTexturePairBindGroup(
       this.device,
@@ -524,25 +512,17 @@ export class PersistencePass {
     layerTextures: LayerTextures,
     readIdx: 0 | 1,
     writeIdx: 0 | 1,
-    duration: number,
+    values: PersistValues,
     uniformBuf: GPUBuffer,
     textures: [GPUTexture | null, GPUTexture | null],
     cache: MotionBindGroupCacheEntry[],
-    params: PersistenceEncodeParams,
+    motionTexture: GPUTexture,
   ): void {
     this.motionPipeline ??= this.pipelines.createPersistMotionPipeline();
     const prevTexture = textures[readIdx]!;
-    const motionTexture = params.motionTexture!;
 
-    this.uniformF32[0] = durationToDecay(duration, params.fps);
-    this.uniformF32[1] = params.colorThresh;
-    this.uniformF32[2] = params.stampBoost;
-    this.uniformU32[3] = params.tracerMode;
-    this.uniformU32[4] = params.peakMode;
-    this.uniformU32[5] = params.motionMode ?? 0;
-    this.uniformF32[6] = params.motionGain ?? 0;
-    this.uniformF32[7] = params.motionDecayBias ?? 0;
-    this.device.queue.writeBuffer(uniformBuf, 0, this.uniformData);
+    packUniforms(PERSIST_MOTION_UNIFORMS, values, this.motionUniformData);
+    this.device.queue.writeBuffer(uniformBuf, 0, this.motionUniformData.buffer);
 
     const entry = cache[readIdx];
     if (
@@ -593,23 +573,18 @@ export class PersistencePass {
     enc: GPUCommandEncoder,
     readIdx: 0 | 1,
     writeIdx: 0 | 1,
-    duration: number,
+    values: PersistValues,
     uniformBuf: GPUBuffer,
     textures: [GPUTexture | null, GPUTexture | null],
     cache: MotionBindGroupCacheEntry[],
-    params: PersistenceEncodeParams,
+    motionTexture: GPUTexture,
   ): void {
     this.motionCompositePipeline ??= this.pipelines.createPersistCompositeMotionPipeline();
     const prevTexture = textures[readIdx]!;
     const stampTexture = this.stampTexture!;
-    const motionTexture = params.motionTexture!;
 
-    this.motionUniformF32[0] = durationToDecay(duration, params.fps);
-    this.motionUniformU32[1] = params.peakMode;
-    this.motionUniformU32[2] = params.motionMode ?? 0;
-    this.motionUniformF32[3] = params.motionGain ?? 0;
-    this.motionUniformF32[4] = params.motionDecayBias ?? 0;
-    this.device.queue.writeBuffer(uniformBuf, 0, this.motionUniformData);
+    packUniforms(PERSIST_COMPOSITE_MOTION_UNIFORMS, values, this.compositeMotionUniformData);
+    this.device.queue.writeBuffer(uniformBuf, 0, this.compositeMotionUniformData.buffer);
 
     const entry = cache[readIdx];
     if (

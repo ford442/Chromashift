@@ -38,6 +38,10 @@ export interface FakeGpu {
   pipelineCount: number;
   bindGroupCount: number;
   bufferWrites: { buffer: string; bytes: number }[];
+  /** Each buffer's size at creation, by label. */
+  bufferSizes: Map<string, number>;
+  /** A copy of the bytes last written to each buffer, by label — what the GPU would read. */
+  bufferContents: Map<string, Uint8Array>;
   /** Fragment source each created pipeline was built from, in creation order. */
   fragments: string[];
   /**
@@ -68,6 +72,8 @@ export function createFakeGpu(): FakeGpu {
     pipelineCount: 0,
     bindGroupCount: 0,
     bufferWrites: [] as { buffer: string; bytes: number }[],
+    bufferSizes: new Map<string, number>(),
+    bufferContents: new Map<string, Uint8Array>(),
     fragments: [] as string[],
     bindGroups: [] as RecordedBindGroup[],
   };
@@ -106,9 +112,10 @@ export function createFakeGpu(): FakeGpu {
         destroy: () => { record.destroyed = true; },
       } as unknown as GPUTexture;
     },
-    createBuffer() {
+    createBuffer(descriptor: GPUBufferDescriptor) {
       const label = nextId('buf');
-      return { label, destroy: () => {} } as unknown as GPUBuffer;
+      state.bufferSizes.set(label, descriptor.size);
+      return { label, size: descriptor.size, destroy: () => {} } as unknown as GPUBuffer;
     },
     createSampler: () => ({ __sampler: nextId('smp') }) as unknown as GPUSampler,
     createShaderModule(descriptor: GPUShaderModuleDescriptor) {
@@ -171,11 +178,28 @@ export function createFakeGpu(): FakeGpu {
       } as unknown as GPUCommandEncoder;
     },
     queue: {
-      writeBuffer(buffer: GPUBuffer, _offset: number, data: ArrayBuffer | ArrayBufferView) {
+      writeBuffer(
+        buffer: GPUBuffer,
+        _offset: number,
+        data: ArrayBuffer | ArrayBufferView,
+        dataOffset = 0,
+        size?: number,
+      ) {
         state.bufferWrites.push({
           buffer: buffer.label,
           bytes: 'byteLength' in data ? data.byteLength : 0,
         });
+        // `writeBuffer` copies at call time, so a writer that reuses one scratch
+        // block for several buffers must still leave each with its own bytes.
+        const bytes = ArrayBuffer.isView(data)
+          ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          : new Uint8Array(data);
+        const elementSize = ArrayBuffer.isView(data) && 'BYTES_PER_ELEMENT' in data
+          ? (data as unknown as { BYTES_PER_ELEMENT: number }).BYTES_PER_ELEMENT
+          : 1;
+        const start = dataOffset * elementSize;
+        const end = size === undefined ? bytes.byteLength : start + size * elementSize;
+        state.bufferContents.set(buffer.label, bytes.slice(start, end));
       },
       writeTexture: () => {},
       submit: () => {},
@@ -190,6 +214,8 @@ export function createFakeGpu(): FakeGpu {
     get pipelineCount() { return state.pipelineCount; },
     get bindGroupCount() { return state.bindGroupCount; },
     get bufferWrites() { return state.bufferWrites; },
+    get bufferSizes() { return state.bufferSizes; },
+    get bufferContents() { return state.bufferContents; },
     get fragments() { return state.fragments; },
     rejectShadersContaining(marker: string, message: string) {
       rejected.push({ marker, message });

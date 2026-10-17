@@ -40,7 +40,6 @@ export class WebGLReadback {
     layerTextures: readonly RenderTarget[],
     persistence: WebGLPersistencePass,
     state: RendererState,
-    layerOpacities: number[],
   ): void {
     this.collectPreview();
     this.collectStats();
@@ -50,7 +49,7 @@ export class WebGLReadback {
         ...state,
         viewportQuarterZoom: false,
         viewportHalfOverlay: false,
-      }, layerOpacities);
+      });
       this.previewPack.start(this.previewTarget, WebGLReadback.PREVIEW_SIZE, WebGLReadback.PREVIEW_SIZE);
     }
     if (this.statsQueued && !this.statsPack.busy) {
@@ -58,7 +57,7 @@ export class WebGLReadback {
       compositor.render(this.diagnosticTarget, WebGLReadback.DIAGNOSTIC_SIZE, WebGLReadback.DIAGNOSTIC_SIZE, layerTextures, persistence, {
         ...state,
         mainViewMode: MAIN_VIEW_MODES.COINCIDENCE_HEATMAP,
-      }, layerOpacities);
+      });
       this.statsPack.start(this.diagnosticTarget, WebGLReadback.DIAGNOSTIC_SIZE, WebGLReadback.DIAGNOSTIC_SIZE);
     }
   }

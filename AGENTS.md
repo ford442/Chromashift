@@ -93,8 +93,9 @@ src/
     │   │   ├── plan.ts                # CompiledGraph → encodable steps (no WebGPU; owns coincidence fusion)
     │   │   ├── pool.ts                # AllocationPlan → textures, lazily; ping-pong + MSAA targets
     │   │   ├── nodePipelines.ts       # One emitted pass → bind-group layout, pipeline, uniform block
+    │   │   ├── uniforms.ts            # RendererState → uniform values, for every encode path and both backends
     │   │   └── WebGpuGraphExecutor.ts # The WebGPU encode path behind ?graph=1
-    │   ├── templates/                 # WGSL + GLSL emitter per node kind
+    │   ├── templates/                 # WGSL + GLSL emitter per node kind; uniformLayout.ts = typed uniform blocks
     │   └── __golden__/                # Pre-refactor shader sources (pixel-identity baseline)
     ├── shaders/              # WGSL modules assembled in TS (thin assembler)
     │   ├── index.ts          # Re-exports all shader sources (import via './shaders')
@@ -219,6 +220,8 @@ The WGSL and GLSL sources for the band layers, the coincidence/decay (persistenc
 On WebGPU the graph is also **executed**: `?graph=1` hands the compiled graph to `WebGpuGraphExecutor`, which walks `compiled.passes` and binds the allocator's pool instead of running the hand-written five-pass encode in `WebGPURenderer`. The default graph is that topology, and its frame is byte-identical to the hand encoder's on a GPU (±1 on a few pixels against the compute-fed stamp — see PASS_GRAPH.md § *Pixel parity*); `?graph=blur` and `?graph=warp` are different shapes that draw with no renderer edit, and the JSON starters `?graph=smear` (a `history` trail pushed along the motion field by `displace`) and `?graph=feedback` use node kinds the hand encoder has no equivalent for. The executor draws only once the device has validated its pipelines, so an emitted shader the device rejects is an `invalid-pipeline` refusal, not a black canvas. The WebGL diagnostic backend compiles only. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md).
 
 For shader-based effect work, prototype/inspect in `src/engine/webgl/` when browser automation needs visible pixels, then port the final logic into `src/engine/shaders/` / `WebGPUPipelines.ts`. Band thresholds must come from the canonical `BAND` table in `src/engine/math/bandClassification.ts` (via `BAND_WGSL` / `BAND_GLSL` in `bandLiterals.ts`) — never hardcode them in WGSL or GLSL; `src/engine/shaders/bandTable.test.ts` guards TS/WGSL/GLSL/C++ against divergence. The tracer-decay constants follow the same rule: the `DECAY` table in `src/engine/math/decay.ts` (from `shared/decay.json`) via `DECAY_WGSL` / `DECAY_GLSL` in `decayLiterals.ts`, guarded by `src/engine/shaders/decayTable.test.ts` — see [docs/wasm-engine.md](docs/wasm-engine.md#shared-decay-table-shareddecayjson). Keep thresholds, uniforms, and state fields aligned between both renderers when the effect is meant to be shared.
+
+Uniforms follow the same single-source rule. A uniform block is declared as a typed layout next to its emitter (`graph/templates/uniformLayout.ts`) and its WGSL `struct` is emitted from that layout, so never write a block by index — pack it by field name (`packUniforms`). The values come from `graph/exec/uniforms.ts`, which every encode path on both backends calls, and an absent optional `RendererState` field means `RENDERER_STATE_DEFAULTS` in `state/defaults.ts`, read through `rendererStateValue()`. Never spell a fallback at the read (`state.stampBoost ?? 1.8`): `graph/exec/uniforms.test.ts` scans `src/engine` for one. See [docs/PASS_GRAPH.md](docs/PASS_GRAPH.md#one-state--uniform-mapping).
 
 ### Rendering Pipeline (Detailed)
 

@@ -10,7 +10,75 @@ import {
 } from '../engine/motionModes';
 import { CANONICAL_LAYER_COUNT } from '../engine/graph/layerSpecs';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
+import type { RendererState } from '../engine/types/RendererState';
 import type { ChromashiftState, PerLayer } from './types';
+
+/** Session defaults that are also what a renderer assumes when the field is absent. */
+export const DEFAULT_TRACER_ABOVE_INTENSITY = 0.85;
+export const DEFAULT_TRACER_BELOW_INTENSITY = 0.30;
+export const DEFAULT_STAMP_BOOST = 1.8;
+export const DEFAULT_DIAGNOSTICS_OPACITY = 0.55;
+export const DEFAULT_TRACER_INSPECT_EXPOSURE = 1.04;
+
+/**
+ * What an absent optional {@link RendererState} field means — to every
+ * renderer, every encode path, and both backends.
+ *
+ * These used to be spelled at each read (`state.stampBoost ?? 1.8`) in the
+ * hand encoder, the graph executor, the stationary previews and the WebGL
+ * passes, and they had already drifted: WebGL read an absent tracer duration
+ * as 500 / 2000 ms where WebGPU read 1000 / 0. Nothing reads one of these
+ * fields with its own fallback any more; `rendererStateValue()` in
+ * `engine/graph/exec/uniforms.ts` is the one reader.
+ *
+ * App frames never hit most of them — `buildRendererState` sets every field —
+ * but tests, offline export and the one-off states a renderer builds for
+ * itself do. Where a session default exists the value is that default; the
+ * tracer durations are the WebGPU renderer's historical fallbacks, kept so no
+ * existing frame changes.
+ */
+export const RENDERER_STATE_DEFAULTS = {
+  layerOpacity: 1,
+  layerScale: 1,
+  tracerScale: 1,
+  tracerAboveIntensity: DEFAULT_TRACER_ABOVE_INTENSITY,
+  tracerBelowIntensity: DEFAULT_TRACER_BELOW_INTENSITY,
+  tracerAboveDuration: 1000,
+  tracerBelowDuration: 0,
+  tracerThreshold: 0.05,
+  tracerMode: 0,
+  motionMode: 0,
+  motionGain: DEFAULT_MOTION_GAIN,
+  motionDecayBias: DEFAULT_MOTION_DECAY_BIAS,
+  motionThreshold: DEFAULT_MOTION_THRESHOLD,
+  colorMode: 1,
+  colorProfileMode: 0,
+  colorProfileLightDark: 1,
+  sobelEnabled: false,
+  softCropEnabled: false,
+  layerBlendMode: 0,
+  tracerBlendMode: 0,
+  outputMode: 0,
+  paused: false,
+  mainViewMode: MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
+  tracerInspectZoom: 1,
+  tracerInspectPanX: 0,
+  tracerInspectPanY: 0,
+  tracerInspectHeatmap: false,
+  tracerInspectExposure: DEFAULT_TRACER_INSPECT_EXPOSURE,
+  tracerInspectTonemap: true,
+  tracerInspectShowLayers: false,
+  diagnosticsMode: false,
+  diagnosticsOpacity: DEFAULT_DIAGNOSTICS_OPACITY,
+  stampBoost: DEFAULT_STAMP_BOOST,
+  peakCollisionsOnly: false,
+  viewportQuarterZoom: false,
+  viewportHalfOverlay: false,
+  halfOverlayAlpha: 0.5,
+} as const satisfies { [K in keyof RendererState]?: NonNullable<RendererState[K]> };
+
+/** Fallback for one entry of `RendererState.layerOpacities`. */
+export const DEFAULT_PER_LAYER_OPACITY = 1;
 
 export const DEFAULT_AUDIO_LEVELS = {
   bass: 0,
@@ -113,8 +181,8 @@ export function createInitialState(): ChromashiftState {
       colorProfile: null,
     },
     tracers: {
-      aboveIntensity: 0.85,
-      belowIntensity: 0.30,
+      aboveIntensity: DEFAULT_TRACER_ABOVE_INTENSITY,
+      belowIntensity: DEFAULT_TRACER_BELOW_INTENSITY,
       aboveDuration: 500,
       belowDuration: 2000,
       mode: 0,
@@ -130,8 +198,8 @@ export function createInitialState(): ChromashiftState {
       mainViewMode: MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
       outputMode: 0,
       diagnosticsMode: false,
-      diagnosticsOpacity: 0.55,
-      stampBoost: 1.8,
+      diagnosticsOpacity: DEFAULT_DIAGNOSTICS_OPACITY,
+      stampBoost: DEFAULT_STAMP_BOOST,
       peakCollisionsOnly: false,
       webglDebugMode: 0,
       viewportQuarterZoom: false,
@@ -144,7 +212,7 @@ export function createInitialState(): ChromashiftState {
         zoom: 1,
         pan: { x: 0, y: 0 },
         heatmap: false,
-        exposure: 1.04,
+        exposure: DEFAULT_TRACER_INSPECT_EXPOSURE,
         tonemap: true,
         showLayers: false,
       },

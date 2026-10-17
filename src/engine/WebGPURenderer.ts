@@ -15,8 +15,16 @@ import {
 import { MotionFieldPass } from './MotionFieldPass';
 import { MOTION_FIELD_DIVISOR, MOTION_MODE_DIRECTION } from './motionModes';
 import { PersistencePass } from './PersistencePass';
-import { CompositorPass, type CompositorUniformParams } from './CompositorPass';
+import { CompositorPass } from './CompositorPass';
 import { TracerInspectPass } from './TracerInspectPass';
+import {
+  bandLayerUniforms,
+  compositorUniforms,
+  rendererStateValue,
+  tracerInspectSettings,
+} from './graph/exec/uniforms';
+import { packUniforms } from './graph/templates/uniformLayout';
+import { BAND_LAYER_UNIFORMS } from './graph/templates/wgsl';
 import { GpuReadback } from './GpuReadback';
 import { GpuTimestampProfiler, publishGpuTimestampBreadcrumbs } from './GpuTimestampProfiler';
 import { StationaryPreviewRenderer } from './StationaryPreviewRenderer';
@@ -368,7 +376,7 @@ export class WebGPURenderer {
     return this.graphExecutor !== null
       && this.graphExecutor.ready
       && passMode === 'composite'
-      && (state.motionMode ?? 0) === 0;
+      && rendererStateValue(state, 'motionMode') === 0;
   }
 
   /** CPU-lane fallback for when `MotionFieldPass` declines; see its docs. */
@@ -493,17 +501,10 @@ export class WebGPURenderer {
     enc: GPUCommandEncoder,
     state: RendererState,
     canvasSize: TextureSize,
-    layerOpacities: number[],
   ): void {
     const maskTexture = this.classificationMaskTexture ?? this.fallbackMaskTexture;
-    const colorMode = state.colorMode ?? 1.0;
-    const useMask = this.classificationMaskTexture && colorMode === 0 ? 1 : 0;
     // Non-classic colour profiles render from the baked LUT (docs/COLOR_PROFILES.md).
     this.profileLut.update(state.colorProfileLut);
-    const profileMode = state.colorProfileLut && state.colorProfileMode ? 1 : 0;
-    const profileLightDark = state.colorProfileLightDark ?? 1;
-    const sobelEnabled = state.sobelEnabled ? 1 : 0;
-    const softCropEnabled = state.softCropEnabled ? 1 : 0;
     const aspect = canvasSize.width / canvasSize.height;
 
     const drawn = drawnLayerCount(this.layerPipelines.length, state.layers.length);
@@ -519,11 +520,11 @@ export class WebGPURenderer {
       lp.rotationData.set([rad, flipX, flipY, layerAspect]);
       this.device.queue.writeBuffer(lp.rotationBuffer, 0, lp.rotationData.buffer as ArrayBuffer, lp.rotationData.byteOffset, 16);
 
-      lp.fragData.set([
-        state.avgLuminance, layerOpacities[i], colorMode, useMask,
-        sobelEnabled, softCropEnabled, profileMode, profileLightDark,
-      ]);
-      this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 32);
+      packUniforms(BAND_LAYER_UNIFORMS, bandLayerUniforms(state, {
+        layerIndex: i,
+        hasClassificationMask: this.classificationMaskTexture !== null,
+      }), lp.fragUniforms);
+      this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragUniforms.buffer);
 
       const bindGroup = getOrCreateLayerBindGroup(
         this.device,
@@ -565,8 +566,8 @@ export class WebGPURenderer {
       console.warn('[WebGPURenderer] Canvas texture unavailable:', error);
       return;
     }
-    this.layerScale = state.layerScale ?? 1.0;
-    this.tracerScale = state.tracerScale ?? 1.0;
+    this.layerScale = rendererStateValue(state, 'layerScale');
+    this.tracerScale = rendererStateValue(state, 'tracerScale');
     this.ensureTextures(canvasTex.width, canvasTex.height);
 
     const hdrCanvas = canvasTex.format === HDR_CANVAS_FORMAT;
@@ -589,8 +590,8 @@ export class WebGPURenderer {
         sampleCount: this.sampleCount,
         readbackActive: state.livePreviewEnabled !== false,
         internalBytesPerPixel: internalColorFormatBytesPerPixel(this.internalFormat),
-        motionActive: (state.motionMode ?? 0) !== 0,
-        motionFlowActive: (state.motionMode ?? 0) === MOTION_MODE_DIRECTION,
+        motionActive: rendererStateValue(state, 'motionMode') !== 0,
+        motionFlowActive: rendererStateValue(state, 'motionMode') === MOTION_MODE_DIRECTION,
         motionDivisor: MOTION_FIELD_DIVISOR,
       });
     }
@@ -632,7 +633,7 @@ export class WebGPURenderer {
     this.gpuProfiler?.afterSubmit();
     // Only when a mode is selected: `off` must not map a stats buffer, or
     // publish a breadcrumb, for a pass that never ran.
-    if ((state.motionMode ?? 0) !== 0) this.motionField.afterSubmit();
+    if (rendererStateValue(state, 'motionMode') !== 0) this.motionField.afterSubmit();
     this.readback.afterSubmit(readbackFlags);
   }
 
@@ -658,8 +659,8 @@ export class WebGPURenderer {
     const fps = options.fps ?? 30;
     const passMode = options.passMode ?? 'composite';
 
-    this.layerScale = state.layerScale ?? 1.0;
-    this.tracerScale = state.tracerScale ?? 1.0;
+    this.layerScale = rendererStateValue(state, 'layerScale');
+    this.tracerScale = rendererStateValue(state, 'tracerScale');
     this.ensureTextures(width, height);
 
     // Always the SDR pipelines' format, never the live canvas's: export stays
@@ -712,7 +713,7 @@ export class WebGPURenderer {
       this.executorEncodedLastFrame = true;
       // The live-preview readback still runs through `CompositorPass`, so its
       // uniform block has to be written even though the graph drew the frame.
-      this.compositor.writeUniforms(this.compositorUniformParams(state));
+      this.compositor.writeUniforms(compositorUniforms(state, this.pipelines.layerCount));
       // A graph that binds the motion field (a `displace` steered by it) runs
       // the chore itself, with flow, whatever `motionMode` says — `motionMode`
       // selects the *persistence* term, and any non-zero mode keeps the hand
@@ -725,8 +726,8 @@ export class WebGPURenderer {
           this.currentTexture.width,
           this.currentTexture.height,
           {
-            threshold: state.motionThreshold ?? 0.04,
-            reset: this.motionResetPending || state.paused === true,
+            threshold: rendererStateValue(state, 'motionThreshold'),
+            reset: this.motionResetPending || rendererStateValue(state, 'paused'),
           },
           true,
         );
@@ -762,18 +763,11 @@ export class WebGPURenderer {
     }
 
     this.executorEncodedLastFrame = false;
-    const globalLayerOpacity = state.layerOpacity ?? 1.0;
-    const sourceLayerOpacities = state.layerOpacities;
-    const layerOpacities: number[] = state.layers.map(
-      (_, i) => globalLayerOpacity * (sourceLayerOpacities?.[i] ?? 1.0),
-    );
-    const stampBoost = state.stampBoost ?? 1.8;
-    const tracerMode = state.tracerMode ?? 0.0;
     const layerTextures = this.getLayerTextures();
     const { below: persistBelow, above: persistAbove } = this.getTracerTextures();
     const canvasSize: TextureSize = { width, height };
 
-    this.encodeLayerPasses(enc, state, canvasSize, layerOpacities);
+    this.encodeLayerPasses(enc, state, canvasSize);
     profiler?.markLayersEnd(enc);
 
     // The motion field depends only on the source frame, so it runs before the
@@ -788,7 +782,7 @@ export class WebGPURenderer {
     // draws below. The markers still bracket this call so an unaffected frame
     // reads the same `motionMs`/`motionFlowMs` split as before; a declined or
     // failed lane just collapses both to ~0, same as `motionMode: 'off'`.
-    const motionMode = state.motionMode ?? 0;
+    const motionMode = rendererStateValue(state, 'motionMode');
     let motionTexture: GPUTexture | null = null;
     if (motionMode !== 0 && this.currentTexture) {
       motionTexture = this.motionField.encodeAndSubmit(
@@ -796,11 +790,11 @@ export class WebGPURenderer {
         this.currentTexture.width,
         this.currentTexture.height,
         {
-          threshold: state.motionThreshold ?? 0.04,
+          threshold: rendererStateValue(state, 'motionThreshold'),
           // A paused session shows a frozen frame; differencing it against
           // itself is zero anyway, but the explicit reset keeps the first frame
           // after unpausing from stamping a whole-screen "change".
-          reset: this.motionResetPending || state.paused === true,
+          reset: this.motionResetPending || rendererStateValue(state, 'paused'),
         },
         motionMode === MOTION_MODE_DIRECTION,
       );
@@ -809,56 +803,28 @@ export class WebGPURenderer {
     profiler?.markMotionEnd(enc);
     profiler?.markMotionFlowEnd(enc);
 
-    this.persistence.encode(enc, layerTextures, {
-      fps,
-      colorThresh: state.tracerThreshold ?? 0.05,
-      tracerMode,
-      stampBoost,
-      peakMode: state.peakCollisionsOnly ? 1 : 0,
-      belowDuration: state.tracerBelowDuration ?? 0,
-      aboveDuration: state.tracerAboveDuration ?? 1000,
-      paused: state.paused ?? false,
-      motionMode,
-      motionGain: state.motionGain ?? 1,
-      motionDecayBias: state.motionDecayBias ?? 0.5,
-      motionTexture,
-    });
+    this.persistence.encode(enc, layerTextures, { state, fps, motionTexture });
     profiler?.markPersistenceEnd(enc);
 
-    const tracerAboveOp = state.tracerAboveIntensity ?? 0.85;
-    const tracerBelowOp = state.tracerBelowIntensity ?? 0.30;
-    const layerBlendMode = state.layerBlendMode ?? 0;
-    const tracerBlendMode = state.tracerBlendMode ?? 0;
-
-    const compositorParams = this.compositorUniformParams(state);
+    const compositorValues = compositorUniforms(state, this.pipelines.layerCount);
     // The SDR compositor's uniforms are written either way: the live-preview
     // readback draws through it.
-    this.compositor.writeUniforms(compositorParams);
+    this.compositor.writeUniforms(compositorValues);
     const present = hdrCanvas
       ? this.hdrPresentPasses()
       : { compositor: this.compositor, tracerInspect: this.tracerInspect };
-    if (hdrCanvas) present.compositor.writeUniforms(compositorParams);
+    if (hdrCanvas) present.compositor.writeUniforms(compositorValues);
+    const inspect = tracerInspectSettings(state);
+    const {
+      tracerAboveOpacity, tracerBelowOpacity, tracerBlendMode, layerBlendMode, layerOpacities,
+      ...inspectView
+    } = inspect;
 
     if (passMode === 'tracers') {
       present.tracerInspect.encodeTracerView(
         enc,
         outputView,
-        {
-          canvasWidth: width,
-          canvasHeight: height,
-          tracerAboveOpacity: tracerAboveOp,
-          tracerBelowOpacity: tracerBelowOp,
-          tracerBlendMode,
-          inspectZoom: state.tracerInspectZoom,
-          inspectPanX: state.tracerInspectPanX,
-          inspectPanY: state.tracerInspectPanY,
-          showHeatmap: state.tracerInspectHeatmap,
-          exposure: state.tracerInspectExposure,
-          applyTonemap: state.tracerInspectTonemap,
-          showLayers: state.tracerInspectShowLayers,
-          layerBlendMode,
-          layerOpacities,
-        },
+        { ...inspect, canvasWidth: width, canvasHeight: height },
         {
           layerTextures,
           persistAbove,
@@ -872,7 +838,7 @@ export class WebGPURenderer {
 
     const mainViewMode = passMode === 'composite'
       ? MAIN_VIEW_MODES.PROCESSED_COMPOSITE
-      : (state.mainViewMode ?? MAIN_VIEW_MODES.PROCESSED_COMPOSITE);
+      : rendererStateValue(state, 'mainViewMode');
 
     const handledAlternateView = present.tracerInspect.encodeMainView(enc, {
       mainViewMode,
@@ -886,24 +852,16 @@ export class WebGPURenderer {
       persistAbove,
       persistDiagnostic: this.persistence.diagnosticTextures[this.persistence.pingPong],
       pingPong: this.persistence.pingPong,
-      colorThresh: state.tracerThreshold ?? 0.05,
-      tracerAboveOp,
-      tracerBelowOp,
+      colorThresh: rendererStateValue(state, 'tracerThreshold'),
+      tracerAboveOp: tracerAboveOpacity,
+      tracerBelowOp: tracerBelowOpacity,
       layerBlendMode,
       tracerBlendMode,
       layerOpacities,
-      stampBoost,
-      outputMode: state.outputMode ?? 0,
-      tracerMode,
-      tracerInspect: {
-        inspectZoom: state.tracerInspectZoom,
-        inspectPanX: state.tracerInspectPanX,
-        inspectPanY: state.tracerInspectPanY,
-        showHeatmap: state.tracerInspectHeatmap,
-        exposure: state.tracerInspectExposure,
-        applyTonemap: state.tracerInspectTonemap,
-        showLayers: state.tracerInspectShowLayers,
-      },
+      stampBoost: compositorValues.stampBoost,
+      outputMode: compositorValues.outputMode,
+      tracerMode: compositorValues.tracerMode,
+      tracerInspect: inspectView,
     });
 
     if (!handledAlternateView) {
@@ -917,29 +875,6 @@ export class WebGPURenderer {
       );
     }
     profiler?.markCompositorEnd(enc);
-  }
-
-  /** Compositor uniform block for one frame, shared by both encode paths. */
-  private compositorUniformParams(state: RendererState): CompositorUniformParams {
-    const globalLayerOpacity = state.layerOpacity ?? 1.0;
-    const sourceLayerOpacities = state.layerOpacities ?? [];
-    return {
-      tracerAboveOp: state.tracerAboveIntensity ?? 0.85,
-      tracerBelowOp: state.tracerBelowIntensity ?? 0.30,
-      layerBlendMode: state.layerBlendMode ?? 0,
-      tracerBlendMode: state.tracerBlendMode ?? 0,
-      layerOpacities: this.layerPipelines.map(
-        (_, i) => globalLayerOpacity * (sourceLayerOpacities[i] ?? 1.0),
-      ),
-      diagnosticsOpacity: state.diagnosticsOpacity ?? 0.55,
-      stampBoost: state.stampBoost ?? 1.8,
-      outputMode: state.outputMode ?? 0,
-      tracerMode: state.tracerMode ?? 0.0,
-      diagnosticsMode: state.diagnosticsMode ?? false,
-      viewportQuarterZoom: false,
-      halfOverlayAlpha: state.halfOverlayAlpha ?? 0.5,
-      viewportHalfOverlay: false,
-    };
   }
 
   /** Upload the active colour profile LUT and hand back its texture. */

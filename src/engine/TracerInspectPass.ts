@@ -13,6 +13,18 @@ import {
 } from './BindGroupCache';
 import type { WebGPUPipelines } from './WebGPUPipelines';
 import { layerTextureEntries, type LayerTextures } from './BindGroupCache';
+import { DEFAULT_PER_LAYER_OPACITY, RENDERER_STATE_DEFAULTS } from '../state/defaults';
+import { createUniformData, packUniforms } from './graph/templates/uniformLayout';
+import {
+  COMPARE_UNIFORMS,
+  DISPLAY_UNIFORMS,
+  HEATMAP_UNIFORMS,
+  TRACER_VIEW_UNIFORMS,
+} from './shaders/diagnostics';
+
+/** The inspection shaders still read three layers; a missing opacity is opaque. */
+const opacityAt = (opacities: readonly number[] | undefined, index: number): number =>
+  opacities?.[index] ?? DEFAULT_PER_LAYER_OPACITY;
 
 export interface TracerViewEncodeParams {
   canvasWidth: number;
@@ -64,17 +76,13 @@ export class TracerInspectPass {
   private readonly tracerViewBGL: GPUBindGroupLayout;
   private readonly tracerViewUniformBuf: GPUBuffer;
   private readonly tracerViewSampler: GPUSampler;
-  private readonly tracerViewUniformData = new ArrayBuffer(80);
-  private readonly tracerViewF32 = new Float32Array(this.tracerViewUniformData);
-  private readonly tracerViewU32 = new Uint32Array(this.tracerViewUniformData);
+  private readonly tracerViewUniforms = createUniformData(TRACER_VIEW_UNIFORMS);
   private readonly tracerViewBindGroupCache: TexturePairBindGroupCacheEntry[];
 
   private readonly displayPipeline: GPURenderPipeline;
   private readonly displayBGL: GPUBindGroupLayout;
   private readonly displayUniformBuf: GPUBuffer;
-  private readonly displayUniformData = new ArrayBuffer(16);
-  private readonly displayF32 = new Float32Array(this.displayUniformData);
-  private readonly displayU32 = new Uint32Array(this.displayUniformData);
+  private readonly displayUniforms = createUniformData(DISPLAY_UNIFORMS);
   private readonly displayBindGroupCache: SimpleTextureBindGroupCacheEntry = {
     bindGroup: null,
     texture: null,
@@ -84,8 +92,7 @@ export class TracerInspectPass {
   private readonly heatmapPipeline: GPURenderPipeline;
   private readonly heatmapBGL: GPUBindGroupLayout;
   private readonly heatmapUniformBuf: GPUBuffer;
-  private readonly heatmapUniformData = new ArrayBuffer(16);
-  private readonly heatmapF32 = new Float32Array(this.heatmapUniformData);
+  private readonly heatmapUniforms = createUniformData(HEATMAP_UNIFORMS);
   private readonly heatmapBindGroupCache: LayerTextureBindGroupCacheEntry = {
     bindGroup: null,
     layers: null,
@@ -96,9 +103,7 @@ export class TracerInspectPass {
   private readonly comparePipeline: GPURenderPipeline;
   private readonly compareBGL: GPUBindGroupLayout;
   private readonly compareUniformBuf: GPUBuffer;
-  private readonly compareUniformData = new ArrayBuffer(48);
-  private readonly compareF32 = new Float32Array(this.compareUniformData);
-  private readonly compareU32 = new Uint32Array(this.compareUniformData);
+  private readonly compareUniforms = createUniformData(COMPARE_UNIFORMS);
   private readonly compareBindGroupCache: LayerTextureBindGroupCacheEntry = {
     bindGroup: null,
     layers: null,
@@ -126,7 +131,7 @@ export class TracerInspectPass {
     this.tracerViewBGL = pipelines.tracerViewBGL;
     this.tracerViewPipeline = pipelines.createTracerViewPipeline();
     this.tracerViewUniformBuf = device.createBuffer({
-      size: 80,
+      size: TRACER_VIEW_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.tracerViewSampler = device.createSampler({
@@ -141,21 +146,21 @@ export class TracerInspectPass {
     this.displayBGL = pipelines.displayBGL;
     this.displayPipeline = pipelines.createDisplayPipeline();
     this.displayUniformBuf = device.createBuffer({
-      size: 16,
+      size: DISPLAY_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.heatmapBGL = pipelines.heatmapBGL;
     this.heatmapPipeline = pipelines.createHeatmapPipeline();
     this.heatmapUniformBuf = device.createBuffer({
-      size: 16,
+      size: HEATMAP_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.compareBGL = pipelines.compareBGL;
     this.comparePipeline = pipelines.createComparePipeline();
     this.compareUniformBuf = device.createBuffer({
-      size: 48,
+      size: COMPARE_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -258,25 +263,29 @@ export class TracerInspectPass {
     const tW = ctx.persistAbove.width;
     const tH = ctx.persistAbove.height;
 
-    this.tracerViewF32[0] = options.canvasWidth / Math.max(1, options.canvasHeight);
-    this.tracerViewF32[1] = tW / Math.max(1, tH);
-    this.tracerViewF32[2] = options.tracerAboveOpacity;
-    this.tracerViewF32[3] = options.tracerBelowOpacity;
-    this.tracerViewU32[4] = options.tracerBlendMode;
-    this.tracerViewU32[5] = options.showHeatmap ? 1 : 0;
-    this.tracerViewF32[6] = Math.max(1, options.inspectZoom ?? 1);
-    this.tracerViewF32[7] = options.inspectPanX ?? 0;
-    this.tracerViewF32[8] = options.inspectPanY ?? 0;
-    this.tracerViewF32[9] = 0.82;
-    this.tracerViewF32[10] = options.exposure ?? 1.04;
-    this.tracerViewU32[11] = (options.applyTonemap ?? true) ? 1 : 0;
-    this.tracerViewU32[12] = (options.showLayers ?? false) ? 1 : 0;
-    this.tracerViewU32[13] = options.layerBlendMode ?? 0;
-    // The tracer-view shader still reads the three canonical layers.
-    this.tracerViewF32[14] = options.layerOpacities?.[0] ?? 1;
-    this.tracerViewF32[15] = options.layerOpacities?.[1] ?? 1;
-    this.tracerViewF32[16] = options.layerOpacities?.[2] ?? 1;
-    this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniformData);
+    // Options come from state (`tracerInspectSettings`) or from an export
+    // request, whose fields are optional; both fall back to the same defaults.
+    const defaults = RENDERER_STATE_DEFAULTS;
+    packUniforms(TRACER_VIEW_UNIFORMS, {
+      canvasAspect: options.canvasWidth / Math.max(1, options.canvasHeight),
+      texAspect: tW / Math.max(1, tH),
+      tracerAboveOpacity: options.tracerAboveOpacity,
+      tracerBelowOpacity: options.tracerBelowOpacity,
+      tracerBlendMode: options.tracerBlendMode,
+      showHeatmap: (options.showHeatmap ?? defaults.tracerInspectHeatmap) ? 1 : 0,
+      zoom: Math.max(1, options.inspectZoom ?? defaults.tracerInspectZoom),
+      panX: options.inspectPanX ?? defaults.tracerInspectPanX,
+      panY: options.inspectPanY ?? defaults.tracerInspectPanY,
+      heatmapOpacity: 0.82,
+      exposure: options.exposure ?? defaults.tracerInspectExposure,
+      applyTonemap: (options.applyTonemap ?? defaults.tracerInspectTonemap) ? 1 : 0,
+      showLayers: (options.showLayers ?? defaults.tracerInspectShowLayers) ? 1 : 0,
+      layerBlendMode: options.layerBlendMode ?? defaults.layerBlendMode,
+      layerOpacity0: opacityAt(options.layerOpacities, 0),
+      layerOpacity1: opacityAt(options.layerOpacities, 1),
+      layerOpacity2: opacityAt(options.layerOpacities, 2),
+    }, this.tracerViewUniforms);
+    this.device.queue.writeBuffer(this.tracerViewUniformBuf, 0, this.tracerViewUniforms.buffer);
 
     const bg = getOrCreateTexturePairBindGroup(
       this.device,
@@ -323,11 +332,8 @@ export class TracerInspectPass {
     canvasAspect: number,
     textureAspect: number,
   ): void {
-    this.displayF32[0] = canvasAspect;
-    this.displayF32[1] = textureAspect;
-    this.displayU32[2] = 0;
-    this.displayU32[3] = 0;
-    this.device.queue.writeBuffer(this.displayUniformBuf, 0, this.displayUniformData);
+    packUniforms(DISPLAY_UNIFORMS, { canvasAspect, texAspect: textureAspect }, this.displayUniforms);
+    this.device.queue.writeBuffer(this.displayUniformBuf, 0, this.displayUniforms.buffer);
 
     const bg = getOrCreateSimpleTextureBindGroup(
       this.device,
@@ -362,11 +368,8 @@ export class TracerInspectPass {
     layerTextures: LayerTextures,
     colorThresh: number,
   ): void {
-    this.heatmapF32[0] = colorThresh;
-    this.heatmapF32[1] = 0;
-    this.heatmapF32[2] = 0;
-    this.heatmapF32[3] = 0;
-    this.device.queue.writeBuffer(this.heatmapUniformBuf, 0, this.heatmapUniformData);
+    packUniforms(HEATMAP_UNIFORMS, { threshold: colorThresh }, this.heatmapUniforms);
+    this.device.queue.writeBuffer(this.heatmapUniformBuf, 0, this.heatmapUniforms.buffer);
 
     const bg = getOrCreateLayerTextureBindGroup(
       this.device,
@@ -396,19 +399,21 @@ export class TracerInspectPass {
   }
 
   private encodeCompare(enc: GPUCommandEncoder, targetView: GPUTextureView, params: MainViewEncodeParams): void {
-    this.compareF32[0] = params.sourceTexture.width / Math.max(1, params.sourceTexture.height);
-    this.compareF32[1] = params.tracerAboveOp;
-    this.compareF32[2] = params.tracerBelowOp;
-    this.compareU32[3] = params.layerBlendMode;
-    this.compareU32[4] = params.tracerBlendMode;
-    this.compareF32[5] = params.layerOpacities[0] ?? 1;
-    this.compareF32[6] = params.layerOpacities[1] ?? 1;
-    this.compareF32[7] = params.layerOpacities[2] ?? 1;
-    this.compareF32[8] = params.stampBoost;
-    this.compareF32[9] = 0.004;
-    this.compareU32[10] = params.outputMode;
-    this.compareU32[11] = params.tracerMode;
-    this.device.queue.writeBuffer(this.compareUniformBuf, 0, this.compareUniformData);
+    packUniforms(COMPARE_UNIFORMS, {
+      sourceAspect: params.sourceTexture.width / Math.max(1, params.sourceTexture.height),
+      tracerAboveOpacity: params.tracerAboveOp,
+      tracerBelowOpacity: params.tracerBelowOp,
+      layerBlendMode: params.layerBlendMode,
+      tracerBlendMode: params.tracerBlendMode,
+      layerOpacity0: opacityAt(params.layerOpacities, 0),
+      layerOpacity1: opacityAt(params.layerOpacities, 1),
+      layerOpacity2: opacityAt(params.layerOpacities, 2),
+      stampBoost: params.stampBoost,
+      dividerWidth: 0.004,
+      outputMode: params.outputMode,
+      tracerMode: params.tracerMode,
+    }, this.compareUniforms);
+    this.device.queue.writeBuffer(this.compareUniformBuf, 0, this.compareUniforms.buffer);
 
     const bg = getOrCreateLayerTextureBindGroup(
       this.device,

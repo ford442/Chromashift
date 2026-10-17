@@ -10,7 +10,8 @@ import type {
   RenderTiming,
 } from '../types/RendererContracts';
 import { EMPTY_GPU_RENDER_TIMING } from '../types/RendererContracts';
-import { durationToDecay } from '../math/decay';
+import { persistUniforms, rendererStateValue } from '../graph/exec/uniforms';
+import { DEFAULT_PER_LAYER_OPACITY } from '../../state/defaults';
 import type { ChromashiftTextureHandle, WebGlTextureHandle } from '../types/TextureHandle';
 import { WebGLBlit } from './WebGLBlit';
 import { WebGLCompositorPass } from './WebGLCompositorPass';
@@ -29,16 +30,6 @@ import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stati
 import type { WebGLRenderViewport } from './types';
 
 export type { WebGLRenderViewport } from './types';
-
-/**
- * Per-layer opacity, global multiplier folded in — one entry per layer the
- * state actually carries, not a fixed three.
- */
-function computeLayerOpacities(state: RendererState): number[] {
-  const globalLayerOpacity = state.layerOpacity ?? 1.0;
-  const perLayer = state.layerOpacities;
-  return state.layers.map((_, i) => globalLayerOpacity * (perLayer?.[i] ?? 1));
-}
 
 /**
  * WebGLRenderer — thin orchestrator over the WebGL2 fallback pipeline.
@@ -157,9 +148,8 @@ export class WebGLRenderer implements ChromashiftRenderer {
     if (!viewport) publishWebglInternalScale(contentScale);
     const internalW = Math.max(1, Math.round(destW * contentScale));
     const internalH = Math.max(1, Math.round(destH * contentScale));
-    const layerScale = viewport ? 1 : (state.layerScale ?? 1);
-    const tracerScale = viewport ? 1 : (state.tracerScale ?? 1);
-    const layerOpacities = computeLayerOpacities(state);
+    const layerScale = viewport ? 1 : rendererStateValue(state, 'layerScale');
+    const tracerScale = viewport ? 1 : rendererStateValue(state, 'tracerScale');
     const upsample = !viewport && (internalW !== canvasW || internalH !== canvasH);
     const compositeTarget = upsample ? this.ensureCompositeTarget(internalW, internalH) : null;
     this.renderFrameInternal(state, fps, {
@@ -180,7 +170,6 @@ export class WebGLRenderer implements ChromashiftRenderer {
       this.layerPass.targets,
       this.persistencePass,
       state,
-      layerOpacities,
     );
     // Hand the queued passes to the GPU every frame. Leaving them buffered
     // makes the next pixel read (preview, export) execute the whole backlog
@@ -234,7 +223,9 @@ export class WebGLRenderer implements ChromashiftRenderer {
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
     if (!this.currentTexture) return null;
     const target = createTarget(this.gl, options.width, options.height);
-    const layerOpacities = this.layerPass.targets.map((_, i) => options.layerOpacities?.[i] ?? 1);
+    const layerOpacities = this.layerPass.targets.map(
+      (_, i) => options.layerOpacities?.[i] ?? DEFAULT_PER_LAYER_OPACITY,
+    );
     const state: RendererState = {
       layers: [
         { angleDeg: 0 },
@@ -256,7 +247,6 @@ export class WebGLRenderer implements ChromashiftRenderer {
       this.layerPass.targets,
       this.persistencePass,
       state,
-      layerOpacities,
     );
     const pixels = await this.readback.readTexturePixelsAsync(target, options.width, options.height)
       ?? this.readback.readTexturePixels(target, options.width, options.height);
@@ -308,23 +298,22 @@ export class WebGLRenderer implements ChromashiftRenderer {
 
     const readIndex = this.persistencePass.pingPong;
     const writeIndex = (1 - this.persistencePass.pingPong) as 0 | 1;
-    const aboveDecay = durationToDecay(state.tracerAboveDuration ?? 500, fps);
-    const belowDecay = durationToDecay(state.tracerBelowDuration ?? 2000, fps);
+    const paused = rendererStateValue(state, 'paused');
     this.persistencePass.render(
       this.persistencePass.tracerAbove[writeIndex]!,
       this.persistencePass.tracerAbove[readIndex]!,
       this.layerPass.targets,
-      aboveDecay,
-      state,
+      persistUniforms(state, { role: 'above', fps }),
+      paused,
     );
     this.persistencePass.render(
       this.persistencePass.tracerBelow[writeIndex]!,
       this.persistencePass.tracerBelow[readIndex]!,
       this.layerPass.targets,
-      belowDecay,
-      state,
+      persistUniforms(state, { role: 'below', fps }),
+      paused,
     );
-    this.persistencePass.advancePingPong(state.paused);
+    this.persistencePass.advancePingPong(paused);
 
     this.compositorPass.render(
       frame.compositeTarget,
@@ -333,7 +322,6 @@ export class WebGLRenderer implements ChromashiftRenderer {
       this.layerPass.targets,
       this.persistencePass,
       state,
-      computeLayerOpacities(state),
       frame.viewport,
     );
   }
