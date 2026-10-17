@@ -1,6 +1,6 @@
 import type { ChromashiftState } from '../state/types';
 import { buildRendererState } from './buildRendererState';
-import type { ChromashiftRenderer } from './RendererTypes';
+import type { ChromashiftRenderer } from './types/RendererContracts';
 import type { RendererState } from './types/RendererState';
 import { MAIN_VIEW_MODES } from './viewModes';
 

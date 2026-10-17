@@ -373,13 +373,20 @@ export function buildWebGpuCapabilityReport(
   };
 }
 
+/**
+ * `requestAdapterInfo()` was removed from the spec in favour of `adapter.info`,
+ * so `@webgpu/types` no longer declares it — but Chromium before `info` has
+ * only this.
+ */
+type LegacyInfoAdapter = GPUAdapter & { requestAdapterInfo?: () => Promise<GPUAdapterInfo> };
+
 export async function readAdapterInfo(adapter: GPUAdapter): Promise<GPUAdapterInfo> {
-  if ('info' in adapter) {
-    const info = (adapter as GPUAdapter & { info?: GPUAdapterInfo }).info;
-    if (info) return info;
-  }
-  if (typeof adapter.requestAdapterInfo === 'function') {
-    return adapter.requestAdapterInfo();
+  // Typed as always present; absent on browsers that predate it.
+  const info = adapter.info as GPUAdapterInfo | undefined;
+  if (info) return info;
+  const legacy = adapter as LegacyInfoAdapter;
+  if (typeof legacy.requestAdapterInfo === 'function') {
+    return legacy.requestAdapterInfo();
   }
   return {
     vendor: 'unknown',

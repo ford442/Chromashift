@@ -2,7 +2,7 @@ import type { MotionMode } from '../../engine/motionModes';
 import type { ColorProfileControls } from '../../hooks/useColorProfiles';
 import type { ExportPanelProps } from './ExportPanel';
 import type { PresetsPanelProps } from './PresetsPanel';
-import type { RendererBackend } from '../../engine/RendererTypes';
+import type { RendererBackend } from '../../engine/types/RendererContracts';
 
 export type ReferenceBlendMode = 'hidden' | 'overlay' | 'split' | 'checker' | 'difference' | 'edge';
 /** Which image feeds the viewport blend overlay (when blend mode is not hidden). */
@@ -36,7 +36,7 @@ export interface PlayPanelProps {
   onImageChangeIntervalChange: (seconds: number) => void;
   isImageStripOpen: boolean;
   onToggleImageStrip: () => void;
-  onLoadSpecificImage: (url: string) => void;
+  onLoadSpecificImage: (url: string) => Promise<void>;
   onLoadFile: (file: File) => void;
   referenceImageLabel: string | null;
   onLoadReferenceImage: (url: string) => void;
@@ -157,7 +157,7 @@ export interface DiagnosticsPanelProps {
   onPerformanceAutoDegradeToggle: (value: boolean) => void;
   onApplyPerformanceDegrade: () => void;
   onFreezeInspect: () => void;
-  onExportTracer: () => void;
+  onExportTracer: () => Promise<void>;
   onTracerInspectHeatmapToggle: (value: boolean) => void;
   onTracerInspectZoomChange: (value: number) => void;
   onTracerInspectExposureChange: (value: number) => void;
@@ -172,8 +172,8 @@ export interface UpscalePanelProps {
   upscaleProgress: number;
   upscaleInfo: string;
   onUpscaleModelChange: (value: string) => void;
-  onUpscaleSource: () => void;
-  onUpscaleOutput: () => void;
+  onUpscaleSource: () => Promise<void>;
+  onUpscaleOutput: () => Promise<void>;
 }
 
 export interface ViewportPanelProps {

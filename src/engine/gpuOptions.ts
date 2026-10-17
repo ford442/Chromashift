@@ -75,10 +75,7 @@ export const CHROMASHIFT_TARGET_MAX_TEXTURE = 8192;
 export const CHROMASHIFT_OPTIONAL_FEATURES = [
   'timestamp-query',
   'rg11b10ufloat-renderable',
-  // Cast: `@tensorflow/tfjs-core` pins `@webgpu/types` 0.1.38, which predates
-  // this feature, and with two copies in the program the older global
-  // `GPUFeatureName` is the one TypeScript resolves.
-  'texture-formats-tier1' as GPUFeatureName,
+  'texture-formats-tier1',
 ] as const satisfies readonly GPUFeatureName[];
 
 /** 8-bit LDR internal targets — default when HDR renderables are not granted. */

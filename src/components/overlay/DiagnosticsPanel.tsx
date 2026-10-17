@@ -7,7 +7,7 @@ import {
   useRenderCpuTiming,
   useRenderGpuTiming,
 } from '../../engine/telemetryStore';
-import type { RendererBackend } from '../../engine/RendererTypes';
+import type { RendererBackend } from '../../engine/types/RendererContracts';
 import type { DiagnosticsPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
 import { readDiagnostic } from '../../engine/diagnostics';
@@ -278,7 +278,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           </button>
           <button
             type="button"
-            onClick={onExportTracer}
+            onClick={() => void onExportTracer()}
             disabled={exportingTracer}
             className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-200 disabled:opacity-50"
             title="Export the current tracer inspection view as a PNG at the main canvas resolution"

@@ -20,8 +20,8 @@ export interface DomRefs {
 
 export interface GpuRefs {
   orchestratorRef: RefObject<import('../../engine/RendererOrchestrator').RendererOrchestrator | null>;
-  rendererRef: RefObject<import('../../engine/RendererTypes').ChromashiftRenderer | null>;
-  textureManagerRef: RefObject<import('../../engine/RendererTypes').ChromashiftTextureManager | null>;
+  rendererRef: RefObject<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>;
+  textureManagerRef: RefObject<import('../../engine/types/RendererContracts').ChromashiftTextureManager | null>;
   deviceRef: RefObject<GPUDevice | null>;
   webGpuSessionRef: RefObject<import('../../engine/gpuBootstrap').WebGpuSession | null>;
   maskTextureRef: MutableRefObject<GPUTexture | null>;
@@ -43,11 +43,11 @@ export interface MediaRefs {
 export interface CompareRefs {
   /** Compare slot B (dual layout): canvas, renderer, independent angle clock. */
   canvasBRef: RefObject<HTMLCanvasElement | null>;
-  rendererBRef: MutableRefObject<import('../../engine/RendererTypes').ChromashiftRenderer | null>;
+  rendererBRef: MutableRefObject<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>;
   /** Quad layout: Original (a) and Tracer (c) canvases. */
   canvasARef: RefObject<HTMLCanvasElement | null>;
   canvasCRef: RefObject<HTMLCanvasElement | null>;
-  quadRenderersRef: MutableRefObject<Record<'a' | 'b' | 'c', import('../../engine/RendererTypes').ChromashiftRenderer | null>>;
+  quadRenderersRef: MutableRefObject<Record<'a' | 'b' | 'c', import('../../engine/types/RendererContracts').ChromashiftRenderer | null>>;
   animAnglesRef: MutableRefObject<number[]>;
   animAnglesBRef: MutableRefObject<number[]>;
   lastAngleSyncRef: MutableRefObject<number>;

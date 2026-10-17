@@ -334,7 +334,7 @@ export function buildColorProfileLut(
   profile: ColorProfile,
   avgLum: number,
   rows: number = PROFILE_LUT_MIN_ROWS,
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   const lut = new Uint8Array(profileLutBytes(rows));
   for (let layer = 0; layer < rows; layer += 1) {
     const profileLayer = layer % profile.layers.length;
@@ -352,7 +352,7 @@ export function buildColorProfileLut(
 
 interface LutCacheEntry {
   key: string;
-  lut: Uint8Array;
+  lut: Uint8Array<ArrayBuffer>;
 }
 
 const LUT_CACHE_LIMIT = 8;
@@ -367,7 +367,7 @@ export function getColorProfileLut(
   profile: ColorProfile,
   avgLum: number,
   layerCount: number = CANONICAL_LAYER_COUNT,
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   // Quantize avgLum: a LUT bucket can't resolve finer than half a unit anyway.
   const quantized = Math.round(avgLum * 2) / 2;
   const rows = profileLutRows(layerCount);

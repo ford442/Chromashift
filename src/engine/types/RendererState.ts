@@ -42,7 +42,7 @@ export interface RendererState {
    * only when a non-classic profile is active; renderers upload it when the
    * array identity changes. `null`/absent keeps the classic branchy path.
    */
-  colorProfileLut?     : Uint8Array | null;
+  colorProfileLut?     : Uint8Array<ArrayBuffer> | null;
   /** 1 = sample the LUT instead of the classic band branches. */
   colorProfileMode?    : number;
   /** 1 = lift luminance by the classic lightDark term before LUT lookup. */

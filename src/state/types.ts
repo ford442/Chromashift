@@ -1,5 +1,5 @@
 import type { ImageEntry } from '../engine/TextureManager';
-import type { RendererBackend } from '../engine/RendererTypes';
+import type { RendererBackend } from '../engine/types/RendererContracts';
 import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';
 import type { GpuRuntimeError } from '../engine/gpuBootstrap';

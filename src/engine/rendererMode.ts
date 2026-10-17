@@ -1,4 +1,4 @@
-import type { RendererBackend } from './RendererTypes';
+import type { RendererBackend } from './types/RendererContracts';
 import { publishDiagnostics } from './diagnostics';
 
 const STORAGE_KEY = 'chromashift.renderer';

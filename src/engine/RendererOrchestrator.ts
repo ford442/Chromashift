@@ -17,7 +17,7 @@ import {
   type WebGpuCanvasOptions,
   type WebGpuSession,
 } from './gpuBootstrap';
-import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './RendererTypes';
+import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './types/RendererContracts';
 
 /** Default slot id for the main viewport canvas. */
 export const PRIMARY_SLOT_ID = 'main';
