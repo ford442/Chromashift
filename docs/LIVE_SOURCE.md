@@ -195,6 +195,12 @@ Where the extra work lands:
   worker the kernel is `computeMotionFlow` from the C++ engine when the WASM module loaded, and the
   portable TypeScript otherwise. Lane selection stays on the main thread, so the breadcrumbs above
   still say which lane served the frame and why the other declined.
+- **Auto-degrade** — `direction` is the most expensive motion mode, so `ui/applyPerformanceDegrade`
+  (the over-budget auto-degrade and the "Apply fixes" button) steps `direction` down to `boost`:
+  same field, magnitude only, no flow solve and no second texture, trail still visible. It never
+  steps to `off` or `gate`, which would read as a missing trail rather than a cheaper one, and it
+  leaves `boost` / `gate` / `off` alone. Like the MSAA step it is unconditional and applies once per
+  enable of auto-degrade; the user can switch back to `direction` afterwards.
 - **WebGL** — the field texture becomes `RGB16F` (magnitude, vx, vy) instead of `R16F` while
   `direction` is selected, and goes back to `R16F` for every other mode. Both are
   texture-filterable in WebGL2 core.
