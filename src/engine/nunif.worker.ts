@@ -12,14 +12,16 @@
  * Scope (per project decision): RGB only — no alpha channel handling and no TTA.
  *
  * Models are fetched from `${baseUrl}/models/swin_unet/${style}/${method}.onnx`
- * and helpers from `${baseUrl}/models/utils/${name}.onnx`. The shared response
- * shape ({progress|done|error}) matches upscaler.worker.ts so the main-thread
- * Upscaler can treat both workers identically.
+ * and helpers from `${baseUrl}/models/utils/${name}.onnx`. Both upscale workers
+ * speak `UpscaleWorkerProtocol` (workers/upscaleProtocol.ts), so the
+ * main-thread Upscaler can treat them identically.
  */
 
 /// <reference lib="webworker" />
 
 import * as ort from 'onnxruntime-web/wasm';
+import { exposeWorkerRpc } from './workers/rpc';
+import type { UpscaleProgress, UpscaleWorkerProtocol } from './workers/upscaleProtocol';
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -50,11 +52,8 @@ export interface NunifRequest {
   baseUrl: string;
 }
 
-// Same response union as upscaler.worker.ts.
-export type NunifResponse =
-  | { kind: 'progress'; progress: number; info: string }
-  | { kind: 'error'; message: string }
-  | { kind: 'done'; pixels: ArrayBuffer; width: number; height: number };
+// Same protocol as upscaler.worker.ts; only the request differs.
+export type NunifProtocol = UpscaleWorkerProtocol<NunifRequest>;
 
 const BLEND_SIZE = 16;
 
@@ -408,31 +407,24 @@ function blitTile(
   }
 }
 
-self.addEventListener('message', async (e: MessageEvent<NunifRequest>) => {
-  const req = e.data;
-  const post = (msg: NunifResponse, transfer?: Transferable[]) =>
-    transfer ? self.postMessage(msg, transfer) : self.postMessage(msg);
-
-  try {
+exposeWorkerRpc<NunifProtocol, UpscaleProgress>(self, {
+  async upscale(req, ctx) {
     if (req.scale === 1 && req.noise === -1) {
       throw new Error('Scale 1× requires a noise-reduction level');
     }
-    post({ kind: 'progress', progress: 0, info: 'Preparing…' });
+    ctx.progress({ progress: 0, info: 'Preparing…' });
 
     const config = getConfig(req.baseUrl, req.style, req.scale, req.noise);
     const tileSize = calcTileSizeSwinUnet(req.tileSize);
 
     const result = await tiledRender(
       req, config, tileSize,
-      (progress) => { post({ kind: 'progress', progress, info: `Upscaling ${progress.toFixed(0)}%` }); },
-      () => { post({ kind: 'progress', progress: 0, info: 'Downloading model…' }); },
+      (progress) => { ctx.progress({ progress, info: `Upscaling ${progress.toFixed(0)}%` }); },
+      () => { ctx.progress({ progress: 0, info: 'Downloading model…' }); },
     );
 
     const buf = result.pixels.buffer as ArrayBuffer;
-    post({ kind: 'done', pixels: buf, width: result.width, height: result.height }, [buf]);
-  } catch (err) {
-    post({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-  }
+    ctx.transfer(buf);
+    return { pixels: buf, width: result.width, height: result.height };
+  },
 });
-
-export {};

@@ -113,6 +113,7 @@ src/
     ├── WebGLTextureManager.ts # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
     ├── LocalLibrary.ts       # IndexedDB-backed local image library (drag-and-drop uploads)
     ├── fileDrop.ts           # Flattens a drop's DataTransfer (incl. folders) into File[]
+    ├── workers/              # rpc.ts: the one typed main-thread ↔ worker channel all four workers use
     ├── Upscaler.ts           # Lazy Web Worker wrapper for the two upscale backends below
     ├── upscaler.worker.ts    # TF.js Real-ESRGAN / Real-CUGAN
     ├── nunif.worker.ts       # onnxruntime-web swin_unet (waifu2x)
@@ -317,7 +318,11 @@ requests camera/screen access. See [LIVE_SOURCE.md](docs/LIVE_SOURCE.md).
 - **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not** bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
 - **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Model ONNX files default to `NUNIF_DEFAULT_BASE` in `Upscaler.ts`; override with `VITE_NUNIF_BASE` to self-host `models/swin_unet/` and `models/utils/`. The ORT wasm runtime is **not** bundled in `dist/` — Vite resolves `onnxruntime-web-use-extern-wasm` (see `vite.config.ts`) and the worker loads `ort-wasm-simd-threaded.{mjs,wasm}` at runtime from `VITE_NUNIF_ORT_WASM_BASE` (default `https://test.1ink.us/nunif/ort`). Mirror those two files from `node_modules/onnxruntime-web/dist/` on the server once per ORT version upgrade; for local dev without the mirror, point `VITE_NUNIF_ORT_WASM_BASE` at jsDelivr in `.env.local`.
 
-Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on an actual first-time fetch, not on cache hits.
+Both workers speak `UpscaleWorkerProtocol` (`src/engine/workers/upscaleProtocol.ts`) over the shared worker channel (see *Worker RPC* below), so a job always settles: a worker that crashes mid-job (an OOM on a large tile, a chunk that failed to load) rejects the job and clears `isBusy()`, and the next click spawns a fresh worker. `upscaler.worker.ts` picks its TF.js backend once per worker and keeps one model resident, disposing it when the model changes. Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on an actual first-time fetch, not on cache hits.
+
+### Worker RPC (`engine/workers/rpc.ts`)
+
+All four workers — `analysis.worker`, `motion.worker`, `upscaler.worker`, `nunif.worker` — sit behind one typed channel rather than four hand-rolled `postMessage` protocols. Each worker exports a protocol type (`{ method: (req) => res }`, e.g. `MotionProtocol`) and registers handlers with `exposeWorkerRpc(self, handlers)`; its host calls `createWorkerRpc<Protocol>(factory, { label })` and `rpc.call(method, req, { transfer, onProgress, timeoutMs })`. The channel owns id correlation, typed progress, transfer lists in both directions (`ctx.transfer(…)` in a handler), and settlement: a handler that throws rejects that call alone; a worker-level `error` rejects every call in flight and drops the worker, so the next call spawns a fresh one; a `messageerror` rejects every call in flight; `terminate()` rejects what is pending. The worker is constructed on the first call, so creating a host never fetches its chunk. The hosts keep their own policy on top — `analysisWorkerHost` / `motionWorkerHost` still fall back to the in-process lane permanently after the first failure, which is what the `wasm-worker` → `wasm-inline` breadcrumbs report. Tests drive hosts through `workers/testing.ts` (`ScriptedWorker` to script replies and crashes, `LoopbackWorker` to run real handlers over a `MessageChannel`).
 
 ### Viewport Modes
 

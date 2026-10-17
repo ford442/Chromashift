@@ -17,6 +17,8 @@
 import * as tf from '@tensorflow/tfjs';
 import '@tensorflow/tfjs-backend-webgpu';
 import '@tensorflow/tfjs-backend-webgl';
+import { exposeWorkerRpc } from './workers/rpc';
+import type { UpscaleProgress, UpscaleWorkerProtocol } from './workers/upscaleProtocol';
 
 declare const self: DedicatedWorkerGlobalScope;
 
@@ -43,10 +45,7 @@ export type UpscalerRequest =
       backend?: 'webgpu' | 'webgl';
     };
 
-export type UpscalerResponse =
-  | { kind: 'progress'; progress: number; info: string }
-  | { kind: 'error'; message: string }
-  | { kind: 'done'; pixels: ArrayBuffer; width: number; height: number };
+export type TfUpscalerProtocol = UpscaleWorkerProtocol<UpscalerRequest>;
 
 // ── Tile image buffer (planar RGBA8) ─────────────────────────────────────────
 class TileImage {
@@ -193,19 +192,53 @@ async function enlarge(
   return out;
 }
 
-self.addEventListener('message', async (e: MessageEvent<UpscalerRequest>) => {
-  const req = e.data;
+// ── Backend + model residency ───────────────────────────────────────────────
+// The backend is picked once per worker: `tf.setBackend` re-initialises it,
+// which on every job threw away compiled kernels for nothing. Only one model is
+// resident at a time — switching model disposes the previous one's weights
+// instead of leaking them for the life of the worker.
+let backendReady: Promise<void> | null = null;
+let resident: { key: string; model: tf.GraphModel } | null = null;
 
-  const post = (msg: UpscalerResponse, transfer?: Transferable[]) =>
-    transfer ? self.postMessage(msg, transfer) : self.postMessage(msg);
-
-  try {
-    const backend = req.backend ?? 'webgpu';
+function ensureBackend(backend: 'webgpu' | 'webgl'): Promise<void> {
+  backendReady ??= (async () => {
     const ok = await tf.setBackend(backend).catch(() => false);
     if (!ok && backend === 'webgpu') {
       await tf.setBackend('webgl');
     }
     await tf.ready();
+  })().catch((error: unknown) => {
+    backendReady = null; // let the next job retry
+    throw error;
+  });
+  return backendReady;
+}
+
+async function loadModel(
+  cacheKey: string,
+  modelPath: string,
+  progress: (p: UpscaleProgress) => void,
+): Promise<tf.GraphModel> {
+  if (resident?.key === cacheKey) return resident.model;
+  resident?.model.dispose();
+  resident = null;
+
+  let model: tf.GraphModel;
+  try {
+    model = await tf.loadGraphModel(`indexeddb://${cacheKey}`);
+    progress({ progress: 0, info: 'Loaded model from cache' });
+  } catch {
+    progress({ progress: 0, info: 'Downloading model…' });
+    model = await tf.loadGraphModel(modelPath);
+    await model.save(`indexeddb://${cacheKey}`);
+  }
+  resident = { key: cacheKey, model };
+  return model;
+}
+
+exposeWorkerRpc<TfUpscalerProtocol, UpscaleProgress>(self, {
+  async upscale(req, ctx) {
+    await ensureBackend(req.backend ?? 'webgpu');
 
     let modelPath: string;
     let cacheKey: string;
@@ -220,15 +253,7 @@ self.addEventListener('message', async (e: MessageEvent<UpscalerRequest>) => {
       factor = req.factor;
     }
 
-    let model: tf.GraphModel;
-    try {
-      model = await tf.loadGraphModel(`indexeddb://${cacheKey}`);
-      post({ kind: 'progress', progress: 0, info: 'Loaded model from cache' });
-    } catch {
-      post({ kind: 'progress', progress: 0, info: 'Downloading model…' });
-      model = await tf.loadGraphModel(modelPath);
-      await model.save(`indexeddb://${cacheKey}`);
-    }
+    const model = await loadModel(cacheKey, modelPath, ctx.progress);
 
     const input = new TileImage(req.width, req.height, new Uint8Array(req.pixels));
     const origW = input.width;
@@ -237,16 +262,13 @@ self.addEventListener('message', async (e: MessageEvent<UpscalerRequest>) => {
     const padded = input.width !== origW || input.height !== origH;
 
     const out = await enlarge(model, input, factor, req.tileSize, 12, (p) => {
-      post({ kind: 'progress', progress: p, info: `Upscaling ${p.toFixed(0)}%` });
+      ctx.progress({ progress: p, info: `Upscaling ${p.toFixed(0)}%` });
     });
 
     if (padded) out.cropTo(origW * factor, origH * factor);
 
     const buf = out.data.buffer as ArrayBuffer;
-    post({ kind: 'done', pixels: buf, width: out.width, height: out.height }, [buf]);
-  } catch (err) {
-    post({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
-  }
+    ctx.transfer(buf);
+    return { pixels: buf, width: out.width, height: out.height };
+  },
 });
-
-export {};

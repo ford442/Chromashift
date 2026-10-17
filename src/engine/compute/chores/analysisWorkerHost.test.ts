@@ -1,38 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createWorkerChromashiftCpuHost } from './analysisWorkerHost';
-import type { AnalysisRequest, AnalysisResponse } from '../analysis.worker';
-
-type Listener<T> = (event: T) => void;
-
-/** Minimal fake `Worker` — captures posted messages and lets the test drive replies. */
-class FakeWorker {
-  posted: Array<{ message: AnalysisRequest; transfer?: Transferable[] }> = [];
-  private messageListeners: Listener<MessageEvent<AnalysisResponse>>[] = [];
-  private errorListeners: Listener<ErrorEvent>[] = [];
-  throwOnPostMessage: Error | null = null;
-
-  postMessage(message: AnalysisRequest, transfer?: Transferable[]): void {
-    if (this.throwOnPostMessage) throw this.throwOnPostMessage;
-    this.posted.push({ message, transfer });
-  }
-
-  addEventListener(type: string, listener: (event: never) => void): void {
-    if (type === 'message') this.messageListeners.push(listener as Listener<MessageEvent<AnalysisResponse>>);
-    if (type === 'error') this.errorListeners.push(listener as Listener<ErrorEvent>);
-  }
-
-  removeEventListener(): void {}
-
-  reply(response: AnalysisResponse): void {
-    const event = { data: response } as MessageEvent<AnalysisResponse>;
-    for (const listener of this.messageListeners) listener(event);
-  }
-
-  fail(message: string): void {
-    const event = { error: new Error(message), message } as ErrorEvent;
-    for (const listener of this.errorListeners) listener(event);
-  }
-}
+import { ScriptedWorker as FakeWorker } from '../../workers/testing';
 
 function fakeImage(): HTMLImageElement {
   return {} as HTMLImageElement;
@@ -60,13 +28,11 @@ describe('createWorkerChromashiftCpuHost', () => {
     await Promise.resolve();
 
     expect(worker).not.toBeNull();
-    expect(worker!.posted).toHaveLength(1);
-    expect(worker!.posted[0].message.op).toBe('image-analysis');
-    expect(worker!.posted[0].transfer).toHaveLength(1);
+    expect(worker!.calls).toHaveLength(1);
+    expect(worker!.calls[0].message.method).toBe('image-analysis');
+    expect(worker!.calls[0].transfer).toHaveLength(1);
 
-    worker!.reply({
-      id: worker!.posted[0].message.id,
-      kind: 'image-analysis',
+    worker!.resolveCall(0, {
       avgLuminance: 100,
       mask: new Uint8Array([1, 2, 3]),
       width: 3,
@@ -95,8 +61,8 @@ describe('createWorkerChromashiftCpuHost', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(worker!.posted[0].message.op).toBe('average-luminance');
-    worker!.reply({ id: worker!.posted[0].message.id, kind: 'average-luminance', avgLuminance: 77 });
+    expect(worker!.calls[0].message.method).toBe('average-luminance');
+    worker!.resolveCall(0, { avgLuminance: 77 });
 
     await expect(resultPromise).resolves.toEqual({ avgLuminance: 77, mode: 'worker' });
   });
@@ -115,12 +81,10 @@ describe('createWorkerChromashiftCpuHost', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(worker!.posted).toHaveLength(2);
-    const [firstId, secondId] = worker!.posted.map((p) => p.message.id);
-
+    expect(worker!.calls).toHaveLength(2);
     // Reply to the second request first.
-    worker!.reply({ id: secondId, kind: 'average-luminance', avgLuminance: 222 });
-    worker!.reply({ id: firstId, kind: 'average-luminance', avgLuminance: 111 });
+    worker!.resolveCall(1, { avgLuminance: 222 });
+    worker!.resolveCall(0, { avgLuminance: 111 });
 
     await expect(first).resolves.toEqual({ avgLuminance: 111, mode: 'worker' });
     await expect(second).resolves.toEqual({ avgLuminance: 222, mode: 'worker' });
@@ -153,7 +117,7 @@ describe('createWorkerChromashiftCpuHost', () => {
     const resultPromise = host.computeAverageLuminance(fakeImage(), false);
     await Promise.resolve();
     await Promise.resolve();
-    worker!.reply({ id: worker!.posted[0].message.id, kind: 'error', message: 'boom' });
+    worker!.rejectCall(0, 'boom');
 
     const result = await resultPromise;
     expect(result.avgLuminance).toBeCloseTo(50, 4);
@@ -163,7 +127,39 @@ describe('createWorkerChromashiftCpuHost', () => {
     const secondResult = await host.computeAverageLuminance(fakeImage(), false);
     expect(secondResult.avgLuminance).toBeCloseTo(50, 4);
     expect(secondResult.mode).toBe('inline');
-    expect(worker!.posted).toHaveLength(1);
+    expect(worker!.calls).toHaveLength(1);
+  });
+
+  it('falls back to the in-process host when the worker crashes mid-job', async () => {
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => fakeBitmap()));
+    vi.stubGlobal('document', {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => {},
+          getImageData: (_x: number, _y: number, w: number, h: number) => ({
+            data: new Uint8ClampedArray(w * h * 4).fill(30),
+            width: w,
+            height: h,
+          }),
+        }),
+      }),
+    });
+    let worker: FakeWorker | null = null;
+    const host = createWorkerChromashiftCpuHost(() => false, () => {
+      worker = new FakeWorker();
+      return worker as unknown as Worker;
+    });
+
+    const resultPromise = host.computeAverageLuminance(fakeImage(), false);
+    await Promise.resolve();
+    await Promise.resolve();
+    worker!.crash('failed to fetch dynamically imported module');
+
+    const result = await resultPromise;
+    expect(result.avgLuminance).toBeCloseTo(30, 4);
+    expect(result.mode).toBe('inline');
   });
 
   it('falls back to the in-process host when postMessage throws', async () => {
