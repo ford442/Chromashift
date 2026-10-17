@@ -10,13 +10,19 @@
  * ES module JS with no dependencies and is never imported by the app bundle.
  */
 
-export const WIDTH = 3840;
-export const HEIGHT = 2160;
+/**
+ * Golden image size: 4K plus one pixel each way, deliberately. 3840×2160 is a
+ * multiple of 16 pixels, so the mask kernels' 16-wide SIMD loop would cover it
+ * exactly and their scalar tail would never run here; 3841×2161 is ≡ 1 mod 16
+ * (and the rows are odd-length), so every kernel's tail does.
+ */
+export const WIDTH = 3841;
+export const HEIGHT = 2161;
 export const PIXEL_COUNT = WIDTH * HEIGHT;
 export const BYTE_LENGTH = PIXEL_COUNT * 4;
 
 /**
- * Deterministic golden 4K RGBA image.
+ * Deterministic golden ~4K RGBA image.
  *
  * Two gradients plus a wrapped diagonal ramp, dithered by an xorshift32 stream,
  * so every colour band is populated and the per-pixel luminance keeps crossing
@@ -72,8 +78,8 @@ export const THROUGHPUT_FLOORS_MPXPS = {
  * default quarter-scale divisor. The kernel never sees full-resolution pixels —
  * it works on the low-resolution luminance planes the frame difference already
  * built — so it is timed over cells, not over the 4K image above. */
-export const FLOW_WIDTH = WIDTH / 4;
-export const FLOW_HEIGHT = HEIGHT / 4;
+export const FLOW_WIDTH = 960;
+export const FLOW_HEIGHT = 540;
 export const FLOW_CELL_COUNT = FLOW_WIDTH * FLOW_HEIGHT;
 
 /** Per-kernel element count for the Mpx/s figure; defaults to the 4K image. */
@@ -110,9 +116,10 @@ export function buildFlowPlanes(width, height) {
  * `src/engine/compute/chores/motionKernel.test.ts` both pin, and the cells they
  * pin it at.
  *
- * Running it here is what checks the **SIMD128** flow path: the host `g++` test
- * build compiles the scalar bodies only, so this is the one place the vector
- * coarse level is executed against a known-good answer.
+ * Running it here checks the artifact that ships — built with the release flags
+ * (-O3, LTO, Closure) — against the TypeScript-pinned answer. Bit-exact SIMD vs
+ * scalar parity is proven separately, and on far more inputs, by
+ * `make -C cpp test-simd` (cpp/tests/simd_parity.cpp).
  */
 export const FLOW_FIXTURE_SIZE = 16;
 export const FLOW_FIXTURE_TOLERANCE = 2e-3;
@@ -159,7 +166,9 @@ export function timeMedian(fn, { warmup = 2, iters = 7 } = {}) {
  * @param mod   Loaded Emscripten module (flat C ABI — `mod._name`).
  * @param opts  `{ pixels }` to reuse an already-built golden image.
  * @returns `{ results, maskMismatches, flowMismatches, avgLum }` where
- *          `results` maps kernel name → `{ ms, mpxps, floor, pass }`.
+ *          `results` maps kernel name → `{ ms, mpxps, floor, pass }` and
+ *          `maskMismatches` counts pixels where either mask kernel disagrees
+ *          with the scalar `classifyPixel` reference.
  */
 export function runBenchmark(mod, { pixels = buildGoldenImage() } = {}) {
   const inPtr = mod._malloc(BYTE_LENGTH);
@@ -208,20 +217,26 @@ export function runBenchmark(mod, { pixels = buildGoldenImage() } = {}) {
     results[name] = { ms, mpxps, floor, pass: mpxps >= floor };
   }
 
-  // The two mask kernels must agree byte-for-byte — the LUT walk and the
-  // vector ladder are only interchangeable while that holds.
-  mod._computeClassificationMask(inPtr, WIDTH, HEIGHT, avgLum, maskPtr);
-  const branchy = mod.HEAPU8.slice(maskPtr, maskPtr + PIXEL_COUNT);
-  mod._computeClassificationMaskLut(inPtr, WIDTH, HEIGHT, avgLum, maskPtr);
-  const lut = mod.HEAPU8.subarray(maskPtr, maskPtr + PIXEL_COUNT);
-  let maskMismatches = 0;
+  // Both mask kernels against the scalar reference: `classifyPixel`, the
+  // single-pixel export, which has no vector path. Comparing the two kernels
+  // with each other would prove nothing — they share one SIMD body — and the
+  // odd golden size makes sure their scalar tails run too.
+  const reference = new Uint8Array(PIXEL_COUNT);
   for (let i = 0; i < PIXEL_COUNT; i += 1) {
-    if (branchy[i] !== lut[i]) maskMismatches += 1;
+    const p = i * 4;
+    reference[i] = mod._classifyPixel(pixels[p], pixels[p + 1], pixels[p + 2], roundedAvgLum);
+  }
+  let maskMismatches = 0;
+  for (const kernel of ['_computeClassificationMask', '_computeClassificationMaskLut']) {
+    mod.HEAPU8.fill(0xff, maskPtr, maskPtr + PIXEL_COUNT);
+    mod[kernel](inPtr, WIDTH, HEIGHT, avgLum, maskPtr);
+    const mask = mod.HEAPU8.subarray(maskPtr, maskPtr + PIXEL_COUNT);
+    for (let i = 0; i < PIXEL_COUNT; i += 1) {
+      if (mask[i] !== reference[i]) maskMismatches += 1;
+    }
   }
 
-  // The pinned 16×16 fixture, run through the shipped (SIMD128) build. The
-  // host C++ tests compile the scalar bodies only, so this is the check that
-  // the vector coarse level agrees with them.
+  // The pinned 16×16 fixture, run through the shipped release build.
   let flowMismatches = 0;
   if (hasMotionFlow) {
     const size = FLOW_FIXTURE_SIZE;
