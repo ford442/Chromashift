@@ -3,7 +3,9 @@ import {
   BAND_THRESHOLDS,
   bt709Luminance,
   classifyPixelBands,
+  classifyPixelBandsF32,
 } from '../math/bandClassification';
+import { classifyPixelsBulkWith } from '../wasm/dispatch/classification';
 import { CLASSIFICATION_COMPUTE_SHADER, WGSL_IMAGE_ANALYSIS_HELPERS } from './chores/kernels';
 
 /** Build a small synthetic RGBA image covering all luminance bands. */
@@ -30,9 +32,13 @@ function buildGoldenRgba(width: number, height: number): Uint8ClampedArray<Array
  * match byte-for-byte.
  */
 function classifyPixelF32(r: number, g: number, b: number, avgLum: number): number {
+  // Rounded after every operation: `(r*R + g*G) + b*B` is two f32 adds, and
+  // rounding the three-term sum once in doubles is not the same thing.
   const lum = Math.fround(
-    Math.fround(r * Math.fround(0.2126))
-    + Math.fround(g * Math.fround(0.7152))
+    Math.fround(
+      Math.fround(r * Math.fround(0.2126))
+      + Math.fround(g * Math.fround(0.7152)),
+    )
     + Math.fround(b * Math.fround(0.0722)),
   );
   const lightDark = Math.fround(128 + Math.fround(Math.abs(avgLum - 128) / 2));
@@ -66,18 +72,60 @@ describe('classification mask golden parity', () => {
   const rgba = buildGoldenRgba(width, height);
   const avgLums = [0, 32, 100, 128, 128.4, 190, 255];
 
-  it('TS fallback (double) matches C++/WGSL f32 reference on the golden image', () => {
+  /** Run the TypeScript mask fallback (`useWasm: false`) over raw RGBA. */
+  const tsFallbackMask = (data: Uint8ClampedArray, w: number, h: number, avgLum: number) =>
+    classifyPixelsBulkWith({ data, width: w, height: h } as ImageData, avgLum, false);
+
+  it('TS fallback matches the C++/WGSL f32 reference on the golden image', () => {
     for (const avgLum of avgLums) {
       const golden = computeClassificationMaskF32(rgba, width, height, avgLum);
-      const roundedAvg = Math.round(avgLum);
+      const mask = tsFallbackMask(rgba, width, height, avgLum);
       let mismatches = 0;
       for (let i = 0; i < golden.length; i += 1) {
-        const o = i * 4;
-        const band = classifyPixelBands(rgba[o], rgba[o + 1], rgba[o + 2], roundedAvg);
-        if (band !== golden[i]) mismatches += 1;
+        if (mask[i] !== golden[i]) mismatches += 1;
       }
-      // ±0 banding allowed at edges: the double and f32 paths must agree exactly.
       expect(mismatches, `avgLum=${avgLum}`).toBe(0);
+    }
+  });
+
+  // Colours whose BT.709 luminance lands within float32 rounding of a band
+  // threshold, found by sweeping all 2^24 RGB values at each avgLum: the double
+  // path (`classifyPixelBands`) puts them in the neighbouring band. The mask
+  // fallback used it, so with the WASM engine loaded a few pixels per 4K frame
+  // differed between lanes.
+  const boundaryCases: Array<{ avgLum: number; rgb: [number, number, number] }> = [
+    { avgLum: 0, rgb: [246, 109, 38] },
+    { avgLum: 64, rgb: [50, 186, 74] },
+    { avgLum: 64, rgb: [115, 169, 51] },
+    { avgLum: 128, rgb: [29, 192, 21] },
+    { avgLum: 128, rgb: [49, 212, 41] },
+    { avgLum: 128, rgb: [81, 136, 201] },
+  ];
+
+  it('TS fallback rounds in f32 where the double path lands in the neighbouring band', () => {
+    for (const { avgLum, rgb: [r, g, b] } of boundaryCases) {
+      const pixel = new Uint8ClampedArray([r, g, b, 255]);
+      const expected = computeClassificationMaskF32(pixel, 1, 1, avgLum)[0];
+      expect(classifyPixelBands(r, g, b, avgLum), `double path differs for ${r},${g},${b}`)
+        .not.toBe(expected);
+      expect(classifyPixelBandsF32(r, g, b, avgLum)).toBe(expected);
+      expect(tsFallbackMask(pixel, 1, 1, avgLum)[0], `${r},${g},${b} @ ${avgLum}`).toBe(expected);
+    }
+  });
+
+  it('TS fallback rounds a fractional avgLum, as the WASM and WebGPU lanes do', () => {
+    // 64.4 and 200.6 round to 64 and 201; unrounded they shift the offset by
+    // 0.1–0.15, enough to move ~0.5% of a random image across a threshold.
+    let state = 0x1234567;
+    const pixels = new Uint8ClampedArray(97 * 61 * 4);
+    for (let i = 0; i < pixels.length; i += 1) {
+      state = (state * 1103515245 + 12345) >>> 0;
+      pixels[i] = i % 4 === 3 ? 255 : state >>> 24;
+    }
+    for (const avgLum of [64.4, 128.5, 200.6]) {
+      const golden = computeClassificationMaskF32(pixels, 97, 61, avgLum);
+      expect(Array.from(tsFallbackMask(pixels, 97, 61, avgLum)), `avgLum=${avgLum}`)
+        .toEqual(Array.from(golden));
     }
   });
 
