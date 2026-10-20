@@ -243,7 +243,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                     ? 'bg-rose-600 text-white shadow-[0_0_8px_rgba(244,63,94,0.35)]'
                     : 'bg-zinc-800 border border-rose-500/30 hover:bg-zinc-700 text-rose-200'
                 }`}
-                title="When over budget, disable MSAA, reduce tracer scale, and turn off live preview readback"
+                title="When over budget, disable MSAA, reduce tracer scale, turn off live preview readback, and drop motion mode direction to boost"
               >
                 {performanceAutoDegrade ? 'Auto-degrade On' : 'Auto-degrade Off'}
               </button>
@@ -251,7 +251,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
                 type="button"
                 onClick={onApplyPerformanceDegrade}
                 className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-rose-500/30 hover:bg-zinc-700 text-rose-200"
-                title="One-shot: disable MSAA, tracer scale ×0.75, live preview off"
+                title="One-shot: disable MSAA, tracer scale ×0.75, live preview off, motion direction → boost"
               >
                 Apply fixes
               </button>
