@@ -207,11 +207,12 @@ Where the extra work lands:
 
 One fixture, four lanes: a translating triangular-ridge "bar" whose every constant is exactly
 representable in binary floating point. `motionKernel.test.ts` pins the golden vectors,
-`cpp/tests/test_engine.cpp` checks the C++ scalar bodies against the same numbers,
-`npm run bench:wasm` runs them through the shipped SIMD128 build — the only place the vector
-coarse level is executed at all, since the host `g++` build compiles the scalar bodies — and
-`e2e/motion-flow-parity.spec.ts` runs the WGSL passes on a real device against their own textures,
-which is also the only thing in CI that *compiles* them.
+`cpp/tests/test_engine.cpp` checks the C++ engine against the same numbers — built both with
+`g++` (scalar bodies) and with `em++ -msimd128` (`make -C cpp test-simd`), whose parity harness
+also holds the SIMD128 `halvePlane` and coarse level bit-identical to the scalar ones on every
+size and on NaN input — `npm run bench:wasm` runs the fixture through the shipped release
+artifact, and `e2e/motion-flow-parity.spec.ts` runs the WGSL passes on a real device against
+their own textures, which is also the only thing in CI that *compiles* them.
 
 The tolerance is `2e-3` between the CPU lanes, and it is not zero because the TypeScript reference
 accumulates in JavaScript doubles while the shader and the C++ kernel accumulate in float32. The
