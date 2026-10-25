@@ -164,7 +164,10 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
         }
         return;
       }
-      if (tracers.motionMode === 'off') {
+      // A graph that steers by the field (`?graph=smear`'s `displace`) wants it
+      // — and its flow — whatever the motion mode.
+      const graphUse = renderer.cpuMotionFieldUse?.() ?? { reads: false, needsFlow: false };
+      if (tracers.motionMode === 'off' && !graphUse.reads) {
         if (motionSamplerRef.current) {
           motionSamplerRef.current.destroy();
           motionSamplerRef.current = null;
@@ -183,9 +186,9 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
       motionSamplerRef.current ??= new LiveMotionSampler(
         createChromashiftCpuHost(() => engineModeRef.current === 'wasm'),
       );
-      // Only `direction` reads the vector, so it is the only mode that pays for
-      // the Lucas–Kanade solve behind it.
-      const wantFlow = tracers.motionMode === 'direction';
+      // Only `direction` (and a graph steering by the flow) reads the vector,
+      // so only they pay for the Lucas–Kanade solve behind it.
+      const wantFlow = tracers.motionMode === 'direction' || graphUse.needsFlow;
       void motionSamplerRef.current.sample(element, tracers.motionThreshold, wantFlow)
         .then((output) => {
           renderer.setMotionField?.(output);

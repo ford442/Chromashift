@@ -4,7 +4,8 @@ import type { GraphBackend, NodeKind } from './types';
  * What each backend can emit.
  *
  * This is the honest answer to "what does the WebGL diagnostic backend
- * support": exactly the node kinds with a GLSL template. `compileGraph`
+ * support": exactly the node kinds with a GLSL template and an executor that
+ * draws them. `compileGraph`
  * consults this table *before* allocating anything, so an unsupported node is a
  * named compile error rather than a silent approximation at runtime.
  */
@@ -23,13 +24,12 @@ const SUPPORTED: Record<GraphBackend, ReadonlySet<NodeKind>> = {
     'displace',
     'output',
   ]),
-  // No `warp`, `blur`, `history` or `displace`: the WebGL path is the
-  // diagnostic / XR / screenshot backend and has no GLSL template for them.
-  // Adding one here means adding the emitter in templates/glsl.ts — nothing
-  // else. `history` and `displace` wait for the WebGL executor on purpose: a
-  // GLSL template nothing executes would be dead code, and a refusal by name
-  // keeps the WebGL backend's own passes (the classic look) on screen. `motion` is fused
-  // into `decay`, whose GLSL template has the motion variant.
+  // Every kind, now that each has a GLSL template and the WebGL executor runs
+  // them (`templates/glsl.ts`, `exec/WebGLGraphExecutor.ts`). A kind added
+  // without its GLSL emitter stays off this list, and a graph reaching it is
+  // an `unsupported-node` refusal naming it. `motion` is fused into `decay`,
+  // whose GLSL template has the motion variant. What the backend still
+  // refuses by name is a *param*, not a kind: an `hdr-extended` output.
   webgl: new Set<NodeKind>([
     'source',
     'band-layer',
@@ -38,6 +38,10 @@ const SUPPORTED: Record<GraphBackend, ReadonlySet<NodeKind>> = {
     'motion',
     'decay',
     'blend',
+    'warp',
+    'blur',
+    'history',
+    'displace',
     'output',
   ]),
 };

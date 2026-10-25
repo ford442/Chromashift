@@ -53,10 +53,10 @@ export {
   parsePassGraphJson,
   type GraphPresetName,
 } from './altGraphs';
-// The executor is deliberately *not* re-exported here. `WebGLLayerPass` and
-// `StationaryPreviewRenderer` import this barrel for `DEFAULT_LAYER_COUNT`, and
-// a value export would drag the WebGPU encode path into the WebGL diagnostic
-// chunk. Import `./exec/WebGpuGraphExecutor` directly instead.
+// The executors are deliberately *not* re-exported here. Both renderers import
+// this barrel, and a value export would drag the WebGPU encode path into the
+// WebGL diagnostic chunk (or the reverse). Import `./exec/WebGpuGraphExecutor`
+// or `./exec/WebGLGraphExecutor` directly instead.
 export {
   CANONICAL_LAYER_COUNT,
   CANONICAL_LAYER_SPECS,

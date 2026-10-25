@@ -3,6 +3,11 @@ import { WebGLTextureManager } from '../WebGLTextureManager';
 import type { RendererState } from '../types/RendererState';
 import { rendererStateValue } from '../graph/exec/uniforms';
 import { getWebGL2ContextAttributes } from '../gpuOptions';
+import { passGraphSelection } from '../graph/gate';
+import { presetGraphSource } from '../graph/variants';
+
+/** The XR renderer's slot in `window.passGraphSlotsExecuting`. */
+export const XR_GRAPH_SLOT = 'xr';
 
 export const XR_RENDER_SCALE = 0.5;
 
@@ -11,6 +16,8 @@ export interface WebXrRenderViewport {
   y: number;
   width: number;
   height: number;
+  /** The `XRWebGLLayer`'s framebuffer: the composite lands in it, not on the canvas. */
+  framebuffer: WebGLFramebuffer | null;
 }
 
 export type WebXrFrameRenderer = (
@@ -21,7 +28,14 @@ export type WebXrFrameRenderer = (
 
 /**
  * Phase-0 WebXR spike: renders the WebGL composite into an XRWebGLLayer at half
- * resolution per eye. Requires a dedicated xr-compatible WebGL2 context.
+ * resolution per eye. Requires a dedicated xr-compatible WebGL2 context (sharing
+ * the desktop one is #178).
+ *
+ * The headset draws the session's pass graph, through the same
+ * `WebGLGraphExecutor` the desktop WebGL canvas uses — so a `?graph=feedback`
+ * session shows the feedback graph in the headset too. Its renderer is not the
+ * primary canvas: it reports into its own `window.passGraphSlotsExecuting`
+ * entry and leaves the session-wide breadcrumbs alone.
  */
 export class WebXrPresenter {
   private readonly canvas: HTMLCanvasElement;
@@ -50,6 +64,10 @@ export class WebXrPresenter {
     }
     this.gl = gl;
     this.renderer = new WebGLRenderer(this.canvas, gl);
+    this.renderer.setPassGraph(presetGraphSource(passGraphSelection().name), {
+      slot: XR_GRAPH_SLOT,
+      primary: false,
+    });
     this.textureManager = new WebGLTextureManager(gl);
   }
 
@@ -146,7 +164,7 @@ export class WebXrPresenter {
         this.gl.clearColor(0, 0, 0, 1);
         this.gl.clear(this.gl.COLOR_BUFFER_BIT);
 
-        this.frameRenderer(this.renderer, { x, y, width, height }, this.fps);
+        this.frameRenderer(this.renderer, { x, y, width, height, framebuffer: layer.framebuffer }, this.fps);
       }
     }
 

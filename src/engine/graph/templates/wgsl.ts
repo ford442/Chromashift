@@ -1158,21 +1158,27 @@ export const BLUR_UNIFORMS = defineUniformLayout('BlurUniforms', [
 ], { column: 6 });
 
 /**
+ * The normalised gaussian taps of a `radius` blur — one source of truth for the
+ * WGSL and GLSL emitters, so the two backends blur by the same kernel.
+ */
+export function blurWeights(radius: number): { offset: number; weight: number }[] {
+  const taps = Math.max(1, Math.round(radius));
+  const sigma = Math.max(0.5, taps / 2);
+  const raw: number[] = [];
+  for (let i = -taps; i <= taps; i += 1) raw.push(Math.exp(-(i * i) / (2 * sigma * sigma)));
+  const total = raw.reduce((a, b) => a + b, 0);
+  return raw.map((w, i) => ({ offset: i - taps, weight: w / total }));
+}
+
+/**
  * `blur` → one axis of a separable gaussian. The scheduler runs the node twice
  * (horizontal, then vertical) through a transient target, which is exactly the
  * case the texture pool exists to make affordable.
  */
 export function emitBlurWgsl(radius: number): string {
-  const taps = Math.max(1, Math.round(radius));
-  const sigma = Math.max(0.5, taps / 2);
-  const weights: number[] = [];
-  for (let i = -taps; i <= taps; i += 1) weights.push(Math.exp(-(i * i) / (2 * sigma * sigma)));
-  const total = weights.reduce((a, b) => a + b, 0);
-  const samples = weights
-    .map((w, i) => {
-      const offset = (i - taps).toFixed(1);
-      return `  acc = acc + textureSample(tex, texSampler, uv + axis * texel * ${offset}) * ${(w / total).toFixed(6)};`;
-    })
+  const samples = blurWeights(radius)
+    .map(({ offset, weight }) =>
+      `  acc = acc + textureSample(tex, texSampler, uv + axis * texel * ${offset.toFixed(1)}) * ${weight.toFixed(6)};`)
     .join('\n');
 
   return /* wgsl */ `

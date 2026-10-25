@@ -187,7 +187,11 @@ describe('the hdr-extended present', () => {
 });
 
 describe('a third tracer on the WebGL backend', () => {
-  it('is refused by name: that compositor blends exactly two', () => {
-    expect(() => compileGraph(buildGraphPreset('trails3'), 'webgl')).toThrow(/blends exactly 2 tracers/);
+  it('compiles: the GLSL compositor blends every timescale', () => {
+    const compiled = compileGraph(buildGraphPreset('trails3'), 'webgl');
+    const blend = compiled.emitted.find((pass) => pass.kind === 'blend')!;
+    expect(blend.textureBindings).toContain('tracer2');
+    expect(blend.fragment).toContain('uniform sampler2D u_tracer2;');
+    expect(blend.fragment).toContain('uniform float u_tracerOpacity2;');
   });
 });

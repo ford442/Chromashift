@@ -35,12 +35,11 @@ function selectionFor(value: string): PassGraphSelection {
 /**
  * Pass-graph gate: which shape the session draws.
  *
- * Every session compiles a graph and, on WebGPU, draws it with the
- * `GraphExecutor` — the default graph unless `?graph=blur` / `?graph=warp`,
- * the starter graphs `?graph=smear` / `?graph=feedback` or `?graph=trails3`
- * (or a stored `chromashift.passGraph` preference) select another. The WebGL
- * diagnostic backend compiles but does not execute, so it stays on its
- * hand-written passes either way.
+ * Every session compiles a graph and draws it with its backend's executor
+ * (`WebGpuGraphExecutor`, `WebGLGraphExecutor`) — the default graph unless
+ * `?graph=blur` / `?graph=warp`, the starter graphs `?graph=smear` /
+ * `?graph=feedback` or `?graph=trails3` (or a stored `chromashift.passGraph`
+ * preference) select another.
  *
  * The URL wins over the stored preference, and storage a hardened browser
  * blocks reads as "no preference".
@@ -77,8 +76,8 @@ export function setStoredPassGraphPreference(name: GraphPresetName | null): void
  * Compile the selected graph for `backend` and publish the breadcrumbs.
  *
  * Returns the compiled graph, or `null` when compilation refused it — the
- * refusal is published rather than swallowed. On WebGPU a refused shape still
- * draws: the renderer stands the default graph in for it.
+ * refusal is published rather than swallowed. A refused shape still draws:
+ * the renderer stands the default graph in for it.
  */
 export function activatePassGraph(
   backend: GraphBackend,
@@ -148,10 +147,10 @@ function publish(
 ): void {
   publishCompile(active, compiled, error, name);
   publishDiagnostic('passGraphVariant', null);
-  // Cleared for *every* result, not just a refusal: a WebGL compile draws
-  // nothing with it, so leaving a previous WebGPU session's
+  // Cleared for *every* result, not just a refusal: until a renderer has drawn
+  // a frame of it, nothing is executing it, and leaving a previous session's
   // `passGraphExecuting` in place would claim an executor that is not running.
-  // A WebGPU renderer republishes it from the first frame it draws.
+  // The renderer republishes it from the first frame it draws.
   publishGraphExecutorBreadcrumbs(null, []);
 }
 

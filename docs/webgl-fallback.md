@@ -97,7 +97,7 @@ These modes are intended for fast browser-visible checks. The WebGPU renderer ig
 
 ## Live-view cost
 
-The diagnostic pipeline is six fullscreen passes (three band layers, two tracers, compositor). On a machine whose WebGPU probe stops at `No available adapters`, that work often runs on a software GL driver, and a synchronous `gl.readPixels` flushes every pass still queued on the context.
+The diagnostic pipeline is the pass graph's fullscreen passes — six for the default graph (three band layers, two tracers, compositor). On a machine whose WebGPU probe stops at `No available adapters`, that work often runs on a software GL driver, and a synchronous `gl.readPixels` flushes every pass still queued on the context.
 
 Measured in headless Chromium on SwiftShader (the draws themselves return immediately; the flush is the stall):
 
@@ -132,7 +132,7 @@ When the HUD is disabled, Chromashift does not write or resolve timestamp querie
 
 Use this workflow for shader-based image effects:
 
-1. Prototype in `src/engine/webgl/` (GLSL in `webgl/shaders/`, pass logic in `WebGLLayerPass`, `WebGLCompositorPass`, etc.) when Playwright or manual screenshots need visible pixels.
+1. Prototype a node kind's GLSL in `src/engine/graph/templates/glsl.ts` and its draw in `graph/exec/WebGLGraphExecutor.ts` when Playwright or manual screenshots need visible pixels — the WebGL backend draws the pass graph, so a kind with a template and an encode step draws in every shape (docs/PASS_GRAPH.md § *The WebGL executor*).
 2. Keep uniform names and state fields close to the WebGPU equivalents.
 3. Port final logic to the node templates in `src/engine/graph/templates/` (WGSL and GLSL), which the WebGPU executor and the WebGL passes both emit from.
 4. Verify `npm run build` and `npm run lint`.

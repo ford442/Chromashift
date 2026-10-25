@@ -1,8 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { createProgram, declaredUniforms, uniform1f } from './programUtils';
 import * as webglShaders from './shaders';
+import { buildShaderCorpus } from '../shaders/__fixtures__/shaderCorpus';
+import { emitLutGlsl } from '../graph/templates/glsl';
 
 const VERTEX = `#version 300 es
 uniform mat3 u_rotation;
@@ -72,13 +74,23 @@ describe('programUtils uniforms', () => {
 
 describe('the WebGL passes', () => {
   it('set only uniforms some WebGL shader declares', () => {
-    const declared = new Set(Object.values(webglShaders).flatMap(declaredUniforms));
-    const dir = __dirname;
-    const used = readdirSync(dir)
-      .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
-      .flatMap((file) => [...readFileSync(join(dir, file), 'utf8')
-        .matchAll(/(?:uniform1[fi]|bindTexture)\(\s*gl,\s*[\w.]+,\s*'(\w+)'/g)]
-        .map((match) => `${file}: ${match[1]}`));
+    // Every GLSL source the backend can link: its own shaders and every pass
+    // the pass graph emits for it, at every preset and layer count.
+    const declared = new Set([
+      ...Object.values(webglShaders),
+      ...buildShaderCorpus().glsl.map((source) => source.code),
+      // No preset grades through a standalone `lut` node, but the executor draws one.
+      emitLutGlsl(3),
+    ].flatMap(declaredUniforms));
+    const files = [
+      ...readdirSync(__dirname)
+        .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
+        .map((file) => join(__dirname, file)),
+      join(__dirname, '../graph/exec/WebGLGraphExecutor.ts'),
+    ];
+    const used = files.flatMap((path) => [...readFileSync(path, 'utf8')
+      .matchAll(/(?:uniform1[fi]|bindTexture)\(\s*gl,\s*[\w.]+,\s*'(\w+)'/g)]
+      .map((match) => `${basename(path)}: ${match[1]}`));
     expect(used.length).toBeGreaterThan(20);
     expect(used.filter((entry) => !declared.has(entry.split(': ')[1]))).toEqual([]);
   });

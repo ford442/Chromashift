@@ -7,9 +7,13 @@ import { scheduleGraph } from './schedule';
 import { validateGraph, type ValidationResult } from './validate';
 import {
   emitBandLayerGlsl,
+  emitBlurGlsl,
   emitCoincidenceDecayGlsl,
   emitCompositorGlsl,
+  emitDisplaceGlsl,
+  emitHistoryTapsGlsl,
   emitLutGlsl,
+  emitWarpGlsl,
 } from './templates/glsl';
 import {
   BLUR_UNIFORMS,
@@ -154,17 +158,9 @@ function emitPass(
           node.id,
         );
       }
-      if (!webgpu && tracerCount !== SHIPPED_TRACER_COUNT) {
-        throw new PassGraphError(
-          'unsupported-node',
-          `The webgl backend's compositor blends exactly ${SHIPPED_TRACER_COUNT} tracers; `
-          + `node '${node.id}' has ${tracerCount}.`,
-          node.id,
-        );
-      }
       let fragment = webgpu
         ? emitCompositorWgsl(layerInputs, WGSL_BLEND_HELPERS, tracerCount)
-        : emitCompositorGlsl(layerInputs);
+        : emitCompositorGlsl(layerInputs, tracerCount);
       // Presenting to an `hdr-extended` canvas swaps the clamping OETF for the
       // extended one, text for text (`toHdrPresentWgsl`, which the inspect
       // views' HDR pipelines use too), so the SDR emission and its golden are
@@ -195,36 +191,46 @@ function emitPass(
 
     case 'warp': {
       const mode = node.params.mode === 'feedback' ? 'feedback' : 'affine';
-      return { ...base, fragment: emitWarpWgsl(mode), textureBindings: ['source'], uniformLayout: WARP_UNIFORMS };
-    }
-
-    case 'blur':
       return {
         ...base,
-        fragment: emitBlurWgsl(intParam(node, 'radius', 2)),
+        fragment: webgpu ? emitWarpWgsl(mode) : emitWarpGlsl(mode),
         textureBindings: ['source'],
-        uniformLayout: BLUR_UNIFORMS,
+        uniformLayout: block(WARP_UNIFORMS),
       };
+    }
+
+    case 'blur': {
+      const radius = intParam(node, 'radius', 2);
+      return {
+        ...base,
+        fragment: webgpu ? emitBlurWgsl(radius) : emitBlurGlsl(radius),
+        textureBindings: ['source'],
+        uniformLayout: block(BLUR_UNIFORMS),
+      };
+    }
 
     case 'history': {
       // The taps half. The write half is a fixed blit the executor owns
-      // (`emitHistoryWriteWgsl`), so it is not a second emitted pass.
+      // (`emitHistoryWriteWgsl`; the WebGL executor's blit program), so it is
+      // not a second emitted pass.
       const frames = intParam(node, 'frames', 2);
       return {
         ...base,
-        fragment: emitHistoryTapsWgsl(frames),
+        fragment: webgpu ? emitHistoryTapsWgsl(frames) : emitHistoryTapsGlsl(frames),
         textureBindings: Array.from({ length: frames }, (_, i) => `ring${i}`),
-        uniformLayout: HISTORY_UNIFORMS,
+        uniformLayout: block(HISTORY_UNIFORMS),
       };
     }
 
-    case 'displace':
+    case 'displace': {
+      const field = node.params.field === 'color' ? 'color' : 'motion';
       return {
         ...base,
-        fragment: emitDisplaceWgsl(node.params.field === 'color' ? 'color' : 'motion'),
+        fragment: webgpu ? emitDisplaceWgsl(field) : emitDisplaceGlsl(field),
         textureBindings: ['source', 'field'],
-        uniformLayout: DISPLACE_UNIFORMS,
+        uniformLayout: block(DISPLACE_UNIFORMS),
       };
+    }
   }
 }
 
