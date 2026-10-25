@@ -18,8 +18,16 @@ function readStoredSections(): Record<OverlaySectionId, boolean> {
   try {
     const raw = localStorage.getItem(OVERLAY_SECTION_STORAGE_KEY);
     if (!raw) return { ...DEFAULT_OPEN };
-    const parsed = JSON.parse(raw) as Partial<Record<OverlaySectionId, boolean>>;
-    return { ...DEFAULT_OPEN, ...parsed };
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return { ...DEFAULT_OPEN };
+    // Only known ids with boolean values — a stale or hand-edited entry can't
+    // add sections or make one truthy with a string.
+    const stored = parsed as Record<string, unknown>;
+    const sections = { ...DEFAULT_OPEN };
+    for (const id of Object.keys(DEFAULT_OPEN) as OverlaySectionId[]) {
+      if (typeof stored[id] === 'boolean') sections[id] = stored[id];
+    }
+    return sections;
   } catch {
     return { ...DEFAULT_OPEN };
   }
