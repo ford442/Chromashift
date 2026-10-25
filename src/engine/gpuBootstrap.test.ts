@@ -18,10 +18,20 @@ import {
   resetGpuDeviceGateForTests,
   toBootstrapRuntimeError,
   deviceLostRuntimeError,
+  createWebGL2Context,
+  webglContextLostRuntimeError,
+  WebGL2ContextLostError,
+  WebGL2UnavailableError,
 } from './gpuBootstrap';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   getWebGL2ContextAttributes,
+  resolveWebGL2Desynchronized,
   resolveWebGL2PreserveDrawingBuffer,
+  webglInternalFormatNote,
+  RENDERER_CANVAS_OPTIONS_MATRIX,
+  WEBGL2_POWER_PREFERENCE_ATTEMPTS,
   CHROMASHIFT_OPTIONAL_FEATURES,
   CHROMASHIFT_TARGET_MAX_TEXTURE,
 } from './gpuOptions';
@@ -435,10 +445,148 @@ describe('buildWebGpuCanvasConfiguration', () => {
 });
 
 describe('getWebGL2ContextAttributes', () => {
-  it('maps antialias from renderer options', () => {
-    expect(getWebGL2ContextAttributes({ antialias: true }).antialias).toBe(true);
+  it('never multisamples the default framebuffer — MSAA is the band layers\' renderbuffer', () => {
+    expect(getWebGL2ContextAttributes({ antialias: true }).antialias).toBe(false);
     expect(getWebGL2ContextAttributes({ antialias: false }).antialias).toBe(false);
   });
+
+  it('sets the attempt\'s powerPreference, and omits the key for the preference-less attempt', () => {
+    expect(getWebGL2ContextAttributes({ antialias: false }, 'low-power').powerPreference).toBe('low-power');
+    expect('powerPreference' in getWebGL2ContextAttributes({ antialias: false }, null)).toBe(false);
+  });
+
+  it('never asks for desynchronized alongside preserveDrawingBuffer', () => {
+    expect(getWebGL2ContextAttributes({ antialias: false }).desynchronized).toBe(false);
+    expect(getWebGL2ContextAttributes({ antialias: false, desynchronized: true }).desynchronized).toBe(true);
+    expect(getWebGL2ContextAttributes({
+      antialias: false,
+      desynchronized: true,
+      preserveDrawingBuffer: true,
+    }).desynchronized).toBe(false);
+  });
+
+  it('matches the options matrix documented in docs/gpu-bootstrap.md', () => {
+    const attrs = getWebGL2ContextAttributes({ antialias: true });
+    const m = RENDERER_CANVAS_OPTIONS_MATRIX.webgl2;
+    expect(attrs).toMatchObject({
+      alpha: m.alpha,
+      antialias: m.antialias,
+      preserveDrawingBuffer: m.preserveDrawingBuffer,
+      desynchronized: m.desynchronized,
+      depth: m.depth,
+      stencil: m.stencil,
+      premultipliedAlpha: m.premultipliedAlpha,
+    });
+    const doc = readFileSync(resolve(__dirname, '../../docs/gpu-bootstrap.md'), 'utf8');
+    const row = (name: string) => doc.split('\n').find((line) => line.startsWith(`| ${name} |`)) ?? '';
+    expect(row('Alpha')).toContain('`alpha: false`');
+    expect(row('Antialias')).toContain('`antialias: false`');
+    expect(row('Preserve buffer')).toContain('`preserveDrawingBuffer: false`');
+    expect(row('Desynchronized')).toContain('`desynchronized: false`');
+    expect(row('Depth / stencil')).toContain('`depth: false`, `stencil: false`');
+    expect(row('Premultiplied alpha')).toContain('`premultipliedAlpha: false`');
+    expect(row('Power')).toContain('`high-performance` → `low-power` → `powerPreference` omitted');
+  });
+});
+
+describe('createWebGL2Context', () => {
+  const gl = { isContextLost: () => false } as unknown as WebGL2RenderingContext;
+  // Each call is a fresh canvas: the context cache is keyed on it.
+  function canvasGranting(grant: (attrs: WebGLContextAttributes) => boolean) {
+    const getContext = vi.fn((_type: string, attrs: WebGLContextAttributes) => (grant(attrs) ? gl : null));
+    return { canvas: { getContext } as unknown as HTMLCanvasElement, getContext };
+  }
+
+  beforeEach(() => {
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('boots on low-power when the high-performance context is declined', () => {
+    const { canvas, getContext } = canvasGranting((attrs) => attrs.powerPreference === 'low-power');
+    expect(createWebGL2Context(canvas, { antialias: false })).toBe(gl);
+    expect(getContext.mock.calls.map(([, attrs]) => attrs.powerPreference)).toEqual(['high-performance', 'low-power']);
+    expect(console.info).toHaveBeenCalledWith(
+      '[Chromashift:GPU] WebGL2 context ready',
+      { attempt: 2, powerPreference: 'low-power' },
+    );
+  });
+
+  it('falls through to a preference-less attempt', () => {
+    const { canvas, getContext } = canvasGranting((attrs) => !('powerPreference' in attrs));
+    expect(createWebGL2Context(canvas, { antialias: false })).toBe(gl);
+    expect(getContext).toHaveBeenCalledTimes(3);
+  });
+
+  it('throws a distinct error after three nulls, and never touches WebGPU', () => {
+    const requestAdapter = vi.fn();
+    vi.stubGlobal('navigator', { gpu: { requestAdapter } });
+    const { canvas, getContext } = canvasGranting(() => false);
+    expect(() => createWebGL2Context(canvas, { antialias: false })).toThrow(WebGL2UnavailableError);
+    expect(getContext).toHaveBeenCalledTimes(WEBGL2_POWER_PREFERENCE_ATTEMPTS.length);
+    expect(console.error).toHaveBeenCalledOnce();
+    expect(requestAdapter).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('reuses the canvas\'s context instead of calling getContext again', () => {
+    const { canvas, getContext } = canvasGranting(() => true);
+    createWebGL2Context(canvas, { antialias: false });
+    expect(createWebGL2Context(canvas, { antialias: false })).toBe(gl);
+    expect(getContext).toHaveBeenCalledOnce();
+  });
+
+  it('maps a still-lost context to the recoverable overlay', () => {
+    const lostGl = { isContextLost: () => true } as unknown as WebGL2RenderingContext;
+    const canvas = { getContext: vi.fn(() => lostGl) } as unknown as HTMLCanvasElement;
+    createWebGL2Context(canvas, { antialias: false });
+    let thrown: unknown;
+    try {
+      createWebGL2Context(canvas, { antialias: false });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(WebGL2ContextLostError);
+    expect(toBootstrapRuntimeError(thrown)).toEqual(webglContextLostRuntimeError());
+    expect(webglContextLostRuntimeError()).toMatchObject({ kind: 'device-lost', recoverable: true });
+  });
+});
+
+describe('resolveWebGL2Desynchronized', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('is off by default', () => {
+    vi.stubGlobal('window', { location: { search: '' } });
+    expect(resolveWebGL2Desynchronized(false)).toBe(false);
+  });
+
+  it('honours ?desynchronized=1 when preserve-drawing-buffer is off', () => {
+    vi.stubGlobal('window', { location: { search: '?desynchronized=1' } });
+    expect(resolveWebGL2Desynchronized(false)).toBe(true);
+  });
+
+  it('ignores ?desynchronized=1 when preserve-drawing-buffer resolved on', () => {
+    vi.stubGlobal('window', { location: { search: '?desynchronized=1' } });
+    vi.stubGlobal('navigator', { webdriver: true });
+    const preserve = resolveWebGL2PreserveDrawingBuffer();
+    expect(preserve).toBe(true);
+    expect(resolveWebGL2Desynchronized(preserve)).toBe(false);
+  });
+});
+
+describe('webglInternalFormatNote', () => {
+  it('notes 8-bit targets and is silent for half-float ones', () => {
+    expect(webglInternalFormatNote('rgba8')).toMatch(/rgba8.*clip/);
+    expect(webglInternalFormatNote('rgba16f')).toBeNull();
+  });
+});
+
+describe('getWebGL2ContextAttributes defaults', () => {
 
   it('keeps alpha disabled and preserveDrawingBuffer off by default', () => {
     const attrs = getWebGL2ContextAttributes({ antialias: false });

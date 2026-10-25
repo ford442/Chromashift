@@ -7,7 +7,13 @@ import {
 } from './RendererOrchestrator';
 import type { ChromashiftRenderer } from './types/RendererContracts';
 import { presetGraphSource } from './graph/variants';
-import type { GpuRuntimeError, WebGpuSession } from './gpuBootstrap';
+import {
+  WebGL2ContextLostError,
+  createWebGL2Context,
+  watchWebGL2Context,
+  type GpuRuntimeError,
+  type WebGpuSession,
+} from './gpuBootstrap';
 import type { TextureManager } from './TextureManager';
 import type { WebGLTextureManager } from './WebGLTextureManager';
 import type { GpuImageAnalysis } from './compute/GpuImageAnalysis';
@@ -105,6 +111,7 @@ function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): Rend
     bootstrapWebGpu: vi.fn(async ({ canvas }) => mockSession(mockWebGpuContext(canvas))),
     configureWebGpuCanvas: vi.fn(),
     createWebGL2Context: vi.fn(() => ({} as WebGL2RenderingContext)),
+    watchWebGL2Context: vi.fn(() => () => undefined),
     createWebGPURenderer: vi.fn(async () => mockRenderer()),
     createSecondaryWebGPURenderer: vi.fn(() => mockRenderer()),
     createWebGLRenderer: vi.fn(() => mockRenderer()),
@@ -273,6 +280,74 @@ describe('RendererOrchestrator', () => {
     expect(backend).toBe('webgl');
     expect(orchestrator.getBackend()).toBe('webgl');
     expect(deps.createWebGLRenderer).toHaveBeenCalledOnce();
+  });
+
+  it('hands the WebGL renderer the antialias toggle (layer MSAA, not a context flag)', async () => {
+    const deps = createMockDeps();
+    await RendererOrchestrator.bootstrap({ primaryCanvas: mockCanvas('main'), antialias: true, backend: 'webgl' }, deps);
+    expect(deps.createWebGLRenderer).toHaveBeenCalledWith(expect.anything(), expect.anything(), true);
+  });
+
+  describe('WebGL context loss', () => {
+    // The real context helpers over a canvas that dispatches DOM events.
+    function lossyCanvas() {
+      const state = { lost: false };
+      const gl = { isContextLost: () => state.lost } as unknown as WebGL2RenderingContext;
+      const canvas = Object.assign(new EventTarget(), {
+        width: 640,
+        height: 480,
+        getContext: vi.fn(() => gl),
+      }) as unknown as HTMLCanvasElement;
+      return { canvas, gl, state };
+    }
+
+    it('surfaces loss as the recoverable overlay and boots again on restore without a second getContext', async () => {
+      vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { canvas, gl, state } = lossyCanvas();
+      const deps = createMockDeps({ createWebGL2Context, watchWebGL2Context });
+      const onRuntimeError = vi.fn();
+      const onContextRestored = vi.fn();
+      const options = { primaryCanvas: canvas, backend: 'webgl' as const, onRuntimeError, onContextRestored };
+
+      const first = await RendererOrchestrator.bootstrap(options, deps);
+      state.lost = true;
+      const lost = new Event('webglcontextlost', { cancelable: true });
+      canvas.dispatchEvent(lost);
+
+      // preventDefault is what lets the browser restore the context at all.
+      expect(lost.defaultPrevented).toBe(true);
+      expect(onRuntimeError).toHaveBeenCalledWith(expect.objectContaining({ kind: 'device-lost', recoverable: true }));
+      expect(first.primarySlot.renderer.destroy).toHaveBeenCalledOnce();
+      expect(first.orchestrator.slotIds()).toEqual([]);
+
+      // Retry GPU while still lost refuses; it does not ask the canvas again.
+      await expect(RendererOrchestrator.bootstrap(options, deps)).rejects.toBeInstanceOf(WebGL2ContextLostError);
+      expect(onContextRestored).not.toHaveBeenCalled();
+
+      state.lost = false;
+      canvas.dispatchEvent(new Event('webglcontextrestored'));
+      expect(onContextRestored).toHaveBeenCalledOnce();
+
+      const second = await RendererOrchestrator.bootstrap(options, deps);
+      expect(second.orchestrator.slotIds()).toEqual([PRIMARY_SLOT_ID]);
+      expect(deps.createWebGLRenderer).toHaveBeenCalledTimes(2);
+      expect(deps.createWebGLRenderer).toHaveBeenLastCalledWith(canvas, gl, false);
+      expect(canvas.getContext).toHaveBeenCalledTimes(1);
+      expect(deps.bootstrapWebGpu).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    });
+
+    it('detaches its listeners on an ordinary destroy', async () => {
+      const unwatch = vi.fn();
+      const deps = createMockDeps({ watchWebGL2Context: vi.fn(() => unwatch) });
+      const { orchestrator } = await RendererOrchestrator.bootstrap(
+        { primaryCanvas: mockCanvas('main'), backend: 'webgl' },
+        deps,
+      );
+      orchestrator.destroy();
+      expect(unwatch).toHaveBeenCalledOnce();
+    });
   });
 
   it('reconfigures all active WebGPU contexts on resizeAll', async () => {

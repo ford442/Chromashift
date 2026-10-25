@@ -2,7 +2,7 @@ import { WebGLRenderer } from '../webgl/WebGLRenderer';
 import { WebGLTextureManager } from '../WebGLTextureManager';
 import type { RendererState } from '../types/RendererState';
 import { rendererStateValue } from '../graph/exec/uniforms';
-import { getWebGL2ContextAttributes } from '../gpuOptions';
+import { createWebGL2Context } from '../gpuBootstrap';
 import { passGraphSelection } from '../graph/gate';
 import { presetGraphSource } from '../graph/variants';
 
@@ -54,13 +54,16 @@ export class WebXrPresenter {
 
   constructor() {
     this.canvas = document.createElement('canvas');
-    const gl = this.canvas.getContext('webgl2', getWebGL2ContextAttributes({
-      antialias: false,
-      preserveDrawingBuffer: false,
-      xrCompatible: true,
-    })) as WebGL2RenderingContext | null;
-    if (!gl) {
-      throw new Error('WebGL2 (xrCompatible) is required for WebXR.');
+    // The same attempt order and attribute matrix as the desktop canvas.
+    let gl: WebGL2RenderingContext;
+    try {
+      gl = createWebGL2Context(this.canvas, {
+        antialias: false,
+        preserveDrawingBuffer: false,
+        xrCompatible: true,
+      });
+    } catch (error) {
+      throw new Error('WebGL2 (xrCompatible) is required for WebXR.', { cause: error });
     }
     this.gl = gl;
     this.renderer = new WebGLRenderer(this.canvas, gl);

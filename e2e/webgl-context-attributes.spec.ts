@@ -28,6 +28,16 @@ test.describe('WebGL2 context attributes', () => {
     expect(attrs?.alpha).toBe(false);
     expect(attrs?.depth).toBe(false);
     expect(attrs?.stencil).toBe(false);
+    // MSAA is the band layers' renderbuffer, never the default framebuffer.
+    expect(attrs?.antialias).toBe(false);
+    expect(attrs?.desynchronized).toBe(false);
+  });
+
+  test('?desynchronized=1 is ignored while preserveDrawingBuffer is on', async ({ page }) => {
+    await page.goto('/?renderer=webgl&desynchronized=1');
+    const attrs = await contextAttributes(page);
+    expect(attrs?.preserveDrawingBuffer).toBe(true);
+    expect(attrs?.desynchronized).toBe(false);
   });
 
   test('?preserve_drawing_buffer=0 forces it back off', async ({ page }) => {

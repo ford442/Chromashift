@@ -49,7 +49,8 @@ import {
 import { createTarget, destroyTarget, type RenderTarget } from './resources';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { WebGLRenderViewport } from './types';
-import { publishDiagnostic } from '../diagnostics';
+import { publishDiagnostic, publishDiagnostics } from '../diagnostics';
+import { webglInternalFormatNote } from '../gpuOptions';
 
 export type { WebGLRenderViewport } from './types';
 
@@ -151,8 +152,14 @@ export class WebGLRenderer implements ChromashiftRenderer {
     // WebGL fallback intentionally derives masks in GLSL from the shared source image.
   }
 
-  setAntialiasing(): void {
-    // WebGL2 fallback uses texture filtering and does not recreate MSAA targets.
+  /**
+   * MSAA 4x: the band layers render into a `samples: 4` renderbuffer and blit
+   * into their layer targets, as WebGPU's band-layer pipelines multisample.
+   * Persistence and the compositor stay 1×. Same context, same programs — the
+   * next frame reallocates the renderbuffer.
+   */
+  setAntialiasing(enabled: boolean): void {
+    this.graphExecutor.setSampleCount(enabled ? 4 : 1);
   }
 
   clearPersistence(): void {
@@ -186,6 +193,10 @@ export class WebGLRenderer implements ChromashiftRenderer {
     if (options) {
       this.graphSlot = options.slot;
       this.graphPrimary = options.primary;
+    }
+    if (this.graphPrimary) {
+      const format = this.graphExecutor.internalFormat;
+      publishDiagnostics({ webglInternalFormat: format, webglInternalFormatNote: webglInternalFormatNote(format) });
     }
     this.graphSource = source ?? DEFAULT_GRAPH_SOURCE;
     this.graphVariants.clear();

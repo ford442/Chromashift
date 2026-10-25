@@ -83,6 +83,21 @@ const FROZEN_SCENE = encodePresetParam({
  */
 const GOLDEN_VIEWPORT = { width: 900, height: 480 } as const;
 
+/**
+ * Hide the extensions that make `RGBA16F` renderable, so the executor's pool
+ * falls back to the `RGBA8` targets the hand-written passes drew into — what
+ * `webgl-default-composite.png` was captured from.
+ */
+async function withEightBitTargets(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const original = WebGL2RenderingContext.prototype.getExtension as (this: WebGL2RenderingContext, name: string) => unknown;
+    WebGL2RenderingContext.prototype.getExtension = function (this: WebGL2RenderingContext, name: string) {
+      if (name === 'EXT_color_buffer_half_float' || name === 'EXT_color_buffer_float') return null;
+      return original.call(this, name);
+    } as WebGL2RenderingContext['getExtension'];
+  });
+}
+
 async function openWebglScene(page: Page, query: string): Promise<void> {
   await stubMinimalCorpus(page);
   await page.route('**/e2e-fixture.png', (route) => route.fulfill({
@@ -141,10 +156,12 @@ test.describe('pass graph', () => {
   });
 
   test('draws the default graph as the hand-written WebGL passes did, pixel for pixel', async ({ page }) => {
+    await withEightBitTargets(page);
     await openWebglScene(page, '');
     await page.waitForFunction(() => window.passGraphExecuting === 'default');
     const frame = await readStableCanvasFrame(page);
     expect(await page.evaluate(() => window.webglInternalScale)).toBe(1);
+    expect(await page.evaluate(() => window.webglInternalFormat)).toBe('rgba8');
     expect(frameDistinctColours(frame)).toBeGreaterThan(8);
 
     // Captured from the hand-drawn layer / persistence / compositor passes at
@@ -156,6 +173,21 @@ test.describe('pass graph', () => {
     }
     const golden = readFrameGolden('webgl-default-composite', frame.format);
     expect(frameDifference(frame, golden)).toEqual({ differingPixels: 0, maxChannelDelta: 0 });
+  });
+
+  test('draws the same frame over half-float targets, short of 8-bit rounding', async ({ page }) => {
+    await openWebglScene(page, '');
+    await page.waitForFunction(() => window.passGraphExecuting === 'default');
+    test.skip(
+      await page.evaluate(() => window.webglInternalFormat) !== 'rgba16f',
+      'this context cannot render RGBA16F',
+    );
+    expect(await page.evaluate(() => window.webglInternalFormatNote)).toBeNull();
+    const frame = await readStableCanvasFrame(page);
+    const golden = readFrameGolden('webgl-default-composite', frame.format);
+    // The layers and tracers no longer round to 8 bits between passes, so the
+    // frame moves by a rounding step or two — and by nothing more.
+    expect(frameDifference(frame, golden).maxChannelDelta).toBeLessThanOrEqual(2);
   });
 
   test('compiles the default graph and publishes the schedule', async ({ page }) => {
