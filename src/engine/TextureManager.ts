@@ -30,6 +30,12 @@ export class TextureManager implements ChromashiftTextureManager {
   private device: GPUDevice;
   private textures: Map<string, GPUTexture> = new Map();
   private cacheTracker = new TextureCacheTracker();
+  /**
+   * Loads still decoding, by URL: a second `loadTexture` of the same URL while
+   * the first is in flight shares it rather than decoding and uploading the
+   * image again — and leaking the first texture when the second overwrote it.
+   */
+  private pending = new Map<string, Promise<ChromashiftTextureHandle>>();
   /** Frame size (`"WxH"`) of the texture currently cached under each live-source key. */
   private videoTextureSizes = new Map<string, string>();
 
@@ -63,7 +69,15 @@ export class TextureManager implements ChromashiftTextureManager {
       if (bytes !== undefined) this.cacheTracker.touch(url, bytes);
       return createWebGpuTextureHandle(cached);
     }
+    const inFlight = this.pending.get(url);
+    if (inFlight) return inFlight;
 
+    const load = this.uploadFromUrl(url).finally(() => this.pending.delete(url));
+    this.pending.set(url, load);
+    return load;
+  }
+
+  private async uploadFromUrl(url: string): Promise<ChromashiftTextureHandle> {
     const image = new Image();
     image.crossOrigin = 'anonymous';
 

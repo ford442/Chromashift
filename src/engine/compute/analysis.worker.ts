@@ -23,7 +23,7 @@
 
 /// <reference lib="webworker" />
 
-import { loadWasmEngine, isWasmReady } from '../wasm/loadEngine';
+import { getWasmEngineStatus, loadWasmEngine, isWasmReady, type WasmEngineStatus } from '../wasm/loadEngine';
 import { computeImageAverageLuminanceWith } from '../wasm/dispatch/luminance';
 import { classifyImageMaskWith } from '../wasm/dispatch/classification';
 import { exposeWorkerRpc } from '../workers/rpc';
@@ -43,8 +43,14 @@ export type AnalysisProtocol = {
       /** Skips the in-worker average-luminance computation when already known. */
       avgLumHint?: number;
     },
-  ) => { avgLuminance: number; mask: Uint8Array; width: number; height: number };
-  'average-luminance': (req: AnalysisRequest) => { avgLuminance: number };
+  ) => {
+    avgLuminance: number;
+    mask: Uint8Array;
+    width: number;
+    height: number;
+    wasmEngine: WasmEngineStatus;
+  };
+  'average-luminance': (req: AnalysisRequest) => { avgLuminance: number; wasmEngine: WasmEngineStatus };
 };
 
 let wasmLoadAttempted = false;
@@ -63,7 +69,10 @@ exposeWorkerRpc<AnalysisProtocol>(self, {
   async 'average-luminance'({ bitmap, useWasm }) {
     try {
       const wasmReady = await ensureWasmReady(useWasm);
-      return { avgLuminance: computeImageAverageLuminanceWith(bitmap, wasmReady) };
+      return {
+        avgLuminance: computeImageAverageLuminanceWith(bitmap, wasmReady),
+        wasmEngine: getWasmEngineStatus(),
+      };
     } finally {
       bitmap.close();
     }
@@ -77,7 +86,13 @@ exposeWorkerRpc<AnalysisProtocol>(self, {
         throw new Error('analysis.worker: classifyImageMaskWith returned null');
       }
       ctx.transfer(result.mask.buffer);
-      return { avgLuminance, mask: result.mask, width: result.width, height: result.height };
+      return {
+        avgLuminance,
+        mask: result.mask,
+        width: result.width,
+        height: result.height,
+        wasmEngine: getWasmEngineStatus(),
+      };
     } finally {
       bitmap.close();
     }

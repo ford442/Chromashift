@@ -2,18 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildWebGpuCanvasConfiguration,
   buildWebGpuCapabilityReport,
-  deriveRequiredLimits,
   getGpuFatalError,
   isFatalGpuDeviceRequestError,
   listAvailableOptionalFeatures,
   logAdapterReport,
-  MIN_DEVICE_TEXTURE_DIMENSION,
   configureWebGpuCanvas,
   getCanvasToneMappingSupport,
   getCanvasHdrSupport,
   probeCanvasHdr,
   releasePageGpuDevice,
+  requestWebGpuAdapter,
   requestWebGpuDevice,
+  withErrorScope,
+  attachDeviceDiagnostics,
   resetCanvasToneMappingSupportForTests,
   resetGpuDeviceGateForTests,
   toBootstrapRuntimeError,
@@ -33,7 +34,6 @@ import {
   RENDERER_CANVAS_OPTIONS_MATRIX,
   WEBGL2_POWER_PREFERENCE_ATTEMPTS,
   CHROMASHIFT_OPTIONAL_FEATURES,
-  CHROMASHIFT_TARGET_MAX_TEXTURE,
 } from './gpuOptions';
 
 function mockAdapterLimits(overrides: Partial<GPUAdapter['limits']> = {}): GPUAdapter['limits'] {
@@ -74,6 +74,15 @@ function mockAdapterLimits(overrides: Partial<GPUAdapter['limits']> = {}): GPUAd
   } as GPUAdapter['limits'];
 }
 
+/** A device that is never lost unless the test resolves `lose`. */
+function liveDevice(features: string[] = []): GPUDevice & { lose: (info: GPUDeviceLostInfo) => void } {
+  let lose!: (info: GPUDeviceLostInfo) => void;
+  const lost = new Promise<GPUDeviceLostInfo>((resolve) => { lose = resolve; });
+  return { features: new Set(features), lost, lose } as unknown as GPUDevice & {
+    lose: (info: GPUDeviceLostInfo) => void;
+  };
+}
+
 function mockAdapter(features: GPUFeatureName[] = []): GPUAdapter {
   return {
     features: new Set(features),
@@ -81,38 +90,6 @@ function mockAdapter(features: GPUFeatureName[] = []): GPUAdapter {
     requestDevice: async () => { throw new Error('not implemented'); },
   } as unknown as GPUAdapter;
 }
-
-describe('deriveRequiredLimits', () => {
-  it('requests 8K headroom when requestHeadroom is enabled', () => {
-    const limits = mockAdapterLimits({ maxTextureDimension2D: 16384 });
-    const required = deriveRequiredLimits(limits, 1920, 1080, { requestHeadroom: true });
-    expect(required?.maxTextureDimension2D).toBe(CHROMASHIFT_TARGET_MAX_TEXTURE);
-  });
-
-  it('requests only canvas size by default (bootstrap-safe)', () => {
-    const limits = mockAdapterLimits({ maxTextureDimension2D: 16384 });
-    const required = deriveRequiredLimits(limits, 1920, 1080);
-    expect(required?.maxTextureDimension2D).toBe(1920);
-  });
-
-  it('floors a collapsed canvas at MIN_DEVICE_TEXTURE_DIMENSION', () => {
-    const limits = mockAdapterLimits({ maxTextureDimension2D: 16384 });
-    const required = deriveRequiredLimits(limits, 150, 150);
-    expect(required?.maxTextureDimension2D).toBe(MIN_DEVICE_TEXTURE_DIMENSION);
-  });
-
-  it('never exceeds adapter maxTextureDimension2D', () => {
-    const limits = mockAdapterLimits({ maxTextureDimension2D: 4096 });
-    const required = deriveRequiredLimits(limits, 7680, 4320, { requestHeadroom: true });
-    expect(required?.maxTextureDimension2D).toBe(4096);
-  });
-
-  it('covers very large canvases up to adapter cap', () => {
-    const limits = mockAdapterLimits({ maxTextureDimension2D: 16384 });
-    const required = deriveRequiredLimits(limits, 9000, 5000, { requestHeadroom: true });
-    expect(required?.maxTextureDimension2D).toBe(9000);
-  });
-});
 
 describe('listAvailableOptionalFeatures', () => {
   it('returns only features supported by the adapter', () => {
@@ -164,7 +141,7 @@ describe('requestWebGpuDevice', () => {
 
   it('requests adapter-default limits and supported optional features on the first attempt', async () => {
     const calls: GPUDeviceDescriptor[] = [];
-    const device = { features: new Set(['timestamp-query']) } as unknown as GPUDevice;
+    const device = liveDevice(['timestamp-query']);
     const adapter = {
       features: new Set(['timestamp-query']),
       limits: mockAdapterLimits(),
@@ -174,7 +151,7 @@ describe('requestWebGpuDevice', () => {
       },
     } as unknown as GPUAdapter;
 
-    await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
+    await requestWebGpuDevice(adapter, ['timestamp-query']);
 
     expect(calls).toHaveLength(1);
     expect(calls[0]?.requiredFeatures).toEqual(['timestamp-query']);
@@ -187,21 +164,21 @@ describe('requestWebGpuDevice', () => {
   });
 
   it('reuses the live device and does not call requestDevice again', async () => {
-    const requestDevice = vi.fn(async () => ({ features: new Set() }) as unknown as GPUDevice);
+    const requestDevice = vi.fn(async () => liveDevice());
     const adapter = {
       features: new Set(),
       limits: mockAdapterLimits(),
       requestDevice,
     } as unknown as GPUAdapter;
 
-    const first = await requestWebGpuDevice(adapter, 1068, 1068);
-    const second = await requestWebGpuDevice(adapter, 150, 150, undefined, ['timestamp-query']);
+    const first = await requestWebGpuDevice(adapter);
+    const second = await requestWebGpuDevice(adapter, ['timestamp-query']);
 
     expect(second).toBe(first);
     expect(requestDevice).toHaveBeenCalledOnce();
     expect(requestDeviceLogMeta(infoSpy)).toHaveLength(1);
 
-    await Promise.all(Array.from({ length: 48 }, () => requestWebGpuDevice(adapter, 150, 150)));
+    await Promise.all(Array.from({ length: 48 }, () => requestWebGpuDevice(adapter)));
     expect(requestDevice).toHaveBeenCalledOnce();
     expect(requestDeviceLogMeta(infoSpy)).toHaveLength(1);
   });
@@ -217,7 +194,7 @@ describe('requestWebGpuDevice', () => {
       },
     } as unknown as GPUAdapter;
 
-    await expect(requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query'])).rejects.toThrow(
+    await expect(requestWebGpuDevice(adapter, ['timestamp-query'])).rejects.toThrow(
       /E_OUTOFMEMORY/,
     );
     expect(calls).toHaveLength(1);
@@ -228,15 +205,15 @@ describe('requestWebGpuDevice', () => {
     expect(String(errorSpy.mock.calls[0]?.[2])).toMatch(/E_OUTOFMEMORY/);
     expect(getGpuFatalError()?.recoverable).toBe(false);
 
-    await expect(requestWebGpuDevice(adapter, 150, 150, undefined, ['timestamp-query'])).rejects.toThrow(
+    await expect(requestWebGpuDevice(adapter, ['timestamp-query'])).rejects.toThrow(
       /out of memory|E_OUTOFMEMORY/i,
     );
     expect(calls).toHaveLength(1);
   });
 
-  it('walks default-limits → canvas-limits → no optional features on non-OOM failure', async () => {
+  it('walks default-limits → no optional features on non-OOM failure, never raising a limit', async () => {
     const calls: GPUDeviceDescriptor[] = [];
-    const device = { features: new Set() } as unknown as GPUDevice;
+    const device = liveDevice();
     const adapter = {
       features: new Set(['timestamp-query']),
       limits: mockAdapterLimits(),
@@ -249,24 +226,23 @@ describe('requestWebGpuDevice', () => {
       },
     } as unknown as GPUAdapter;
 
-    const result = await requestWebGpuDevice(adapter, 1920, 1080, undefined, ['timestamp-query']);
+    const result = await requestWebGpuDevice(adapter, ['timestamp-query']);
 
     expect(result).toBe(device);
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(2);
     expect(calls[0]?.requiredFeatures).toEqual(['timestamp-query']);
-    expect(calls[0]?.requiredLimits).toBeUndefined();
-    expect(calls[1]?.requiredFeatures).toEqual(['timestamp-query']);
-    expect(calls[1]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
-    expect(Array.from(calls[2]?.requiredFeatures ?? [])).toEqual([]);
-    expect(calls[2]?.requiredLimits?.maxTextureDimension2D).toBe(1920);
+    expect(Array.from(calls[1]?.requiredFeatures ?? [])).toEqual([]);
+    // A retry that asks for as much or more than the request that just
+    // failed cannot succeed (the old `canvas-limits` strategy raised
+    // maxColorAttachmentBytesPerSample to the adapter maximum).
+    for (const call of calls) expect(call.requiredLimits).toBeUndefined();
     expect(requestDeviceLogMeta(infoSpy)).toEqual([
       expect.objectContaining({ attempt: 1, strategy: 'default-limits' }),
     ]);
     expect(requestDeviceLogMeta(debugSpy)).toEqual([
-      expect.objectContaining({ attempt: 2, strategy: 'canvas-limits', requiredFeatures: ['timestamp-query'] }),
-      expect.objectContaining({ attempt: 3, strategy: 'no-optional-features', requiredFeatures: [] }),
+      expect.objectContaining({ attempt: 2, strategy: 'no-optional-features', requiredFeatures: [] }),
     ]);
-    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
   });
 
   it('propagates the error when the device request fails with no optional features requested', async () => {
@@ -278,17 +254,17 @@ describe('requestWebGpuDevice', () => {
       },
     } as unknown as GPUAdapter;
 
-    await expect(requestWebGpuDevice(adapter, 1920, 1080, undefined, [])).rejects.toThrow(
+    await expect(requestWebGpuDevice(adapter, [])).rejects.toThrow(
       'no adapter available',
     );
-    expect(debugSpy).toHaveBeenCalled();
-    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(debugSpy).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(getGpuFatalError()?.recoverable).toBe(false);
 
-    await expect(requestWebGpuDevice(adapter, 1920, 1080, undefined, [])).rejects.toThrow(
+    await expect(requestWebGpuDevice(adapter, [])).rejects.toThrow(
       'no adapter available',
     );
-    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
   });
 
   it('joins an in-flight acquire instead of starting a second requestDevice', async () => {
@@ -302,9 +278,9 @@ describe('requestWebGpuDevice', () => {
       requestDevice,
     } as unknown as GPUAdapter;
 
-    const first = requestWebGpuDevice(adapter, 1068, 1068);
-    const second = requestWebGpuDevice(adapter, 150, 150);
-    const device = { features: new Set() } as unknown as GPUDevice;
+    const first = requestWebGpuDevice(adapter);
+    const second = requestWebGpuDevice(adapter);
+    const device = liveDevice();
     resolveDevice?.(device);
 
     expect(await first).toBe(device);
@@ -313,19 +289,129 @@ describe('requestWebGpuDevice', () => {
   });
 
   it('allows a new acquire after releasePageGpuDevice (device-lost retry)', async () => {
-    const requestDevice = vi.fn(async () => ({ features: new Set() }) as unknown as GPUDevice);
+    const requestDevice = vi.fn(async () => liveDevice());
     const adapter = {
       features: new Set(),
       limits: mockAdapterLimits(),
       requestDevice,
     } as unknown as GPUAdapter;
 
-    await requestWebGpuDevice(adapter, 1920, 1080);
+    await requestWebGpuDevice(adapter);
     releasePageGpuDevice();
-    await requestWebGpuDevice(adapter, 1920, 1080);
+    await requestWebGpuDevice(adapter);
 
     expect(requestDevice).toHaveBeenCalledTimes(2);
     expect(requestDeviceLogMeta(infoSpy)).toHaveLength(2);
+  });
+
+  it('releases the lease itself when the device is lost', async () => {
+    const devices = [liveDevice(), liveDevice()];
+    const adapter = {
+      features: new Set(),
+      limits: mockAdapterLimits(),
+      requestDevice: vi.fn(async () => devices.shift()!),
+    } as unknown as GPUAdapter;
+
+    const first = await requestWebGpuDevice(adapter) as ReturnType<typeof liveDevice>;
+    first.lose({ reason: 'unknown', message: 'driver reset' } as GPUDeviceLostInfo);
+    await Promise.resolve();
+
+    expect(await requestWebGpuDevice(adapter)).not.toBe(first);
+  });
+});
+
+describe('Retry GPU after a device loss', () => {
+  const originalGpu = (navigator as { gpu?: GPU }).gpu;
+
+  beforeEach(() => {
+    resetGpuDeviceGateForTests();
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'gpu', { value: originalGpu, configurable: true });
+    resetGpuDeviceGateForTests();
+    vi.restoreAllMocks();
+  });
+
+  /** An adapter that hands out one device, then refuses — a consumed adapter. */
+  function singleUseAdapter(): GPUAdapter {
+    let used = false;
+    return {
+      features: new Set(['timestamp-query']),
+      limits: mockAdapterLimits(),
+      requestDevice: vi.fn(async () => {
+        if (used) throw new DOMException('The adapter has been consumed.', 'OperationError');
+        used = true;
+        return liveDevice();
+      }),
+    } as unknown as GPUAdapter;
+  }
+
+  it('acquires a fresh adapter, so the new device request can succeed', async () => {
+    const requestAdapter = vi.fn(async () => singleUseAdapter());
+    Object.defineProperty(navigator, 'gpu', { value: { requestAdapter }, configurable: true });
+
+    const firstAdapter = (await requestWebGpuAdapter())!;
+    const lostDevice = await requestWebGpuDevice(firstAdapter, ['timestamp-query']) as ReturnType<typeof liveDevice>;
+    lostDevice.lose({ reason: 'unknown', message: 'simulated loss' } as GPUDeviceLostInfo);
+    await Promise.resolve();
+
+    // Retry GPU: release, then bootstrap again.
+    releasePageGpuDevice();
+    const secondAdapter = (await requestWebGpuAdapter())!;
+    expect(secondAdapter).not.toBe(firstAdapter);
+    await expect(requestWebGpuDevice(secondAdapter, ['timestamp-query'])).resolves.toBeDefined();
+    expect(getGpuFatalError()).toBeNull();
+  });
+});
+
+describe('withErrorScope', () => {
+  function scopedDevice(errorOnPop: GPUError | null) {
+    const pops = vi.fn(async () => errorOnPop);
+    const device = { pushErrorScope: vi.fn(), popErrorScope: pops } as unknown as GPUDevice;
+    return { device, pops };
+  }
+
+  it('pops its scope once when the scope caught an error', async () => {
+    const { device, pops } = scopedDevice({ message: 'invalid pipeline' } as GPUError);
+    await expect(withErrorScope(device, 'validation', 'test', () => 1)).rejects.toThrow(/invalid pipeline/);
+    // A second pop would take the enclosing caller's scope.
+    expect(pops).toHaveBeenCalledTimes(1);
+  });
+
+  it('pops its scope once when the work throws', async () => {
+    const { device, pops } = scopedDevice(null);
+    await expect(withErrorScope(device, 'validation', 'test', () => {
+      throw new Error('boom');
+    })).rejects.toThrow('boom');
+    expect(pops).toHaveBeenCalledTimes(1);
+  });
+
+  it('pops once and returns the result on success', async () => {
+    const { device, pops } = scopedDevice(null);
+    await expect(withErrorScope(device, 'validation', 'test', () => 7)).resolves.toBe(7);
+    expect(pops).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('attachDeviceDiagnostics', () => {
+  it('stops forwarding device.lost once detached', async () => {
+    const device = Object.assign(liveDevice(), { onuncapturederror: null });
+    const stale = vi.fn();
+    const live = vi.fn();
+    const detach = attachDeviceDiagnostics(device, { onLost: stale });
+    attachDeviceDiagnostics(device, { onLost: live });
+    detach();
+
+    device.lose({ reason: 'unknown', message: 'reset' } as GPUDeviceLostInfo);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(stale).not.toHaveBeenCalled();
+    expect(live).toHaveBeenCalledOnce();
   });
 });
 
@@ -351,8 +437,8 @@ describe('logAdapterReport', () => {
       },
     };
 
-    logAdapterReport(report, { maxTextureDimension2D: 1068 });
-    logAdapterReport(report, { maxTextureDimension2D: 150 });
+    logAdapterReport(report);
+    logAdapterReport(report);
 
     expect(infoSpy).toHaveBeenCalledTimes(1);
     expect(infoSpy.mock.calls[0]?.[0]).toBe('[Chromashift:GPU] Adapter ready');
@@ -434,13 +520,20 @@ describe('buildWebGpuCanvasConfiguration', () => {
     });
     expect(config.format).toBe('rgba16float');
     expect(config.toneMapping).toEqual({ mode: 'extended' });
-    // COPY_SRC stays: preview thumbnails and collision stats copy the swap chain.
-    expect(config.usage).toBe(0x10 | 0x01);
+    expect(config.usage).toBe(0x10);
   });
 
   it('sdr keeps the preferred format', () => {
     const config = buildWebGpuCanvasConfiguration(device, 'bgra8unorm', { presentation: 'sdr' });
     expect(config.format).toBe('bgra8unorm');
+  });
+
+  // Nothing copies out of the swap chain (exports and previews read offscreen
+  // targets), and an unused COPY_SRC can cost the compositor its scanout path.
+  it('configures the swap chain as a render target only', () => {
+    for (const presentation of ['sdr', 'hdr-extended'] as const) {
+      expect(buildWebGpuCanvasConfiguration(device, 'bgra8unorm', { presentation }).usage).toBe(0x10);
+    }
   });
 });
 

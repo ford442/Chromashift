@@ -41,7 +41,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
-      - run: npx tsc -b
       - run: npm run build
 
   shaders:

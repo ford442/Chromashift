@@ -540,6 +540,22 @@ or, on older browsers:
 [WasmEngine] WebAssembly SIMD128 unsupported — using the TypeScript engine.
 ```
 
+The probe module is built from its sections (`wasmSection` + `leb128` in `loadEngine.ts`),
+so every size field is computed rather than typed in. The hand-written bytes it replaced
+had two section sizes short (`0x0f`/`0x0d` for 22/20-byte bodies): `WebAssembly.validate`
+rejected the module on every browser, and the engine silently never loaded.
+`loadEngine.test.ts` pins `isWasmSimdSupported() === true` under Node 22, which has SIMD128.
+
+**Load status breadcrumbs.** The main thread publishes `window.wasmEngineState`
+(`'idle' | 'loading' | 'ready' | 'unavailable' | 'error'`) and `window.wasmEngineError`
+(the caught message, or `null`). `unavailable` means no SIMD128; `error` means the fetch or
+instantiation threw, and is also logged once as
+`[WasmEngine] C++ WASM engine failed to load — using the TypeScript engine:` with the error.
+Workers have no `window`, so `analysis.worker.ts` and `motion.worker.ts` return their
+module's status with every response and their hosts merge it into
+`window.wasmEngineWorkers` (`{ analysis?, motion? }`, each `{ state, error }`).
+`e2e/wasm-engine.spec.ts` asserts `ready` on the main thread and in both workers.
+
 > **Note:** there is deliberately no separate scalar WASM build. The scalar kernel bodies are
 > still compiled — they finish every SIMD loop's tail, the host `g++` test build runs them
 > alone, and `make -C cpp test-simd` links a `CS_FORCE_SCALAR` copy next to the SIMD engine
@@ -565,14 +581,25 @@ auto-play).
 `classifyImageMaskWith` and `computeMotionFlowWith` put their outputs in the same
 persistent buffer, after the inputs, so a mask or flow field costs no allocation per call.
 Separate small output buffers (histogram: 1 KB, band counts: 44 bytes) are still
-allocated per-call because they are fixed-size and inexpensive. On the C++ side,
+allocated per-call because they are fixed-size and inexpensive, through
+`withWasmScratch` (freed in a `finally`).
+
+Every allocation goes through `checkedMalloc`: with `ALLOW_MEMORY_GROWTH` a `_malloc`
+the heap cannot grow to fit returns `0` instead of aborting, and the caller would then
+copy the pixels over heap offset 0. `checkedMalloc` throws instead.
+
+Strided luminance copies only its samples. `computeAverageLuminanceStridedWith` with
+`stride > 1` packs the sampled pixels in JS and hands C++ a contiguous run (stride 1), and
+`computeImageAverageLuminanceWith` reads only the sampled rows out of the image
+(`getStridedRows`). At 8K and stride 30 that is ~37k pixels instead of a ~132 MB frame,
+and the result is the same: the C++ sums are exact. On the C++ side,
 `computeMotionFlow` keeps its half-resolution scratch planes in a grow-only arena for the
 same reason.
 
 ### Guidelines for future WASM integrations
 
-- **Always free** temporary allocations (`_malloc` / `_free`) unless you are
-  intentionally keeping a persistent buffer.
+- **Always free** temporary allocations: use `withWasmScratch` (or `getPersistentBuf`
+  for a buffer you mean to keep), never a bare `_malloc`, which returns `0` on failure.
 - **Do not hold** a heap pointer across `await` boundaries — memory may have moved
   if `ALLOW_MEMORY_GROWTH` caused a reallocation.
 - **Prefer bulk operations** (`classifyPixelsBulkWith`) over per-pixel calls

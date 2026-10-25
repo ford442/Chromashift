@@ -105,94 +105,108 @@ export class WebGPUPipelines {
     return this.layoutFor(stampDiagnosticViewFragmentSource);
   }
 
-  public createTracerViewPipeline(): GPURenderPipeline {
+  /**
+   * The five inspect-view pipelines, compiled off the frame.
+   *
+   * They used to be built synchronously inside `render()` on the first frame
+   * that showed an inspect view, outside any error scope — so a shader the
+   * device rejected surfaced only as a dropped command buffer. Built async,
+   * a rejection arrives here, with the compiler's messages.
+   */
+  public createInspectPipelines(): Promise<InspectPipelines> {
+    const n = this.layerCount;
+    return Promise.all([
+      this.fullscreenPipeline('tracer view', this.tracerViewBGL, this.canvasSource(emitTracerViewWgsl(n)), this.format),
+      this.fullscreenPipeline('display', this.displayBGL, this.canvasSource(displayTextureFragmentSource), this.format),
+      this.fullscreenPipeline('heatmap', this.heatmapBGL, this.canvasSource(emitCoincidenceHeatmapWgsl(n)), this.format),
+      this.fullscreenPipeline('compare', this.compareBGL, this.canvasSource(emitCompareWgsl(n)), this.format),
+      this.fullscreenPipeline(
+        'stamp diagnostics',
+        this.stampDiagnosticViewBGL,
+        this.canvasSource(stampDiagnosticViewFragmentSource),
+        this.format,
+      ),
+    ]).then(([tracerView, display, heatmap, compare, stampDiagnosticView]) => ({
+      tracerView, display, heatmap, compare, stampDiagnosticView,
+    }));
+  }
 
+  /** The collision-stats blit: an 8-bit offscreen target, whatever the canvas presents. */
+  public createPersistDiagnosticBlitPipeline(): Promise<GPURenderPipeline> {
+    return this.fullscreenPipeline(
+      'collision-stats blit',
+      this.persistDiagnosticBlitBGL,
+      persistDiagnosticBlitFragmentSource,
+      'rgba8unorm',
+    );
+  }
+
+  /**
+   * A fullscreen-triangle pass running `fragment` into `format`. The device
+   * call is made synchronously (before the first `await`), so a recording
+   * device sees every pipeline from a synchronous caller.
+   */
+  private async fullscreenPipeline(
+    label: string,
+    layout: GPUBindGroupLayout,
+    fragment: string,
+    format: GPUTextureFormat,
+  ): Promise<GPURenderPipeline> {
     const device = this.device;
-    return device.createRenderPipeline({
-      layout  : device.createPipelineLayout({ bindGroupLayouts: [this.tracerViewBGL] }),
-      vertex  : { module: device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module     : device.createShaderModule({ code: this.canvasSource(emitTracerViewWgsl(this.layerCount)) }),
-        entryPoint : 'main',
-        targets    : [{ format: this.format }],
-      },
-      primitive  : { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
+    const modules = [
+      device.createShaderModule({ code: fullscreenVertexSource }),
+      device.createShaderModule({ code: fragment }),
+    ];
+    try {
+      return await device.createRenderPipelineAsync({
+        label,
+        layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        vertex: { module: modules[0], entryPoint: 'main' },
+        fragment: { module: modules[1], entryPoint: 'main', targets: [{ format }] },
+        primitive: { topology: 'triangle-list' },
+        multisample: { count: 1 },
+      });
+    } catch (error) {
+      throw new PipelineCompileError(label, await compilationMessages(modules, error));
+    }
   }
+}
 
-  public createDisplayPipeline(): GPURenderPipeline {
+/** What `createInspectPipelines` resolves to: one pipeline per inspect pass. */
+export interface InspectPipelines {
+  tracerView: GPURenderPipeline;
+  display: GPURenderPipeline;
+  heatmap: GPURenderPipeline;
+  compare: GPURenderPipeline;
+  stampDiagnosticView: GPURenderPipeline;
+}
 
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.displayBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: this.canvasSource(displayTextureFragmentSource) }),
-        entryPoint: 'main',
-        targets: [{ format: this.format }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
+/** A pipeline the device refused, carrying the shader compiler's messages. */
+export class PipelineCompileError extends Error {
+  override readonly name = 'PipelineCompileError';
+  readonly label: string;
+  readonly messages: string;
+
+  constructor(label: string, messages: string) {
+    super(`[WebGPU:${label}] ${messages}`);
+    this.label = label;
+    this.messages = messages;
   }
+}
 
-  public createHeatmapPipeline(): GPURenderPipeline {
-
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.heatmapBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: this.canvasSource(emitCoincidenceHeatmapWgsl(this.layerCount)) }),
-        entryPoint: 'main',
-        targets: [{ format: this.format }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
+/**
+ * The compiler's error messages for `modules` (`line:column message`, one per
+ * line), or the pipeline error's own message when the shaders compiled and it
+ * was the pipeline that failed (a layout mismatch, say).
+ */
+async function compilationMessages(modules: readonly GPUShaderModule[], error: unknown): Promise<string> {
+  const lines: string[] = [];
+  for (const module of modules) {
+    const info = await module.getCompilationInfo().catch(() => null);
+    for (const message of info?.messages ?? []) {
+      if (message.type === 'error') lines.push(`${message.lineNum}:${message.linePos} ${message.message}`);
+    }
   }
-
-  public createComparePipeline(): GPURenderPipeline {
-
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.compareBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: this.canvasSource(emitCompareWgsl(this.layerCount)) }),
-        entryPoint: 'main',
-        targets: [{ format: this.format }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
-
-  public createPersistDiagnosticBlitPipeline(): GPURenderPipeline {
-
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.persistDiagnosticBlitBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: persistDiagnosticBlitFragmentSource }),
-        entryPoint: 'main',
-        targets: [{ format: 'rgba8unorm' }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
-
-  public createStampDiagnosticViewPipeline(): GPURenderPipeline {
-
-    return this.device.createRenderPipeline({
-      layout: this.device.createPipelineLayout({ bindGroupLayouts: [this.stampDiagnosticViewBGL] }),
-      vertex: { module: this.device.createShaderModule({ code: fullscreenVertexSource }), entryPoint: 'main' },
-      fragment: {
-        module: this.device.createShaderModule({ code: this.canvasSource(stampDiagnosticViewFragmentSource) }),
-        entryPoint: 'main',
-        targets: [{ format: this.format }],
-      },
-      primitive: { topology: 'triangle-list' },
-      multisample: { count: 1 },
-    });
-  }
+  if (lines.length > 0) return lines.join('\n');
+  return error instanceof Error ? error.message : String(error);
 }

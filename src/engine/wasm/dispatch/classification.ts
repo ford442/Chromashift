@@ -3,8 +3,13 @@
  * the call-site matrix and the production-vs-benchmark export split.
  */
 
-import { classifyBandIndex, classifyPixelBandsF32, computeAdjustedRgb } from '../../math/bandClassification';
-import { canUseWasmFn, getPersistentBuf, getWasmModule } from '../loadEngine';
+import {
+  BAND_INDEX_COUNT,
+  classifyBandIndex,
+  classifyPixelBandsF32,
+  computeAdjustedRgb,
+} from '../../math/bandClassification';
+import { canUseWasmFn, getPersistentBuf, getWasmModule, withWasmScratch } from '../loadEngine';
 import { getImageBytes, getImageDataAtNaturalSize, type PixelSource } from '../imageBytes';
 
 /**
@@ -69,15 +74,13 @@ export function classifyPixelsBulkWith(
   if (canUseWasmFn('_classifyPixelsBulk', useWasm)) {
     const mod = getWasmModule()!;
     // Input buffer comes from the shared persistent pool (like the other
-    // dispatchers in this file); the output buffer is small/transient per
-    // call and stays a plain malloc/free.
-    const inPtr  = getPersistentBuf(data.length);
-    const outPtr = mod._malloc(pixelCount * 4); // int32 per pixel
+    // dispatchers in this file); the output buffer is transient per call.
+    const inPtr = getPersistentBuf(data.length);
     mod.HEAPU8.set(data, inPtr);
-    mod._classifyPixelsBulk(inPtr, data.length, Math.round(avgLum), outPtr);
-    const result = mod.HEAP32.subarray(outPtr >> 2, (outPtr >> 2) + pixelCount).slice();
-    mod._free(outPtr);
-    return result;
+    return withWasmScratch(mod, pixelCount * 4, (outPtr) => { // int32 per pixel
+      mod._classifyPixelsBulk(inPtr, data.length, Math.round(avgLum), outPtr);
+      return mod.HEAP32.slice(outPtr >> 2, (outPtr >> 2) + pixelCount);
+    });
   }
 
   // TypeScript fallback — byte-identical to the WASM branch above and to the
@@ -111,12 +114,9 @@ export function classifyImageMaskWith(
   const { data, width, height } = imageData;
   const pixelCount = width * height;
 
-  const kernel = canUseWasmFn('_computeClassificationMaskLut', useWasm)
-    ? '_computeClassificationMaskLut'
-    : canUseWasmFn('_computeClassificationMask', useWasm)
-      ? '_computeClassificationMask'
-      : null;
-  if (kernel) {
+  // `_computeClassificationMask` (no LUT) is the benchmark/parity twin: every
+  // build that has it has this one, so it is never a fallback.
+  if (canUseWasmFn('_computeClassificationMaskLut', useWasm)) {
     const mod = getWasmModule()!;
     // One persistent allocation holds the RGBA input and the mask after it, so
     // an image the size of the last one costs no allocation at all — a full
@@ -124,7 +124,7 @@ export function classifyImageMaskWith(
     const inPtr = getPersistentBuf(data.length + pixelCount);
     const outPtr = inPtr + data.length;
     mod.HEAPU8.set(data, inPtr);
-    mod[kernel](inPtr, width, height, avgLum, outPtr);
+    mod._computeClassificationMaskLut(inPtr, width, height, avgLum, outPtr);
     // Copied out: the next call reuses this very allocation.
     const mask = mod.HEAPU8.slice(outPtr, outPtr + pixelCount);
     return { mask, width, height };
@@ -159,15 +159,11 @@ export function computeLuminanceHistogramWith(
   if (canUseWasmFn('_computeLuminanceHistogram', useWasm)) {
     const mod = getWasmModule()!;
     const inPtr  = getPersistentBuf(bytes.length);
-    const outPtr = mod._malloc(256 * 4); // 256 uint32 values — fixed small size
     mod.HEAPU8.set(bytes, inPtr);
-    mod._computeLuminanceHistogram(inPtr, bytes.length, outPtr);
-    const result = new Uint32Array(256);
-    for (let i = 0; i < 256; i++) {
-      result[i] = mod.HEAPU32[(outPtr >> 2) + i];
-    }
-    mod._free(outPtr);
-    return result;
+    return withWasmScratch(mod, 256 * 4, (outPtr) => { // 256 uint32 buckets
+      mod._computeLuminanceHistogram(inPtr, bytes.length, outPtr);
+      return mod.HEAPU32.slice(outPtr >> 2, (outPtr >> 2) + 256);
+    });
   }
 
   // TypeScript fallback
@@ -188,7 +184,7 @@ export function computeLuminanceHistogramWith(
  * @param image    Source image element.
  * @param avgLum   Per-image average luminance [0–255].
  * @param useWasm  Attempt to use the C++ WASM engine.
- * @returns        `Uint32Array` of length 11 where `result[n]` is the pixel
+ * @returns        `Uint32Array` of length `BAND_INDEX_COUNT` (11) where `result[n]` is the pixel
  *                 count for colour band `n`.  See `classifyPixelWith` for the
  *                 band-to-index mapping.
  */
@@ -198,24 +194,20 @@ export function computeColorBandCountsWith(
   useWasm: boolean,
 ): Uint32Array {
   const bytes = getImageBytes(image);
-  if (!bytes) return new Uint32Array(11);
+  if (!bytes) return new Uint32Array(BAND_INDEX_COUNT);
 
   if (canUseWasmFn('_computeColorBandCounts', useWasm)) {
     const mod = getWasmModule()!;
     const inPtr  = getPersistentBuf(bytes.length);
-    const outPtr = mod._malloc(11 * 4); // 11 uint32 values — fixed small size
     mod.HEAPU8.set(bytes, inPtr);
-    mod._computeColorBandCounts(inPtr, bytes.length, Math.round(avgLum), outPtr);
-    const result = new Uint32Array(11);
-    for (let i = 0; i < 11; i++) {
-      result[i] = mod.HEAPU32[(outPtr >> 2) + i];
-    }
-    mod._free(outPtr);
-    return result;
+    return withWasmScratch(mod, BAND_INDEX_COUNT * 4, (outPtr) => { // one uint32 per band
+      mod._computeColorBandCounts(inPtr, bytes.length, Math.round(avgLum), outPtr);
+      return mod.HEAPU32.slice(outPtr >> 2, (outPtr >> 2) + BAND_INDEX_COUNT);
+    });
   }
 
   // TypeScript fallback
-  const counts = new Uint32Array(11);
+  const counts = new Uint32Array(BAND_INDEX_COUNT);
   for (let i = 0; i < bytes.length; i += 4) {
     const r = bytes[i];
     const g = bytes[i + 1];

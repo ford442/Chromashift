@@ -30,7 +30,8 @@ export class StationaryPreviewRenderer {
   private readonly outputFormat: GPUTextureFormat;
   private readonly executor: WebGpuGraphExecutor;
   /** The SDR tracer-view pass for a frame of `n` layers — shared with the renderer. */
-  private readonly tracerInspectFor: (layerCount: number) => TracerInspectPass;
+  /** The renderer's inspect passes, once compiled; `null` if the device refused them. */
+  private readonly tracerInspectFor: (layerCount: number) => Promise<TracerInspectPass | null>;
   private readonly readback: GpuReadback;
   private outputTexture: GPUTexture | null = null;
   private sourceTexture: GPUTexture | null = null;
@@ -45,7 +46,7 @@ export class StationaryPreviewRenderer {
     internalFormat: GPUTextureFormat,
     outputFormat: GPUTextureFormat,
     sampler: GPUSampler,
-    tracerInspectFor: (layerCount: number) => TracerInspectPass,
+    tracerInspectFor: (layerCount: number) => Promise<TracerInspectPass | null>,
   ) {
     this.device = device;
     this.outputFormat = outputFormat;
@@ -110,14 +111,17 @@ export class StationaryPreviewRenderer {
     // The thumbnail's own size at every scale: the session's layer and tracer
     // scales are for the main canvas.
     const preview: RendererState = { ...state, layerScale: 1, tracerScale: 1 };
-    const inputs = this.inputs(preview);
 
     const separated = wantSeparated
-      ? await this.renderSeparated(preview, inputs, size, fps)
+      ? await this.renderSeparated(preview, this.inputs(preview), size, fps)
       : null;
 
     let tracer: Uint8ClampedArray<ArrayBuffer> | null = null;
-    if (wantTracer && !this.destroyed) {
+    // Inputs are read again after the readback await: a new image or mask may
+    // have landed meanwhile, and its predecessor been destroyed — submitting
+    // a bind group that holds it is a validation error, every warmup frame.
+    if (wantTracer && !this.destroyed && this.sourceTexture) {
+      const inputs = this.inputs(preview);
       this.executor.clearAccumulators();
       // The preview state is a paused one (it is a still), but the warmup has
       // to accumulate; and no motion field is bound, so the temporal term is off.
@@ -198,8 +202,10 @@ export class StationaryPreviewRenderer {
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const outputs = this.executor.outputTextures();
     if (!outputs) return null;
+    const inspect = await this.tracerInspectFor(outputs.layers.length);
+    if (!inspect || this.destroyed) return null;
     const enc = this.device.createCommandEncoder();
-    this.tracerInspectFor(outputs.layers.length).encodeTracerView(
+    inspect.encodeTracerView(
       enc,
       this.outputTexture!.createView(),
       {

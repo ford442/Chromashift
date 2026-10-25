@@ -23,6 +23,26 @@ const { bands } = JSON.parse(readFileSync(jsonPath, 'utf8'));
 const entries = Object.entries(bands);
 const values = entries.map(([, v]) => v);
 
+// Band index i is "the first i where rgb > threshold[i]", so the table must be
+// finite numbers, highest first — a string or an out-of-order entry would
+// compile to a header that classifies differently from TS and WGSL.
+const problems = [];
+if (entries.length === 0) problems.push('no bands');
+entries.forEach(([name, v], i) => {
+  if (typeof v !== 'number' || !Number.isFinite(v)) {
+    problems.push(`${name}: ${JSON.stringify(v)} is not a finite number`);
+  } else if (i > 0 && !(v < values[i - 1])) {
+    problems.push(`${name}: ${v} is not below ${entries[i - 1][0]} (${values[i - 1]})`);
+  }
+});
+if (problems.length > 0) {
+  console.error(`codegen-band: invalid ${jsonPath}:\n  ${problems.join('\n  ')}`);
+  process.exit(1);
+}
+
+/** A C++ float literal: `125.0f`, `125.5f` (`${v}.0f` turned 125.5 into `125.5.0f`). */
+const floatLiteral = (v) => (Number.isInteger(v) ? `${v}.0f` : `${v}f`);
+
 const lines = [
   '#pragma once',
   '/**',
@@ -38,7 +58,7 @@ const lines = [
   `constexpr std::size_t DARK_BAND_INDEX = ${values.length};`,
   '',
   'constexpr float BAND_THRESHOLDS[BAND_COUNT] = {',
-  ...values.map((v, i) => `    ${v}.0f${i < values.length - 1 ? ',' : ''}`),
+  ...values.map((v, i) => `    ${floatLiteral(v)}${i < values.length - 1 ? ',' : ''}`),
   '};',
   '',
   '} // namespace chromashift',

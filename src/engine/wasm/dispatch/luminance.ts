@@ -3,7 +3,7 @@
  */
 
 import { canUseWasmFn, getPersistentBuf, getWasmModule } from '../loadEngine';
-import { getImageBytes, getImageDataAtNaturalSize, type PixelSource } from '../imageBytes';
+import { getImageBytes, getStridedRows, type PixelSource } from '../imageBytes';
 import { tsComputeAverageLuminance, tsComputeAverageLuminanceStrided } from '../fallbacks/luminance';
 
 /**
@@ -58,13 +58,29 @@ export function computeAverageLuminanceStridedWith(
   useWasm: boolean,
 ): number {
   const safeStride = Math.max(1, stride);
+  const byteLen = width * height * 4;
+  if (pixels.length < byteLen) {
+    throw new RangeError(
+      `computeAverageLuminanceStridedWith: ${pixels.length} bytes is short of ${width}×${height} RGBA (${byteLen})`,
+    );
+  }
 
   if (canUseWasmFn('_computeAverageLuminanceStrided', useWasm)) {
     const mod = getWasmModule()!;
-    const byteLen = width * height * 4;
+    if (safeStride > 1) {
+      // Copy only the samples: at 8K, stride 30 reads ~0.1% of a ~132 MB frame.
+      // The C++ sums are exact, so the packed run averages to the same value.
+      const columns = Math.ceil(width / safeStride);
+      const rows = Math.ceil(height / safeStride);
+      const samples = gatherStrided(pixels, width, height, safeStride, safeStride);
+      const ptr = getPersistentBuf(samples.length);
+      mod.HEAPU8.set(samples, ptr);
+      return mod._computeAverageLuminanceStrided(ptr, columns, rows, 1);
+    }
     const ptr = getPersistentBuf(byteLen);
-    mod.HEAPU8.set(pixels, ptr);
-    return mod._computeAverageLuminanceStrided(ptr, width, height, safeStride);
+    // Exactly the image: a longer buffer would overrun the allocation.
+    mod.HEAPU8.set(pixels.length === byteLen ? pixels : pixels.subarray(0, byteLen), ptr);
+    return mod._computeAverageLuminanceStrided(ptr, width, height, 1);
   }
 
   return tsComputeAverageLuminanceStrided(pixels, width, height, safeStride);
@@ -74,7 +90,10 @@ export function computeAverageLuminanceStridedWith(
  * Compute average BT.709 luminance for an image, choosing the best CPU path.
  *
  * - Images larger than 256 px on the longest edge use a strided full-resolution
- *   sample (`stride = floor(max(w,h) / 256)`) via `computeAverageLuminanceStridedWith`.
+ *   sample (`stride = floor(max(w,h) / 256)`): only the sampled rows are read
+ *   out of the image (`getStridedRows`), and only the sampled pixels of those
+ *   reach `computeAverageLuminanceStridedWith` — the same pixels, and so the
+ *   same average, as striding over the whole frame.
  * - Smaller images use the ≤256 px downscale path via `computeAverageLuminanceWith`.
  *
  * Prefer GPU histogram from `GpuImageAnalysis` when available; this helper is for
@@ -91,18 +110,44 @@ export function computeImageAverageLuminanceWith(
   const maxDim = Math.max(width, height);
 
   if (maxDim > 256) {
-    const imageData = getImageDataAtNaturalSize(image);
-    if (imageData) {
-      const stride = Math.max(1, Math.floor(maxDim / 256));
+    const stride = Math.max(1, Math.floor(maxDim / 256));
+    const sampled = getStridedRows(image, stride);
+    if (sampled) {
+      const columns = Math.ceil(sampled.width / stride);
       return computeAverageLuminanceStridedWith(
-        imageData.data,
-        width,
-        height,
-        stride,
+        gatherStrided(sampled.data, sampled.width, sampled.rows, stride, 1),
+        columns,
+        sampled.rows,
+        1,
         useWasm,
       );
     }
   }
 
   return computeAverageLuminanceWith(image, useWasm);
+}
+
+/**
+ * Every `xStride`-th pixel of every `yStride`-th row, packed row-major:
+ * `ceil(width / xStride) × ceil(height / yStride)` RGBA pixels.
+ */
+function gatherStrided(
+  data: Uint8Array | Uint8ClampedArray,
+  width: number,
+  height: number,
+  xStride: number,
+  yStride: number,
+): Uint8Array {
+  const out = new Uint8Array(Math.ceil(width / xStride) * Math.ceil(height / yStride) * 4);
+  let o = 0;
+  for (let y = 0; y < height; y += yStride) {
+    for (let x = 0; x < width; x += xStride) {
+      const i = (y * width + x) * 4;
+      out[o++] = data[i];
+      out[o++] = data[i + 1];
+      out[o++] = data[i + 2];
+      out[o++] = data[i + 3];
+    }
+  }
+  return out;
 }

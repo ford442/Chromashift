@@ -6,7 +6,7 @@
  */
 
 import { buildRotationMat3 } from '../../math/rotation';
-import { canUseWasmFn, getWasmModule } from '../loadEngine';
+import { canUseWasmFn, getWasmModule, withWasmScratch } from '../loadEngine';
 import { durationToDecay, tsAdvanceAngles, tsSimulateTracerDecay } from '../fallbacks/decay';
 
 /**
@@ -68,12 +68,10 @@ export function buildRotationMat3With(
 ): Float32Array {
   if (canUseWasmFn('_buildRotationMat3', useWasm)) {
     const mod = getWasmModule()!;
-    const outPtr = mod._malloc(9 * 4);
-    mod._buildRotationMat3(angleDeg, outPtr);
-    const result = new Float32Array(9);
-    result.set(mod.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + 9));
-    mod._free(outPtr);
-    return result;
+    return withWasmScratch(mod, 9 * 4, (outPtr) => {
+      mod._buildRotationMat3(angleDeg, outPtr);
+      return mod.HEAPF32.slice(outPtr >> 2, (outPtr >> 2) + 9);
+    });
   }
 
   return buildRotationMat3(angleDeg);
@@ -101,13 +99,13 @@ export function simulateTracerDecayWith(
   if (canUseWasmFn('_simulateTracerDecay', useWasm)) {
     const mod = getWasmModule()!;
     const byteCount = pixelCount * 4 * 4; // pixelCount × 4 channels × 4 bytes/float
-    const ptr = mod._malloc(byteCount);
-    // Copy buffer into WASM heap (HEAPF32 is indexed by float, not byte)
-    mod.HEAPF32.set(buffer.subarray(0, pixelCount * 4), ptr >> 2);
-    mod._simulateTracerDecay(ptr, pixelCount, decayFactor);
-    // Copy result back
-    buffer.set(mod.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + pixelCount * 4));
-    mod._free(ptr);
+    withWasmScratch(mod, byteCount, (ptr) => {
+      // Copy buffer into WASM heap (HEAPF32 is indexed by float, not byte)
+      mod.HEAPF32.set(buffer.subarray(0, pixelCount * 4), ptr >> 2);
+      mod._simulateTracerDecay(ptr, pixelCount, decayFactor);
+      // Copy result back
+      buffer.set(mod.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + pixelCount * 4));
+    });
     return;
   }
 

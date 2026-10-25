@@ -125,6 +125,8 @@ export interface AppUIPreviewStripProps {
 export interface AppUIChromeProps {
   gpuError: GpuRuntimeError | null;
   onRetryGpu: () => void;
+  /** Close a non-fatal error (a refused pipeline); the session kept drawing. */
+  onDismissGpuError: () => void;
   isGpuRetrying: boolean;
   avgLuminance: number;
   engineMode: EngineMode;

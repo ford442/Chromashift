@@ -4,12 +4,45 @@ import type { ExportTracerOptions, ExportTracerResult } from './types/RendererCo
 import type { TracerInspectPass } from './TracerInspectPass';
 import type { WebGPUPipelines } from './WebGPUPipelines';
 
+/**
+ * Tightly packed RGBA bytes from a mapped `copyTextureToBuffer` of a 4-byte
+ * texture: strips the 256-byte row padding and, for a `bgra*` texture, swaps
+ * R and B.
+ *
+ * Every consumer (PNG and video export, the stationary previews) reads the
+ * result as RGBA. The offscreen targets render in the canvas's preferred
+ * format, which desktop Chrome reports as `bgra8unorm` on Windows and macOS,
+ * and the copy is byte-for-byte — so without the swap a red export came out blue.
+ */
+export function packRgbaRows(
+  mapped: Uint8Array,
+  bytesPerRow: number,
+  width: number,
+  height: number,
+  format: GPUTextureFormat,
+): Uint8ClampedArray<ArrayBuffer> {
+  const rowBytes = width * 4;
+  const packed = new Uint8ClampedArray(rowBytes * height);
+  for (let y = 0; y < height; y++) {
+    packed.set(mapped.subarray(y * bytesPerRow, y * bytesPerRow + rowBytes), y * rowBytes);
+  }
+  if (format.startsWith('bgra')) {
+    for (let i = 0; i < packed.length; i += 4) {
+      const b = packed[i];
+      packed[i] = packed[i + 2];
+      packed[i + 2] = b;
+    }
+  }
+  return packed;
+}
+
 export class GpuReadback {
   static readonly DIAGNOSTIC_SIZE = 64;
 
   private readonly device: GPUDevice;
   private readonly format: GPUTextureFormat;
-  private readonly persistDiagnosticBlitPipeline: GPURenderPipeline;
+  /** `null` until the device has compiled it; no collision-stats capture runs before. */
+  private persistDiagnosticBlitPipeline: GPURenderPipeline | null = null;
   private readonly persistDiagnosticBlitBGL: GPUBindGroupLayout;
   private readonly persistDiagnosticSampler: GPUSampler;
   private readonly diagnosticBlitBindGroup = bindGroupSlot();
@@ -24,7 +57,12 @@ export class GpuReadback {
     this.device = device;
     this.format = format;
     this.persistDiagnosticBlitBGL = pipelines.persistDiagnosticBlitBGL;
-    this.persistDiagnosticBlitPipeline = pipelines.createPersistDiagnosticBlitPipeline();
+    // Compiled off the frame, not in the constructor: a renderer is built
+    // outside any error scope for the compare and quad slots.
+    pipelines.createPersistDiagnosticBlitPipeline().then(
+      (pipeline) => { this.persistDiagnosticBlitPipeline = pipeline; },
+      (error: unknown) => { console.error('[GpuReadback] Collision-stats blit unavailable:', error); },
+    );
     this.persistDiagnosticSampler = device.createSampler({
       magFilter: 'nearest',
       minFilter: 'nearest',
@@ -62,7 +100,9 @@ export class GpuReadback {
       return false;
     }
     if (persistDiagnostic) {
-      this.encodeDiagnosticBlit(enc, persistDiagnostic);
+      // Stays queued until the blit has compiled.
+      if (!this.persistDiagnosticBlitPipeline) return false;
+      this.encodeDiagnosticBlit(enc, persistDiagnostic, this.persistDiagnosticBlitPipeline);
     }
 
     const sz = GpuReadback.DIAGNOSTIC_SIZE;
@@ -100,16 +140,10 @@ export class GpuReadback {
 
     try {
       await staging.mapAsync(GPUMapMode.READ);
-      const mapped = new Uint8Array(staging.getMappedRange());
-      const packed = new Uint8ClampedArray(width * height * 4);
-      for (let y = 0; y < height; y++) {
-        const srcOffset = y * bytesPerRow;
-        const dstOffset = y * width * 4;
-        packed.set(mapped.subarray(srcOffset, srcOffset + width * 4), dstOffset);
-      }
+      const data = packRgbaRows(new Uint8Array(staging.getMappedRange()), bytesPerRow, width, height, texture.format);
       staging.unmap();
       staging.destroy();
-      return { width, height, data: packed };
+      return { width, height, data };
     } catch {
       staging.destroy();
       return null;
@@ -175,17 +209,11 @@ export class GpuReadback {
 
     try {
       await staging.mapAsync(GPUMapMode.READ);
-      const mapped = new Uint8Array(staging.getMappedRange());
-      const packed = new Uint8ClampedArray(width * height * 4);
-      for (let y = 0; y < height; y++) {
-        const srcOffset = y * bytesPerRow;
-        const dstOffset = y * width * 4;
-        packed.set(mapped.subarray(srcOffset, srcOffset + width * 4), dstOffset);
-      }
+      const data = packRgbaRows(new Uint8Array(staging.getMappedRange()), bytesPerRow, width, height, output.format);
       staging.unmap();
       output.destroy();
       staging.destroy();
-      return { width, height, data: packed };
+      return { width, height, data };
     } catch {
       output.destroy();
       staging.destroy();
@@ -213,7 +241,11 @@ export class GpuReadback {
     });
   }
 
-  private encodeDiagnosticBlit(enc: GPUCommandEncoder, persistDiagnostic: GPUTexture): void {
+  private encodeDiagnosticBlit(
+    enc: GPUCommandEncoder,
+    persistDiagnostic: GPUTexture,
+    pipeline: GPURenderPipeline,
+  ): void {
     const bg = cachedBindGroup(
       this.device,
       this.diagnosticBlitBindGroup,
@@ -233,7 +265,7 @@ export class GpuReadback {
         clearValue: { r: 0, g: 0, b: 0, a: 0 },
       }],
     });
-    pass.setPipeline(this.persistDiagnosticBlitPipeline);
+    pass.setPipeline(pipeline);
     pass.setBindGroup(0, bg);
     pass.draw(6);
     pass.end();

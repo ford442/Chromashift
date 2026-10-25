@@ -195,7 +195,7 @@ src/
     WebGPURenderer.ts   # WebGPU frame: the pass-graph executor draws it (layers → persistence → compositor)
     graph/              # pass-graph IR, compiler and WebGPU executor (docs/PASS_GRAPH.md)
     TracerInspectPass.ts, WebGPUPipelines.ts  # inspect views over the graph's outputs
-    webgl/              # WebGL2 diagnostic renderer (pass modules + GLSL shaders; WebGLRenderer.ts re-export)
+    webgl/              # WebGL2 diagnostic / XR renderer: WebGLRenderer + WebGLGraphExecutor over the compiled graph
     rendererMode.ts     # URL/localStorage/backend breadcrumb selection
     TextureManager.ts, WebGLTextureManager.ts  # JSON/blob fetch + GPU/WebGL texture upload
     LocalLibrary.ts, fileDrop.ts               # IndexedDB local image library (drag-and-drop)
@@ -230,14 +230,14 @@ See [AGENTS.md](AGENTS.md#browser-requirements) for the full matrix with version
 ## Roadmap
 
 **[docs/ROADMAP.md](docs/ROADMAP.md)** is the maintained roadmap (shipped vs. planned).
-Open strategic backlog: **[#143](https://github.com/ford442/Chromashift/issues/143)–[#145](https://github.com/ford442/Chromashift/issues/145)** and **[#149](https://github.com/ford442/Chromashift/issues/149)–[#155](https://github.com/ford442/Chromashift/issues/155)** (#115–#142 are closed).
+Open backlog: **[#223](https://github.com/ford442/Chromashift/issues/223)–[#228](https://github.com/ford442/Chromashift/issues/228)**, **[#206](https://github.com/ford442/Chromashift/issues/206)**, **[#178](https://github.com/ford442/Chromashift/issues/178)** and **[#177](https://github.com/ford442/Chromashift/issues/177)**. #143, #144 and #153 were closed as not planned; #145 and #149–#155 otherwise shipped.
 
 | Status | Highlights |
 |--------|------------|
-| **Shipped** | Colour profiles + schema v3/v4, live source, gpu-chores, compare dual/swipe/quad, WebGPU hard-fail, explicit WebGL diagnostic backend, optional GPU features, WebCodecs export — see [ROADMAP.md](docs/ROADMAP.md) |
-| **Foundation first** | Stop whole-tree re-renders ([#149](https://github.com/ford442/Chromashift/issues/149)); analysis off the main thread ([#150](https://github.com/ford442/Chromashift/issues/150)); virtualized image browser ([#151](https://github.com/ford442/Chromashift/issues/151)); real WASM SIMD ([#152](https://github.com/ford442/Chromashift/issues/152)) |
-| **Next** | Profile designer ([#143](https://github.com/ford442/Chromashift/issues/143)); automation timeline ([#153](https://github.com/ford442/Chromashift/issues/153)); kiosk camera + live capture ([#144](https://github.com/ford442/Chromashift/issues/144)) |
-| **Then** | Compute persistence / no per-frame WASM ([#145](https://github.com/ford442/Chromashift/issues/145)); pass-graph IR ([#154](https://github.com/ford442/Chromashift/issues/154)); motion-aware tracers ([#155](https://github.com/ford442/Chromashift/issues/155)) |
+| **Shipped** | Colour profiles + schema v3/v4, live source, gpu-chores, compare dual/swipe/quad, WebGPU hard-fail, explicit WebGL diagnostic backend, optional GPU features, WebCodecs export, compute persistence, the pass-graph IR on both backends, motion-aware tracers, real WASM SIMD — see [ROADMAP.md](docs/ROADMAP.md) |
+| **Foundation first** | Correctness sweep ([#225](https://github.com/ford442/Chromashift/issues/225)); checked inputs, one parameter registry, one frame clock ([#226](https://github.com/ford442/Chromashift/issues/226)) |
+| **Next** | One graph everywhere ([#228](https://github.com/ford442/Chromashift/issues/228)); multi-output slots ([#178](https://github.com/ford442/Chromashift/issues/178)); performance timeline ([#224](https://github.com/ford442/Chromashift/issues/224)) |
+| **Then** | Modulation matrix ([#227](https://github.com/ford442/Chromashift/issues/227)); previous-frame feedback ([#223](https://github.com/ford442/Chromashift/issues/223)); one ONNX ML stack ([#206](https://github.com/ford442/Chromashift/issues/206)); node editor ([#177](https://github.com/ford442/Chromashift/issues/177)) |
 | **Research** | WebGPU-XR swapchain — [WebXR.md](docs/WebXR.md); WebGL presenter path is unblocked via `?renderer=webgl` |
 
 Full per-issue detail and file pointers: **[docs/ROADMAP.md](docs/ROADMAP.md)**.

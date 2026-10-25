@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   estimateRgba8MipChainBytes,
   estimateRgba8SingleLevelBytes,
-  estimateWebGlTextureBytes,
   isBlobTextureUrl,
   TEXTURE_CACHE_BYTE_BUDGET,
   TEXTURE_CACHE_MAX_ENTRIES,
@@ -18,11 +17,6 @@ describe('textureCachePolicy', () => {
 
     it('single-level estimate matches w×h×4', () => {
       expect(estimateRgba8SingleLevelBytes(1920, 1080)).toBe(1920 * 1080 * 4);
-    });
-
-    it('WebGL PO2 uses mip chain; non-PO2 uses single level', () => {
-      expect(estimateWebGlTextureBytes(256, 256)).toBe(estimateRgba8MipChainBytes(256, 256));
-      expect(estimateWebGlTextureBytes(1920, 1080)).toBe(estimateRgba8SingleLevelBytes(1920, 1080));
     });
   });
 

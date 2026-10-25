@@ -21,6 +21,7 @@ import { createChromashiftCpuHost } from './chromashiftHost';
 import type { CpuChoreHost, CpuImageAnalysisResult } from './types';
 import type { AnalysisProtocol } from '../analysis.worker';
 import { createWorkerRpc } from '../../workers/rpc';
+import { publishWorkerWasmEngine } from '../../diagnostics';
 
 export type AnalysisWorkerFactory = () => Worker;
 
@@ -50,7 +51,12 @@ export function createWorkerChromashiftCpuHost(
     useWasm: boolean,
   ): Promise<CpuImageAnalysisResult | null> {
     const bitmap = await createImageBitmap(image);
-    const response = await rpc.call('image-analysis', { bitmap, avgLumHint, useWasm }, { transfer: [bitmap] });
+    const { wasmEngine, ...response } = await rpc.call(
+      'image-analysis',
+      { bitmap, avgLumHint, useWasm },
+      { transfer: [bitmap] },
+    );
+    publishWorkerWasmEngine('analysis', wasmEngine);
     return { ...response, mode: 'worker' };
   }
 
@@ -60,6 +66,7 @@ export function createWorkerChromashiftCpuHost(
   ): Promise<{ avgLuminance: number; mode: 'worker' }> {
     const bitmap = await createImageBitmap(image);
     const response = await rpc.call('average-luminance', { bitmap, useWasm }, { transfer: [bitmap] });
+    publishWorkerWasmEngine('analysis', response.wasmEngine);
     return { avgLuminance: response.avgLuminance, mode: 'worker' };
   }
 

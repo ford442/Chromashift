@@ -53,3 +53,5 @@ test-screenshots/
 
 # Shader corpus dumped by `npm run shaders:validate` (scripts/validate-shaders.mjs).
 test-results/shaders/
+# Playwright's last-run status: rewritten by every local E2E run.
+test-results/.last-run.json

@@ -213,6 +213,11 @@ export function useAppWebGPUInit({
     const preferredBackend = getRendererPreference();
     const onRuntimeError = (error: GpuRuntimeError) => {
       if (isCancelled(cancelToken, signal)) return;
+      // A refused pipeline: shown, but the session keeps drawing without it.
+      if (error.kind === 'pipeline') {
+        setGpuError(error);
+        return;
+      }
       if (error.kind !== 'device-lost') return;
       clearOrchestratorRefs(
         orchestratorRef,

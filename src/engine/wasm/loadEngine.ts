@@ -2,10 +2,12 @@
  * Loader for the optional C++ WebAssembly engine.
  *
  * At runtime this module attempts to load the Emscripten-compiled module at
- * /chromashift_engine.js (which fetches /chromashift_engine.wasm). If those
- * assets are absent (i.e. the C++ engine has not been built yet) `loadWasmEngine`
- * resolves `false` and every dispatcher in `./dispatch.ts` transparently falls
- * back to its TypeScript implementation.
+ * /chromashift_engine.js (which fetches /chromashift_engine.wasm). If the
+ * runtime lacks SIMD128, or the module fails to load, `loadWasmEngine` resolves
+ * `false` and every dispatcher in `./dispatch.ts` falls back to its TypeScript
+ * implementation. Which of the two happened is never silent: it is logged and
+ * published as `window.wasmEngineState` / `wasmEngineError` (a worker's own
+ * instance reaches `window.wasmEngineWorkers` through its host).
  *
  * Build the C++ engine:
  *   cd cpp && make          # requires Emscripten — see docs/wasm-engine.md
@@ -13,12 +15,38 @@
 
 import type { ChromashiftWasmModule, GlueModule, WasmApiFunction } from './types';
 import { WASM_API_FUNCTIONS } from './types';
+import { publishDiagnostics } from '../diagnostics';
 
-type LoadState = 'idle' | 'loading' | 'ready' | 'unavailable';
+/**
+ * Where this realm's engine got to. `unavailable` means the runtime cannot run
+ * it at all (no SIMD128); `error` means it should have loaded and did not —
+ * the glue failed to import or the module failed to instantiate.
+ */
+export type WasmEngineState = 'idle' | 'loading' | 'ready' | 'unavailable' | 'error';
+
+/** One realm's engine state, as the breadcrumbs and the worker replies carry it. */
+export interface WasmEngineStatus {
+  state: WasmEngineState;
+  /** Why it is `unavailable` or `error`; `null` otherwise. */
+  error: string | null;
+}
 
 let wasmModule: ChromashiftWasmModule | null = null;
-let loadState: LoadState = 'idle';
+let loadState: WasmEngineState = 'idle';
+let loadError: string | null = null;
 const pendingResolvers: Array<(ok: boolean) => void> = [];
+
+/** This realm's engine state. Workers send it back with every reply. */
+export function getWasmEngineStatus(): WasmEngineStatus {
+  return { state: loadState, error: loadError };
+}
+
+function settle(state: 'ready' | 'unavailable' | 'error', error: string | null): void {
+  loadState = state;
+  loadError = error;
+  // A no-op in the workers (no `window`); their hosts publish for them.
+  publishDiagnostics({ wasmEngineState: state, wasmEngineError: error });
+}
 
 /**
  * A single reusable WASM heap allocation for input pixel buffers.
@@ -60,10 +88,33 @@ export function getPersistentBuf(size: number): number {
   }
   if (persistentBufPtr !== 0) {
     mod._free(persistentBufPtr);
+    persistentBufPtr = 0;
+    persistentBufSize = 0;
   }
-  persistentBufPtr = mod._malloc(size);
+  persistentBufPtr = checkedMalloc(mod, size);
   persistentBufSize = size;
   return persistentBufPtr;
+}
+
+/**
+ * `_malloc(size)`, or a throw when the heap cannot grow to fit it. With
+ * `ALLOW_MEMORY_GROWTH` a failed allocation returns `0` rather than aborting,
+ * and every caller would then write the pixels over heap offset 0.
+ */
+export function checkedMalloc(mod: ChromashiftWasmModule, size: number): number {
+  const ptr = mod._malloc(size);
+  if (ptr === 0) throw new Error(`[WasmEngine] _malloc(${size}) failed: the WASM heap cannot grow that far`);
+  return ptr;
+}
+
+/** Run `work` with a transient `size`-byte allocation, freed however `work` exits. */
+export function withWasmScratch<T>(mod: ChromashiftWasmModule, size: number, work: (ptr: number) => T): T {
+  const ptr = checkedMalloc(mod, size);
+  try {
+    return work(ptr);
+  } finally {
+    mod._free(ptr);
+  }
 }
 
 function logStaleWasmExports(): void {
@@ -92,33 +143,50 @@ function logStaleWasmExports(): void {
  */
 export function isWasmSimdSupported(): boolean {
   try {
-    // Minimal WASM binary: () -> v128, returns v128.const 0
-    // Sections: type(1), function(1), code(1 function body with v128.const + end)
-    //
-    // The two size bytes must count exactly: a body of 20 bytes (local count,
-    // the 2-byte opcode, its 16-byte immediate, end) in a 22-byte section. They
-    // once read 0x0d / 0x0f, which made the module malformed — validate()
-    // returned false in every browser and the engine never loaded.
-    // loadEngine.test.ts runs this probe in Node, which has SIMD128.
-    return WebAssembly.validate(new Uint8Array([
-      0x00, 0x61, 0x73, 0x6d, // magic
-      0x01, 0x00, 0x00, 0x00, // version
-      // type section: 1 type, () -> v128
-      0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7b,
-      // function section: 1 function, type index 0
-      0x03, 0x02, 0x01, 0x00,
-      // code section: 1 body
-      0x0a, 0x16, 0x01,       // section id, size (22), count
-      0x14, 0x00,             // body size (20), local count
-      0xfd, 0x0c,             // v128.const
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x0b,                   // end
-    ]));
+    return WebAssembly.validate(SIMD_PROBE_MODULE);
   } catch {
     return false;
   }
 }
+
+/** Unsigned LEB128, the encoding of every size and count in a WASM binary. */
+export function leb128(value: number): number[] {
+  const bytes: number[] = [];
+  let rest = value >>> 0;
+  do {
+    const byte = rest & 0x7f;
+    rest >>>= 7;
+    bytes.push(rest === 0 ? byte : byte | 0x80);
+  } while (rest !== 0);
+  return bytes;
+}
+
+/** One module section: its id, then its contents prefixed by their byte length. */
+function wasmSection(id: number, contents: readonly number[]): number[] {
+  return [id, ...leb128(contents.length), ...contents];
+}
+
+/**
+ * The probe module: one function `() -> v128` whose body is `v128.const 0`.
+ * Every length is computed, not written by hand — the hand-counted sizes once
+ * read 0x0f / 0x0d instead of 22 / 20, which made the module malformed, so
+ * `validate()` returned false in every browser and the engine never loaded.
+ */
+const SIMD_PROBE_MODULE: Uint8Array<ArrayBuffer> = (() => {
+  const V128 = 0x7b;
+  const body = [
+    0x00,                          // no locals
+    0xfd, 0x0c, ...new Array<number>(16).fill(0), // v128.const 0
+    0x0b,                          // end
+  ];
+  return new Uint8Array([
+    0x00, 0x61, 0x73, 0x6d,        // magic
+    0x01, 0x00, 0x00, 0x00,        // version
+    ...wasmSection(0x01, [0x01, 0x60, 0x00, 0x01, V128]),     // type: () -> v128
+    ...wasmSection(0x03, [0x01, 0x00]),                       // function: type 0
+    ...wasmSection(0x0a, [0x01, ...leb128(body.length), ...body]), // code: one body
+  ]);
+})();
 
 /**
  * Attempt to load the compiled C++ WASM engine.
@@ -128,7 +196,7 @@ export function isWasmSimdSupported(): boolean {
  */
 export async function loadWasmEngine(): Promise<boolean> {
   if (loadState === 'ready')       return true;
-  if (loadState === 'unavailable') return false;
+  if (loadState === 'unavailable' || loadState === 'error') return false;
 
   if (loadState === 'loading') {
     return new Promise<boolean>((resolve) => {
@@ -141,7 +209,7 @@ export async function loadWasmEngine(): Promise<boolean> {
     console.info(
       '[WasmEngine] WebAssembly SIMD128 unsupported — using the TypeScript engine.',
     );
-    loadState = 'unavailable';
+    settle('unavailable', 'WebAssembly SIMD128 is not supported by this runtime');
     return false;
   }
 
@@ -160,16 +228,18 @@ export async function loadWasmEngine(): Promise<boolean> {
     const engineUrl = new URL('chromashift_engine.js', assetBaseUrl).href;
     const glue = await import(/* @vite-ignore */ engineUrl) as GlueModule;
     wasmModule = await glue.default();
-    loadState = 'ready';
+    settle('ready', null);
     logStaleWasmExports();
 
     console.info('[WasmEngine] C++ WASM engine loaded (SIMD128 kernels active).');
-  } catch {
-    // WASM assets not yet built — this is expected in the default repo state.
-    loadState = 'unavailable';
+  } catch (error) {
+    // The artifacts are committed, so this is a real failure — a fetch, an
+    // import or an instantiation — not "not built yet". Say which.
+    console.warn('[WasmEngine] C++ WASM engine failed to load — using the TypeScript engine:', error);
+    settle('error', error instanceof Error ? error.message : String(error));
   }
 
-  const ok = loadState === 'ready';
+  const ok = getWasmEngineStatus().state === 'ready';
   for (const resolve of pendingResolvers) resolve(ok);
   pendingResolvers.length = 0;
   return ok;

@@ -23,6 +23,7 @@ import { MOTION_FIELD_DIVISOR, MOTION_MODE_DIRECTION } from './motionModes';
 import { TracerInspectPass } from './TracerInspectPass';
 import { compositorUniforms, rendererStateValue, tracerInspectSettings } from './graph/exec/uniforms';
 import { GpuReadback } from './GpuReadback';
+import { pipelineRuntimeError, type GpuRuntimeError } from './gpuBootstrap';
 import { GpuTimestampProfiler, publishGpuTimestampBreadcrumbs } from './GpuTimestampProfiler';
 import { StationaryPreviewRenderer } from './StationaryPreviewRenderer';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from './stationaryPreview';
@@ -66,6 +67,14 @@ function exportMainView(passMode: ExportPassMode, state: RendererState): number 
   if (passMode === 'tracers') return MAIN_VIEW_MODES.FULL_RES_TRACER;
   if (passMode === 'layers') return rendererStateValue(state, 'mainViewMode');
   return MAIN_VIEW_MODES.PROCESSED_COMPOSITE;
+}
+
+/** One layer count × presentation's inspect passes. */
+interface InspectPassEntry {
+  /** `null` while the device compiles them, and for good if it refused them. */
+  pass: TracerInspectPass | null;
+  /** Settles once compiled (the passes) or refused (`null`). */
+  ready: Promise<TracerInspectPass | null>;
 }
 
 /** Clear `view` to opaque black: a frame with nothing validated to draw it. */
@@ -114,7 +123,10 @@ export class WebGPURenderer {
    */
   private motionResetPending = true;
   /** Inspect passes by `layerCount:presentation`, built on first use. */
-  private readonly inspectPassSets = new Map<string, TracerInspectPass>();
+  /** Inspect passes per layer count × presentation: compiling, compiled, or refused. */
+  private readonly inspectPassSets = new Map<string, InspectPassEntry>();
+  /** Where a refused pipeline is reported — the orchestrator's error overlay. */
+  private runtimeErrorHandler: ((error: GpuRuntimeError) => void) | null = null;
   /** Whether this frame ran the motion chore, so `afterSubmit` maps its stats only then. */
   private motionFieldEncoded = false;
   /** `motionFieldUse` per compiled graph — asked every frame, computed once. */
@@ -203,7 +215,7 @@ export class WebGPURenderer {
       this.internalFormat,
       format,
       this.compositorSampler,
-      (layerCount) => this.inspectPassesFor(layerCount, 'sdr'),
+      (layerCount) => this.inspectPassesFor(layerCount, 'sdr').ready,
     );
     const timestamp = GpuTimestampProfiler.create(device);
     this.gpuProfiler = timestamp.profiler;
@@ -526,6 +538,12 @@ export class WebGPURenderer {
     })) {
       await this.graphExecutor.prepare();
     }
+    // An inspect-view export (tracers, a layer) needs its passes compiled, or
+    // it would export the composite instead.
+    const mainView = exportMainView(passMode, state);
+    if (mainView !== MAIN_VIEW_MODES.PROCESSED_COMPOSITE) {
+      await this.inspectPassesFor(Math.max(1, Math.min(MAX_LAYER_COUNT, state.layers.length)), 'sdr').ready;
+    }
     if (this.destroyed || !this.currentTexture) return null;
 
     // Always the SDR canvas format, never the live canvas's: export stays SDR
@@ -547,7 +565,7 @@ export class WebGPURenderer {
     };
 
     const enc = this.device.createCommandEncoder();
-    this.encodeFrameCore(enc, exportState, output.createView(), width, height, fps, exportMainView(passMode, state));
+    this.encodeFrameCore(enc, exportState, output.createView(), width, height, fps, mainView);
     this.device.queue.submit([enc.finish()]);
 
     const result = await this.readback.readTexturePixels(output, width, height);
@@ -622,11 +640,16 @@ export class WebGPURenderer {
     // A frame whose canvas shows an inspect view rather than the composite
     // still runs every pass but the compositor, so the tracers keep
     // accumulating, and the view is drawn from the graph's outputs.
+    // Until the device has compiled the inspect pipelines (off the frame),
+    // the canvas keeps the composite.
     const { outputs } = frame.compiled;
-    const inspectView = mainView !== MAIN_VIEW_MODES.PROCESSED_COMPOSITE
+    const inspectPass = mainView !== MAIN_VIEW_MODES.PROCESSED_COMPOSITE
       && outputs.layers.length > 0
       && outputs.tracers.length >= 2
-      && TracerInspectPass.drawsMainView(mainView, outputs.layers.length);
+      && TracerInspectPass.drawsMainView(mainView, outputs.layers.length)
+      ? this.inspectPassesFor(outputs.layers.length, presentation).pass
+      : null;
+    const inspectView = inspectPass !== null;
     this.graphExecutor.encode(
       enc,
       {
@@ -656,9 +679,9 @@ export class WebGPURenderer {
       },
       frame,
     );
-    if (inspectView) {
+    if (inspectPass) {
       const textures = this.graphExecutor.outputTextures()!;
-      this.encodeInspectView(enc, state, mainView, outputView, width, height, presentation, {
+      this.encodeInspectView(inspectPass, enc, state, mainView, outputView, width, height, {
         layers: textures.layers,
         below: textures.tracerBelow,
         above: textures.tracerAbove,
@@ -674,13 +697,13 @@ export class WebGPURenderer {
    * `outputView` from the frame's outputs. Returns whether it drew.
    */
   private encodeInspectView(
+    inspectPass: TracerInspectPass,
     enc: GPUCommandEncoder,
     state: RendererState,
     mainView: number,
     outputView: GPUTextureView,
     width: number,
     height: number,
-    presentation: CanvasPresentation,
     textures: {
       layers: LayerTextures;
       below: GPUTexture;
@@ -694,7 +717,7 @@ export class WebGPURenderer {
       ...inspectView
     } = tracerInspectSettings(state);
     const compositorValues = compositorUniforms(state, textures.layers.length);
-    return this.inspectPassesFor(textures.layers.length, presentation).encodeMainView(enc, {
+    return inspectPass.encodeMainView(enc, {
       mainViewMode: mainView,
       canvasView: outputView,
       canvasWidth: width,
@@ -722,22 +745,43 @@ export class WebGPURenderer {
   /**
    * The inspect passes for a frame of `layerCount` band layers presented to
    * `presentation`: their shaders and layouts bind every layer, so each count
-   * needs its own set. Built on first use and kept.
+   * needs its own set. Compiled off the frame on first use (`pass` stays
+   * `null` until then, and for good if the device refuses them) and kept.
    */
-  private inspectPassesFor(layerCount: number, presentation: CanvasPresentation): TracerInspectPass {
+  private inspectPassesFor(layerCount: number, presentation: CanvasPresentation): InspectPassEntry {
     const key = `${layerCount}:${presentation}`;
-    let pass = this.inspectPassSets.get(key);
-    if (!pass) {
-      const pipelines = new WebGPUPipelines(
-        this.device,
-        presentation === 'hdr-extended' ? HDR_CANVAS_FORMAT : this.pipelines.format,
-        layerCount,
-        presentation,
-      );
-      pass = new TracerInspectPass(this.device, pipelines, this.compositorSampler);
-      this.inspectPassSets.set(key, pass);
-    }
-    return pass;
+    const cached = this.inspectPassSets.get(key);
+    if (cached) return cached;
+
+    const pipelines = new WebGPUPipelines(
+      this.device,
+      presentation === 'hdr-extended' ? HDR_CANVAS_FORMAT : this.pipelines.format,
+      layerCount,
+      presentation,
+    );
+    const entry: InspectPassEntry = { pass: null, ready: Promise.resolve(null) };
+    entry.ready = TracerInspectPass.create(this.device, pipelines, this.compositorSampler).then(
+      (pass) => {
+        if (this.destroyed) {
+          pass.destroy();
+          return null;
+        }
+        entry.pass = pass;
+        return pass;
+      },
+      (error: unknown) => {
+        console.error('[WebGPURenderer] Inspect view pipelines refused:', error);
+        if (!this.destroyed) this.runtimeErrorHandler?.(pipelineRuntimeError('An inspect view', error));
+        return null;
+      },
+    );
+    this.inspectPassSets.set(key, entry);
+    return entry;
+  }
+
+  /** Report a refused pipeline (to the orchestrator, and so the error overlay). */
+  setRuntimeErrorHandler(handler: ((error: GpuRuntimeError) => void) | null): void {
+    this.runtimeErrorHandler = handler;
   }
 
   /**
@@ -789,8 +833,10 @@ export class WebGPURenderer {
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
     const outputs = this.lastFrameOutputs();
     if (!outputs) return null;
+    const inspect = await this.inspectPassesFor(outputs.layers.length, 'sdr').ready;
+    if (!inspect || this.destroyed) return null;
     return this.readback.exportTracerView(
-      this.inspectPassesFor(outputs.layers.length, 'sdr'),
+      inspect,
       {
         persistAbove: outputs.tracerAbove,
         persistBelow: outputs.tracerBelow,
@@ -806,7 +852,7 @@ export class WebGPURenderer {
     publishSlotExecuting(this.graphSlot, undefined);
     this.graphExecutor.destroy();
     this.motionField.destroy();
-    for (const pass of this.inspectPassSets.values()) pass.destroy();
+    for (const entry of this.inspectPassSets.values()) entry.pass?.destroy();
     this.readback.destroy();
     this.stationaryPreview.destroy();
     this.gpuProfiler?.destroy();

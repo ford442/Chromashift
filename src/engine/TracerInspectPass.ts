@@ -6,7 +6,7 @@ import {
   type BindGroupSlot,
   type LayerTextures,
 } from './bindGroups';
-import type { WebGPUPipelines } from './WebGPUPipelines';
+import type { InspectPipelines, WebGPUPipelines } from './WebGPUPipelines';
 import { DEFAULT_PER_LAYER_OPACITY, RENDERER_STATE_DEFAULTS } from '../state/defaults';
 import { createUniformData, packUniforms, type UniformData } from './graph/templates/uniformLayout';
 import {
@@ -66,6 +66,20 @@ export interface MainViewEncodeParams {
 }
 
 export class TracerInspectPass {
+  /**
+   * The inspect passes for `pipelines`, once the device has compiled them.
+   * Rejects with a `PipelineCompileError` naming the pass and the compiler's
+   * messages.
+   */
+  static async create(
+    device: GPUDevice,
+    pipelines: WebGPUPipelines,
+    compositorSampler: GPUSampler,
+  ): Promise<TracerInspectPass> {
+    const built = await pipelines.createInspectPipelines();
+    return new TracerInspectPass(device, pipelines, built, compositorSampler);
+  }
+
   private readonly device: GPUDevice;
   private readonly compositorSampler: GPUSampler;
 
@@ -104,9 +118,10 @@ export class TracerInspectPass {
   /** Per ping-pong phase: the diagnostic accumulator flips with the tracers. */
   private readonly stampDiagnosticBindGroups: [BindGroupSlot, BindGroupSlot] = [bindGroupSlot(), bindGroupSlot()];
 
-  constructor(
+  private constructor(
     device: GPUDevice,
     pipelines: WebGPUPipelines,
+    built: InspectPipelines,
     compositorSampler: GPUSampler,
   ) {
     this.device = device;
@@ -116,7 +131,7 @@ export class TracerInspectPass {
     this.compareUniforms = createUniformData(compareUniformLayout(this.layerCount));
 
     this.tracerViewBGL = pipelines.tracerViewBGL;
-    this.tracerViewPipeline = pipelines.createTracerViewPipeline();
+    this.tracerViewPipeline = built.tracerView;
     this.tracerViewUniformBuf = device.createBuffer({
       size: tracerViewUniformLayout(pipelines.layerCount).bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -130,28 +145,28 @@ export class TracerInspectPass {
     });
 
     this.displayBGL = pipelines.displayBGL;
-    this.displayPipeline = pipelines.createDisplayPipeline();
+    this.displayPipeline = built.display;
     this.displayUniformBuf = device.createBuffer({
       size: DISPLAY_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.heatmapBGL = pipelines.heatmapBGL;
-    this.heatmapPipeline = pipelines.createHeatmapPipeline();
+    this.heatmapPipeline = built.heatmap;
     this.heatmapUniformBuf = device.createBuffer({
       size: HEATMAP_UNIFORMS.bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.compareBGL = pipelines.compareBGL;
-    this.comparePipeline = pipelines.createComparePipeline();
+    this.comparePipeline = built.compare;
     this.compareUniformBuf = device.createBuffer({
       size: compareUniformLayout(pipelines.layerCount).bytes,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
     this.stampDiagnosticViewBGL = pipelines.stampDiagnosticViewBGL;
-    this.stampDiagnosticViewPipeline = pipelines.createStampDiagnosticViewPipeline();
+    this.stampDiagnosticViewPipeline = built.stampDiagnosticView;
     this.stampDiagnosticViewSampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',

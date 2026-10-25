@@ -37,6 +37,13 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
   const lastFingerprintRef = useRef('');
   const refreshGenRef = useRef(0);
   const inFlightRef = useRef(false);
+  /**
+   * What was asked for while a refresh was in flight, run when it settles.
+   * Dropping it lost the post-load Separated refresh whenever the 2 s tracer
+   * refresh happened to be running: the fingerprint then matched, so nothing
+   * asked again and the thumbnail stayed blank.
+   */
+  const queuedRef = useRef<{ separated: boolean; tracer: boolean } | null>(null);
 
   const applyPreviewResult = useCallback((
     separated: Uint8ClampedArray<ArrayBuffer> | null,
@@ -77,13 +84,21 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
 
   const refreshPreviews = useCallback(async (
     options: { separated?: boolean; tracer?: boolean } = {},
-  ) => {
+  ): Promise<void> => {
     const renderer = rendererRef.current;
-    if (!renderer || inFlightRef.current) return;
+    if (!renderer) return;
 
     const wantSeparated = options.separated !== false;
     const wantTracer = options.tracer !== false;
     if (!wantSeparated && !wantTracer) return;
+    if (inFlightRef.current) {
+      const queued = queuedRef.current;
+      queuedRef.current = {
+        separated: wantSeparated || (queued?.separated ?? false),
+        tracer: wantTracer || (queued?.tracer ?? false),
+      };
+      return;
+    }
 
     const current = renderStateRef.current;
     if (!current.engine.gpuReady || current.ui.exportingVideo) return;
@@ -97,13 +112,15 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
         separated: wantSeparated,
         tracer: wantTracer,
       });
-      if (gen !== refreshGenRef.current) return;
-      applyPreviewResult(result.separated, result.tracer);
+      if (gen === refreshGenRef.current) applyPreviewResult(result.separated, result.tracer);
     } catch (error) {
       console.warn('Stationary preview refresh failed:', error);
     } finally {
       inFlightRef.current = false;
     }
+    const queued = queuedRef.current;
+    queuedRef.current = null;
+    if (queued) await refreshPreviews(queued);
   }, [rendererRef, renderStateRef, applyPreviewResult]);
 
   const gpuReady = state.engine.gpuReady;

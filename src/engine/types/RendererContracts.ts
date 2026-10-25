@@ -16,6 +16,7 @@ import type { CollisionStats, RendererState } from './RendererState';
 import type { ImageEntry } from '../TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { ChromashiftTextureHandle } from './TextureHandle';
+import type { GpuRuntimeError } from '../gpuBootstrap';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 
@@ -138,6 +139,12 @@ export interface ChromashiftRenderer {
    * docs/PASS_GRAPH.md.
    */
   setPassGraph?(source: PassGraphSource | null, options?: PassGraphSlotOptions): void;
+  /**
+   * Where the renderer reports a pipeline the device refused to build
+   * (`kind: 'pipeline'`), compiled off the frame. The orchestrator forwards it
+   * to the error overlay.
+   */
+  setRuntimeErrorHandler?(handler: ((error: GpuRuntimeError) => void) | null): void;
   render(state: RendererState, fps?: number): void;
   /** Stationary side previews at panel preset angles (Original/Separated/Tracer strip). */
   renderStationaryPreviews(
