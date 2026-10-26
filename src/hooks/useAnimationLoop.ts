@@ -56,8 +56,9 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
       if (current.ui.exportingVideo) return;
 
       const msPerFrame = 1000 / current.engine.fps;
-      last ??= now - msPerFrame;
-      const delta = now - last;
+      // The first tick renders: `now - (now - msPerFrame)` can round to a hair
+      // under a frame, so compute it rather than seeding `last` with it.
+      const delta = last === null ? msPerFrame : now - last;
       if (delta < msPerFrame) return;
       last = now - (delta % msPerFrame);
       due = true;

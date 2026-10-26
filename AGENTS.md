@@ -30,7 +30,8 @@ npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
 npm run knip      # Unused files, exports and dependencies (knip.json)
-npm test          # Vitest unit tests (src/**/*.test.ts)
+npm test          # Vitest: src/**/*.test.ts on node, src/**/*.dom.test.tsx on happy-dom
+npm run test:coverage  # The same with v8 coverage (coverage/, gitignored)
 npm run shaders:validate  # Dump every WGSL/GLSL variant; naga + glslangValidator over each
 npm run test:e2e  # Playwright E2E (all projects; install browsers first)
 npm run test:e2e:webgl   # Playwright chromium: explicit WebGL diagnostic backend
@@ -84,6 +85,7 @@ src/
 │   ├── settingsSchema.ts, schemaFields.ts  # The preset schema (ranges + metadata) and its lenient decoder
 │   ├── params.ts                 # ParamPath registry: ParamSpec, getParam/withParam, sliderProps
 │   └── serializeSettings.ts, presetUrl.ts, presetLibrary.ts, presetGallery.ts  # see docs/PRESETS.md
+├── test/                     # DOM test support: domSetup.ts (RTL cleanup), renderAppHook.tsx (hook under the real store)
 └── engine/
     ├── graph/                # Pass-graph IR + compiler + WebGPU executor — see docs/PASS_GRAPH.md
     │   ├── types.ts, nodeKinds.ts     # The IR and the per-node-kind registry
@@ -574,6 +576,7 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | Tier | Command | Scope |
 |------|---------|-------|
 | **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `settingsSchema`, a `fast-check` property test over `deserializeSettings`, `presetUrl`), engine (`blendModes`, `adapter` / `canvasConfig` / `gpuErrors` / `gpuOptions` (GPU bootstrap), `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
+| **Vitest (DOM)** | `npm test` | `src/**/*.dom.test.tsx` only, on happy-dom through React Testing Library (vitest project `dom`; everything else stays on the `node` project, so an engine test cannot lean on a DOM by accident). `src/test/renderAppHook.tsx` renders a hook under the real ref bundle and store, so a test drives it with real actions and reads real state back. Per-frame hooks are stepped deterministically with the frame clock's offline mode (`frameClockRef.current.enterOffline()` + `step(dt)`). Covered: `useAnimationLoop`, `useReactiveInput` (mic and MIDI classes faked), `useKioskMode`, `usePresets`. `npm run test:coverage` adds a v8 coverage report |
 | **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`), the WASM engine loading on the page and in both workers (`wasm-engine.spec.ts`, `window.wasmEngineState` / `wasmEngineWorkers`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`), export readback on a forced `bgra8unorm` canvas (`webgpu-bgra-export.spec.ts`; run with `--workers=1`), **Retry GPU** after a simulated `device.destroy()` loss (`webgpu-device-loss.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/test_engine.cpp` via `g++` — band ladder vs the original linear scan, bulk-kernel/single-pixel parity, luminance, decay and motion-flow math against the engine's scalar path; no Emscripten required |
 | **C++ SIMD128** | `npm run test:cpp:simd` | The same suite built with `em++ -msimd128` and run under Node — the code the browser runs — then `cpp/tests/simd_parity.cpp`: the SIMD engine and a `CS_FORCE_SCALAR` copy linked into one module and compared **bit for bit** on every kernel, at odd sizes and on NaN/denormal/extreme inputs. Needs emsdk |
@@ -585,7 +588,7 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 |-----|----------------|
 | `guard` | Blocks `dist/` and accidental secrets in PR diffs |
 | `web` | `npm run lint`, `npm run knip`, `npx tsc -b`, `npm run build` |
-| `unit` | `npm test` (Vitest) |
+| `unit` | `npm run test:coverage` (Vitest + v8 coverage): the totals go to the job summary (`scripts/coverage-summary.mjs`) and the HTML report is the `coverage-html` artifact. Reported, not gated — no threshold yet |
 | `shaders` | `node scripts/validate-shaders.mjs --require-glslang`: dumps every WGSL/GLSL variant (`shaderBindings.test.ts`), then `naga` + `glslangValidator` (naga-cli pinned and cached) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu` + SwiftShader Vulkan) |

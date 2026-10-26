@@ -13,7 +13,8 @@ npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
 npm run knip      # Unused files, exports and dependencies (knip.json)
-npm test          # Vitest unit tests
+npm test          # Vitest: node project (*.test.ts) + happy-dom project (*.dom.test.tsx)
+npm run test:coverage  # The same with v8 coverage (coverage/, gitignored)
 npm run shaders:validate  # naga + glslangValidator over every shader variant (needs naga-cli, glslang)
 npm run test:e2e  # Playwright smoke (WebGL)
 npm run test:cpp  # C++ host tests (:werror is the CI gate, :asan is opt-in, :simd needs emsdk)
