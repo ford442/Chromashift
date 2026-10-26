@@ -3,7 +3,7 @@ import {
   WEBGL_INTERNAL_FORMAT_HDR,
   WEBGL_INTERNAL_FORMAT_LDR,
   type WebGLInternalFormat,
-} from '../gpuOptions';
+} from '../gpu/gpuOptions';
 
 export interface RenderTarget {
   texture: WebGLTexture;

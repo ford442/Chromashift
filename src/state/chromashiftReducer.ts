@@ -1,6 +1,6 @@
-import type { ImageEntry } from '../engine/TextureManager';
-import { countLocalEntries } from '../engine/corpusIndex';
-import { parseDisplayColorSpace } from '../engine/gpuOptions';
+import type { ImageEntry } from '../engine/library/imageEntry';
+import { countLocalEntries } from '../engine/library/corpusIndex';
+import { parseDisplayColorSpace } from '../engine/gpu/gpuOptions';
 import { clampLayerCount } from '../engine/graph/layerSpecs';
 import {
   DEFAULT_FPS,
@@ -48,7 +48,7 @@ function resizePerLayer(
   fill: (index: number) => number,
 ): number[] {
   if (values.length === count) return values as number[];
-  return Array.from({ length: count }, (_, i) => (i < values.length ? values[i] : fill(i)));
+  return Array.from({ length: count }, (_, i) => (i < values.length ? values[i]! : fill(i)));
 }
 
 /**
@@ -59,7 +59,7 @@ function resizePerLayer(
  * layer-count control — so every writer funnels through here rather than each
  * one remembering to resize all three arrays.
  */
-export function normalizeLayersSlice(layers: LayersSlice): LayersSlice {
+function normalizeLayersSlice(layers: LayersSlice): LayersSlice {
   const count = clampLayerCount(layers.count);
   const resized = {} as Record<PerLayerField, number[]>;
   let moved = count !== layers.count;

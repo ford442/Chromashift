@@ -1,6 +1,6 @@
 import type { RendererBackend } from '../../engine/types/RendererContracts';
 import type { EngineKind } from '../../engine/WasmEngine';
-import type { GpuRuntimeError } from '../../engine/gpuBootstrap';
+import type { GpuRuntimeError } from '../../engine/gpu/gpuErrors';
 import type { ChromashiftDispatch } from './types';
 
 export function createEngineActions(dispatch: ChromashiftDispatch) {

@@ -152,8 +152,6 @@ const SPECS: Record<NodeKind, NodeKindSpec> = {
   },
 };
 
-export const NODE_KINDS = Object.keys(SPECS) as NodeKind[];
-
 export function nodeKindSpec(kind: NodeKind): NodeKindSpec {
   return SPECS[kind];
 }

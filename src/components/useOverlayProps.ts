@@ -21,7 +21,7 @@ import { useCallback } from 'react';
 import { buildOverlayProps } from './buildOverlayProps';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import type { MainViewMode } from '../engine/viewModes';
-import type { DisplayColorSpace } from '../engine/gpuOptions';
+import type { DisplayColorSpace } from '../engine/gpu/gpuOptions';
 import type { AppUIProps } from './AppUI.types';
 import type { OverlayProps } from './overlay/types';
 import type { EngineMode, LayerIndex } from './overlay/types';

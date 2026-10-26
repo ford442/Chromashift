@@ -28,8 +28,8 @@ export const DECAY_SHADER_FLOAT = Object.fromEntries(
   ]),
 ) as Record<DecayConstantName, string>;
 
-/** WGSL alias — interpolate into WGSL template strings. */
+/** WGSL alias — interpolate into WGSL template strings. @alias */
 export const DECAY_WGSL = DECAY_SHADER_FLOAT;
 
-/** GLSL alias — interpolate into GLSL template strings. */
+/** GLSL alias — interpolate into GLSL template strings. @alias */
 export const DECAY_GLSL = DECAY_SHADER_FLOAT;

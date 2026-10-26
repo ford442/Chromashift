@@ -1,8 +1,8 @@
 import { WebGLRenderer } from '../webgl/WebGLRenderer';
-import { WebGLTextureManager } from '../WebGLTextureManager';
+import { WebGLTextureManager } from '../webgl/WebGLTextureManager';
 import type { RendererState } from '../types/RendererState';
 import { rendererStateValue } from '../graph/exec/uniforms';
-import { createWebGL2Context } from '../gpuBootstrap';
+import { createWebGL2Context } from '../webgl/webgl2Context';
 import { passGraphSelection } from '../graph/gate';
 import { presetGraphSource } from '../graph/variants';
 import type { FrameClock, FrameScheduler } from '../frame/FrameClock';
@@ -21,14 +21,14 @@ export function xrSessionScheduler(session: XRSession): FrameScheduler {
 }
 
 /** The XR renderer's slot in `window.passGraphSlotsExecuting`. */
-export const XR_GRAPH_SLOT = 'xr';
+const XR_GRAPH_SLOT = 'xr';
 
 /**
  * The layer's framebuffer scale: the headset's recommended resolution × this,
  * per eye. Half resolution is the UA's job (`framebufferScaleFactor`), not a
  * centred quarter-area patch of a full-size viewport.
  */
-export const XR_RENDER_SCALE = 0.5;
+const XR_RENDER_SCALE = 0.5;
 
 export interface WebXrRenderViewport {
   x: number;

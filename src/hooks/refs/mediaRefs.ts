@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
-import type { ImageEntry } from '../../engine/TextureManager';
-import type { LiveSourceManager } from '../../engine/LiveSource';
+import type { ImageEntry } from '../../engine/library/imageEntry';
+import type { LiveSourceManager } from '../../engine/live/LiveSource';
 import type { ChromashiftTextureHandle } from '../../engine/types/TextureHandle';
 import type { EngineKind } from '../../engine/WasmEngine';
 import { createInitialState } from '../../state/chromashiftReducer';

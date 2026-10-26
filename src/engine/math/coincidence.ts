@@ -77,21 +77,21 @@ export function computeCoincidence(
   let sumR = 0;
   let sumG = 0;
   let sumB = 0;
-  for (let i = 0; i < total; i += 1) {
+  for (const [i, layer] of layers.entries()) {
     if (active[i]) {
-      sumR += layers[i].r;
-      sumG += layers[i].g;
-      sumB += layers[i].b;
+      sumR += layer.r;
+      sumG += layer.g;
+      sumB += layer.b;
     }
   }
   const combined: RgbaColor = { r: sumR / layerCount, g: sumG / layerCount, b: sumB / layerCount, a: 1 };
 
   let variance = 0;
-  for (let i = 0; i < total; i += 1) {
+  for (const [i, layer] of layers.entries()) {
     if (active[i]) {
-      const dr = layers[i].r - combined.r;
-      const dg = layers[i].g - combined.g;
-      const db = layers[i].b - combined.b;
+      const dr = layer.r - combined.r;
+      const dg = layer.g - combined.g;
+      const db = layer.b - combined.b;
       variance += Math.sqrt(dr * dr + dg * dg + db * db);
     }
   }
@@ -102,9 +102,9 @@ export function computeCoincidence(
 
   let dominantLayer = 0;
   let maxLum = 0;
-  for (let i = 0; i < total; i += 1) {
+  for (const [i, layer] of layers.entries()) {
     if (active[i]) {
-      const lum = luminance(layers[i]);
+      const lum = luminance(layer);
       if (lum > maxLum) {
         maxLum = lum;
         dominantLayer = i;

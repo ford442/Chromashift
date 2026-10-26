@@ -57,7 +57,7 @@ export interface FrameScheduler {
   cancel(handle: number): void;
 }
 
-export const windowFrameScheduler: FrameScheduler = {
+const windowFrameScheduler: FrameScheduler = {
   request: (callback) => requestAnimationFrame((now) => callback(now)),
   cancel: (handle) => cancelAnimationFrame(handle),
 };

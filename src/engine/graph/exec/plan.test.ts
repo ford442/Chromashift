@@ -90,7 +90,7 @@ describe('encode plan — non-default shapes', () => {
     expect(compiled.allocation.slotsByResolution.layer).toBeLessThan(9);
     const shared = compiled.allocation.slots.filter((slot) => slot.nodes.length > 1);
     expect(shared).toHaveLength(1);
-    expect(shared[0].nodes).toEqual(['layer0-blur-x', 'layer1-blur-x', 'layer2-blur-x']);
+    expect(shared[0]?.nodes).toEqual(['layer0-blur-x', 'layer1-blur-x', 'layer2-blur-x']);
   });
 
   it('takes the tracer roles from the compositor\u2019s input order', () => {
@@ -317,10 +317,10 @@ describe('historyWeights', () => {
     const weights = historyWeights(4, 0, 4, { mode: 'trail', delay: 0, falloff: 0.5 });
     // Ages: slot 0 → 0, slot 3 → 1, slot 2 → 2, slot 1 → 3.
     expect(sum(weights)).toBeCloseTo(1, 6);
-    expect(weights[0]).toBeGreaterThan(weights[3]);
-    expect(weights[3]).toBeGreaterThan(weights[2]);
-    expect(weights[2]).toBeGreaterThan(weights[1]);
-    expect(weights[3] / weights[0]).toBeCloseTo(0.5, 6);
+    expect(weights[0]).toBeGreaterThan(weights[3]!);
+    expect(weights[3]).toBeGreaterThan(weights[2]!);
+    expect(weights[2]).toBeGreaterThan(weights[1]!);
+    expect(weights[3]! / weights[0]!).toBeCloseTo(0.5, 6);
   });
 
   it('weights only the filled slots while the ring warms up', () => {
@@ -357,5 +357,25 @@ describe('encode plan — a third tracer timescale', () => {
     const moving = buildEncodePlan(compile(withMotionTerm(buildTrails3Graph())));
     const fields = moving.steps.flatMap((step) => (step.kind === 'decay' ? [step.motionField] : []));
     expect(fields).toEqual([MOTION_FIELD_SOURCE_ID, MOTION_FIELD_SOURCE_ID, MOTION_FIELD_SOURCE_ID]);
+  });
+});
+
+describe('encode plan — feedback edges', () => {
+  it('keeps a feedback input in the consumer’s slots (warp → decay → warp)', () => {
+    // The schedule lists a feedback edge apart from `pass.inputs`; the plan
+    // must still hand the warp its one input, read from the decay's previous frame.
+    const graph: PassGraph = {
+      output: 'out',
+      nodes: [
+        { id: 'src', kind: 'source', inputs: [], params: {} },
+        // One band layer, so the decay's shader is emitted for one stamp input.
+        { id: 'l0', kind: 'band-layer', inputs: ['src'], params: { layerIndex: 0, layerCount: 1 } },
+        { id: 'w', kind: 'warp', inputs: ['d'], params: { mode: 'feedback' } },
+        { id: 'd', kind: 'decay', inputs: ['w'], params: { durationMs: 500 } },
+        { id: 'out', kind: 'output', inputs: ['d'], params: {} },
+      ],
+    };
+    const plan = buildEncodePlan(compile(graph));
+    expect(plan.steps.find((step) => step.nodeId === 'w')).toMatchObject({ kind: 'warp', inputs: ['d'] });
   });
 });

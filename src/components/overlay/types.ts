@@ -179,7 +179,7 @@ export interface UpscalePanelProps {
 export interface ViewportPanelProps {
   squareCanvas: boolean;
   antialiasEnabled: boolean;
-  displayColorSpace: import('../../engine/gpuOptions').DisplayColorSpace;
+  displayColorSpace: import('../../engine/gpu/gpuOptions').DisplayColorSpace;
   canvasHdr: boolean;
   viewportQuarterZoom: boolean;
   viewportHalfOverlay: boolean;
@@ -187,7 +187,7 @@ export interface ViewportPanelProps {
   mainViewMode: number;
   onSquareCanvasToggle: (value: boolean) => void;
   onAntialiasToggle: (value: boolean) => void;
-  onDisplayColorSpaceChange: (space: import('../../engine/gpuOptions').DisplayColorSpace) => void;
+  onDisplayColorSpaceChange: (space: import('../../engine/gpu/gpuOptions').DisplayColorSpace) => void;
   onCanvasHdrToggle: (enabled: boolean) => void;
   onViewportQuarterZoomToggle: (value: boolean) => void;
   onViewportHalfOverlayToggle: (value: boolean) => void;

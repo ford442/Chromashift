@@ -23,7 +23,7 @@ import {
 import type { ChromashiftState } from './types';
 
 export type { NumericSettingPath, ParamPath } from './settingsSchema';
-export { isNumericSettingPath, isParamPath } from './settingsSchema';
+export { isParamPath } from './settingsSchema';
 
 export interface ParamSpec {
   path: ParamPath;
@@ -94,13 +94,14 @@ export function getParam(state: ChromashiftState, path: NumericSettingPath): num
 }
 
 /** Clamp, wrap or round `value` the way decoding a preset would; undefined for NaN / ±Infinity. */
-export function coerceParam(path: NumericSettingPath, value: number): number | undefined {
+function coerceParam(path: NumericSettingPath, value: number): number | undefined {
   const coerced = resolve(path).leaf.schema.decode(value, path, { issues: [] });
   return coerced === DROP ? undefined : coerced;
 }
 
 function setIn(container: unknown, keys: readonly string[], value: number): unknown {
   const [key, ...rest] = keys;
+  if (key === undefined) return container;
   if (Array.isArray(container)) {
     const index = Number(key);
     // Writes past the end are dropped rather than growing the array behind

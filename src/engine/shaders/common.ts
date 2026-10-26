@@ -1,4 +1,3 @@
-export { BAND_GLSL, BAND_SHADER_FLOAT, BAND_WGSL, DARK_BAND_RGB_MAX } from './bandLiterals';
 import { CANONICAL_LAYER_SPECS } from '../graph/layerSpecs';
 import { emitColorHelpersWgsl } from '../graph/templates/wgsl';
 

@@ -127,7 +127,7 @@ describe('FrameClock registration', () => {
     scheduler.fire(2);
     expect(ran).toEqual([0, 1]);
     expect(onError).toHaveBeenCalledTimes(2);
-    expect(onError.mock.calls[0].slice(1)).toEqual(['modulate', 'bad']);
+    expect(onError.mock.calls[0]!.slice(1)).toEqual(['modulate', 'bad']);
   });
 });
 
@@ -190,7 +190,7 @@ describe('FrameClock offline', () => {
     const [a, b] = [await run(), await run()];
     expect(a).toEqual(b);
     expect(a).toHaveLength(30);
-    expect(a[29][0]).toBeCloseTo(1250, 9);
+    expect(a[29]![0]).toBeCloseTo(1250, 9);
   });
 
   it('refuses to step in realtime or while a step is running', async () => {

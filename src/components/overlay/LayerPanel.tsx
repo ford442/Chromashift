@@ -101,7 +101,7 @@ export const LayerPanel = memo(function LayerPanel({
             <div className="knob-pair">
               <LiveAngleKnob layer={i} onAngleChange={onAngleChange} />
               <RotaryKnob
-                value={layerExtensions[i]}
+                value={layerExtensions[i]!}
                 {...sliderProps('layers.extensions.0')}
                 onChange={(step) => onExtensionChange(i, step)}
                 label="Rate"
@@ -148,7 +148,7 @@ export const LayerPanel = memo(function LayerPanel({
             <div key={layer} className="flex items-center gap-2">
               <span className={`text-xs font-mono whitespace-nowrap ${layerColor(layer, layerCount)}`}>
                 L{layer}:{' '}
-                <span className="tabular-nums text-amber-200">{Math.round(layerOpacities[layer] * 100)}%</span>
+                <span className="tabular-nums text-amber-200">{Math.round(layerOpacities[layer]! * 100)}%</span>
               </span>
               <input
                 type="range"

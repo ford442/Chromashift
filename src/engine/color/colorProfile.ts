@@ -261,7 +261,7 @@ export function isClassicProfile(profile: ColorProfile | string | null | undefin
 }
 
 /** `diff` — the avgLuminance-driven desaturation term. */
-export function colorProfileDiff(avgLum: number, preprocess: ColorProfilePreprocess): number {
+function colorProfileDiff(avgLum: number, preprocess: ColorProfilePreprocess): number {
   return (avgLum / 255) * preprocess.diffScale;
 }
 
@@ -311,15 +311,14 @@ export function sampleColorProfile(
     }
 
     const t = band.rgbTo ? clamp01((value - band.min) / (band.max - band.min)) : 0;
-    const out: [number, number, number, number] = [0, 0, 0, alpha];
-    for (let c = 0; c < 3; c += 1) {
+    const channel = (c: 0 | 1 | 2): number => {
       const base = band.rgbTo
         ? band.rgb[c] + (band.rgbTo[c] - band.rgb[c]) * t
         : band.rgb[c];
       const tinted = band.diffTint ? base - diff * band.diffTint[c] : base;
-      out[c] = clamp01(tinted / 255);
-    }
-    return out;
+      return clamp01(tinted / 255);
+    };
+    return [channel(0), channel(1), channel(2), alpha];
   }
 
   return [0, 0, 0, 0];

@@ -15,7 +15,7 @@
 export const WEBGL_INTERNAL_EDGE_CAP = 960;
 
 /** Floor so a slow machine still has a recognisable diagnostic image. */
-export const WEBGL_INTERNAL_EDGE_MIN = 480;
+const WEBGL_INTERNAL_EDGE_MIN = 480;
 
 /** Ignore the first frames at a size — texture allocation is not a steady state. */
 export const WEBGL_SCALE_WARMUP_FRAMES = 15;

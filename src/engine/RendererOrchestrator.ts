@@ -1,29 +1,26 @@
 import type { PassGraphSource } from './graph/variants';
-import { WebGPURenderer } from './WebGPURenderer';
+import { WebGPURenderer } from './webgpu/WebGPURenderer';
 import { WebGLRenderer } from './webgl/WebGLRenderer';
-import { TextureManager } from './TextureManager';
-import { WebGLTextureManager } from './WebGLTextureManager';
+import { TextureManager } from './webgpu/TextureManager';
+import { WebGLTextureManager } from './webgl/WebGLTextureManager';
 import { GpuImageAnalysis } from './compute/GpuImageAnalysis';
 import { publishGpuComputeBreadcrumbs, readGpuComputeDiagnostics } from './compute/chores/support';
 import {
   resolveWebGL2Desynchronized,
   resolveWebGL2PreserveDrawingBuffer,
   type CanvasPresentation,
-} from './gpuOptions';
+} from './gpu/gpuOptions';
 import { acquireGpuChoreSession, type GpuChoreLease } from './compute/GpuChoreSession';
 import { getRendererPreference } from './rendererMode';
 import {
-  bootstrapWebGpu,
-  configureWebGpuCanvas,
-  createWebGL2Context,
-  watchWebGL2Context,
   pipelineRuntimeError,
   webglContextLostRuntimeError,
   withErrorScope,
   type GpuRuntimeError,
-  type WebGpuCanvasOptions,
-  type WebGpuSession,
-} from './gpuBootstrap';
+} from './gpu/gpuErrors';
+import { configureWebGpuCanvas, type WebGpuCanvasOptions } from './webgpu/canvasConfig';
+import { bootstrapWebGpu, type WebGpuSession } from './webgpu/webgpuSession';
+import { createWebGL2Context, watchWebGL2Context } from './webgl/webgl2Context';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './types/RendererContracts';
 
 /** Default slot id for the main viewport canvas. */
@@ -100,7 +97,7 @@ export interface RendererOrchestratorDeps {
   getRendererPreference: () => RendererBackend;
 }
 
-export const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
+const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
   bootstrapWebGpu,
   configureWebGpuCanvas,
   createWebGL2Context,

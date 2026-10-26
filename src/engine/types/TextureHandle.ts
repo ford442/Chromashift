@@ -15,9 +15,6 @@ export interface WebGlTextureHandle {
 
 export type ChromashiftTextureHandle = WebGpuTextureHandle | WebGlTextureHandle;
 
-/** @deprecated Use {@link WebGlTextureHandle} */
-export type WebGLImageTexture = WebGlTextureHandle;
-
 export function createWebGpuTextureHandle(texture: GPUTexture): WebGpuTextureHandle {
   return { backend: 'webgpu', texture };
 }

@@ -26,14 +26,14 @@ import { MAX_LAYER_COUNT } from '../graph/layerSpecs';
 const BAND = bandTable.bands;
 
 function classicBand(layer: number, name: string) {
-  const band = CLASSIC_COLOR_PROFILE.layers[layer].bands.find((b) => b.name === name);
+  const band = CLASSIC_COLOR_PROFILE.layers[layer]!.bands.find((b) => b.name === name);
   if (!band) throw new Error(`missing band ${name}`);
   return band;
 }
 
 function lutPixel(lut: Uint8Array, layer: number, value: number): [number, number, number, number] {
   const offset = (layer * PROFILE_LUT_WIDTH + value) * 4;
-  return [lut[offset], lut[offset + 1], lut[offset + 2], lut[offset + 3]];
+  return [lut[offset]!, lut[offset + 1]!, lut[offset + 2]!, lut[offset + 3]!];
 }
 
 describe('built-in colour profiles', () => {

@@ -1,5 +1,5 @@
 import { MAIN_VIEW_MODES } from '../viewModes';
-import { MAX_LAYER_COUNT, buildDefaultGraph, compileGraph } from '../graph';
+import { buildDefaultGraph, compileGraph } from '../graph';
 import {
   WebGLGraphExecutor,
   type WebGLGraphEncodeParams,
@@ -8,13 +8,14 @@ import {
 import type { RendererState } from '../types/RendererState';
 import type { WebGlTextureHandle } from '../types/TextureHandle';
 import {
-  STATIONARY_PREVIEW_SIZE,
-  STATIONARY_TRACER_WARMUP_FRAMES,
+  planStationaryPreview,
+  separatedPreviewState,
+  tracerWarmupState,
   type StationaryPreviewOptions,
   type StationaryPreviewResult,
 } from '../stationaryPreview';
 import type { WebGLProfileLut } from './WebGLProfileLut';
-import { PixelPackRead } from './asyncReadback';
+import { readTargetPixelsAsync } from './asyncReadback';
 import { createTarget, destroyTarget, type RenderTarget } from './resources';
 
 const EMPTY: StationaryPreviewResult = { separated: null, tracer: null };
@@ -57,18 +58,15 @@ export class WebGLStationaryPreviewRenderer {
   ): Promise<StationaryPreviewResult> {
     if (!this.sourceTexture) return EMPTY;
 
-    const size = STATIONARY_PREVIEW_SIZE;
-    const fps = options.fps ?? 30;
-    const warmupFrames = options.tracerWarmupFrames ?? STATIONARY_TRACER_WARMUP_FRAMES;
-    const wantSeparated = options.separated !== false;
-    const wantTracer = options.tracer !== false;
-    const layerCount = Math.max(1, Math.min(MAX_LAYER_COUNT, state.layers.length));
+    const plan = planStationaryPreview(state, options);
+    const { size, fps } = plan;
 
-    this.executor.setGraph(compileGraph(buildDefaultGraph(layerCount), 'webgl'));
+    this.executor.setGraph(compileGraph(buildDefaultGraph(plan.layerCount), 'webgl'));
     if (this.executor.prepare() !== null) return EMPTY;
 
     this.ensureOutputTarget(size);
-    this.profileLut.update(state.colorProfileLut);
+    const preview = plan.state;
+    this.profileLut.update(preview.colorProfileLut);
     const inputs: WebGLGraphInputs = {
       source: this.sourceTexture,
       profileLut: this.profileLut.texture,
@@ -84,34 +82,21 @@ export class WebGLStationaryPreviewRenderer {
 
     this.executor.clearAccumulators();
     let separated: Uint8ClampedArray<ArrayBuffer> | null = null;
-    if (wantSeparated) {
-      // The bands alone: the graph's composite with no tracers and no overlay.
-      this.executor.encode(inputs, {
-        ...frame,
-        state: {
-          ...state,
-          tracerAboveIntensity: 0,
-          tracerBelowIntensity: 0,
-          mainViewMode: MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
-          viewportQuarterZoom: false,
-          viewportHalfOverlay: false,
-          diagnosticsMode: false,
-        },
-      });
+    if (plan.separated) {
+      this.executor.encode(inputs, { ...frame, state: separatedPreviewState(preview) });
       separated = await this.readOutput(size);
     }
 
     let tracer: Uint8ClampedArray<ArrayBuffer> | null = null;
-    if (wantTracer) {
+    if (plan.tracer) {
       this.executor.clearAccumulators();
-      // The preview may be of a paused session, but the warmup has to accumulate.
-      const warmup: RendererState = { ...state, paused: false };
-      for (let i = 0; i < warmupFrames; i += 1) {
+      const warmup = tracerWarmupState(preview);
+      for (let i = 0; i < plan.warmupFrames; i += 1) {
         this.executor.encode(inputs, { ...frame, state: warmup, composite: false });
       }
       // The warmed-up tracers, read out of the graph through the tracer view.
       this.executor.composite(inputs, {
-        ...state,
+        ...preview,
         mainViewMode: MAIN_VIEW_MODES.FULL_RES_TRACER,
         viewportQuarterZoom: false,
         viewportHalfOverlay: false,
@@ -132,18 +117,7 @@ export class WebGLStationaryPreviewRenderer {
   }
 
   private async readOutput(size: number): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
-    const target = this.outputTarget;
-    if (!target) return null;
-    const pack = new PixelPackRead(this.gl);
-    try {
-      pack.start(target, size, size);
-      // Never fall back to a client readPixels here. On a deferred driver that
-      // maps the buffer only when something syncs, that fallback executes every
-      // frame still queued on this context and freezes input for seconds.
-      // A missed thumbnail is retried by the live-preview interval.
-      return await pack.wait();
-    } finally {
-      pack.destroy();
-    }
+    // A missed thumbnail is retried by the live-preview interval.
+    return this.outputTarget ? readTargetPixelsAsync(this.gl, this.outputTarget, size, size) : null;
   }
 }

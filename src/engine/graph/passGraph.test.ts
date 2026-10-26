@@ -498,7 +498,7 @@ describe('history and displace', () => {
   it('runs a tracer-resolution ring at tracer scale, output and ring alike', () => {
     const graph = withParams(smearGraph(), 'smear-history', { frames: 3, resolution: 'tracer' });
     const allocation = plan(graph);
-    expect(allocation.rings[0].resolution).toBe('tracer');
+    expect(allocation.rings[0]?.resolution).toBe('tracer');
     expect(allocation.assignment['smear-history']).toMatch(/^tracer:/);
   });
 
@@ -545,7 +545,7 @@ describe('history and displace', () => {
     // before, which is what this key spells out (empty structural brackets).
     expect(structuralKey(buildDefaultGraph(), 'webgpu')).toContain(';source:source()[];');
     const motion = buildDefaultGraph();
-    motion.nodes[0].params = { role: 'motion-field' };
+    motion.nodes[0]!.params = { role: 'motion-field' };
     expect(structuralHash(motion, 'webgpu')).not.toBe(structuralHash(buildDefaultGraph(), 'webgpu'));
   });
 });

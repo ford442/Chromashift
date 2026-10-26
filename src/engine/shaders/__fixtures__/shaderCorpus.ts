@@ -19,10 +19,10 @@ import { applyGraphVariant, compileGraph, MAX_LAYER_COUNT } from '../../graph';
 import { buildGraphPreset, GRAPH_PRESETS } from '../../graph/altGraphs';
 import { buildEncodePlan } from '../../graph/exec/plan';
 import { createNodeProgram, type NodeProgramContext } from '../../graph/exec/nodePipelines';
-import type { CanvasPresentation } from '../../gpuOptions';
-import { TextureManager } from '../../TextureManager';
+import type { CanvasPresentation } from '../../gpu/gpuOptions';
+import { TextureManager } from '../../webgpu/TextureManager';
 import * as webglShaders from '../../webgl/shaders';
-import { WebGPUPipelines } from '../../WebGPUPipelines';
+import { WebGPUPipelines } from '../../webgpu/WebGPUPipelines';
 import { diagnosticFragmentSource } from '../diagnostics';
 import { createPipelineRecorder, type RecordedPipeline } from './recordingDevice';
 

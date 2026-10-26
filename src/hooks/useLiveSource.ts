@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { FrameTick } from '../engine/frame/FrameClock';
-import { computeVideoAverageLuminance, LiveSourceManager, type LiveSourceKind } from '../engine/LiveSource';
-import { publishLiveSourceBreadcrumbs } from '../engine/liveSourceBreadcrumbs';
-import { LIVE_SOURCE_CACHE_KEY } from '../engine/liveSourceTexture';
+import { computeVideoAverageLuminance, LiveSourceManager, type LiveSourceKind } from '../engine/live/LiveSource';
+import { publishLiveSourceBreadcrumbs } from '../engine/live/liveSourceBreadcrumbs';
+import { LIVE_SOURCE_CACHE_KEY } from '../engine/live/liveSourceTexture';
 import { createChromashiftCpuHost } from '../engine/compute/chores/chromashiftHost';
 import {
   publishMotionFieldBreadcrumbs,
@@ -10,7 +10,7 @@ import {
   publishMotionFieldFlow,
   publishMotionFieldHasFlow,
 } from '../engine/compute/chores';
-import { LiveMotionSampler } from '../engine/liveMotionField';
+import { LiveMotionSampler } from '../engine/live/liveMotionField';
 import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
 /** How often to resample average luminance from the live frame (ms). */

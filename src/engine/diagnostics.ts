@@ -24,12 +24,12 @@
 import type { RenderCountsApi } from '../debug/renderCounts';
 import type { CompareLayoutMode } from './compareViews';
 import type { GpuComputeDiagnostics } from './compute/chores/support';
-import type { WebGLInternalFormat } from './gpuOptions';
+import type { WebGLInternalFormat } from './gpu/gpuOptions';
 import type { MotionFlowStats } from './compute/chores/motionKernel';
 import type { GraphPresetName } from './graph/altGraphs';
-import type { LiveSourceKind } from './LiveSource';
+import type { LiveSourceKind } from './live/LiveSource';
 import type { RendererBackend } from './types/RendererContracts';
-import type { WebGpuProbeResult } from './webgpuProbe';
+import type { WebGpuProbeResult } from './webgpu/webgpuProbe';
 import type { WasmEngineState, WasmEngineStatus } from './wasm/loadEngine';
 
 export interface ChromashiftDiagnostics {
@@ -50,7 +50,7 @@ export interface ChromashiftDiagnostics {
   /** Set while the WebGL pool is 8-bit, so tracers clip (see `webglInternalFormatNote`). */
   webglInternalFormatNote: string | null;
 
-  // ── Canvas presentation (gpuBootstrap.ts, WebGPURenderer.ts) ────────────────
+  // ── Canvas presentation (canvasConfig.ts, WebGPURenderer.ts) ────────────────
   /** Whether `hdr-extended` canvas presentation is available this session. */
   canvasHdrAvailable: boolean;
   /** Why (or why not), for diagnostics and E2E. */

@@ -1,6 +1,16 @@
 # GPU Bootstrap
 
-Chromashift centralizes renderer initialization in `src/engine/gpuBootstrap.ts` and documents shared canvas options in `src/engine/gpuOptions.ts`. Multi-canvas slot lifecycle (compare views, future quad layout) is owned by `src/engine/RendererOrchestrator.ts`.
+Chromashift centralizes renderer initialization in a few small modules, and documents shared canvas options in `src/engine/gpu/gpuOptions.ts`:
+
+| Module | Owns |
+|---|---|
+| `src/engine/webgpu/webgpuSession.ts` | `bootstrapWebGpu()` — one canvas's session on the page's leased device |
+| `src/engine/webgpu/adapter.ts` | Adapter request, the page device gate (`requestDevice` strategies), adapter / capability reports |
+| `src/engine/webgpu/canvasConfig.ts` | `configureWebGpuCanvas()` — SDR / `hdr-extended`, the tone-mapping and HDR probes |
+| `src/engine/gpu/gpuErrors.ts` | `GpuRuntimeError` and the mappings into it, `withErrorScope`, device diagnostics, the fatal breaker |
+| `src/engine/webgl/webgl2Context.ts` | `createWebGL2Context()` (one sticky context per canvas) and `watchWebGL2Context()` |
+
+ Multi-canvas slot lifecycle (compare views, future quad layout) is owned by `src/engine/RendererOrchestrator.ts`.
 
 ## Renderer orchestration
 
@@ -67,7 +77,7 @@ RendererOrchestrator.bootstrap(primaryCanvas)
 | Context loss | `device.lost` → recoverable overlay | `webglcontextlost` → the same overlay; `webglcontextrestored` → boot again on the same context |
 | Texture headroom | At most two `requestDevice` strategies, both on default limits, then the live device is reused | `gl.MAX_TEXTURE_SIZE` |
 
-`getWebGL2ContextAttributes(options, powerPreference)` (`gpuOptions.ts`) builds every attempt from `RENDERER_CANVAS_OPTIONS_MATRIX.webgl2`, and `gpuBootstrap.test.ts` checks this table against it. WebXR's xr-compatible context goes through the same `createWebGL2Context`.
+`getWebGL2ContextAttributes(options, powerPreference)` (`gpuOptions.ts`) builds every attempt from `RENDERER_CANVAS_OPTIONS_MATRIX.webgl2`, and `gpuOptions.test.ts` checks this table against it. WebXR's xr-compatible context goes through the same `createWebGL2Context`.
 
 **Context attempts (WebGL2).** `createWebGL2Context` tries `high-performance`, then `low-power`, then attributes with `powerPreference` omitted, and logs one `[Chromashift:GPU] WebGL2 context ready` info line naming the attempt that succeeded. A null `getContext` creates nothing, so each attempt is a fresh request. If all three return null it logs an error and throws `WebGL2UnavailableError`; the explicit WebGL session never falls through to WebGPU. Once granted, the context is remembered per canvas: `getContext` is sticky (a second call returns the same context, or null), so every later bootstrap on that canvas — a React effect re-run, **Retry GPU**, a restore — reuses it rather than asking again.
 
@@ -160,7 +170,7 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 |---|---|---|
 | `device.lost` (non-destroyed) | `deviceLostRuntimeError` | Recoverable overlay: **Retry GPU** or reload |
 | `webglcontextlost` (WebGL) | `watchWebGL2Context` → `webglContextLostRuntimeError` | The same recoverable overlay; `webglcontextrestored` re-boots on the same context, or **Reload page** if it never comes |
-| `device.onuncapturederror` | Logged + `uncapturedRuntimeError` | Console + non-recoverable notice |
+| `device.onuncapturederror` | `attachDeviceDiagnostics` → logged; rendering continues | Console only |
 | A pipeline the device refused (inspect views, a compare slot's renderer, the collision-stats blit) | `PipelineCompileError` → `pipelineRuntimeError` | Dismissable notice with the compiler's `line:column` messages; the frame keeps drawing (that view shows the composite) |
 | Bootstrap failure | `toBootstrapRuntimeError` | Blocking overlay; **not** recoverable (no Retry GPU). Queue OOM names command-queue exhaustion. **Open WebGL diagnostic session** remains. |
 
@@ -199,4 +209,4 @@ Pure helpers are covered by Vitest without a React tree:
 npm test
 ```
 
-Tests live in `src/engine/gpuBootstrap.test.ts` and `src/engine/RendererOrchestrator.test.ts` (Retry GPU on a fresh adapter, one error-scope pop, detachable device-lost listeners, refused secondary pipelines), `src/engine/GpuReadback.test.ts` (BGRA → RGBA readback) and `src/engine/WebGPUPipelines.test.ts` (compiler messages). In the browser, `e2e/webgpu-device-loss.spec.ts` destroys the device and clicks **Retry GPU**, and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.
+Tests live beside each module (`adapter.test.ts`, `canvasConfig.test.ts`, `gpuErrors.test.ts`, `gpuOptions.test.ts`, `webgl2Context.test.ts`) and in `src/engine/RendererOrchestrator.test.ts` (Retry GPU on a fresh adapter, one error-scope pop, detachable device-lost listeners, refused secondary pipelines), `src/engine/webgpu/GpuReadback.test.ts` (BGRA → RGBA readback) and `src/engine/webgpu/WebGPUPipelines.test.ts` (compiler messages). In the browser, `e2e/webgpu-device-loss.spec.ts` destroys the device and clicks **Retry GPU**, and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.

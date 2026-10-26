@@ -108,6 +108,27 @@ export class PixelPackRead {
   }
 }
 
+/**
+ * Pack `target` and resolve on a later frame, with no client `readPixels`
+ * fallback: on a deferred driver that maps the buffer only when something
+ * syncs, that fallback executes every frame still queued on this context and
+ * freezes input for seconds.
+ */
+export async function readTargetPixelsAsync(
+  gl: WebGL2RenderingContext,
+  target: RenderTarget,
+  width: number,
+  height: number,
+): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
+  const pack = new PixelPackRead(gl);
+  try {
+    pack.start(target, width, height);
+    return await pack.wait();
+  } finally {
+    pack.destroy();
+  }
+}
+
 export function flipRgbaRows(
   data: Uint8Array,
   width: number,

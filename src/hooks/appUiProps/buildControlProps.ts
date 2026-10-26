@@ -10,7 +10,7 @@ export function buildControlProps(
   actions: ChromashiftActions,
   handlers: AppUiHandlerBundle,
   webxr: WebXrControls,
-  derived: MainViewportDerived & { isViewingTracer: boolean; currentImage: import('../../engine/TextureManager').ImageEntry | null },
+  derived: MainViewportDerived & { isViewingTracer: boolean; currentImage: import('../../engine/library/imageEntry').ImageEntry | null },
 ): AppUIControlProps {
   const { layers, tracers, output, engine, ui, reactive } = state;
 

@@ -50,8 +50,9 @@ export const ReactivePanel = memo(function ReactivePanel({
   useRenderCount('ReactivePanel');
   const learnable = useMemo(() => listParams(layerCount), [layerCount]);
   const [learnPick, setLearnPick] = useState<ParamPath>('layers.extensions.0');
-  // A pick for a layer the session no longer has falls back to the first parameter.
-  const learnParam = learnable.some((spec) => spec.path === learnPick) ? learnPick : learnable[0].path;
+  // A pick for a layer the session no longer has falls back to the first
+  // parameter (the session-wide ones are always learnable, so there is one).
+  const learnParam = learnable.some((spec) => spec.path === learnPick) ? learnPick : learnable[0]!.path;
   const learning = midiLearnTarget !== null;
 
   return (

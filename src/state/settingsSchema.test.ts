@@ -67,7 +67,7 @@ describe('settings schema', () => {
     let busy = chromashiftReducer(createInitialState(), { type: 'layers/setCount', count: 10 });
     busy = chromashiftReducer(busy, { type: 'compare/setLayout', layout: 'quad' });
     busy = chromashiftReducer(busy, {
-      type: 'compare/setSlotB', label: 'Gallery', settings: BUILTIN_PRESETS[1].settings,
+      type: 'compare/setSlotB', label: 'Gallery', settings: BUILTIN_PRESETS[1]!.settings,
     });
     busy = chromashiftReducer(busy, {
       type: 'reactive/addMidiBinding',

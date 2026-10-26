@@ -48,7 +48,7 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 | Chrome flags | On older builds, enable WebGPU via `chrome://flags/#enable-unsafe-webgpu` |
 | Fallback | **Off.** Failed WebGPU boots show a blocking probe screen. Explicit WebGL: `?renderer=webgl` ([webgl-fallback.md](docs/webgl-fallback.md)) |
 
-GPU bootstrap (`src/engine/gpuBootstrap.ts`) logs adapter info at startup, derives conservative `requiredLimits`, handles `device.lost`, and surfaces uncaptured errors. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) for the WebGPU/WebGL options matrix.
+GPU bootstrap (`src/engine/webgpu/webgpuSession.ts`, over `adapter.ts` and `canvasConfig.ts`) logs adapter info at startup, derives conservative `requiredLimits`, handles `device.lost`, and surfaces uncaptured errors. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) for the WebGPU/WebGL options matrix.
 
 ```bash
 npm install
@@ -192,14 +192,16 @@ The `TextureManager` fetches this file on startup and loads each image into a GP
 ```
 src/
   engine/
-    WebGPURenderer.ts   # WebGPU frame: the pass-graph executor draws it (layers → persistence → compositor)
+    webgpu/             # WebGPU backend: WebGPURenderer (the pass-graph executor draws the frame),
+                        #   TextureManager, inspect views (TracerInspectPass, WebGPUPipelines), readback
     graph/              # pass-graph IR, compiler and WebGPU executor (docs/PASS_GRAPH.md)
-    TracerInspectPass.ts, WebGPUPipelines.ts  # inspect views over the graph's outputs
     webgl/              # WebGL2 diagnostic / XR renderer: WebGLRenderer + WebGLGraphExecutor over the compiled graph
+    gpu/                # adapter/device/canvas bootstrap shared by both backends
     rendererMode.ts     # URL/localStorage/backend breadcrumb selection
-    TextureManager.ts, WebGLTextureManager.ts  # JSON/blob fetch + GPU/WebGL texture upload
-    LocalLibrary.ts, fileDrop.ts               # IndexedDB local image library (drag-and-drop)
-    Upscaler.ts, upscaler.worker.ts, nunif.worker.ts  # Lazy-loaded AI upscalers
+    library/            # corpus manifest + search, IndexedDB local image library (drag-and-drop)
+    live/               # camera / screen / video-file source
+    upscale/            # Lazy-loaded AI upscalers (Upscaler.ts + two workers)
+    frame/              # FrameClock: the one requestAnimationFrame loop
     videoExport/        # Offline WebM/PNG-sequence export
     compute/             # WebGPU histogram + classification-mask compute shaders
     shaders/             # WGSL vertex + fragment shader modules

@@ -27,7 +27,7 @@ tears down the partial boot and rethrows.
 
 ## Boot probe
 
-`probeWebGPU()` (`src/engine/webgpuProbe.ts`) runs only on the WebGPU path,
+`probeWebGPU()` (`src/engine/webgpu/webgpuProbe.ts`) runs only on the WebGPU path,
 before the orchestrator. It stops **before** `requestDevice()`. Explicit WebGL
 sessions skip the probe so nothing is left for gpu-chores to adopt.
 

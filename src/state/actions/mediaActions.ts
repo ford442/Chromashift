@@ -1,4 +1,4 @@
-import type { ImageEntry } from '../../engine/TextureManager';
+import type { ImageEntry } from '../../engine/library/imageEntry';
 import type { LiveSourceState } from '../types';
 import type { ChromashiftDispatch } from './types';
 

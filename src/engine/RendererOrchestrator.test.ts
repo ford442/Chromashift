@@ -7,15 +7,11 @@ import {
 } from './RendererOrchestrator';
 import type { ChromashiftRenderer } from './types/RendererContracts';
 import { presetGraphSource } from './graph/variants';
-import {
-  WebGL2ContextLostError,
-  createWebGL2Context,
-  watchWebGL2Context,
-  type GpuRuntimeError,
-  type WebGpuSession,
-} from './gpuBootstrap';
-import type { TextureManager } from './TextureManager';
-import type { WebGLTextureManager } from './WebGLTextureManager';
+import { type GpuRuntimeError } from './gpu/gpuErrors';
+import { type WebGpuSession } from './webgpu/webgpuSession';
+import { WebGL2ContextLostError, createWebGL2Context, watchWebGL2Context } from './webgl/webgl2Context';
+import type { TextureManager } from './webgpu/TextureManager';
+import type { WebGLTextureManager } from './webgl/WebGLTextureManager';
 import type { GpuImageAnalysis } from './compute/GpuImageAnalysis';
 
 function mockRenderer(): ChromashiftRenderer {
@@ -98,7 +94,6 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
 function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): RendererOrchestratorDeps {
   const textureManager = {
     destroy: vi.fn(),
-    fetchImageList: vi.fn(),
     loadTexture: vi.fn(),
     uploadPixels: vi.fn(),
     evictExcept: vi.fn(),
@@ -120,7 +115,6 @@ function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): Rend
     createTextureManager: vi.fn(() => textureManager),
     createWebGLTextureManager: vi.fn(() => ({
       destroy: vi.fn(),
-      fetchImageList: vi.fn(),
       loadTexture: vi.fn(),
       uploadPixels: vi.fn(),
       evictExcept: vi.fn(),
@@ -202,11 +196,11 @@ describe('RendererOrchestrator', () => {
     const source = presetGraphSource('default');
 
     orchestrator.setPassGraph(source);
-    expect(renderers[0].setPassGraph).toHaveBeenCalledWith(source, { slot: PRIMARY_SLOT_ID, primary: true });
+    expect(renderers[0]!.setPassGraph).toHaveBeenCalledWith(source, { slot: PRIMARY_SLOT_ID, primary: true });
 
     // A compare slot opened later draws the same graph, with its own executor.
     orchestrator.createSlot('compare-b', mockCanvas('compare-b'));
-    expect(renderers[1].setPassGraph).toHaveBeenCalledWith(source, { slot: 'compare-b', primary: false });
+    expect(renderers[1]!.setPassGraph).toHaveBeenCalledWith(source, { slot: 'compare-b', primary: false });
 
     orchestrator.setPassGraph(null);
     for (const renderer of renderers) expect(renderer.setPassGraph).toHaveBeenLastCalledWith(null, expect.anything());
