@@ -75,15 +75,45 @@ load, so a hand-edited preset degrades to the default look instead of nothing.
 | `layers.colorProfileId` | Active named colour profile (v3) — see [COLOR_PROFILES.md](COLOR_PROFILES.md) |
 | `layers.colorProfile` | Full profile table, embedded for user profiles in file exports; `null` for built-ins and in share URLs |
 
+## Validation
+
+Every untrusted document — `?preset=` URL, imported file, localStorage entry —
+is decoded through one declarative schema, `src/state/settingsSchema.ts`.
+`ChromashiftSettingsInput` is *inferred* from that schema, so the type a preset
+claims and the check it gets cannot drift apart.
+
+- **Clamp and drop, never reject.** An out-of-range number is clamped to the
+  range its control offers (`engine.fps: 0` → `1`); an integer field is rounded;
+  an angle wraps into `[0, 360)`; a mistyped leaf or an unknown key (runtime
+  state such as `ui.exportingVideo` or `engine.gpuReady`) is dropped. A bad
+  entry in a per-layer array is replaced by that layer's default rather than
+  removed, so later layers keep their index.
+- **One warning.** `deserializeSettings()` logs a single `console.warn` listing
+  every corrected path. `decodeSettingsDocument()` returns the same list as
+  `issues` for callers that want to show it.
+- **Only the envelope is all-or-nothing:** unparseable JSON, a missing
+  `settings` object, or an unsupported `version` still reject the document and
+  set `ui.presetLoadError`.
+- Every numeric leaf carries `min` / `max` / `step` / `default` / `unit` /
+  `label`. `settingsSchema.test.ts` checks each default against
+  `createInitialState()` and checks that everything the serializer writes
+  decodes with zero corrections. `deserializeSettings.fuzz.test.ts` runs 10 000
+  `fast-check` documents and asserts that decoding never throws and that its
+  output re-decodes to itself with no issues.
+
+The schema combinators (`src/state/schemaFields.ts`) are in-house, not a
+validation library: clamp-and-continue with a full path list is the point, and a
+pass/fail library would need a custom action on every leaf to get it.
+
 ## Migration from older versions
 
-- **Reading:** `deserializeSettings()` accepts `version: 1`–`8` documents and normalizes them to v8 (`migrateToLatest`). Older URLs and saved files continue to work. v6 is reserved for the automation timeline (#153) and is read as a pre-count document.
+- **Reading:** `deserializeSettings()` accepts `version: 1`–`8` documents, decodes them against `rawSettingsSchema` (the v8 schema plus the legacy keys older versions wrote), and normalizes them to v8 (`migrateToLatest`). The migrations only move and default fields; validation has already happened. Older URLs and saved files continue to work. v6 is reserved for the automation timeline (#153) and is read as a pre-count document.
 - **Writing:** All new exports (share URL, JSON file, localStorage save) emit `version: 8`.
 - **v7 and earlier → v8 Canvas HDR:** `viewport.canvasHdr` is `false`.
 - **v6 and earlier → v7 layer count:** documents hydrate as `layers.count: 3` with their angles / rates / opacities unchanged (see the v7 section above).
 - **v3 → v4 canvas colour space:** missing `viewport.colorSpace` defaults to `srgb`. Display P3 is opt-in.
 - **v2 → v3 colour profiles:** documents that predate profiles migrate to `cr0p-classic`, the look they were saved with. An embedded profile table is re-validated on read and dropped when invalid or when its `id` doesn't match `colorProfileId`. Share URLs omit the table and carry the id alone to stay short.
-- **v1 → v2 defaults:** Missing reactive toggles default to `false`. Missing `viewport` is hoisted from legacy `output.viewportQuarterZoom` / `viewportHalfOverlay` when present. Missing `compare` and `kiosk` default to the app's initial single-view / non-kiosk state.
+- **v1 → v2 defaults:** Missing reactive toggles default to `false`. Missing `viewport` is hoisted from legacy `output.viewportQuarterZoom` / `viewportHalfOverlay` when present. Missing `compare` and `kiosk` default to the app's initial single-view / non-kiosk state; a partial `compare` fills in from the same default.
 - **Kiosk precedence:** When both a preset and `?kiosk=1` are present, the URL installation bootstrap wins (hides chrome, forces autoplay, etc.).
 
 Built-in gallery entries in `src/state/presetGallery.ts` remain partial `ChromashiftSettingsInput` patches (no document version) and work with every schema version.
@@ -99,12 +129,12 @@ Built-in gallery entries in `src/state/presetGallery.ts` remain partial `Chromas
 ## Presets panel (NUNIF Controls → 💾 Presets)
 
 - **Gallery** — built-in looks from `src/state/presetGallery.ts`: Classic CR0P, Soft Glow, Diagnostic Overlap, Tracer Focus. Each is a partial settings patch applied via the `settings/apply` reducer action.
-- **My Presets** — named presets persisted in `localStorage` (`chromashift.presets`, via `src/state/presetLibrary.ts`). Save / load / delete. Stored documents are re-validated on read so a stale schema can't be applied.
+- **My Presets** — named presets persisted in `localStorage` (`chromashift.presets`, via `src/state/presetLibrary.ts`). Save / load / delete. Stored documents are decoded on read, and the *decoded* document is what gets applied, so a stale or hand-edited entry can't reach the reducer.
 - **Share** — Copy URL, Export (downloads `chromashift-preset.json`), Import (applies a preset file, with a friendly error for invalid files).
 
 ## Tests
 
-`src/state/serializeSettings.test.ts` and `src/state/presetUrl.test.ts` cover round-trip for every field group (including the v7 layer count), v1–v6 backward compatibility, schema version enforcement, invalid-preset fallback, kiosk URL precedence, and gallery preset URL round-trip.
+`src/state/settingsSchema.test.ts` and `src/state/deserializeSettings.fuzz.test.ts` cover the validation boundary (see above). `src/state/serializeSettings.test.ts` and `src/state/presetUrl.test.ts` cover round-trip for every field group (including the v7 layer count), v1–v6 backward compatibility, schema version enforcement, invalid-preset fallback, kiosk URL precedence, and gallery preset URL round-trip.
 
 ## Future
 

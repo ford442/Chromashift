@@ -19,8 +19,8 @@ import type {
   TracersSlice,
   UiSlice,
 } from './types';
-import type { CompareViewState } from '../engine/compareViews';
-import type { MidiBinding, ReactiveSettings } from '../engine/reactive/types';
+import type { MidiBinding } from '../engine/reactive/types';
+import type { ChromashiftSettingsInput } from './settingsSchema';
 
 /** The `LayersSlice` fields that carry one value per layer. */
 export type PerLayerField = 'angles' | 'extensions' | 'opacities';
@@ -103,23 +103,7 @@ export type ChromashiftAction =
   | { type: 'compare/setQuadLayerIndex'; quadLayerIndex: import('../engine/compareViews').QuadLayerIndex }
   | { type: 'compare/cycleQuadLayer' };
 
-/** Serializable preset payload (excludes runtime GPU/media corpus state). */
-export interface ChromashiftSettingsInput {
-  layers?: Partial<LayersSlice>;
-  tracers?: Partial<TracersSlice>;
-  output?: Partial<Omit<OutputSlice, 'tracerInspect'>> & { tracerInspect?: Partial<TracerInspectState> };
-  engine?: Pick<EngineSlice, 'fps' | 'paused' | 'engineMode' | 'avgLuminance'>;
-  ui?: Pick<UiSlice, 'isAutoPlayActive' | 'imageChangeInterval' | 'referenceBlendMode' | 'overlayImageSource' | 'referenceOpacity' | 'upscaleModel'>;
-  reactive?: Partial<ReactiveSettings>;
-  compare?: CompareViewState;
-  viewport?: {
-    quarterZoom?: boolean;
-    halfOverlay?: boolean;
-    colorSpace?: import('../engine/gpuOptions').DisplayColorSpace;
-    canvasHdr?: boolean;
-  };
-  kiosk?: Pick<UiSlice, 'kioskEnabled' | 'kioskUiHidden' | 'kioskAttractMode'>;
-}
+export type { ChromashiftSettingsInput } from './settingsSchema';
 
 /**
  * Merge `patch` into `slice`, returning `slice` itself when nothing moved.
