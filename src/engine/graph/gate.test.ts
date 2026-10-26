@@ -103,27 +103,26 @@ describe('named graph shapes', () => {
     expect(compiled!.passes.map((pass) => pass.nodeId)).toContain('layer0-blur-x');
   });
 
-  it('refuses a warp graph on the WebGL diagnostic backend, naming the node', () => {
-    const win = installBrowserGlobals('?graph=warp');
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it.each([
+    ['warp', 'layer0-warp'],
+    ['blur', 'layer0-blur-x'],
+    ['feedback', 'layer0-warp'],
+    ['smear', 'smear-history'],
+    ['trails3', 'tracer-echo'],
+  ])('compiles ?graph=%s for the WebGL backend', (name, nodeId) => {
+    const win = installBrowserGlobals(`?graph=${name}`);
 
-    expect(activatePassGraph('webgl')).toBeNull();
-    expect(win.passGraphError).toContain('unsupported-node');
-    expect(win.passGraphError).toContain("'warp'");
-    expect(win.passGraphExecuting).toBeNull();
-    warn.mockRestore();
+    const compiled = activatePassGraph('webgl');
+    expect(compiled?.backend).toBe('webgl');
+    expect(win.passGraphError).toBeNull();
+    expect(win.passGraphName).toBe(name);
+    expect(win.passGraphPasses).toContain(nodeId);
   });
 
-  it('refuses the body-smear starter on WebGL, naming its history node', () => {
+  it('publishes the smear ring on WebGL too', () => {
     const win = installBrowserGlobals('?graph=smear');
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    expect(activatePassGraph('webgl')).toBeNull();
-    expect(win.passGraphError).toMatch(/^unsupported-node: /);
-    expect(win.passGraphError).toContain("'history'");
-    expect(win.passGraphError).toContain("'smear-history'");
-    expect(win.passGraphRingFrames).toEqual({});
-    warn.mockRestore();
+    activatePassGraph('webgl');
+    expect(win.passGraphRingFrames).toEqual({ source: 0, layer: 4, tracer: 0, output: 0 });
   });
 
   it('separates "the compiler ran" from "something is drawing it"', () => {

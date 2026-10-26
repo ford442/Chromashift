@@ -7,17 +7,38 @@ import type {
   ExportFrameResult,
   ExportTracerOptions,
   ExportTracerResult,
+  PassGraphSlotOptions,
   RenderTiming,
 } from '../types/RendererContracts';
 import { EMPTY_GPU_RENDER_TIMING } from '../types/RendererContracts';
-import { persistUniforms, rendererStateValue } from '../graph/exec/uniforms';
+import { rendererStateValue } from '../graph/exec/uniforms';
 import { DEFAULT_PER_LAYER_OPACITY } from '../../state/defaults';
+import {
+  DEFAULT_LAYER_COUNT,
+  MAX_LAYER_COUNT,
+  compileGraph,
+  graphVariantKey,
+  passGraphRefusal,
+  presetGraphSource,
+  publishGraphExecutorBreadcrumbs,
+  publishGraphVariant,
+  publishSlotExecuting,
+  type GraphPresetName,
+  type GraphVariant,
+  type PassGraphSource,
+} from '../graph';
+import { buildEncodePlan, motionFieldUse, type MotionFieldUse } from '../graph/exec/plan';
+import {
+  WebGLGraphExecutor,
+  type WebGLGraphEncodeParams,
+  type WebGLGraphInputs,
+} from '../graph/exec/WebGLGraphExecutor';
+import type { CompiledGraph } from '../graph/types';
 import type { ChromashiftTextureHandle, WebGlTextureHandle } from '../types/TextureHandle';
 import { WebGLBlit } from './WebGLBlit';
-import { WebGLCompositorPass } from './WebGLCompositorPass';
 import { WebGLDebugPasses } from './WebGLDebugPasses';
-import { WebGLLayerPass } from './WebGLLayerPass';
-import { WebGLPersistencePass } from './WebGLPersistencePass';
+import { WebGLMotionField } from './WebGLMotionField';
+import { WebGLProfileLut } from './WebGLProfileLut';
 import { WebGLReadback } from './WebGLReadback';
 import { WebGLStationaryPreviewRenderer } from './WebGLStationaryPreviewRenderer';
 import {
@@ -33,7 +54,31 @@ import { publishDiagnostic } from '../diagnostics';
 export type { WebGLRenderViewport } from './types';
 
 /**
- * WebGLRenderer — thin orchestrator over the WebGL2 fallback pipeline.
+ * What a slot draws until the orchestrator hands it the session's source, and
+ * what a selected shape draws at a variant it refuses.
+ */
+const DEFAULT_GRAPH_SOURCE = presetGraphSource('default');
+
+/** A frame whose graph reads no motion field and solves no flow. */
+const NO_MOTION_FIELD_USE: MotionFieldUse = { reads: false, needsFlow: false };
+
+/** A compiled variant and where it came from, for the breadcrumbs. */
+interface VariantOrigin {
+  /** The shape it is a variant of — the session's, or `default` standing in for it. */
+  readonly name: GraphPresetName;
+  readonly key: string;
+}
+
+/**
+ * WebGLRenderer — the WebGL2 diagnostic / XR / screenshot backend.
+ *
+ * Every frame is a variant of the session's pass graph, drawn by
+ * `WebGLGraphExecutor` exactly as the WebGPU renderer draws it with its own
+ * executor (docs/PASS_GRAPH.md): the same compiled graph, the same encode
+ * plan, the same uniforms. A variant that will not compile, plan or link is
+ * refused by name, and that variant draws the default graph. The debug views
+ * (`webglDebugMode`) are not graph nodes; they replace the band layers'
+ * program for inspection.
  */
 export class WebGLRenderer implements ChromashiftRenderer {
   readonly backend = 'webgl' as const;
@@ -41,9 +86,8 @@ export class WebGLRenderer implements ChromashiftRenderer {
   private readonly gl: WebGL2RenderingContext;
   private readonly canvas: HTMLCanvasElement;
   private readonly debugPasses: WebGLDebugPasses;
-  private readonly layerPass: WebGLLayerPass;
-  private readonly persistencePass: WebGLPersistencePass;
-  private readonly compositorPass: WebGLCompositorPass;
+  private readonly profileLut: WebGLProfileLut;
+  private readonly motionField: WebGLMotionField;
   private readonly readback: WebGLReadback;
   private readonly blit: WebGLBlit;
   private readonly stationaryPreview: WebGLStationaryPreviewRenderer;
@@ -55,16 +99,39 @@ export class WebGLRenderer implements ChromashiftRenderer {
   /** Previous on-screen frame's main-thread time, fed into the scale controller. */
   private pendingElapsedMs: number | null = null;
 
+  /** The pass-graph executor: it draws every frame. */
+  private readonly graphExecutor: WebGLGraphExecutor;
+  private graphSource: PassGraphSource = DEFAULT_GRAPH_SOURCE;
+  /**
+   * The source's variants compiled so far, by `graphVariantKey` — or, for one
+   * that will not compile, plan or link, the refusal it produced. Remembered
+   * either way, so a frame never compiles twice and a refusal is not retried.
+   */
+  private readonly graphVariants = new Map<string, CompiledGraph | string>();
+  /** The default graph's variants, standing in for ones the source refused. */
+  private readonly defaultVariants = new Map<string, CompiledGraph | string>();
+  private readonly variantOrigins = new WeakMap<CompiledGraph, VariantOrigin>();
+  /** `motionFieldUse` per compiled graph — asked every frame, computed once. */
+  private readonly fieldUseByGraph = new WeakMap<CompiledGraph, MotionFieldUse>();
+  /** The variant the executor targets right now. */
+  private adoptedGraph: CompiledGraph | null = null;
+  /** What the last frame drew; `undefined` until the first frame publishes it. */
+  private drawnGraph: CompiledGraph | null | undefined = undefined;
+  private graphSlot = 'main';
+  private graphPrimary = true;
+  /** The last frame's layer count, for `cpuMotionFieldUse`. */
+  private lastLayerCount = DEFAULT_LAYER_COUNT;
+
   constructor(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext) {
     this.canvas = canvas;
     this.gl = gl;
     this.debugPasses = new WebGLDebugPasses(gl);
-    this.layerPass = new WebGLLayerPass(gl, this.debugPasses);
-    this.persistencePass = new WebGLPersistencePass(gl);
-    this.compositorPass = new WebGLCompositorPass(gl);
+    this.profileLut = new WebGLProfileLut(gl);
+    this.motionField = new WebGLMotionField(gl);
     this.readback = new WebGLReadback(gl);
     this.blit = new WebGLBlit(gl);
-    this.stationaryPreview = new WebGLStationaryPreviewRenderer(gl);
+    this.graphExecutor = new WebGLGraphExecutor(gl);
+    this.stationaryPreview = new WebGLStationaryPreviewRenderer(gl, this.profileLut);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
     gl.disable(gl.BLEND);
@@ -89,19 +156,48 @@ export class WebGLRenderer implements ChromashiftRenderer {
   }
 
   clearPersistence(): void {
-    this.persistencePass.clear();
+    this.graphExecutor.clearAccumulators();
   }
 
   /**
-   * Hand the diagnostic backend the latest motion field.
-   *
-   * There is no compute lane here, so the field arrives from the chore kit's
-   * `wasm`/`ts` lanes as a small `Float32Array` (see `useMotionField`) and is
-   * uploaded into a quarter-resolution R16F texture. `null` drops it, which
-   * returns the persistence pass to the non-motion program.
+   * Hand the diagnostic backend the latest motion field (the CPU lanes'
+   * output; see `useLiveSource`). `null` drops it, which returns the frame to
+   * the pre-motion variant and a `displace` to the identity.
    */
   setMotionField(motion: CpuMotionField | null): void {
-    this.persistencePass.setMotionField(motion);
+    this.motionField.set(motion);
+  }
+
+  /**
+   * What the graph needs of the CPU motion field beyond the temporal term: a
+   * `displace` steered by it reads the field — and its flow — whatever the
+   * motion mode, so the live-source sampler must produce one for it.
+   */
+  cpuMotionFieldUse(): MotionFieldUse {
+    return this.graphFieldUse(this.lastLayerCount);
+  }
+
+  /**
+   * Adopt a pass-graph source — `null` for the default graph. Each frame asks
+   * it for the variant it needs (the layer count, the temporal term) and the
+   * executor draws that.
+   */
+  setPassGraph(source: PassGraphSource | null, options?: PassGraphSlotOptions): void {
+    if (options) {
+      this.graphSlot = options.slot;
+      this.graphPrimary = options.primary;
+    }
+    this.graphSource = source ?? DEFAULT_GRAPH_SOURCE;
+    this.graphVariants.clear();
+    this.adoptedGraph = null;
+    // Republish what this slot draws under its (possibly new) name.
+    this.drawnGraph = undefined;
+    this.adoptGraphVariant({ layerCount: DEFAULT_LAYER_COUNT, motion: false, presentation: 'sdr' });
+  }
+
+  /** Name of the graph shape this renderer draws. */
+  get passGraphName(): GraphPresetName {
+    return this.graphSource.name;
   }
 
   async renderStationaryPreviews(
@@ -148,25 +244,27 @@ export class WebGLRenderer implements ChromashiftRenderer {
     const tracerScale = viewport ? 1 : rendererStateValue(state, 'tracerScale');
     const upsample = !viewport && (internalW !== canvasW || internalH !== canvasH);
     const compositeTarget = upsample ? this.ensureCompositeTarget(internalW, internalH) : null;
-    this.renderFrameInternal(state, fps, {
-      layerWidth: Math.max(1, Math.round(internalW * layerScale)),
-      layerHeight: Math.max(1, Math.round(internalH * layerScale)),
-      tracerWidth: Math.max(1, Math.round(internalW * tracerScale)),
-      tracerHeight: Math.max(1, Math.round(internalH * tracerScale)),
-      compositeWidth: upsample ? internalW : destW,
-      compositeHeight: upsample ? internalH : destH,
-      compositeTarget,
-      viewport: upsample ? undefined : viewport,
+    const drew = this.renderFrameInternal(state, fps, {
+      layer: scaled(internalW, internalH, layerScale),
+      tracer: scaled(internalW, internalH, tracerScale),
+      aspect: internalW / internalH,
+      output: {
+        target: compositeTarget,
+        framebuffer: viewport?.framebuffer ?? null,
+        viewport: upsample || !viewport
+          ? { x: 0, y: 0, width: upsample ? internalW : destW, height: upsample ? internalH : destH }
+          : viewport,
+      },
     });
-    if (upsample && compositeTarget) {
+    if (drew && upsample && compositeTarget) {
       this.blit.draw(compositeTarget.texture, canvasW, canvasH);
     }
-    this.readback.afterFrame(
-      this.compositorPass,
-      this.layerPass.targets,
-      this.persistencePass,
-      state,
-    );
+    if (!viewport) {
+      this.readback.afterFrame((target, size) => this.graphExecutor.composite(this.inputs(), {
+        ...state,
+        mainViewMode: MAIN_VIEW_MODES.COINCIDENCE_HEATMAP,
+      }, { target, viewport: { x: 0, y: 0, width: size, height: size } }));
+    }
     // Hand the queued passes to the GPU every frame. Leaving them buffered
     // makes the next pixel read (preview, export) execute the whole backlog
     // on the main thread in one hitch.
@@ -177,11 +275,8 @@ export class WebGLRenderer implements ChromashiftRenderer {
     if (!viewport) this.pendingElapsedMs = elapsed;
   }
 
-  restoreRenderSize(width: number, height: number): void {
-    if (width > 0 && height > 0) {
-      this.layerPass.ensureTextures(width, height);
-      this.persistencePass.ensureTextures(width, height);
-    }
+  restoreRenderSize(): void {
+    // The executor's pool sizes itself from the next frame's targets.
   }
 
   async exportFrame(state: RendererState, options: ExportFrameOptions): Promise<ExportFrameResult | null> {
@@ -191,9 +286,6 @@ export class WebGLRenderer implements ChromashiftRenderer {
     const height = Math.max(1, Math.floor(options.height));
     const fps = options.fps ?? 30;
     const passMode = options.passMode ?? 'composite';
-
-    this.layerPass.ensureTextures(width, height);
-    this.persistencePass.ensureTextures(width, height);
 
     const exportState: RendererState = {
       ...state,
@@ -209,45 +301,50 @@ export class WebGLRenderer implements ChromashiftRenderer {
     };
 
     const target = createTarget(this.gl, width, height);
-    this.renderFrameInternal(exportState, fps, fullFrame(width, height, target));
-    const pixels = await this.readback.readTexturePixelsAsync(target, width, height)
-      ?? this.readback.readTexturePixels(target, width, height);
-    destroyTarget(this.gl, target);
-    return { data: pixels, width, height };
+    try {
+      this.renderFrameInternal(exportState, fps, {
+        layer: { width, height },
+        tracer: { width, height },
+        aspect: width / height,
+        output: { target, viewport: { x: 0, y: 0, width, height } },
+      });
+      const pixels = await this.readback.readTexturePixelsAsync(target, width, height)
+        ?? this.readback.readTexturePixels(target, width, height);
+      return { data: pixels, width, height };
+    } finally {
+      destroyTarget(this.gl, target);
+    }
   }
 
   async exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null> {
     if (!this.currentTexture) return null;
-    const target = createTarget(this.gl, options.width, options.height);
-    const layerOpacities = this.layerPass.targets.map(
-      (_, i) => options.layerOpacities?.[i] ?? DEFAULT_PER_LAYER_OPACITY,
-    );
+    const layerCount = this.graphExecutor.outputTargets()?.layers.length ?? DEFAULT_LAYER_COUNT;
     const state: RendererState = {
-      layers: [
-        { angleDeg: 0 },
-        { angleDeg: 0, flipY: true },
-        { angleDeg: 0 },
-      ],
+      layers: Array.from({ length: layerCount }, (_, i) => ({ angleDeg: 0, ...(i === 1 ? { flipY: true } : {}) })),
       avgLuminance: 128,
       mainViewMode: MAIN_VIEW_MODES.FULL_RES_TRACER,
       tracerAboveIntensity: options.tracerAboveOpacity,
       tracerBelowIntensity: options.tracerBelowOpacity,
       tracerBlendMode: options.tracerBlendMode,
       layerBlendMode: options.layerBlendMode,
-      layerOpacities,
+      layerOpacities: Array.from(
+        { length: layerCount },
+        (_, i) => options.layerOpacities?.[i] ?? DEFAULT_PER_LAYER_OPACITY,
+      ),
     };
-    this.compositorPass.render(
-      target,
-      options.width,
-      options.height,
-      this.layerPass.targets,
-      this.persistencePass,
-      state,
-    );
-    const pixels = await this.readback.readTexturePixelsAsync(target, options.width, options.height)
-      ?? this.readback.readTexturePixels(target, options.width, options.height);
-    destroyTarget(this.gl, target);
-    return { data: pixels, width: options.width, height: options.height };
+    const target = createTarget(this.gl, options.width, options.height);
+    try {
+      const drew = this.graphExecutor.composite(this.inputs(), state, {
+        target,
+        viewport: { x: 0, y: 0, width: options.width, height: options.height },
+      });
+      if (!drew) return null;
+      const pixels = await this.readback.readTexturePixelsAsync(target, options.width, options.height)
+        ?? this.readback.readTexturePixels(target, options.width, options.height);
+      return { data: pixels, width: options.width, height: options.height };
+    } finally {
+      destroyTarget(this.gl, target);
+    }
   }
 
   destroy(): void {
@@ -255,13 +352,130 @@ export class WebGLRenderer implements ChromashiftRenderer {
       destroyTarget(this.gl, this.compositeTarget);
       this.compositeTarget = null;
     }
+    publishSlotExecuting(this.graphSlot, undefined);
     this.readback.destroy();
     this.blit.destroy();
     this.stationaryPreview.destroy();
-    this.layerPass.destroy();
-    this.persistencePass.destroy();
-    this.compositorPass.destroy();
+    this.graphExecutor.destroy();
+    this.motionField.destroy();
+    this.profileLut.destroy();
     this.debugPasses.destroy();
+  }
+
+  // ─── graph variants ───────────────────────────────────────────────────────
+
+  /**
+   * The graph a frame of `variant` draws: the source's, or — when the source
+   * refused that variant — the default graph's. `null` when even the default
+   * graph refused it.
+   */
+  private compiledGraphVariant(variant: GraphVariant): CompiledGraph | null {
+    const key = graphVariantKey(variant);
+    const own = this.compileVariant(this.graphSource, this.graphVariants, variant, key);
+    if (typeof own !== 'string') return own;
+    if (this.graphSource.name === 'default') return null;
+    const fallback = this.compileVariant(DEFAULT_GRAPH_SOURCE, this.defaultVariants, variant, key);
+    return typeof fallback === 'string' ? null : fallback;
+  }
+
+  /** `source`'s graph for `variant`, compiled on first request into `cache` — or its refusal. */
+  private compileVariant(
+    source: PassGraphSource,
+    cache: Map<string, CompiledGraph | string>,
+    variant: GraphVariant,
+    key: string,
+  ): CompiledGraph | string {
+    let entry = cache.get(key);
+    if (entry === undefined) {
+      try {
+        entry = compileGraph(source.build(variant), 'webgl');
+        // Planning is where an encodable-but-not-drawable graph is refused.
+        buildEncodePlan(entry);
+        this.variantOrigins.set(entry, { name: source.name, key });
+      } catch (error) {
+        entry = passGraphRefusal(error);
+        console.warn('[Chromashift:PassGraph] refused a graph variant —', source.name, key, entry);
+        if (this.graphPrimary) publishGraphVariant(null, entry, this.graphSource.name, key);
+      }
+      cache.set(key, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * Make `variant` the executor's target if it is not already, and link its
+   * programs. A program the context rejects is an `invalid-pipeline` refusal:
+   * that variant then draws the default graph, and until a frame adopts the
+   * stand-in the executor keeps drawing the last frame that linked.
+   */
+  private adoptGraphVariant(variant: GraphVariant): CompiledGraph | null {
+    const compiled = this.compiledGraphVariant(variant);
+    if (compiled === this.adoptedGraph) return compiled;
+    this.graphExecutor.setGraph(compiled);
+    this.adoptedGraph = compiled;
+    if (!compiled) return null;
+    if (this.graphPrimary) {
+      // A stand-in default keeps the source's refusal on the breadcrumb.
+      const key = graphVariantKey(variant);
+      const own = this.graphVariants.get(key);
+      publishGraphVariant(compiled, typeof own === 'string' ? own : null, this.graphSource.name, key);
+    }
+    const error = this.graphExecutor.prepare();
+    if (error === null) return compiled;
+    this.refuseVariant(compiled, `invalid-pipeline: ${error}`);
+    // The refused entry is a string now, so this adopts its stand-in (or nothing).
+    return this.adoptGraphVariant(variant);
+  }
+
+  /** Remember `compiled`'s variant as refused, so the frame adopts its stand-in. */
+  private refuseVariant(compiled: CompiledGraph, message: string): void {
+    console.warn('[Chromashift:PassGraph] the context rejected a graph variant —', message);
+    for (const cache of [this.graphVariants, this.defaultVariants]) {
+      for (const [key, entry] of cache) {
+        if (entry === compiled) cache.set(key, message);
+      }
+    }
+    if (this.adoptedGraph === compiled) this.adoptedGraph = null;
+    if (this.graphPrimary) publishDiagnostic('passGraphError', message);
+  }
+
+  /** What this renderer drew: into its slot's entry, and session-wide from the primary canvas. */
+  private publishDrawn(compiled: CompiledGraph | null): void {
+    if (compiled === this.drawnGraph) return;
+    this.drawnGraph = compiled;
+    const origin = compiled ? this.variantOrigins.get(compiled) : undefined;
+    const name = origin?.name ?? null;
+    publishSlotExecuting(this.graphSlot, name);
+    if (this.graphPrimary) {
+      publishGraphExecutorBreadcrumbs(
+        name,
+        compiled ? this.graphExecutor.encodedPasses(compiled) : [],
+        origin?.key ?? null,
+      );
+    }
+  }
+
+  /** How the source's still graph reads the motion field — a `displace` steered by it, say. */
+  private graphFieldUse(layerCount: number): MotionFieldUse {
+    const still = this.compiledGraphVariant({ layerCount, motion: false, presentation: 'sdr' });
+    if (!still) return NO_MOTION_FIELD_USE;
+    let use = this.fieldUseByGraph.get(still);
+    if (!use) {
+      use = motionFieldUse(still);
+      this.fieldUseByGraph.set(still, use);
+    }
+    return use;
+  }
+
+  // ─── frames ───────────────────────────────────────────────────────────────
+
+  private inputs(): WebGLGraphInputs {
+    const source = this.currentTexture!;
+    return {
+      source: { texture: source.texture, width: source.width, height: source.height },
+      profileLut: this.profileLut.texture,
+      motionField: this.motionField.texture,
+    };
   }
 
   private ensureCompositeTarget(width: number, height: number): RenderTarget {
@@ -275,76 +489,57 @@ export class WebGLRenderer implements ChromashiftRenderer {
     return this.compositeTarget;
   }
 
+  /** Draw one frame of the variant `state` needs. Returns whether anything validated drew it. */
   private renderFrameInternal(
     state: RendererState,
     fps: number,
-    frame: WebGLFrameSize,
-  ): void {
-    if (!this.currentTexture) return;
-    this.layerPass.ensureTextures(frame.layerWidth, frame.layerHeight);
-    this.persistencePass.ensureTextures(frame.tracerWidth, frame.tracerHeight);
+    frame: Omit<WebGLGraphEncodeParams, 'state' | 'fps' | 'drawLayer'>,
+  ): boolean {
+    if (!this.currentTexture) return false;
+    // Non-classic colour profiles render from the baked LUT (docs/COLOR_PROFILES.md).
+    this.profileLut.update(state.colorProfileLut);
+
+    const layerCount = Math.max(1, Math.min(MAX_LAYER_COUNT, state.layers.length));
+    this.lastLayerCount = layerCount;
+    const motionMode = rendererStateValue(state, 'motionMode');
+    this.adoptGraphVariant({
+      layerCount,
+      motion: motionMode !== 0 && this.motionField.texture !== null,
+      presentation: 'sdr',
+    });
+    const ready = this.graphExecutor.readyFrame();
+    this.publishDrawn(ready?.compiled ?? null);
+    if (!ready) {
+      // Nothing linked can draw this frame: black, rather than a half-bound pass.
+      const gl = this.gl;
+      const { viewport } = frame.output;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, frame.output.target?.framebuffer ?? frame.output.framebuffer ?? null);
+      gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return false;
+    }
 
     const debugMode = state.webglDebugMode ?? 0;
-    this.layerPass.render(
-      this.currentTexture.texture,
+    this.graphExecutor.encode(this.inputs(), {
+      ...frame,
       state,
-      debugMode,
-      frame.layerWidth / frame.layerHeight,
-    );
-
-    const readIndex = this.persistencePass.pingPong;
-    const writeIndex = (1 - this.persistencePass.pingPong) as 0 | 1;
-    const paused = rendererStateValue(state, 'paused');
-    this.persistencePass.render(
-      this.persistencePass.tracerAbove[writeIndex]!,
-      this.persistencePass.tracerAbove[readIndex]!,
-      this.layerPass.targets,
-      persistUniforms(state, { role: 'above', fps }),
-      paused,
-    );
-    this.persistencePass.render(
-      this.persistencePass.tracerBelow[writeIndex]!,
-      this.persistencePass.tracerBelow[readIndex]!,
-      this.layerPass.targets,
-      persistUniforms(state, { role: 'below', fps }),
-      paused,
-    );
-    this.persistencePass.advancePingPong(paused);
-
-    this.compositorPass.render(
-      frame.compositeTarget,
-      frame.compositeWidth,
-      frame.compositeHeight,
-      this.layerPass.targets,
-      this.persistencePass,
-      state,
-      frame.viewport,
-    );
+      fps,
+      drawLayer: debugMode === 0
+        ? undefined
+        : (layerIndex, source) => {
+            this.debugPasses.renderLayer(debugMode, source, state, layerIndex, frame.aspect);
+            return true;
+          },
+    }, ready);
+    return true;
   }
 }
 
-interface WebGLFrameSize {
-  layerWidth: number;
-  layerHeight: number;
-  tracerWidth: number;
-  tracerHeight: number;
-  compositeWidth: number;
-  compositeHeight: number;
-  compositeTarget: RenderTarget | null;
-  viewport?: WebGLRenderViewport;
-}
-
-function fullFrame(width: number, height: number, compositeTarget: RenderTarget): WebGLFrameSize {
-  return {
-    layerWidth: width,
-    layerHeight: height,
-    tracerWidth: width,
-    tracerHeight: height,
-    compositeWidth: width,
-    compositeHeight: height,
-    compositeTarget,
-  };
-}
+const scaled = (width: number, height: number, scale: number) => ({
+  width: Math.max(1, Math.round(width * scale)),
+  height: Math.max(1, Math.round(height * scale)),
+});
 
 function publishWebglInternalScale(scale: number): void {
   publishDiagnostic('webglInternalScale', scale);

@@ -1,3 +1,4 @@
+import type { MotionFieldUse } from '../graph/exec/plan';
 import type { PassGraphSource } from '../graph/variants';
 
 /** Which orchestrator slot a renderer draws, for the pass-graph breadcrumbs. */
@@ -125,13 +126,16 @@ export interface ChromashiftRenderer {
    */
   wantsCpuMotionField?(): boolean;
   /**
-   * Adopt a pass-graph source and encode the variant each frame needs (the
-   * temporal term on or off) instead of the hand-written topology, or `null`
-   * to go back to it.
-   *
-   * Implemented by the WebGPU renderer. The WebGL diagnostic backend compiles
-   * the graph — that is where `unsupported-node` refusals come from — but does
-   * not execute it, so it does not implement this. See docs/PASS_GRAPH.md.
+   * What the drawn graph needs of the CPU motion field whatever the motion
+   * mode — a `displace` steered by it reads the field and its flow. Absent
+   * means nothing: only the temporal term asks for a field.
+   */
+  cpuMotionFieldUse?(): MotionFieldUse;
+  /**
+   * Adopt a pass-graph source (`null`: the default graph) and draw the variant
+   * each frame needs — the layer count, the temporal term, the canvas it
+   * presents to. Both backends' renderers execute the graph; see
+   * docs/PASS_GRAPH.md.
    */
   setPassGraph?(source: PassGraphSource | null, options?: PassGraphSlotOptions): void;
   render(state: RendererState, fps?: number): void;

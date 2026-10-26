@@ -19,9 +19,9 @@ import { UPDATING_FRAME_GOLDENS, readFrameGolden, writeFrameGolden } from './hel
 /**
  * Pass-graph **executor** (docs/PASS_GRAPH.md).
  *
- * `pass-graph.spec.ts` covers the compiler's breadcrumbs on the WebGL
- * diagnostic backend, where the graph compiles but nothing draws it. These
- * specs are the other half: on WebGPU, `WebGpuGraphExecutor` draws every frame.
+ * `pass-graph.spec.ts` covers the WebGL diagnostic backend, where
+ * `WebGLGraphExecutor` draws the same graphs. These specs are the WebGPU half:
+ * `WebGpuGraphExecutor` draws every frame.
  *
  * Frames are read back from the swap-chain texture (see
  * `helpers/gpuCanvasReadback.ts`), not screenshotted, and every pixel

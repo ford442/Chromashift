@@ -12,7 +12,7 @@ import type {
 /**
  * `RendererState` → uniform values, once, for every encode path.
  *
- * The hand encoder (since deleted), the graph executor, the stationary
+ * The hand encoders (since deleted), the graph executors, the stationary
  * previews and the WebGL passes each used to translate state into uniforms
  * themselves, with their own copy of every default. Every encode path now
  * calls the functions below and pack the
@@ -135,6 +135,14 @@ export function persistUniforms(
     motionDecayBias: rendererStateValue(state, 'motionDecayBias'),
   };
 }
+
+/**
+ * What an extra tracer timescale (a third accumulator and on) is drawn with
+ * when its node does not say: a slow, faint echo under the shipped pair. Read
+ * by both executors, so a graph's echo looks the same on either backend.
+ */
+export const EXTRA_TRACER_DURATION_MS = 4000;
+export const EXTRA_TRACER_INTENSITY = 0.4;
 
 export interface CompositorUniformOptions {
   /**

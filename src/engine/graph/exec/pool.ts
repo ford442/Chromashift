@@ -18,12 +18,47 @@ export interface PoolDevice {
   createTexture(descriptor: GPUTextureDescriptor): GPUTexture;
 }
 
+/**
+ * What a pooled texture is for. `color` is every node target, ring slot and
+ * accumulator; `diagnostic` the fused pass's stamp side-channel; `msaa` the
+ * band layers' shared multisample target.
+ */
+export type PoolTextureUse = 'color' | 'diagnostic' | 'msaa';
+
+/**
+ * How a backend makes and frees one pooled texture. The pool decides *which*
+ * textures exist and when; this is the only part that differs between the
+ * WebGPU executor (`GPUTexture`) and the WebGL one (an FBO-backed target).
+ */
+export interface PoolTextureFactory<T> {
+  create(size: ClassSize, use: PoolTextureUse, sampleCount: number): T;
+  destroy(texture: T): void;
+}
+
 /** rgba8unorm side-channel the fused coincidence/decay pass writes at @location(1). */
 const DIAGNOSTIC_FORMAT: GPUTextureFormat = 'rgba8unorm';
 
+/** The WebGPU executor's textures: render targets it can also sample and copy out of. */
+function gpuTextureFactory(device: PoolDevice, internalFormat: GPUTextureFormat): PoolTextureFactory<GPUTexture> {
+  return {
+    create: (size, use, sampleCount) => device.createTexture({
+      size: [Math.max(1, size.width), Math.max(1, size.height), 1],
+      format: use === 'diagnostic' ? DIAGNOSTIC_FORMAT : internalFormat,
+      sampleCount,
+      usage: sampleCount > 1
+        ? GPUTextureUsage.RENDER_ATTACHMENT
+        : GPUTextureUsage.RENDER_ATTACHMENT
+          | GPUTextureUsage.TEXTURE_BINDING
+          | GPUTextureUsage.COPY_SRC,
+    }),
+    destroy: (texture) => texture.destroy(),
+  };
+}
+
 /**
  * Render targets for one compiled graph, backed by the compiler's
- * `AllocationPlan`.
+ * `AllocationPlan`. Generic over the texture type, so the WebGPU and WebGL
+ * executors share one set of lifetime rules rather than two copies of them.
  *
  * The plan already decided *which* nodes share a target; this turns that plan
  * into textures. Three rules carry over from the hand-written encoder:
@@ -39,9 +74,8 @@ const DIAGNOSTIC_FORMAT: GPUTextureFormat = 'rgba8unorm';
  * A `history` node's ring is the fourth kind of storage: `frames` textures that
  * outlive the frame like a ping-pong pair, advanced by the same `flip()`.
  */
-export class GraphTexturePool {
-  private readonly device: PoolDevice;
-  private readonly internalFormat: GPUTextureFormat;
+export class TexturePool<T> {
+  private readonly factory: PoolTextureFactory<T>;
 
   private plan: AllocationPlan | null = null;
   private sizes: PoolSizes | null = null;
@@ -49,7 +83,7 @@ export class GraphTexturePool {
 
   private readonly slotById = new Map<string, PoolSlot>();
   private readonly ringByNode = new Map<string, HistoryRing>();
-  private readonly rings = new Map<string, GPUTexture[]>();
+  private readonly rings = new Map<string, T[]>();
   /**
    * Ring write position and fill level, shared by every ring in the graph the
    * way `phase` is shared by every ping-pong pair. `head` is the slot written
@@ -57,10 +91,10 @@ export class GraphTexturePool {
    */
   private ringFrame = 0;
   private ringFilled = 0;
-  private readonly transients = new Map<string, GPUTexture>();
-  private readonly pairs = new Map<string, [GPUTexture, GPUTexture]>();
-  private readonly diagnostics = new Map<string, [GPUTexture, GPUTexture]>();
-  private msaa: GPUTexture | null = null;
+  private readonly transients = new Map<string, T>();
+  private readonly pairs = new Map<string, [T, T]>();
+  private readonly diagnostics = new Map<string, [T, T]>();
+  private msaa: T | null = null;
 
   /** Ping-pong phase, flipped once per frame so every `decay` node stays in step. */
   private phase: 0 | 1 = 0;
@@ -68,9 +102,8 @@ export class GraphTexturePool {
   /** Textures created since construction — the leak/churn probe unit tests read. */
   textureCreateCount = 0;
 
-  constructor(device: PoolDevice, internalFormat: GPUTextureFormat) {
-    this.device = device;
-    this.internalFormat = internalFormat;
+  constructor(factory: PoolTextureFactory<T>) {
+    this.factory = factory;
   }
 
   /**
@@ -129,9 +162,10 @@ export class GraphTexturePool {
       const after = slots.get(id);
       return before !== undefined && after !== undefined && before.resolution === after.resolution;
     };
-    prune(this.transients, sameSlot, (texture) => texture.destroy());
-    prune(this.pairs, sameSlot, ([a, b]) => { a.destroy(); b.destroy(); });
-    prune(this.diagnostics, sameSlot, ([a, b]) => { a.destroy(); b.destroy(); });
+    const free = (texture: T) => this.factory.destroy(texture);
+    prune(this.transients, sameSlot, free);
+    prune(this.pairs, sameSlot, ([a, b]) => { free(a); free(b); });
+    prune(this.diagnostics, sameSlot, ([a, b]) => { free(a); free(b); });
     prune(
       this.rings,
       (id) => {
@@ -140,10 +174,10 @@ export class GraphTexturePool {
         return before !== undefined && after !== undefined
           && before.frames === after.frames && before.resolution === after.resolution;
       },
-      (textures) => { for (const texture of textures) texture.destroy(); },
+      (textures) => { for (const texture of textures) free(texture); },
     );
-    if (sampleCount !== this.sampleCount) {
-      this.msaa?.destroy();
+    if (sampleCount !== this.sampleCount && this.msaa) {
+      free(this.msaa);
       this.msaa = null;
     }
   }
@@ -162,14 +196,14 @@ export class GraphTexturePool {
    * One `history` node's ring: its textures, the slot this frame writes, and how
    * many slots hold a real frame once that write lands.
    */
-  ring(nodeId: string): { textures: GPUTexture[]; head: number; filled: number } {
+  ring(nodeId: string): { textures: T[]; head: number; filled: number } {
     const ring = this.ringByNode.get(nodeId);
     if (!ring) throw new Error(`Graph node '${nodeId}' has no history ring.`);
     let textures = this.rings.get(ring.id);
     if (!textures) {
       textures = Array.from(
         { length: ring.frames },
-        () => this.create(ring.resolution, this.internalFormat),
+        () => this.create(ring.resolution, 'color'),
       );
       this.rings.set(ring.id, textures);
     }
@@ -211,24 +245,21 @@ export class GraphTexturePool {
   }
 
   /** The pooled transient a non-ping-pong node writes (and its readers sample). */
-  transient(nodeId: string): GPUTexture {
+  transient(nodeId: string): T {
     const slot = this.requireSlot(nodeId);
     const existing = this.transients.get(slot.id);
     if (existing) return existing;
-    const texture = this.create(slot.resolution, this.internalFormat);
+    const texture = this.create(slot.resolution, 'color');
     this.transients.set(slot.id, texture);
     return texture;
   }
 
   /** The read/write pair a `decay` node accumulates into. */
-  pingPong(nodeId: string): { read: GPUTexture; write: GPUTexture } {
+  pingPong(nodeId: string): { read: T; write: T } {
     const slot = this.requireSlot(nodeId);
     let pair = this.pairs.get(slot.id);
     if (!pair) {
-      pair = [
-        this.create(slot.resolution, this.internalFormat),
-        this.create(slot.resolution, this.internalFormat),
-      ];
+      pair = [this.create(slot.resolution, 'color'), this.create(slot.resolution, 'color')];
       this.pairs.set(slot.id, pair);
     }
     return { read: pair[this.readPhase], write: pair[this.writePhase] };
@@ -240,24 +271,16 @@ export class GraphTexturePool {
    * optional — but it ping-pongs with the tracer so a readback can name the
    * frame it came from, exactly as the shipped persistence pass did.
    */
-  diagnostic(nodeId: string): { read: GPUTexture; write: GPUTexture } {
+  diagnostic(nodeId: string): { read: T; write: T } {
     const slot = this.requireSlot(nodeId);
     let pair = this.diagnostics.get(slot.id);
     if (!pair) {
-      pair = [
-        this.create(slot.resolution, DIAGNOSTIC_FORMAT),
-        this.create(slot.resolution, DIAGNOSTIC_FORMAT),
-      ];
+      pair = [this.create(slot.resolution, 'diagnostic'), this.create(slot.resolution, 'diagnostic')];
       this.diagnostics.set(slot.id, pair);
     }
     return { read: pair[this.readPhase], write: pair[this.writePhase] };
   }
 
-  /**
-   * Shared multisample target for `band-layer` passes, matching the hand
-   * encoder: one MSAA texture, resolved into the pooled layer target at the end
-   * of each pass.
-   */
   /**
    * Every accumulator texture the pool owns — both sides of each ping-pong
    * pair and their diagnostic attachments.
@@ -265,7 +288,7 @@ export class GraphTexturePool {
    * `clearPersistence()` clears these: they are the tracer state. The
    * `history` rings are trails too, so they are cleared with them.
    */
-  accumulatorTextures(): GPUTexture[] {
+  accumulatorTextures(): T[] {
     return [
       ...[...this.pairs.values()].flat(),
       ...[...this.diagnostics.values()].flat(),
@@ -278,18 +301,24 @@ export class GraphTexturePool {
     return [...this.rings.values()].reduce((total, ring) => total + ring.length, 0);
   }
 
-  msaaTarget(): GPUTexture | null {
+  /**
+   * Shared multisample target for `band-layer` passes, matching the hand
+   * encoder: one MSAA texture, resolved into the pooled layer target at the end
+   * of each pass.
+   */
+  msaaTarget(): T | null {
     if (this.sampleCount <= 1) return null;
-    this.msaa ??= this.create('layer', this.internalFormat, this.sampleCount);
+    this.msaa ??= this.create('layer', 'msaa', this.sampleCount);
     return this.msaa;
   }
 
   release(): void {
-    for (const texture of this.transients.values()) texture.destroy();
-    for (const [a, b] of this.pairs.values()) { a.destroy(); b.destroy(); }
-    for (const [a, b] of this.diagnostics.values()) { a.destroy(); b.destroy(); }
-    for (const ring of this.rings.values()) for (const texture of ring) texture.destroy();
-    this.msaa?.destroy();
+    const free = (texture: T) => this.factory.destroy(texture);
+    for (const texture of this.transients.values()) free(texture);
+    for (const [a, b] of this.pairs.values()) { free(a); free(b); }
+    for (const [a, b] of this.diagnostics.values()) { free(a); free(b); }
+    for (const ring of this.rings.values()) for (const texture of ring) free(texture);
+    if (this.msaa) free(this.msaa);
     this.transients.clear();
     this.pairs.clear();
     this.diagnostics.clear();
@@ -307,24 +336,18 @@ export class GraphTexturePool {
     return slot;
   }
 
-  private create(
-    resolution: ResolutionClass,
-    format: GPUTextureFormat,
-    sampleCount = 1,
-  ): GPUTexture {
+  private create(resolution: ResolutionClass, use: PoolTextureUse, sampleCount = 1): T {
     const size = this.sizes?.[resolution];
     if (!size) throw new Error(`No size configured for the '${resolution}' resolution class.`);
     this.textureCreateCount += 1;
-    return this.device.createTexture({
-      size: [Math.max(1, size.width), Math.max(1, size.height), 1],
-      format,
-      sampleCount,
-      usage: sampleCount > 1
-        ? GPUTextureUsage.RENDER_ATTACHMENT
-        : GPUTextureUsage.RENDER_ATTACHMENT
-          | GPUTextureUsage.TEXTURE_BINDING
-          | GPUTextureUsage.COPY_SRC,
-    });
+    return this.factory.create(size, use, sampleCount);
+  }
+}
+
+/** The WebGPU executor's pool, in the device's internal colour format. */
+export class GraphTexturePool extends TexturePool<GPUTexture> {
+  constructor(device: PoolDevice, internalFormat: GPUTextureFormat) {
+    super(gpuTextureFactory(device, internalFormat));
   }
 }
 

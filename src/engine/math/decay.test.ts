@@ -22,8 +22,7 @@ const HOT_PATH_FILES = [
   '../StationaryPreviewRenderer.ts',
   '../compute/chores/webgpuBackend.ts',
   '../webgl/WebGLRenderer.ts',
-  '../webgl/WebGLPersistencePass.ts',
-  '../webgl/WebGLCompositorPass.ts',
+  '../graph/exec/WebGLGraphExecutor.ts',
   '../webgl/WebGLStationaryPreviewRenderer.ts',
   '../../hooks/useAnimationLoop.ts',
 ];

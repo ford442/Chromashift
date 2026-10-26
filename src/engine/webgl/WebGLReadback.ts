@@ -1,9 +1,12 @@
-import { MAIN_VIEW_MODES } from '../viewModes';
-import type { CollisionStats, RendererState } from '../types/RendererState';
+import type { CollisionStats } from '../types/RendererState';
 import { PixelPackRead } from './asyncReadback';
 import { createTarget, destroyTarget, readTargetPixels, type RenderTarget } from './resources';
-import type { WebGLCompositorPass } from './WebGLCompositorPass';
-import type { WebGLPersistencePass } from './WebGLPersistencePass';
+
+/**
+ * Draws the frame's coincidence heatmap into `target` (the graph's compositor,
+ * re-run in heatmap view). `false` when there is no frame to draw it from.
+ */
+export type HeatmapDraw = (target: RenderTarget, size: number) => boolean;
 
 export class WebGLReadback {
   static readonly DIAGNOSTIC_SIZE = 64;
@@ -24,20 +27,14 @@ export class WebGLReadback {
     return true;
   }
 
-  afterFrame(
-    compositor: WebGLCompositorPass,
-    layerTextures: readonly RenderTarget[],
-    persistence: WebGLPersistencePass,
-    state: RendererState,
-  ): void {
+  afterFrame(drawHeatmap: HeatmapDraw): void {
     this.collectStats();
     if (this.statsQueued && !this.statsPack.busy) {
-      this.diagnosticTarget ??= createTarget(this.gl, WebGLReadback.DIAGNOSTIC_SIZE, WebGLReadback.DIAGNOSTIC_SIZE);
-      compositor.render(this.diagnosticTarget, WebGLReadback.DIAGNOSTIC_SIZE, WebGLReadback.DIAGNOSTIC_SIZE, layerTextures, persistence, {
-        ...state,
-        mainViewMode: MAIN_VIEW_MODES.COINCIDENCE_HEATMAP,
-      });
-      this.statsPack.start(this.diagnosticTarget, WebGLReadback.DIAGNOSTIC_SIZE, WebGLReadback.DIAGNOSTIC_SIZE);
+      const size = WebGLReadback.DIAGNOSTIC_SIZE;
+      this.diagnosticTarget ??= createTarget(this.gl, size, size);
+      if (drawHeatmap(this.diagnosticTarget, size)) {
+        this.statsPack.start(this.diagnosticTarget, size, size);
+      }
     }
   }
 

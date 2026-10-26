@@ -281,8 +281,8 @@ export class RendererOrchestrator {
    * in its own entry of `window.passGraphSlotsExecuting`. Each slot's renderer
    * owns an executor of its own (its pool, buffers and bind groups); their
    * compiled programs are shared per device, keyed on the structural hash, so a
-   * second slot drawing the same graph compiles nothing. WebGPU only: the WebGL
-   * diagnostic backend compiles graphs but does not execute them.
+   * second slot drawing the same graph compiles nothing. The WebGL backend has
+   * one slot, drawn by its own executor over the context's program cache.
    */
   setPassGraph(source: PassGraphSource | null): void {
     this.passGraphSource = source;
@@ -290,7 +290,6 @@ export class RendererOrchestrator {
   }
 
   private applyPassGraph(slot: RendererSlot): void {
-    if (this.backend !== 'webgpu') return;
     slot.renderer.setPassGraph?.(this.passGraphSource, {
       slot: slot.id,
       primary: slot.canvas === this.primaryCanvas,
@@ -537,6 +536,7 @@ export class RendererOrchestrator {
     const renderer = this.deps.createWebGLRenderer(canvas, this.webglContext);
     const slot: RendererSlot = { id, canvas, renderer };
     this.slots.set(id, slot);
+    this.applyPassGraph(slot);
     return slot;
   }
 }

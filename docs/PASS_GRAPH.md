@@ -12,8 +12,11 @@ pipeline they hard-code.
 > are different *shapes* that draw without a renderer edit, and the starter
 > graphs `?graph=smear` / `?graph=feedback` / `?graph=trails3` add what the
 > hand encoder had no equivalent for (`history`, `displace`, a third tracer
-> timescale). The WebGL diagnostic backend compiles only, and refuses the
-> shapes it has no template for by name.
+> timescale). The WebGL diagnostic / XR backend executes the same graphs:
+> `WebGLGraphExecutor` walks the same encode plan over an FBO pool, every
+> shape draws on it, and its default-graph frame is the hand-written WebGL
+> passes' frame, pinned in `e2e/__golden__/webgl-default-composite.png` (see
+> [The WebGL executor](#the-webgl-executor)).
 > See [Phase 2](#phase-2--shipped) and [Phase 3](#phase-3--shipped) for what
 > landed and [what is left](#not-done-yet).
 
@@ -69,11 +72,11 @@ emitted code) rather than *value* params (they change a uniform).
 | `coincidence` | 1–∞ | tracer | `minOverlap`, `emitDiagnostic` | thresholds | ✓ |
 | `motion` | 2: `[stamp, field]` | tracer | — | mode, gain, decay bias (from `RendererState`) | ✓ (fused into `decay`) |
 | `decay` | 1 | tracer (ping-pong) | — | duration | ✓ |
-| `blend` | layers + ≥ 2 tracers | output | `layerInputs`, `tracerInputs` | opacities, modes; an extra tracer's `intensity` | ✓ (two tracers only) |
-| `warp` | 1 | layer | `mode` (`affine` \| `feedback`) | `angleDeg`, `scale`, `displace` | — |
-| `blur` | 1 | layer | `radius` | `axis` | — |
-| `history` | 1 | layer, or tracer | `frames` (2–8), `resolution` | `mode` (`trail` \| `tap`), `delay`, `falloff` | — |
-| `displace` | 2: `[source, field]` | layer | `field` (`motion` \| `color`) | `gain`, `mode` (`inverse` \| `forward`) | — |
+| `blend` | layers + ≥ 2 tracers | output | `layerInputs`, `tracerInputs` | opacities, modes; an extra tracer's `intensity` | ✓ |
+| `warp` | 1 | layer | `mode` (`affine` \| `feedback`) | `angleDeg`, `scale`, `displace` | ✓ |
+| `blur` | 1 | layer | `radius` | `axis` | ✓ |
+| `history` | 1 | layer, or tracer | `frames` (2–8), `resolution` | `mode` (`trail` \| `tap`), `delay`, `falloff` | ✓ |
+| `displace` | 2: `[source, field]` | layer | `field` (`motion` \| `color`) | `gain`, `mode` (`inverse` \| `forward`) | ✓ |
 | `output` | 1 | output | `presentation` (`sdr` \| `hdr-extended`) | — | ✓ (`sdr` only) |
 
 A structural param that selects code or a binding is checked by `validate.ts`:
@@ -127,16 +130,18 @@ guarantee in `bandTable.test.ts` is untouched.
 ## Backend capability is a compile-time answer
 
 `capabilities.ts` lists the node kinds each backend can emit. The WebGL
-diagnostic backend supports every kind that has a GLSL template — today
-everything except `warp`, `blur`, `history` and `displace`. The last two are
-WebGPU-only on purpose rather than for want of a template: the WebGL backend
-does not *execute* graphs yet, so a GLSL emitter would be code nothing runs.
-They arrive with the WebGL executor. Compiling a graph that reaches an
-unsupported node throws a `PassGraphError` with `code: 'unsupported-node'`
-naming the node and the kind. It never silently approximates.
+backend supports every kind that has a GLSL template and an executor that
+draws it — today every kind: `warp`, `blur`, `history` and `displace` arrived
+with the WebGL executor, each emitter in the same change as its name in the
+`webgl` set. Compiling a graph that reaches an unsupported node throws a
+`PassGraphError` with `code: 'unsupported-node'` naming the node and the kind,
+and the canvas keeps the default graph. It never silently approximates. What
+WebGL still refuses by name is a param, not a kind: an `hdr-extended` output.
 
-Adding WebGL support for a kind means adding its emitter to `templates/glsl.ts`
-and its name to the `webgl` set — nothing else.
+Adding WebGL support for a new kind means adding its emitter to
+`templates/glsl.ts`, its name to the `webgl` set and its encode step to
+`WebGLGraphExecutor` — a kind with an emitter but no step would be code nothing
+runs.
 
 ## Pixel identity
 
@@ -196,7 +201,7 @@ hand-written shader it replaced — see `__golden__/coincidence-compute.wgsl`.
 ## The gate
 
 The gate picks the **shape**. Every session compiles a graph, publishes the
-breadcrumbs and, on WebGPU, draws it with the executor — the default graph,
+breadcrumbs and draws it with its backend's executor — the default graph,
 unless `?graph=<name>` (or a stored `chromashift.passGraph` preference) selects
 another. The URL wins over the stored preference. The default graph draws the
 hand encoder's look: see [Pixel parity](#pixel-parity-on-a-device) for how
@@ -215,10 +220,10 @@ exactly.
 | `window.passGraphExecuting` | the shape the executor **drew** last frame — the selected one, or `default` standing in for a variant it refused — or `null` for a frame nothing validated could draw |
 | `window.passGraphDrawnVariant` | the variant that frame drew. It trails `passGraphVariant` while the device validates a new one, since the last one keeps drawing until then |
 | `window.passGraphExecutedPasses` | node ids the executor encodes, in order |
-| `window.passGraphSlotsExecuting` | per orchestrator slot (`main`, `compare-b`, the quad cells): the shape that slot's executor drew last frame, or `null`. Every other breadcrumb here is the primary canvas's alone |
+| `window.passGraphSlotsExecuting` | per orchestrator slot (`main`, `compare-b`, the quad cells — and `xr` for a headset session): the shape that slot's executor drew last frame, or `null`. Every other breadcrumb here is the primary canvas's alone |
 
 `passGraphActive` says the compiler ran; `passGraphExecuting` says something is
-drawing what it produced. `passGraphExecutedPasses` is shorter than
+drawing what it produced — on either backend. `passGraphExecutedPasses` is shorter than
 `passGraphPasses`: `source` and `output` own no pass, and a `coincidence` fused
 into its `decay` consumers is absorbed by them.
 
@@ -259,7 +264,7 @@ layer count.
 
 The values come from one module, `exec/uniforms.ts` (`bandLayerUniforms`,
 `persistUniforms`, `compositorUniforms`, …). Every encode path — the executor,
-the inspect views, the stationary previews, the WebGL passes — calls it, and an absent
+the inspect views, the stationary previews, the WebGL executor — calls it, and an absent
 `RendererState` field means `RENDERER_STATE_DEFAULTS` in `state/defaults.ts` —
 read through `rendererStateValue()`, never a fallback spelled at the read. The
 backends had already drifted (WebGL read an absent tracer duration as
@@ -583,7 +588,7 @@ present node — that the pass writing it reads.
   target `rgba16float`; every other pass keeps its internal format.
 - **SDR stays SDR.** An `sdr` output carries no param, so SDR graphs hash as they
   always did. Export renders the `sdr` variant whatever the canvas presents.
-- **WebGL refuses it** by name: its compositor presents SDR only.
+- **WebGL refuses it** by name: its canvas is `RGBA8` and presents SDR only.
 
 On SwiftShader the browser grants extended tone mapping, so
 `e2e/graph-executor.spec.ts` reads the float swap chain back (decoded to 8 bits)
@@ -609,7 +614,9 @@ layers and `persistAbove` over them, timed by the session's tracer settings.
   order, never from a param.
 - The temporal term reaches every accumulator through the one shared `motion`
   node; the readback roles (`tracerBelow`, `tracerAbove`) are still the pair.
-- **WebGL refuses** a compositor with more than two tracers, by name.
+- **WebGL blends them too.** `emitCompositorGlsl(layers, tracerCount)` adds
+  `u_tracer2…` and `u_tracerOpacity2…` and folds every extra beneath `below`;
+  two tracers emit exactly `__golden__/compositor.glsl`.
 
 `?graph=trails3` (`buildTrails3Graph`) is the starter: the default graph plus a
 6-second echo at 0.45, drawn under everything — the trail a slow-moving subject
@@ -632,10 +639,10 @@ leaves long after the shipped tracers have faded.
   run emitters (`emitBlurWgsl`, `emitWarpWgsl`) that had no runtime at all
   before. The E2E spec asserts content, a difference from the default graph,
   and no uncaptured GPU error.
-- **Refusals stay refusals.** On WebGL, `?graph=warp` and `?graph=blur` are a
-  `PassGraphError` with `code: 'unsupported-node'` naming the node, published as
-  `window.passGraphError`, and the canvas keeps drawing the default look
-  (`e2e/pass-graph.spec.ts`). On WebGPU, a graph the executor cannot encode is
+- **Refusals stay refusals.** On WebGL (until it had an executor of its own),
+  `?graph=warp` and `?graph=blur` were a `PassGraphError` with
+  `code: 'unsupported-node'` naming the node, and the canvas kept drawing the
+  default look. On WebGPU, a graph the executor cannot encode is
   refused with the node named, and one whose pipelines the device rejects is
   refused with the device's error — either way the hand encoder stayed on
   screen (since Phase 3, the default graph does).
@@ -741,12 +748,76 @@ Issue #203: the executor became the one WebGPU encode path, one step per PR.
   and a refused variant draws the default graph. The compute-fed stamp was
   [decided](#the-compute-fed-stamp-decided).
 
+## The WebGL executor
+
+The diagnostic / XR / screenshot backend draws the compiled graph too. Before
+it did, `WebGLRenderer` drew the classic topology by hand
+(`WebGLLayerPass`, `WebGLPersistencePass`, `WebGLCompositorPass`) — three band
+passes at any layer count — and every new shape was WebGPU-only, so a look
+could be green in `chromium-webgpu` and invisible to the `chromium` project
+that runs on every push, and a headset could never show it. The hand passes
+are gone.
+
+```
+compileGraph(graph, 'webgl')   →  CompiledGraph   (GLSL ES 3.00 per pass)
+buildEncodePlan(compiled)      →  EncodeStep[]    (the same plan WebGPU walks)
+WebGLGraphExecutor.encode(...) →  one fullscreen draw per step
+```
+
+| File | Job |
+|---|---|
+| `templates/glsl.ts` | The GLSL twins: `emitWarpGlsl`, `emitBlurGlsl` (the same taps, via `blurWeights`), `emitHistoryTapsGlsl`, `emitDisplaceGlsl`, and the N-tracer `emitCompositorGlsl`. |
+| `exec/pool.ts` | `TexturePool<T>` — the allocator's lifetime rules (lazy transients, ping-pong pairs, `history` rings, `flip()`, retention across a plan change), generic over the texture. WebGPU's `GraphTexturePool` and WebGL's `RenderTarget` pool are the same class. |
+| `exec/webglProgramCache.ts` | The context's linked programs, keyed on the structural hash and shared by source — every band layer runs one program, both accumulators another. Refcounted by its executors, so a renderer torn down while its replacement draws on the same context deletes nothing in use. |
+| `exec/WebGLGraphExecutor.ts` | Walks the steps: binds each pass's inputs by name, sets its uniforms from `uniforms.ts`, draws, flips the ping-pong. |
+
+What carries over unchanged is everything the two backends share: the fusion
+rule, the tracer roles and every refusal live in `plan.ts`; the uniform values
+in `uniforms.ts`; the variant cache and the "refused variant draws the default
+graph" rule in the renderer. Accumulators are read from their history side by
+the compositor, as on WebGPU — the hand-written WebGL compositor read the side
+it had just written, a frame earlier than WebGPU; with the shared rule the two
+backends composite the same frame of accumulation.
+
+What differs is the backend's own:
+
+- **Validation is synchronous.** A shader the driver rejects is a compile or
+  link failure the moment it is built, so `prepare()` answers at once. It is
+  an `invalid-pipeline:` refusal like WebGPU's: the variant draws the default
+  graph, and until a frame adopts the stand-in `readyFrame()` keeps the last
+  frame that linked.
+- **Targets are `RGBA` / `UNSIGNED_BYTE`** (`webgl/resources.ts`), not the
+  WebGPU internal format. Half-float targets are a separate context-policy
+  change. So the WebGL frame is pinned against its own golden
+  (`e2e/__golden__/webgl-default-composite.png`), never against WebGPU's.
+  That golden was captured from the hand-written passes at the last commit
+  that had them, and the executor draws it byte-identically.
+- **No stamp diagnostic attachment and no MSAA.** The collision-stats readback
+  re-runs the graph's compositor in heatmap view (`composite()`), as the tracer
+  export and the stationary previews do.
+- **Textures are resolved before any is bound.** Creating a texture (a pool
+  target on first use, the 1×1 zero field) binds it on the active unit, which
+  would clobber an input the pass had already bound there.
+- **The motion field is the CPU lanes'** (`WebGLMotionField`): `R16F`
+  magnitude, or `RGB16F` with flow. `useLiveSource` samples it whenever the
+  graph reads it (`cpuMotionFieldUse()`), not only when a motion mode is on, so
+  `?graph=smear` steers on WebGL too.
+
+The debug views (`webglDebugMode`: luminance mask, rotation UV grid, layer
+isolation) are not graph nodes. They stay `WebGLDebugPasses`, and replace the
+band layers' program through the executor's `drawLayer` hook.
+
+**XR** constructs its own `WebGLRenderer` on its own xr-compatible context
+(sharing one with the desktop canvas is #178) and hands it the session's graph
+source as a non-primary slot (`xr` in `window.passGraphSlotsExecuting`). The
+composite lands in the `XRWebGLLayer`'s framebuffer, cleared per eye inside its
+viewport. A `?graph=feedback` session shows the feedback graph in the headset.
+
+WebGL stays an explicit backend: `?renderer=webgl` is the only way in, never
+an automatic fallback.
+
 ### Not done yet
 
-- **The WebGL executor.** The diagnostic / XR / screenshot backend still
-  compiles only, and still draws its own three band passes at any layer count.
-  It is second in line on purpose: it has no template for `warp` or `blur`, so
-  the shapes worth executing are WebGPU's first.
 - **`history` feedback cycles.** A ring whose oldest slot could close a cycle
   would make true previous-frame feedback (a warp steered by its own last
   output) expressible.
@@ -780,13 +851,16 @@ src/engine/graph/
 │   ├── nodePipelines.ts         # one emitted pass → shared program + per-executor uniforms
 │   ├── programCache.ts          # the device's programs, shared by every slot's executor
 │   ├── uniforms.ts              # RendererState → uniform values, for every encode path
-│   └── WebGpuGraphExecutor.ts   # walks the steps and encodes the frame
+│   ├── WebGpuGraphExecutor.ts   # walks the steps and encodes the frame
+│   ├── webglProgramCache.ts     # the GL context's programs, shared by its executors
+│   └── WebGLGraphExecutor.ts    # walks the same steps on WebGL2
 ├── templates/
 │   ├── uniformLayout.ts  # typed uniform-block layouts; the WGSL structs are emitted from them
 │   ├── wgsl.ts       # band-layer, coincidence+decay, blend, lut, warp, blur, history, displace
 │   ├── canonicalWgsl.ts  # the default graph's three-layer sources by name (shaders/*.ts re-export them)
-│   └── glsl.ts       # band-layer, coincidence+decay, blend, lut
+│   └── glsl.ts       # the GLSL twins of every kind
 └── __golden__/       # pre-refactor shader sources — the pixel-identity baseline
 
 e2e/__golden__/       # the hand encoder's frames, pinned — the on-device baseline
+                      #   (webgl-default-composite.png: the hand-written WebGL passes')
 ```

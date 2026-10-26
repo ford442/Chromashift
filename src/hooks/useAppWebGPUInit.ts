@@ -262,10 +262,9 @@ export function useAppWebGPUInit({
       publishRendererBreadcrumbs(bootstrapped.orchestrator.getBackend(), fallbackReason);
       // Pass-graph gate: which shape the session draws (`?graph=blur`,
       // `?graph=trails3`, …; the default graph otherwise). Compiles it for the
-      // live backend and publishes the breadcrumbs. On WebGPU the graph source
-      // is then handed to every slot's renderer, whose `GraphExecutor` draws
-      // each frame — a variant the shape refuses draws the default graph. The
-      // WebGL diagnostic backend compiles but does not execute.
+      // live backend and publishes the breadcrumbs. The graph source is then
+      // handed to every slot's renderer, whose executor — WebGPU or WebGL —
+      // draws each frame; a variant the shape refuses draws the default graph.
       // See docs/PASS_GRAPH.md.
       activatePassGraph(bootstrapped.orchestrator.getBackend());
       bootstrapped.orchestrator.setPassGraph(presetGraphSource(passGraphSelection().name));

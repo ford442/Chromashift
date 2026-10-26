@@ -12,6 +12,8 @@ import {
 } from '../templates/wgsl';
 import { packUniforms, type UniformLayout, type UniformValues } from '../templates/uniformLayout';
 import {
+  EXTRA_TRACER_DURATION_MS,
+  EXTRA_TRACER_INTENSITY,
   bandLayerUniforms,
   compositorUniforms,
   graphTracerDuration,
@@ -120,13 +122,6 @@ interface Frame extends GraphFrame {
   readonly plan: EncodePlan;
   readonly set: PipelineSet;
 }
-
-/**
- * What an extra tracer timescale (a third accumulator and on) is drawn with
- * when its node does not say: a slow, faint echo under the shipped pair.
- */
-const EXTRA_TRACER_DURATION_MS = 4000;
-const EXTRA_TRACER_INTENSITY = 0.4;
 
 /**
  * Executes a `CompiledGraph` on WebGPU.
