@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInitialState } from '../../state/defaults';
 import type { ChromashiftRenderer, ExportFrameOptions } from '../types/RendererContracts';
 import type { RendererState } from '../types/RendererState';
+import { FrameClock } from '../frame/FrameClock';
 import { exportVideo, type VideoExportRequest } from './VideoExporter';
 import type { VideoExportCapabilities } from './videoCodecs';
 
@@ -267,6 +268,32 @@ describe('exportVideo (offline render loop)', () => {
     expect(result.mimeType).toBe('video/webm;codecs=vp9');
     expect(result.filename).toBe('test-export.webm');
     expect(result.blob.size).toBeGreaterThan(0);
+  });
+
+  it('steps the shared frame clock: live tasks run once per frame, in phase order, then realtime resumes', async () => {
+    const scheduler = { request: vi.fn(() => 1), cancel: vi.fn() };
+    const clock = new FrameClock({ scheduler });
+    const fake = makeFakeRenderer();
+    const log: string[] = [];
+    clock.register('input', (tick) => { log.push(`input:${tick.mode}`); }, 'audio-input');
+    clock.register('sources', () => { log.push('sources'); }, 'live-source-upload');
+    clock.register('telemetry', () => { log.push('telemetry'); }, 'meters');
+    const exportFrame = fake.renderer.exportFrame.bind(fake.renderer);
+    fake.renderer.exportFrame = (state, options) => {
+      log.push('export');
+      return exportFrame(state, options);
+    };
+
+    const result = await exportVideo(
+      fake.renderer, createInitialState(), [0, 0, 0], 64, 64,
+      makeRequest({ durationSec: 1, fps: 3, clock }),
+    );
+
+    expect(result.frameCount).toBe(3);
+    const frame = ['input:offline', 'sources', 'export', 'telemetry'];
+    expect(log).toEqual([...frame, ...frame, ...frame]);
+    expect(clock.mode).toBe('realtime');
+    expect(clock.describe().render).toEqual([]);
   });
 
   it('produces an identical angle sequence across two runs from the same preset', async () => {

@@ -61,4 +61,9 @@ export interface ReactiveRefs {
   reactiveModRef: MutableRefObject<ReactiveModulation | null>;
 }
 
-export type ChromashiftRefs = DomRefs & GpuRefs & MediaRefs & CompareRefs & ReactiveRefs;
+export interface FrameRefs {
+  /** The app's one frame clock (`engine/frame/FrameClock.ts`); never reassigned. */
+  frameClockRef: MutableRefObject<import('../../engine/frame/FrameClock').FrameClock>;
+}
+
+export type ChromashiftRefs = DomRefs & GpuRefs & MediaRefs & CompareRefs & ReactiveRefs & FrameRefs;

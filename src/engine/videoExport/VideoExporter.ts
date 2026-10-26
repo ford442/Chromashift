@@ -1,3 +1,4 @@
+import type { FrameClock } from '../frame/FrameClock';
 import type { ChromashiftRenderer, ExportPassMode } from '../types/RendererContracts';
 import type { ChromashiftState } from '../../state/types';
 import { exportVideoMediaRecorder } from './exportVideoMediaRecorder';
@@ -16,6 +17,14 @@ export interface VideoExportRequest {
   quality: VideoExportQuality;
   signal?: AbortSignal;
   onProgress?: (frame: number, totalFrames: number) => void;
+  /**
+   * The app's frame clock. Export switches it to offline mode and steps it
+   * once per exported frame, so the live session's `input` / `sources` /
+   * `modulate` tasks run in the same order as they do live, and nothing
+   * renders to the canvas meanwhile. Omitted (tests, tools), export runs on a
+   * private clock with only its own render task.
+   */
+  clock?: FrameClock;
 }
 
 export interface VideoExportResult {

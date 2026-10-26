@@ -3,14 +3,14 @@ import { AudioAnalyser } from '../engine/reactive/AudioAnalyser';
 import { applyMidiParam } from '../engine/reactive/applyMidiParam';
 import { MidiController, findBinding } from '../engine/reactive/MidiController';
 import { computeAudioModulation } from '../engine/reactive/modulation';
-import type { ReactiveModulation } from '../engine/reactive/types';
+import type { AudioLevelSnapshot } from '../engine/reactive/types';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 const LEVEL_UI_INTERVAL_MS = 100;
 
 export function useReactiveInput(refs: ChromashiftRefs, store: ChromashiftStore): void {
   const { state, dispatch } = store;
-  const { reactiveModRef, renderStateRef } = refs;
+  const { reactiveModRef, renderStateRef, frameClockRef } = refs;
   const reactive = state.reactive;
 
   const audioRef = useRef<AudioAnalyser | null>(null);
@@ -142,50 +142,47 @@ export function useReactiveInput(refs: ChromashiftRefs, store: ChromashiftStore)
     };
   }, [reactive.enabled, reactive.midiEnabled, dispatch, renderStateRef]);
 
-  // Per-frame audio modulation + level meters.
+  // Per-frame audio modulation + level meters — registered only while audio
+  // reactive is on; with it off nothing runs and `reactiveModRef` stays null.
   useEffect(() => {
-    if (!reactive.enabled) {
+    if (!reactive.enabled || !reactive.audioEnabled) {
       reactiveModRef.current = null;
       return;
     }
+    const clock = frameClockRef.current;
+    let levels: AudioLevelSnapshot | null = null;
 
-    let raf = 0;
-    const tick = (now: number) => {
+    // input: sample the analyser and derive this tick's modulation, so the
+    // animation's `modulate` task (and everything after it) reads this frame's.
+    const unregisterInput = clock.register('input', () => {
       const current = renderStateRef.current;
-      if (!current.reactive.enabled) {
-        reactiveModRef.current = null;
-        raf = requestAnimationFrame(tick);
-        return;
+      levels = audioRef.current?.isActive ? audioRef.current.sample() : null;
+      reactiveModRef.current = levels ? computeAudioModulation(current, levels) : null;
+    }, 'audio-input');
+
+    const unregisterMeters = clock.register('telemetry', ({ now }) => {
+      if (!levels || now - lastLevelSyncRef.current < LEVEL_UI_INTERVAL_MS) return;
+      lastLevelSyncRef.current = now;
+      const prev = renderStateRef.current.reactive.audioLevels;
+      if (
+        prev.bass !== levels.bass
+        || prev.mid !== levels.mid
+        || prev.high !== levels.high
+        || prev.energy !== levels.energy
+      ) {
+        dispatch({ type: 'reactive/patch', patch: { audioLevels: levels } });
       }
+    }, 'audio-meters');
 
-      let modulation: ReactiveModulation | null = null;
-      if (current.reactive.audioEnabled && audioRef.current?.isActive) {
-        const levels = audioRef.current.sample();
-        modulation = computeAudioModulation(current, levels);
-
-        if (now - lastLevelSyncRef.current >= LEVEL_UI_INTERVAL_MS) {
-          lastLevelSyncRef.current = now;
-          const prev = current.reactive.audioLevels;
-          if (
-            prev.bass !== levels.bass
-            || prev.mid !== levels.mid
-            || prev.high !== levels.high
-            || prev.energy !== levels.energy
-          ) {
-            dispatch({ type: 'reactive/patch', patch: { audioLevels: levels } });
-          }
-        }
-      }
-
-      reactiveModRef.current = modulation;
-      raf = requestAnimationFrame(tick);
+    return () => {
+      unregisterInput();
+      unregisterMeters();
+      reactiveModRef.current = null;
     };
-
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
   }, [
     reactive.enabled,
     reactive.audioEnabled,
+    frameClockRef,
     reactiveModRef,
     renderStateRef,
     dispatch,

@@ -320,7 +320,7 @@ place of a still image — same rotating layers, tracers, and audio-reactive/MID
 `MediaStream` or file; `TextureManager`/`WebGLTextureManager.updateVideoTexture()` re-upload
 the current frame into a texture reused across calls (recreated only on resolution change, no
 mip chain) so memory stays stable over long sessions. `useLiveSource` (`src/hooks/useLiveSource.ts`)
-runs its own `requestAnimationFrame` loop (mirroring `useReactiveInput`'s pattern) for per-frame
+registers a `sources`-phase task on the frame clock (see "Frame clock" below) for per-frame
 upload and once-a-second luminance resampling, and publishes `window.liveSourceActive` /
 `window.liveSourceKind` / `window.liveSourceFps` breadcrumbs. `media.liveSource` is
 runtime-only state — never serialized into presets, so a shared preset URL never silently
@@ -511,6 +511,8 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
   compiles the golden graph (docs/PASS_GRAPH.md § *The temporal term*).
 
 ### State & Animation Loop (`App.tsx`)
+
+**Frame clock (`engine/frame/FrameClock.ts`).** There is exactly one `requestAnimationFrame` loop. Every per-frame subsystem registers a task on the app's `FrameClock` (`refs.frameClockRef`), which runs the phases in a fixed order each tick: **input** (`useReactiveInput`'s `audio-input`: sample the analyser and derive `reactiveModRef`) → **sources** (`useLiveSource`'s `live-source-upload`) → **modulate** (`useAnimationLoop`'s `animation-angles`: the fps throttle and the angle clock) → **render** (`main-render` for the canvas and compare slot B; `xr-render` while immersive) → **telemetry** (`render-telemetry`, `audio-meters`; each throttles itself). Anything a later phase reads is written in an earlier phase — never rely on registration order within a phase. A subsystem that is off **unregisters** (reactive input with audio off, no live source, export in progress) instead of spinning as a no-op; with nothing registered the clock requests no frames. While an XR session presents, `WebXrPresenter.enter(clock)` swaps the clock onto the session's frame loop (`xrSessionScheduler`), so every output shares the headset's tick. Video export puts the clock in **offline** mode (`enterOffline`) and `step`s it once per exported frame with `dt = 1000 / fps`, its own `render` task awaited in place of the canvas — the same phases, in the same order, as live. `e2e/frame-clock.spec.ts` asserts one rAF callback per frame (idle and with reactive input on).
 
 - Default layer spin rates: `[130, 230, 330]` (normalized degrees; wall-clock °/s = value × 30). FPS only changes sampling density — not angular speed.
 - Default FPS: 30.

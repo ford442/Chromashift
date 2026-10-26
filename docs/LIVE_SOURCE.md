@@ -33,8 +33,10 @@ or clicking Stop, releases the stream/file and returns to the normal image pipel
   filtering would be wasted GPU time). This keeps texture memory stable over long sessions
   instead of growing per frame.
 - **`useLiveSource`** (`src/hooks/useLiveSource.ts`) owns the manager instance, the
-  start/stop handlers, and a dedicated `requestAnimationFrame` loop (mirroring
-  `useReactiveInput`'s own loop rather than piggybacking on the main render loop) that:
+  start/stop handlers, and a `sources`-phase task on the app's frame clock
+  (`engine/frame/FrameClock.ts`) — registered only while a source is active, and run
+  before the render phase every tick, so a frame always draws the video frame just
+  uploaded. The task:
   1. Uploads the current frame every tick and routes the resulting texture handle through
      `applySourceTexture` — the same path used for still images, so it reaches the primary
      renderer and any active compare/quad slots.

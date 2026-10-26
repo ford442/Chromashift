@@ -5,6 +5,20 @@ import { rendererStateValue } from '../graph/exec/uniforms';
 import { createWebGL2Context } from '../gpuBootstrap';
 import { passGraphSelection } from '../graph/gate';
 import { presetGraphSource } from '../graph/variants';
+import type { FrameClock, FrameScheduler } from '../frame/FrameClock';
+
+/**
+ * An immersive session's frame loop as a {@link FrameScheduler}. While a
+ * session is presenting, the window's `requestAnimationFrame` may stop (a
+ * standalone headset) or run at the monitor's rate; the headset's own loop is
+ * the one every output should tick on.
+ */
+export function xrSessionScheduler(session: XRSession): FrameScheduler {
+  return {
+    request: (callback) => session.requestAnimationFrame((now, frame) => callback(now, frame)),
+    cancel: (handle) => session.cancelAnimationFrame(handle),
+  };
+}
 
 /** The XR renderer's slot in `window.passGraphSlotsExecuting`. */
 export const XR_GRAPH_SLOT = 'xr';
@@ -42,6 +56,10 @@ export type WebXrFrameRenderer = (
  * resolution per eye. Requires a dedicated xr-compatible WebGL2 context (sharing
  * the desktop one is #178).
  *
+ * While presenting, the app's {@link FrameClock} ticks on the session's frame
+ * loop (see {@link xrSessionScheduler}) and the headset is drawn by a `render`
+ * task — every subsystem shares the headset's tick.
+ *
  * The headset draws the session's pass graph, through the same
  * `WebGLGraphExecutor` the desktop WebGL canvas uses — so a `?graph=feedback`
  * session shows the feedback graph in the headset too. Its renderer is not the
@@ -62,6 +80,8 @@ export class WebXrPresenter {
   private frameRenderer: WebXrFrameRenderer | null = null;
   private fps = 30;
   private onSessionEnd: (() => void) | null = null;
+  /** Undo the clock wiring made in `enter`. */
+  private releaseClock: (() => void) | null = null;
 
   constructor() {
     this.canvas = document.createElement('canvas');
@@ -102,7 +122,7 @@ export class WebXrPresenter {
     this.currentUrl = url;
   }
 
-  async enter(onEnd?: () => void): Promise<void> {
+  async enter(clock: FrameClock, onEnd?: () => void): Promise<void> {
     if (this.active) return;
     if (!navigator.xr) throw new Error('WebXR is not available.');
 
@@ -129,7 +149,14 @@ export class WebXrPresenter {
     session.addEventListener('end', handleEnd, { once: true });
 
     this.active = true;
-    session.requestAnimationFrame(this.onXrFrame);
+    const restoreScheduler = clock.useScheduler(xrSessionScheduler(session));
+    const unregister = clock.register('render', ({ xrFrame }) => {
+      if (xrFrame) this.drawFrame(xrFrame);
+    }, 'xr-render');
+    this.releaseClock = () => {
+      unregister();
+      restoreScheduler();
+    };
   }
 
   exit(): void {
@@ -146,17 +173,19 @@ export class WebXrPresenter {
   }
 
   private teardownSession(): void {
+    this.releaseClock?.();
+    this.releaseClock = null;
     this.active = false;
     this.session = null;
     this.layer = null;
     this.refSpace = null;
   }
 
-  private onXrFrame = (_time: number, frame: XRFrame): void => {
-    const session = this.session;
+  /** Draw both eyes for one XR frame (the clock's `render` phase calls this). */
+  drawFrame(frame: XRFrame): void {
     const layer = this.layer;
     const refSpace = this.refSpace;
-    if (!session || !layer || !refSpace || !this.active) return;
+    if (!layer || !refSpace || !this.active) return;
 
     const pose = frame.getViewerPose(refSpace);
     if (pose && this.frameRenderer) {
@@ -175,9 +204,7 @@ export class WebXrPresenter {
         );
       });
     }
-
-    session.requestAnimationFrame(this.onXrFrame);
-  };
+  }
 }
 
 /**
