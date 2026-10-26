@@ -22,8 +22,10 @@ EMSDK_VERSION := $(strip $(shell cat $(EMSDK_VERSION_FILE) 2>/dev/null))
 # `source emsdk_env.sh` can hit the `/…/emsdk/node` *directory* and fail with
 # EACCES when make execs it directly — common under emmake/Colab.
 NODE     := $(shell command -v node 2>/dev/null)
-SRC      := chromashift_engine.cpp
+SRCS     := chromashift_engine.cpp motion_flow.cpp
 HEADER   := chromashift_engine.h
+# Internal headers every engine TU includes (not part of the exported interface).
+INTERNAL_HDRS := simd_util.h
 BAND_HDR := band_table.h
 BAND_JSON := ../shared/band.json
 BAND_CODEGEN := ../scripts/codegen-band.mjs
@@ -48,9 +50,32 @@ EXPORTED_FUNCS := \
   _classifyPixelsBulk,_classifyPixelsBulkLut,\
   _computeClassificationMask,_computeClassificationMaskLut,\
   _computeLuminanceHistogram,_computeColorBandCounts,\
-  _buildRotationMat3,_durationToDecay,_advanceLayerAngles,_advanceLayerAngles3,\
+  _buildRotationMat3,_durationToDecay,_advanceLayerAngles,\
   _computeMotionFlow,\
   _simulateTracerDecay
+
+# ─── Compile flags: the one source ───────────────────────────────────────────
+#
+# Every compile of the engine — host g++ tests, the em++ SIMD tests, the shipped
+# emcc build and the clangd database (`make compile-commands` passes these to
+# scripts/gen-compile-commands.mjs) — starts from CXXFLAGS_COMMON, so a warning
+# that fails `make test-werror` in CI cannot be silently absent from the shipped
+# build, and the editor sees exactly what the compiler sees.
+#
+# -ffp-contract=off: never fuse a*b+c into an FMA. The kernels are written so
+# the scalar, SIMD128, TypeScript and WGSL lanes round identically, and an
+# aarch64 host (where clang contracts by default) would otherwise fuse the
+# lkSolve arithmetic and make the host tests platform-dependent. wasm32 has no
+# scalar FMA, so the shipped build is unaffected; it is pinned there anyway so
+# the guarantee does not rest on that.
+CXXFLAGS_COMMON := -std=c++17 -Wall -Wextra -ffp-contract=off -I.
+
+# Code-generation flags for the wasm32 target (compile side only; the -s link
+# settings follow). -msimd128 enables the hand-written wasm_simd128.h kernels.
+# Never add -mrelaxed-simd: relaxed ops (FMA, swizzle, min/max) have
+# implementation-defined results, which would break bit-exact SIMD-vs-scalar
+# parity (tests/simd_parity.cpp) and make output differ between browsers.
+WASM_CXXFLAGS := $(CXXFLAGS_COMMON) -msimd128 -fno-exceptions -fno-rtti
 
 # Shared Emscripten link flags (debug vs release differ only in -O / ASSERTIONS / -flto)
 #
@@ -60,24 +85,27 @@ EXPORTED_FUNCS := \
 # C ABI, and dropping it also drops the -fno-rtti / UNBOUND_TYPE_NAMES workarounds
 # it needed.  `make verify-exports` is the single source of truth for the list.
 #
-# -Wall -Wextra match the host test compile below: the wasm and host builds see
-# the same sources, so a warning that fails `make test-werror` in CI must not be
-# silently absent from the shipped build.
+# No -msse2: nothing includes the x86 headers. -fno-rtti: nothing uses
+# typeid/dynamic_cast (there is no embind). ENVIRONMENT=web,worker + FILESYSTEM=0
+# drop the Node/shell and filesystem glue — the engine only ever runs in a
+# browser window or a Web Worker. DYNAMIC_EXECUTION=0 keeps eval/new Function out
+# of the glue, so the app works under a strict CSP.
 #
-# -msimd128 enables the hand-written wasm_simd128.h kernels in the engine
-# (guarded by __wasm_simd128__).  No -msse2: nothing includes the x86 headers.
-# ENVIRONMENT=web,worker + FILESYSTEM=0 drop the Node/shell and filesystem glue —
-# the engine only ever runs in a browser window or a Web Worker.
+# MALLOC=emmalloc: the engine allocates a handful of long-lived buffers (the
+# TypeScript side pools its inputs, motion_flow.cpp keeps a grow-only arena), so
+# dlmalloc's small-object bins buy nothing; emmalloc is ~13% smaller.
+#
+# INITIAL_MEMORY is 16 MiB plus growth. Up to three instances exist at once (main
+# thread, analysis worker, motion worker) and each reserves this up front; the
+# large buffers — a 4K–8K RGBA image and its mask — grow the heap on first use
+# and the TypeScript pool keeps it from churning after that.
 #
 # Release-only: -flto and --closure 1 (the glue is a thin C-ABI shim, so Closure
 # has nothing to break and halves it).  Both are off in debug builds so stack
 # traces and ASSERTIONS output stay readable.  Output is reproducible for a
 # pinned emsdk version, which the wasm-freshness workflow relies on.
 EMFLAGS_COMMON := \
-  -Wall \
-  -Wextra \
-  -msimd128 \
-  -fno-exceptions \
+  $(WASM_CXXFLAGS) \
   -s MODULARIZE=1 \
   -s EXPORT_ES6=1 \
   -s EXPORT_NAME="ChromashiftEngine" \
@@ -85,7 +113,9 @@ EMFLAGS_COMMON := \
   -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32","HEAP32","HEAPF32"]' \
   -s ENVIRONMENT=web,worker \
   -s FILESYSTEM=0 \
-  -s INITIAL_MEMORY=67108864 \
+  -s DYNAMIC_EXECUTION=0 \
+  -s MALLOC=emmalloc \
+  -s INITIAL_MEMORY=16777216 \
   -s ALLOW_MEMORY_GROWTH=1
 
 EMFLAGS_RELEASE := -O3 -flto --closure 1 $(EMFLAGS_COMMON)
@@ -96,13 +126,30 @@ CXX      := g++
 TEST_BIN := tests/test_engine
 TEST_SRC := tests/test_engine.cpp
 TEST_ASAN_BIN := tests/test_engine_asan
-# Kept in sync with scripts/gen-compile-commands.mjs — the clangd database
-# spells out this exact invocation.
-TEST_CXXFLAGS := -std=c++17 -Wall -Wextra -I.
+TEST_CXXFLAGS := $(CXXFLAGS_COMMON)
+
+# ─── SIMD128 tests (em++ -msimd128, run under Node) ─────────────────────────
+# The host build above never compiles a CS_HAS_SIMD block, so these are the
+# tests of the code the browser actually runs:
+#   test-simd    the whole tests/test_engine.cpp suite against the SIMD build
+#   test-parity  tests/simd_parity.cpp — the SIMD and the scalar engine linked
+#                into one module (tests/scalar_*.cpp recompile every engine TU
+#                with CS_FORCE_SCALAR and renamed exports) and compared bit for
+#                bit on odd sizes and NaN / denormal / extreme inputs
+# -O3 like the release build, so the optimiser sees what it sees in production.
+# `.cjs` because the repo's package.json is "type": "module" and the Node glue
+# is CommonJS.
+EMXX          := em++
+EMTEST_FLAGS  := $(WASM_CXXFLAGS) -O3 -s ENVIRONMENT=node -s ALLOW_MEMORY_GROWTH=1
+SIMD_TEST_JS  := tests/test_engine_simd.cjs
+PARITY_JS     := tests/simd_parity.cjs
+PARITY_SRCS   := tests/simd_parity.cpp tests/scalar_engine.cpp tests/scalar_motion_flow.cpp
+PARITY_HDRS   := tests/scalar_names.h
 
 # ─── Targets ─────────────────────────────────────────────────────────────────
-.PHONY: all release debug clean check check-emsdk-version test test-werror test-asan verify-exports \
-        codegen rebuild compile-commands ensure-mode ensure-flags _build
+.PHONY: all release debug clean check check-emsdk-version test test-werror test-asan \
+        test-simd test-parity verify-exports codegen rebuild compile-commands \
+        ensure-mode ensure-flags _build
 
 all: release
 
@@ -153,7 +200,10 @@ ensure-flags:
 
 # shared/*.json → *_table.h (codegen only rewrites when content changes).
 # Depend on the JSON only — not the codegen script — so editing the script
-# does not force an every-build no-op regenerate.
+# does not force an every-build no-op regenerate. The trailing `touch` matters
+# for the same reason: when the JSON is newer but the generated text is
+# unchanged, codegen leaves the header's mtime alone, so without it the header
+# would stay older than the JSON and be "rebuilt" on every make.
 $(BAND_HDR): $(BAND_JSON)
 	@if [ -z "$(NODE)" ]; then \
 	  echo "❌  node not found on PATH — cannot regenerate $(BAND_HDR)"; \
@@ -161,6 +211,7 @@ $(BAND_HDR): $(BAND_JSON)
 	  exit 1; \
 	fi
 	$(NODE) $(BAND_CODEGEN)
+	@touch $@
 
 $(DECAY_HDR): $(DECAY_JSON)
 	@if [ -z "$(NODE)" ]; then \
@@ -169,6 +220,7 @@ $(DECAY_HDR): $(DECAY_JSON)
 	  exit 1; \
 	fi
 	$(NODE) $(DECAY_CODEGEN)
+	@touch $@
 
 # Select flags from CS_BUILD_MODE (set by release/debug → _build).
 # Expanded in the recipe so nested make does not mangle quoted -s args.
@@ -176,16 +228,17 @@ CS_EMFLAGS = $(if $(filter debug,$(CS_BUILD_MODE)),$(EMFLAGS_DEBUG),$(EMFLAGS_RE
 
 # Grouped target (&:) so -j does not run emcc twice for the dual outputs.
 # Also depends on Makefile so editing this file forces a rebuild.
-$(OUT_JS) $(OUT_WASM) &: $(SRC) $(HEADER) $(GEN_HDRS) Makefile
+$(OUT_JS) $(OUT_WASM) &: $(SRCS) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS) Makefile
 	@command -v $(EMCC) >/dev/null 2>&1 || \
 	  (echo "❌  emcc not found — run: source /path/to/emsdk/emsdk_env.sh" && exit 1)
-	$(EMCC) $(SRC) $(CS_EMFLAGS) -o $(OUT_JS)
+	$(EMCC) $(SRCS) $(CS_EMFLAGS) -o $(OUT_JS)
 	@echo "✅  WASM build complete ($(if $(filter debug,$(CS_BUILD_MODE)),debug,release)):"
 	@echo "     $(OUT_JS)"
 	@echo "     $(OUT_WASM)"
 
 clean:
 	rm -f $(OUT_JS) $(OUT_WASM) $(TEST_BIN) $(TEST_ASAN_BIN) compile_commands.json \
+	  $(SIMD_TEST_JS) $(SIMD_TEST_JS:.cjs=.wasm) $(PARITY_JS) $(PARITY_JS:.cjs=.wasm) \
 	  $(MODE_STAMP) $(FLAGS_STAMP) $(FLAGS_STAMP).new
 
 check:
@@ -209,13 +262,13 @@ check-emsdk-version:
 	  echo "    Committed public/chromashift_engine.* are reproducible only for the pinned version."; \
 	fi
 
-$(TEST_BIN): $(SRC) $(TEST_SRC) $(HEADER) $(GEN_HDRS)
-	$(CXX) $(TEST_CXXFLAGS) $(EXTRA_TEST_CXXFLAGS) $(SRC) $(TEST_SRC) -o $(TEST_BIN) -lm
+$(TEST_BIN): $(SRCS) $(TEST_SRC) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS)
+	$(CXX) $(TEST_CXXFLAGS) $(EXTRA_TEST_CXXFLAGS) $(SRCS) $(TEST_SRC) -o $(TEST_BIN) -lm
 
 test: $(TEST_BIN)
 	./$(TEST_BIN)
 
-# Warning gate. CI's `wasm` job runs this instead of plain `test`, so a new
+# Warning gate. CI's `cpp` job runs this instead of plain `test`, so a new
 # implicit conversion or unused parameter fails the build rather than scrolling
 # past. Rebuilds from scratch because -Werror only applies to recompiled TUs.
 test-werror:
@@ -226,21 +279,40 @@ test-werror:
 # is several times slower) and never applied to the shipped .wasm — run it when
 # touching pointer arithmetic in the bulk/LUT kernels:
 #   make -C cpp test-asan
-$(TEST_ASAN_BIN): $(SRC) $(TEST_SRC) $(HEADER) $(GEN_HDRS)
+$(TEST_ASAN_BIN): $(SRCS) $(TEST_SRC) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS)
 	$(CXX) $(TEST_CXXFLAGS) -g -fsanitize=address,undefined -fno-omit-frame-pointer \
-	  $(SRC) $(TEST_SRC) -o $(TEST_ASAN_BIN) -lm
+	  $(SRCS) $(TEST_SRC) -o $(TEST_ASAN_BIN) -lm
 
 test-asan: $(TEST_ASAN_BIN)
 	./$(TEST_ASAN_BIN)
 
-# Write compile_commands.json for the host compile so clangd resolves the
-# scalar engine bodies. Gitignored: it embeds an absolute directory path.
+# -Werror always: these only run where emsdk is installed (CI's `wasm` job and
+# local runs), and a SIMD-only warning has nowhere else to fail.
+$(SIMD_TEST_JS): $(SRCS) $(TEST_SRC) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS) Makefile
+	$(EMXX) $(EMTEST_FLAGS) -Werror $(SRCS) $(TEST_SRC) -o $@
+
+$(PARITY_JS): $(SRCS) $(PARITY_SRCS) $(PARITY_HDRS) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS) Makefile
+	$(EMXX) $(EMTEST_FLAGS) -Werror $(SRCS) $(PARITY_SRCS) -o $@
+
+test-simd: $(SIMD_TEST_JS)
+	$(NODE) $(SIMD_TEST_JS)
+	@$(MAKE) --no-print-directory test-parity
+
+test-parity: $(PARITY_JS)
+	$(NODE) $(PARITY_JS)
+
+# Write compile_commands.json for clangd. Gitignored: it embeds absolute paths.
+# The flags come from this Makefile, so the database cannot drift from the build:
+# engine TUs get a wasm32 + -msimd128 entry when $EMSDK is set (so clangd sees
+# the SIMD blocks too), the host entry otherwise.
 compile-commands:
 	@if [ -z "$(NODE)" ]; then \
 	  echo "❌  node not found on PATH — cannot write compile_commands.json"; \
 	  exit 1; \
 	fi
-	@$(NODE) ../scripts/gen-compile-commands.mjs
+	@$(NODE) ../scripts/gen-compile-commands.mjs \
+	  --host-cxx='$(CXX)' --host-flags='$(TEST_CXXFLAGS)' --wasm-flags='$(WASM_CXXFLAGS)' \
+	  --engine='$(SRCS)' --host-only='$(TEST_SRC)' --wasm-only='$(PARITY_SRCS)'
 
 # Ensure EXPORTED_FUNCS and the header's prototypes match exactly, both ways.
 # Prototypes are `<return type> <name>(` lines at column 0. An empty parse is a
