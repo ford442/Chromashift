@@ -1,4 +1,5 @@
 import { memo, useRef } from 'react';
+import { sliderProps } from '../../state/params';
 import type { PlayPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
 
@@ -26,8 +27,7 @@ export const PlayPanel = memo(function PlayPanel({
           </label>
           <input
             type="range"
-            min={2}
-            max={30}
+            {...sliderProps('ui.imageChangeInterval')}
             value={imageChangeInterval}
             onChange={(e) => onImageChangeIntervalChange(Number(e.target.value))}
             className="flex-1 h-1 accent-amber-400"

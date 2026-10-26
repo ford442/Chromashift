@@ -186,7 +186,6 @@ export function buildControlProps(
     midiBindings: reactive.midiBindings,
     audioLevels: reactive.audioLevels,
     audioSensitivity: reactive.audioSensitivity,
-    layerExtension0: layers.extensions[0],
     onReactiveEnabledChange: actions.setReactiveEnabled,
     onAudioEnabledChange: actions.setReactiveAudioEnabled,
     onMidiEnabledChange: actions.setReactiveMidiEnabled,

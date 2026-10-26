@@ -255,7 +255,7 @@ const REACTIVE_KEYS = keysOf<ReactivePanelProps>({
   midiBindings: true,
   audioLevels: true,
   audioSensitivity: true,
-  layerExtension0: true,
+  layerCount: true,
   onReactiveEnabledChange: true,
   onAudioEnabledChange: true,
   onMidiEnabledChange: true,

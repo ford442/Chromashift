@@ -1,4 +1,5 @@
 import { memo, useCallback } from 'react';
+import { sliderProps } from '../state/params';
 import { ImageStrip } from './ImageStrip';
 import { KioskRemote } from './KioskRemote';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
@@ -159,8 +160,7 @@ export const ChromeShell = memo(function ChromeShell({
           </span>
           <input
             type="range"
-            min={0}
-            max={255}
+            {...sliderProps('engine.avgLuminance')}
             value={avgLuminance}
             onChange={(e) => setAvgLuminance(Number(e.target.value))}
             className="w-28 h-1 accent-amber-400"

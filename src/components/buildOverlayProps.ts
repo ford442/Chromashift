@@ -194,7 +194,6 @@ export function buildOverlayProps(
     midiBindings: p.midiBindings,
     audioLevels: p.audioLevels,
     audioSensitivity: p.audioSensitivity,
-    layerExtension0: p.layerExtension0,
     onReactiveEnabledChange: p.onReactiveEnabledChange,
     onAudioEnabledChange: p.onAudioEnabledChange,
     onMidiEnabledChange: p.onMidiEnabledChange,

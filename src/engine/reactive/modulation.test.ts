@@ -5,7 +5,6 @@ import {
   computeAudioModulation,
   extractEnergy,
   extractFrequencyBands,
-  midiValueToParam,
 } from './modulation';
 
 describe('extractFrequencyBands', () => {
@@ -70,12 +69,5 @@ describe('computeAudioModulation at any layer count', () => {
       ext[4] * (1 + levels.high * 0.6 * s),
     ].map((v) => Math.min(Math.max(v, 0), 360));
     expect(mod.extensions).toEqual(expected);
-  });
-});
-
-describe('midiValueToParam', () => {
-  it('maps CC 127 to layer step 360', () => {
-    expect(midiValueToParam('layers.extensions.0', 1)).toBe(360);
-    expect(midiValueToParam('layers.extensions.0', 0)).toBe(0);
   });
 });

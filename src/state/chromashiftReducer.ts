@@ -21,6 +21,7 @@ import type {
 } from './types';
 import type { MidiBinding } from '../engine/reactive/types';
 import type { ChromashiftSettingsInput } from './settingsSchema';
+import { withParam, type ParamPath } from './params';
 
 /** The `LayersSlice` fields that carry one value per layer. */
 export type PerLayerField = 'angles' | 'extensions' | 'opacities';
@@ -94,7 +95,9 @@ export type ChromashiftAction =
   | { type: 'reactive/patch'; patch: Partial<import('../engine/reactive/types').ReactiveSlice> }
   | { type: 'reactive/setMidiBindings'; bindings: MidiBinding[] }
   | { type: 'reactive/addMidiBinding'; binding: MidiBinding }
-  | { type: 'reactive/removeMidiBinding'; param: import('../engine/reactive/types').MidiParamId }
+  | { type: 'reactive/removeMidiBinding'; param: ParamPath }
+  /** Set one parameter by path, coerced into its range (MIDI, attract, modulation). */
+  | { type: 'param/set'; path: ParamPath; value: number }
   | { type: 'settings/apply'; settings: ChromashiftSettingsInput; presetId?: string }
   | { type: 'compare/setLayout'; layout: import('../engine/compareViews').CompareLayoutMode }
   | { type: 'compare/setSyncPlay'; syncPlay: boolean }
@@ -283,6 +286,9 @@ function reduceSlices(
 
     case 'reactive/patch':
       return { ...state, reactive: { ...state.reactive, ...action.patch } };
+
+    case 'param/set':
+      return withParam(state, action.path, action.value);
 
     case 'reactive/setMidiBindings':
       return {

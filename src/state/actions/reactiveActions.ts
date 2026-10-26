@@ -1,4 +1,4 @@
-import type { MidiParamId } from '../../engine/reactive/types';
+import type { ParamPath } from '../params';
 import type { ChromashiftDispatch } from './types';
 
 export function createReactiveActions(dispatch: ChromashiftDispatch) {
@@ -20,9 +20,9 @@ export function createReactiveActions(dispatch: ChromashiftDispatch) {
       dispatch({ type: 'reactive/patch', patch: { midiEnabled } }),
     setReactiveAudioSensitivity: (audioSensitivity: number) =>
       dispatch({ type: 'reactive/patch', patch: { audioSensitivity } }),
-    setMidiLearnTarget: (midiLearnTarget: MidiParamId | null) =>
+    setMidiLearnTarget: (midiLearnTarget: ParamPath | null) =>
       dispatch({ type: 'reactive/patch', patch: { midiLearnTarget } }),
-    removeMidiBinding: (param: MidiParamId) =>
+    removeMidiBinding: (param: ParamPath) =>
       dispatch({ type: 'reactive/removeMidiBinding', param }),
   };
 }
