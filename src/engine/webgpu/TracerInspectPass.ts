@@ -239,7 +239,7 @@ export class TracerInspectPass {
       this.encodeDisplay(
         enc,
         canvasView,
-        params.layerTextures[layerIndex],
+        params.layerTextures[layerIndex]!,
         this.compositorSampler,
         1,
         1,

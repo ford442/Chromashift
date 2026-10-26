@@ -90,7 +90,7 @@ describe('configureWebGpuCanvas tone mapping', () => {
     const context = fakeContext();
     configureWebGpuCanvas(context, device, 'bgra8unorm');
     expect(context.configure).toHaveBeenCalledTimes(1);
-    expect(context.configure.mock.calls[0][0].toneMapping).toEqual({ mode: 'standard' });
+    expect(context.configure.mock.calls[0]![0].toneMapping).toEqual({ mode: 'standard' });
     expect(getCanvasToneMappingSupport()).toBe(true);
   });
 
@@ -121,7 +121,7 @@ describe('configureWebGpuCanvas tone mapping', () => {
     const next = fakeContext();
     configureWebGpuCanvas(next, device, 'bgra8unorm');
     expect(next.configure).toHaveBeenCalledTimes(1);
-    expect(next.configure.mock.calls[0][0].toneMapping).toBeUndefined();
+    expect(next.configure.mock.calls[0]![0].toneMapping).toBeUndefined();
   });
 });
 
@@ -169,7 +169,7 @@ describe('configureWebGpuCanvas hdr-extended', () => {
     expect(configureWebGpuCanvas(context, device, 'bgra8unorm', { presentation: 'hdr-extended' }))
       .toBe('sdr');
     expect(context.configure).toHaveBeenCalledTimes(2);
-    expect(context.configure.mock.calls[1][0].format).toBe('bgra8unorm');
+    expect(context.configure.mock.calls[1]![0].format).toBe('bgra8unorm');
     expect(getCanvasHdrSupport()).toBe(false);
 
     // Cached: the next HDR request goes straight to SDR without a throw.

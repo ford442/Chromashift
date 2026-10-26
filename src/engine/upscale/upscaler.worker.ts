@@ -156,34 +156,36 @@ async function enlarge(
   const extraLapX = totalLapX - baseLapX * (numX - 1);
   const extraLapY = totalLapY - baseLapY * (numY - 1);
 
+  // Every slot of these arrays is filled below, so the `!` reads are in range.
   locX[0] = 0;
-  for (let i = 1; i < numX; i++) locX[i] = locX[i - 1] + tileSize - baseLapX - (i <= extraLapX ? 1 : 0);
+  for (let i = 1; i < numX; i++) locX[i] = locX[i - 1]! + tileSize - baseLapX - (i <= extraLapX ? 1 : 0);
   locY[0] = 0;
-  for (let i = 1; i < numY; i++) locY[i] = locY[i - 1] + tileSize - baseLapY - (i <= extraLapY ? 1 : 0);
+  for (let i = 1; i < numY; i++) locY[i] = locY[i - 1]! + tileSize - baseLapY - (i <= extraLapY ? 1 : 0);
 
   padL[0] = 0; padT[0] = 0;
   padR[numX - 1] = 0; padB[numY - 1] = 0;
-  for (let i = 1; i < numX; i++) padL[i] = Math.floor((locX[i - 1] + tileSize - locX[i]) / 2);
-  for (let i = 1; i < numY; i++) padT[i] = Math.floor((locY[i - 1] + tileSize - locY[i]) / 2);
-  for (let i = 0; i < numX - 1; i++) padR[i] = locX[i] + tileSize - locX[i + 1] - padL[i + 1];
-  for (let i = 0; i < numY - 1; i++) padB[i] = locY[i] + tileSize - locY[i + 1] - padT[i + 1];
+  for (let i = 1; i < numX; i++) padL[i] = Math.floor((locX[i - 1]! + tileSize - locX[i]!) / 2);
+  for (let i = 1; i < numY; i++) padT[i] = Math.floor((locY[i - 1]! + tileSize - locY[i]!) / 2);
+  for (let i = 0; i < numX - 1; i++) padR[i] = locX[i]! + tileSize - locX[i + 1]! - padL[i + 1]!;
+  for (let i = 0; i < numY - 1; i++) padB[i] = locY[i]! + tileSize - locY[i + 1]! - padT[i + 1]!;
 
   const total = numX * numY;
   let done = 0;
   for (let i = 0; i < numX; i++) {
     for (let j = 0; j < numY; j++) {
-      const x1 = locX[i], y1 = locY[j];
+      const x1 = locX[i]!, y1 = locY[j]!;
+      const l = padL[i]!, t = padT[j]!, r = padR[i]!, b = padB[j]!;
       const tile = new TileImage(tileSize, tileSize);
       tile.blit(0, 0, input, x1, y1, x1 + tileSize, y1 + tileSize);
       const scaled = await runTile(tile, model);
       out.blit(
-        (x1 + padL[i]) * factor,
-        (y1 + padT[j]) * factor,
+        (x1 + l) * factor,
+        (y1 + t) * factor,
         scaled,
-        padL[i] * factor,
-        padT[j] * factor,
-        scaled.width - padR[i] * factor,
-        scaled.height - padB[j] * factor,
+        l * factor,
+        t * factor,
+        scaled.width - r * factor,
+        scaled.height - b * factor,
       );
       done++;
       onProgress((done / total) * 100);

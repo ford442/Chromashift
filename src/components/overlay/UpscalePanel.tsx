@@ -31,7 +31,7 @@ export const UpscalePanel = memo(function UpscalePanel({
         onChange={(e) => {
           const v = e.target.value;
           onUpscaleModelChange(
-            v.startsWith('swin_unet') ? composeSwinModel(v.split(':')[1], swinScale, swinNoise) : v,
+            v.startsWith('swin_unet') ? composeSwinModel(v.split(':')[1] ?? swinStyle, swinScale, swinNoise) : v,
           );
         }}
         disabled={upscaleBusy}

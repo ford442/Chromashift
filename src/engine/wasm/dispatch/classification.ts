@@ -88,9 +88,9 @@ export function classifyPixelsBulkWith(
   const roundedAvgLum = Math.round(avgLum);
   const result = new Int32Array(pixelCount);
   for (let i = 0; i < pixelCount; i++) {
-    const r = data[i * 4];
-    const g = data[i * 4 + 1];
-    const b = data[i * 4 + 2];
+    const r = data[i * 4]!;
+    const g = data[i * 4 + 1]!;
+    const b = data[i * 4 + 2]!;
     result[i] = classifyPixelBandsF32(r, g, b, roundedAvgLum);
   }
   return result;
@@ -132,9 +132,7 @@ export function classifyImageMaskWith(
 
   const bands = classifyPixelsBulkWith(imageData, avgLum, false);
   const mask = new Uint8Array(pixelCount);
-  for (let i = 0; i < pixelCount; i++) {
-    mask[i] = bands[i];
-  }
+  mask.set(bands);
   return { mask, width, height };
 }
 
@@ -169,8 +167,8 @@ export function computeLuminanceHistogramWith(
   // TypeScript fallback
   const hist = new Uint32Array(256);
   for (let i = 0; i < bytes.length; i += 4) {
-    const lum = bytes[i] * 0.2126 + bytes[i + 1] * 0.7152 + bytes[i + 2] * 0.0722;
-    hist[Math.min(Math.floor(lum), 255)]++;
+    const lum = bytes[i]! * 0.2126 + bytes[i + 1]! * 0.7152 + bytes[i + 2]! * 0.0722;
+    hist[Math.min(Math.floor(lum), 255)]!++;
   }
   return hist;
 }
@@ -209,12 +207,12 @@ export function computeColorBandCountsWith(
   // TypeScript fallback
   const counts = new Uint32Array(BAND_INDEX_COUNT);
   for (let i = 0; i < bytes.length; i += 4) {
-    const r = bytes[i];
-    const g = bytes[i + 1];
-    const b = bytes[i + 2];
+    const r = bytes[i]!;
+    const g = bytes[i + 1]!;
+    const b = bytes[i + 2]!;
     const rgb = computeAdjustedRgb(r, g, b, avgLum);
     const band = classifyBandIndex(rgb);
-    counts[band]++;
+    counts[band]!++;
   }
   return counts;
 }

@@ -162,7 +162,7 @@ function validateParams(node: GraphNode): void {
  * would bind an arbitrary texture as velocities, so it is refused by name.
  */
 function validateMotionField(node: GraphNode, byId: Map<string, GraphNode>): void {
-  const field = byId.get(node.inputs[1])!;
+  const field = byId.get(node.inputs[1]!)!;
   if (field.kind !== 'source' || field.params.role !== 'motion-field') {
     throw new PassGraphError(
       'edge-type',
@@ -189,14 +189,14 @@ function walk(graph: PassGraph, byId: Map<string, GraphNode>): {
   reachable.add(graph.output);
 
   while (stack.length > 0) {
-    const frame = stack[stack.length - 1];
+    const frame = stack[stack.length - 1]!;
     const node = byId.get(frame.id)!;
     if (frame.next >= node.inputs.length) {
       colour.set(frame.id, 'black');
       stack.pop();
       continue;
     }
-    const inputId = node.inputs[frame.next];
+    const inputId = node.inputs[frame.next]!;
     frame.next += 1;
     const state = colour.get(inputId);
     if (state === 'grey') {

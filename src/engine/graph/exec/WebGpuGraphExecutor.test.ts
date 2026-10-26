@@ -106,12 +106,12 @@ describe('WebGpuGraphExecutor', () => {
     msaaExecutor.setGraph(compile());
     gpu.reset();
     encode(msaaExecutor);
-    const resolves = gpu.passes.filter((pass) => pass.attachments[0].includes('->'));
+    const resolves = gpu.passes.filter((pass) => pass.attachments[0]!.includes('->'));
     // Exactly the three band-layer passes are multisampled, as in the hand
     // encoder — the blur and compositor passes are not.
     expect(resolves).toHaveLength(3);
     // One shared multisample source, three distinct resolve targets.
-    const sources = new Set(resolves.map((pass) => pass.attachments[0].split('->')[0]));
+    const sources = new Set(resolves.map((pass) => pass.attachments[0]!.split('->')[0]));
     expect(sources.size).toBe(1);
   });
 
@@ -171,7 +171,7 @@ describe('WebGpuGraphExecutor', () => {
 
     const written = gpu.passes
       .slice(3, 5)
-      .map((pass) => pass.attachments[0].split('@')[0]);
+      .map((pass) => pass.attachments[0]!.split('@')[0]);
     const compositorBindGroup = gpu.bindGroups
       .find((group) => group.label === gpu.passes.at(-1)!.bindGroup);
     expect(compositorBindGroup).toBeDefined();
@@ -226,7 +226,7 @@ describe('WebGpuGraphExecutor', () => {
 
     // Two ping-pong pairs plus their two diagnostic pairs: eight clears.
     expect(gpu.passes).toHaveLength(8);
-    expect(gpu.passes.every((pass) => pass.attachments[0].endsWith('@clear'))).toBe(true);
+    expect(gpu.passes.every((pass) => pass.attachments[0]!.endsWith('@clear'))).toBe(true);
     expect(gpu.passes.every((pass) => pass.draws.length === 0)).toBe(true);
   });
 
@@ -399,7 +399,7 @@ describe('WebGpuGraphExecutor', () => {
     const smear = () => compile(buildGraphPreset('smear'));
     const label = (texture: GPUTexture) => (texture as unknown as { label: string }).label;
     /** Texture labels a recorded pass wrote, without the load op. */
-    const written = (index: number) => gpu.passes[index].attachments[0].split('@')[0];
+    const written = (index: number) => gpu.passes[index]!.attachments[0]!.split('@')[0]!;
 
     it('writes the ring, mixes its taps and displaces before the band layers', () => {
       executor.setGraph(smear());
@@ -461,7 +461,7 @@ describe('WebGpuGraphExecutor', () => {
       executor.setGraph(smear());
       gpu.reset();
       encode(executor, {}, field);
-      const displace = () => gpu.bindGroups.find((group) => group.label === gpu.passes[2].bindGroup)!;
+      const displace = () => gpu.bindGroups.find((group) => group.label === gpu.passes[2]!.bindGroup)!;
       expect(displace().textures[1]).toBe(label(field));
 
       gpu.reset();

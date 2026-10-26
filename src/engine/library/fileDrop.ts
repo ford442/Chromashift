@@ -47,7 +47,7 @@ function walkEntry(entry: FileSystemEntry, out: File[]): Promise<void> {
 /** Extract every image `File` from a drop event's `DataTransfer`, recursing into dropped folders. */
 export async function collectImageFilesFromDataTransfer(dataTransfer: DataTransfer): Promise<File[]> {
   const items = dataTransfer.items;
-  if (items && items.length > 0 && typeof items[0].webkitGetAsEntry === 'function') {
+  if (items && items.length > 0 && typeof items[0]?.webkitGetAsEntry === 'function') {
     const entries = Array.from(items)
       .map((item) => item.webkitGetAsEntry())
       .filter((entry): entry is FileSystemEntry => entry !== null);

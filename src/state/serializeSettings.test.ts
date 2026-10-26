@@ -244,7 +244,7 @@ describe('serializeSettings', () => {
     it('embeds a custom profile in file exports and round-trips it', () => {
       const doc = deserializeSettings(settingsToJson(stateWithProfile()));
       expect(doc?.settings.layers?.colorProfileId).toBe('artist-neon');
-      expect(doc?.settings.layers?.colorProfile?.layers[0].bands[0].rgb).toEqual([255, 0, 128]);
+      expect(doc?.settings.layers?.colorProfile?.layers[0]?.bands[0]?.rgb).toEqual([255, 0, 128]);
 
       const restored = applySettingsToState(createInitialState(), doc!.settings);
       expect(restored.layers.colorProfile?.id).toBe('artist-neon');

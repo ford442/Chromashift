@@ -89,7 +89,12 @@ export const MOTION_FIELD_SOURCE_ID = 'motion-field';
  * with no `decay` has nothing for the term to weight and comes back unchanged.
  */
 export function withMotionTerm(graph: PassGraph): PassGraph {
-  const decays = graph.nodes.filter((node) => node.kind === 'decay' && node.inputs[0] !== node.id);
+  // Only a decay with its one stamp input is rewritten: one of the wrong arity
+  // is left for validation to refuse, rather than becoming a motion node that
+  // reads `undefined` or losing its extra inputs to the rewrite.
+  const decays = graph.nodes.filter(
+    (node) => node.kind === 'decay' && node.inputs.length === 1 && node.inputs[0] !== node.id,
+  );
   if (decays.length === 0) return graph;
 
   const taken = new Set(graph.nodes.map((node) => node.id));
@@ -112,7 +117,7 @@ export function withMotionTerm(graph: PassGraph): PassGraph {
   // the two tracer timescales weight the same stamp by the same field.
   const termFor = new Map<string, string>();
   for (const decay of decays) {
-    const stamp = decay.inputs[0];
+    const stamp = decay.inputs[0]!;
     if (termFor.has(stamp)) continue;
     const id = unique(`${stamp}-motion`);
     termFor.set(stamp, id);
@@ -122,7 +127,7 @@ export function withMotionTerm(graph: PassGraph): PassGraph {
   return {
     nodes: [
       ...graph.nodes.map((node) => (decays.includes(node)
-        ? { ...node, inputs: [termFor.get(node.inputs[0])!] }
+        ? { ...node, inputs: [termFor.get(node.inputs[0]!)!] }
         : node)),
       ...added,
     ],

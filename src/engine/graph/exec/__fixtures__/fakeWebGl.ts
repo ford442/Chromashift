@@ -133,9 +133,10 @@ export function createFakeWebGl(options: FakeWebGlOptions = {}): FakeWebGl {
     attachShader: (p: FakeProgram, shader: FakeShader) => { p.shaders.push(shader); },
     linkProgram: (p: FakeProgram) => {
       for (const shader of p.shaders) {
+        // Both groups are mandatory in UNIFORM, so a match always has them.
         for (const [, type, name] of shader.source.matchAll(UNIFORM)) {
-          p.uniformNames.push(name);
-          if (type.startsWith('sampler')) p.samplerNames.add(name);
+          p.uniformNames.push(name!);
+          if (type!.startsWith('sampler')) p.samplerNames.add(name!);
         }
       }
       linked += 1;
@@ -152,7 +153,7 @@ export function createFakeWebGl(options: FakeWebGlOptions = {}): FakeWebGl {
     uniform1i: (location: { program: FakeProgram; name: string }, value: number) => {
       location.program.values.set(location.name, value);
     },
-    activeTexture: (unit: number) => { activeUnit = unit - constants.TEXTURE0; },
+    activeTexture: (unit: number) => { activeUnit = unit - constants.TEXTURE0!; },
     createTexture: (): FakeTexture => {
       const texture = { id: nextId++, width: 0, height: 0, internalFormat: 0, deleted: false };
       textures.push(texture);

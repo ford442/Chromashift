@@ -40,7 +40,7 @@ export function emitCropHelperWgsl(spec: LayerSpec): string {
     .map((band, i) => {
       const upper = cropUpper === null
         ? ''
-        : ` && bandLum < ${i === 0 ? cropUpper : crop[i - 1].lower}`;
+        : ` && bandLum < ${i === 0 ? cropUpper : crop[i - 1]!.lower}`;
       return `    if (bandLum >= ${band.lower}${upper}) { return ${band.name}; }`;
     })
     .join('\n');

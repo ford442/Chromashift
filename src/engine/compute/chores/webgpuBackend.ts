@@ -85,7 +85,7 @@ export function averageFromHistogram(histogram: Uint32Array): number {
   let sum = 0;
   let count = 0;
   for (let bucket = 0; bucket < HISTOGRAM_BINS; bucket += 1) {
-    const n = histogram[bucket];
+    const n = histogram[bucket]!;
     sum += bucket * n;
     count += n;
   }
@@ -812,10 +812,11 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
       const view = new Uint32Array(this.motionStatsStagingBuffer!.getMappedRange().slice(0));
       this.motionStatsStagingBuffer!.unmap();
       this.motionStatsMapPending = false;
-      const cells = view[2];
+      // The staging copy is a fixed 16 bytes: four u32 counters.
+      const [magnitudeSum, moving, cells] = view as unknown as readonly [number, number, number, number];
       this.lastMotionStats = cells === 0
         ? EMPTY_MOTION_FIELD_STATS
-        : { meanMagnitude: view[0] / 1000 / cells, movingFraction: view[1] / cells, cells };
+        : { meanMagnitude: magnitudeSum / 1000 / cells, movingFraction: moving / cells, cells };
     }).catch(() => {
       this.motionStatsMapPending = false;
     });

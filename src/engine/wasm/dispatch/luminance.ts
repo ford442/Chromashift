@@ -143,10 +143,10 @@ function gatherStrided(
   for (let y = 0; y < height; y += yStride) {
     for (let x = 0; x < width; x += xStride) {
       const i = (y * width + x) * 4;
-      out[o++] = data[i];
-      out[o++] = data[i + 1];
-      out[o++] = data[i + 2];
-      out[o++] = data[i + 3];
+      out[o++] = data[i]!;
+      out[o++] = data[i + 1]!;
+      out[o++] = data[i + 2]!;
+      out[o++] = data[i + 3]!;
     }
   }
   return out;

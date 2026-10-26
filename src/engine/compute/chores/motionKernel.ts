@@ -79,9 +79,9 @@ export function downsampleLuminance(frame: MotionFrame, divisor: number): Lumina
         let index = (y * frame.width + cx * d) * 4;
         for (let x = cx * d; x < x1; x += 1) {
           sum += (
-            frame.data[index] * 0.2126
-            + frame.data[index + 1] * 0.7152
-            + frame.data[index + 2] * 0.0722
+            frame.data[index]! * 0.2126
+            + frame.data[index + 1]! * 0.7152
+            + frame.data[index + 2]! * 0.0722
           ) / 255;
           count += 1;
           index += 4;
@@ -120,7 +120,7 @@ export function motionMagnitudeField(
   const floor = Math.min(Math.max(threshold, 0), 0.999);
   const scale = 1 / Math.max(1 - floor, 1e-4);
   for (let i = 0; i < field.length; i += 1) {
-    const delta = Math.abs(current.lum[i] - previous.lum[i]);
+    const delta = Math.abs(current.lum[i]! - previous.lum[i]!);
     field[i] = delta > floor ? Math.min((delta - floor) * scale, 1) : 0;
   }
   return field;
@@ -131,9 +131,9 @@ export function summariseMotionField(field: Float32Array): MotionFieldStats {
   if (field.length === 0) return EMPTY_MOTION_FIELD_STATS;
   let sum = 0;
   let moving = 0;
-  for (let i = 0; i < field.length; i += 1) {
-    sum += field[i];
-    if (field[i] > 0) moving += 1;
+  for (const value of field) {
+    sum += value;
+    if (value > 0) moving += 1;
   }
   return {
     meanMagnitude: sum / field.length,
@@ -228,7 +228,7 @@ export function halveLuminancePlane(plane: LuminancePlane): LuminancePlane {
       const x1 = Math.min(plane.width, cx * 2 + 2);
       for (let y = cy * 2; y < y1; y += 1) {
         for (let x = cx * 2; x < x1; x += 1) {
-          sum += plane.lum[y * plane.width + x];
+          sum += plane.lum[y * plane.width + x]!;
           count += 1;
         }
       }
@@ -242,7 +242,7 @@ export function halveLuminancePlane(plane: LuminancePlane): LuminancePlane {
 export function planeAt(plane: LuminancePlane, x: number, y: number): number {
   const cx = x < 0 ? 0 : (x > plane.width - 1 ? plane.width - 1 : x);
   const cy = y < 0 ? 0 : (y > plane.height - 1 ? plane.height - 1 : y);
-  return plane.lum[cy * plane.width + cx];
+  return plane.lum[cy * plane.width + cx]!;
 }
 
 /**
@@ -262,10 +262,10 @@ export function samplePlaneBilinear(plane: LuminancePlane, x: number, y: number)
   const y1 = Math.min(y0 + 1, plane.height - 1);
   const tx = fx - x0;
   const ty = fy - y0;
-  const row0 = plane.lum[y0 * plane.width + x0]
-    + (plane.lum[y0 * plane.width + x1] - plane.lum[y0 * plane.width + x0]) * tx;
-  const row1 = plane.lum[y1 * plane.width + x0]
-    + (plane.lum[y1 * plane.width + x1] - plane.lum[y1 * plane.width + x0]) * tx;
+  const row0 = plane.lum[y0 * plane.width + x0]!
+    + (plane.lum[y0 * plane.width + x1]! - plane.lum[y0 * plane.width + x0]!) * tx;
+  const row1 = plane.lum[y1 * plane.width + x0]!
+    + (plane.lum[y1 * plane.width + x1]! - plane.lum[y1 * plane.width + x0]!) * tx;
   return row0 + (row1 - row0) * ty;
 }
 
@@ -346,15 +346,17 @@ export function lucasKanadeFlow(
 
   const currentPyramid: LuminancePlane[] = [current];
   const previousPyramid: LuminancePlane[] = [previous];
-  for (let level = 1; level < Math.max(1, levels); level += 1) {
-    currentPyramid.push(halveLuminancePlane(currentPyramid[level - 1]));
-    previousPyramid.push(halveLuminancePlane(previousPyramid[level - 1]));
+  for (let level = 1, cur = current, prev = previous; level < Math.max(1, levels); level += 1) {
+    cur = halveLuminancePlane(cur);
+    prev = halveLuminancePlane(prev);
+    currentPyramid.push(cur);
+    previousPyramid.push(prev);
   }
 
   let coarse: MotionFlowField | null = null;
   for (let level = currentPyramid.length - 1; level >= 0; level -= 1) {
-    const cur = currentPyramid[level];
-    const prev = previousPyramid[level];
+    const cur = currentPyramid[level]!;
+    const prev = previousPyramid[level]!;
     const flow = new Float32Array(cur.width * cur.height * 2);
     for (let cy = 0; cy < cur.height; cy += 1) {
       for (let cx = 0; cx < cur.width; cx += 1) {
@@ -365,8 +367,8 @@ export function lucasKanadeFlow(
           // level-0 cells, so its displacement is worth twice as much here.
           const sx = Math.min(cx >> 1, coarse.width - 1);
           const sy = Math.min(cy >> 1, coarse.height - 1);
-          guessX = 2 * coarse.flow[(sy * coarse.width + sx) * 2];
-          guessY = 2 * coarse.flow[(sy * coarse.width + sx) * 2 + 1];
+          guessX = 2 * coarse.flow[(sy * coarse.width + sx) * 2]!;
+          guessY = 2 * coarse.flow[(sy * coarse.width + sx) * 2 + 1]!;
         }
         const step = lucasKanadeStep(cur, prev, cx, cy, guessX, guessY);
         const index = (cy * cur.width + cx) * 2;
@@ -414,8 +416,8 @@ export function summariseMotionFlow(flow: Float32Array | null): MotionFlowStats 
   let sumSpeed = 0;
   let moving = 0;
   for (let i = 0; i < flow.length; i += 2) {
-    const vx = flow[i];
-    const vy = flow[i + 1];
+    const vx = flow[i]!;
+    const vy = flow[i + 1]!;
     const speed = Math.sqrt(vx * vx + vy * vy);
     if (speed <= MOTION_FLOW_MIN_SPEED) continue;
     sumX += vx;

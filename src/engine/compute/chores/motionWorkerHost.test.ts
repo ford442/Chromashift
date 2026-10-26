@@ -10,8 +10,9 @@ function frame(fill: number) {
 function hostWithScriptedWorker(wasmEnabled = true) {
   const spawned: ScriptedWorker[] = [];
   const host = createMotionWorkerHost(() => wasmEnabled, () => {
-    spawned.push(new ScriptedWorker());
-    return spawned[spawned.length - 1].asWorker();
+    const worker = new ScriptedWorker();
+    spawned.push(worker);
+    return worker.asWorker();
   });
   return { host, spawned };
 }
@@ -27,8 +28,8 @@ describe('createMotionWorkerHost', () => {
     const sample = host.motionField(source, 4, 0.02, false, true, true);
     await Promise.resolve();
 
-    const [worker] = spawned;
-    const { message, transfer } = worker.calls[0];
+    const worker = spawned[0]!;
+    const { message, transfer } = worker.calls[0]!;
     expect(message.method).toBe('motion-field');
     const req = message.req as MotionFieldRequest;
     expect(req).toMatchObject({ width: 8, height: 8, divisor: 4, flow: true, useWasm: true });
@@ -44,7 +45,7 @@ describe('createMotionWorkerHost', () => {
     const { host, spawned } = hostWithScriptedWorker(false);
     void host.motionField(frame(0), 4, 0.02, false, false, true);
     await Promise.resolve();
-    expect((spawned[0].calls[0].message.req as MotionFieldRequest).useWasm).toBe(false);
+    expect((spawned[0]!.calls[0]!.message.req as MotionFieldRequest).useWasm).toBe(false);
   });
 
   it('falls back to the inline kernel for good when the worker crashes', async () => {
@@ -52,7 +53,7 @@ describe('createMotionWorkerHost', () => {
     const { host, spawned } = hostWithScriptedWorker();
     const sample = host.motionField(frame(10), 4, 0.02, false, false, true);
     await Promise.resolve();
-    spawned[0].crash('out of memory');
+    spawned[0]!.crash('out of memory');
 
     const result = await sample;
     expect(result?.mode).toBe('inline');
@@ -62,7 +63,7 @@ describe('createMotionWorkerHost', () => {
     const next = await host.motionField(frame(200), 4, 0.02, false, false, true);
     expect(next?.mode).toBe('inline');
     expect(spawned).toHaveLength(1);
-    expect(spawned[0].calls).toHaveLength(1);
+    expect(spawned[0]!.calls).toHaveLength(1);
   });
 
   it('destroy() rejects the sample in flight and terminates the worker', async () => {
@@ -73,6 +74,6 @@ describe('createMotionWorkerHost', () => {
     host.destroy();
     // The host's contract is that a sample always produces a field: it falls back inline.
     await expect(sample).resolves.toMatchObject({ mode: 'inline' });
-    expect(spawned[0].terminated).toBe(true);
+    expect(spawned[0]!.terminated).toBe(true);
   });
 });

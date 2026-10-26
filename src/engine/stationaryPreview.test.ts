@@ -32,7 +32,7 @@ describe('planStationaryPreview', () => {
   });
 
   it('honours the options and clamps the layer count to what a graph builds', () => {
-    const many = base({ layers: Array.from({ length: MAX_LAYER_COUNT + 3 }, () => base().layers[0]) });
+    const many = base({ layers: Array.from({ length: MAX_LAYER_COUNT + 3 }, () => base().layers[0]!) });
     const plan = planStationaryPreview(many, { fps: 12, tracerWarmupFrames: 3, separated: false, tracer: false });
     expect(plan).toMatchObject({ fps: 12, warmupFrames: 3, separated: false, tracer: false, layerCount: MAX_LAYER_COUNT });
   });

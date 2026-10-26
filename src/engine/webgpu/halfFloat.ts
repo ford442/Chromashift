@@ -13,7 +13,7 @@ const u32 = new Uint32Array(f32.buffer);
 /** Round-to-nearest-even binary16 bit pattern for `value`. */
 export function float32ToFloat16Bits(value: number): number {
   f32[0] = value;
-  const x = u32[0];
+  const x = u32[0]!;
   const sign = (x >>> 16) & 0x8000;
   const exp = (x >>> 23) & 0xff;
   const mant = x & 0x7fffff;
@@ -55,9 +55,9 @@ export function packMotionFieldRgba16(
   const flow = motion.flow && motion.flow.length >= cells * 2 ? motion.flow : null;
   for (let i = 0; i < cells; i += 1) {
     const o = i * 4;
-    packed[o] = float32ToFloat16Bits(motion.field[i]);
-    packed[o + 1] = flow ? float32ToFloat16Bits(flow[i * 2]) : 0;
-    packed[o + 2] = flow ? float32ToFloat16Bits(flow[i * 2 + 1]) : 0;
+    packed[o] = float32ToFloat16Bits(motion.field[i]!);
+    packed[o + 1] = flow ? float32ToFloat16Bits(flow[i * 2]!) : 0;
+    packed[o + 2] = flow ? float32ToFloat16Bits(flow[i * 2 + 1]!) : 0;
     packed[o + 3] = HALF_ONE;
   }
   return packed;

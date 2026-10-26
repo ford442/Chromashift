@@ -101,6 +101,7 @@ export function coerceParam(path: NumericSettingPath, value: number): number | u
 
 function setIn(container: unknown, keys: readonly string[], value: number): unknown {
   const [key, ...rest] = keys;
+  if (key === undefined) return container;
   if (Array.isArray(container)) {
     const index = Number(key);
     // Writes past the end are dropped rather than growing the array behind

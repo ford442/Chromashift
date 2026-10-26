@@ -528,12 +528,12 @@ export class WebGLGraphExecutor {
     const tracerName = (k: number) => (k === 0 ? 'u_tracerBelow' : k === 1 ? 'u_tracerAbove' : `u_tracer${k}`);
     tracers.forEach((texture, k) => bindTexture(gl, program, tracerName(k), layers.length + k, texture));
     for (let i = 0; i < layers.length; i += 1) {
-      uniform1f(gl, program, `u_layerOpacity${i}`, values[`layerOpacity${i}`]);
+      uniform1f(gl, program, `u_layerOpacity${i}`, values[`layerOpacity${i}`]!);
     }
     uniform1f(gl, program, 'u_tracerBelowOpacity', values.tracerBelowOpacity);
     uniform1f(gl, program, 'u_tracerAboveOpacity', values.tracerAboveOpacity);
-    extraTracerOpacities.forEach((_, k) => {
-      uniform1f(gl, program, `u_tracerOpacity${k + 2}`, values[`tracerOpacity${k + 2}`]);
+    extraTracerOpacities.forEach((opacity, k) => {
+      uniform1f(gl, program, `u_tracerOpacity${k + 2}`, opacity);
     });
     uniform1i(gl, program, 'u_layerBlendMode', values.layerBlendMode);
     uniform1i(gl, program, 'u_tracerBlendMode', values.tracerBlendMode);
@@ -563,7 +563,7 @@ export class WebGLGraphExecutor {
     if (params.state.paused !== true) {
       const write = this.program(RING_WRITE);
       const source = this.textureFor(step.input, inputs);
-      this.beginPass(ring.textures[ring.head], false);
+      this.beginPass(ring.textures[ring.head]!, false);
       activateProgram(gl, write);
       bindTexture(gl, write, 'u_source', 0, source);
       this.draw();
@@ -594,8 +594,8 @@ export class WebGLGraphExecutor {
     const gl = this.gl;
     const program = this.program(step.nodeId);
     const node = this.graphNode(step.nodeId);
-    const source = this.textureFor(step.inputs[0], inputs);
-    const field = step.kind === 'displace' ? this.textureFor(step.inputs[1], inputs) : null;
+    const source = this.textureFor(step.inputs[0]!, inputs);
+    const field = step.kind === 'displace' ? this.textureFor(step.inputs[1]!, inputs) : null;
     this.beginPass(this.pool.transient(step.nodeId));
     activateProgram(gl, program);
     bindTexture(gl, program, 'u_source', 0, source);

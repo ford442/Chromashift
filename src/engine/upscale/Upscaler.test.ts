@@ -32,9 +32,9 @@ describe('Upscaler', () => {
     const job = upscaler.upscale(source, 4, 4, SWIN, (p) => progress.push(p.progress));
     await flush();
 
-    const [worker] = spawned;
-    expect(worker.calls[0].message.method).toBe('upscale');
-    expect(worker.calls[0].transfer).toHaveLength(1);
+    const worker = spawned[0]!;
+    expect(worker.calls[0]!.message.method).toBe('upscale');
+    expect(worker.calls[0]!.transfer).toHaveLength(1);
     expect(source.byteLength).toBe(64); // the caller's buffer was not the one moved
     expect(upscaler.isBusy()).toBe(true);
 
@@ -53,16 +53,16 @@ describe('Upscaler', () => {
     await flush();
     expect(upscaler.isBusy()).toBe(true);
 
-    spawned[0].crash('Out of memory');
+    spawned[0]!.crash('Out of memory');
     await expect(job).rejects.toThrow('Out of memory');
     expect(upscaler.isBusy()).toBe(false);
-    expect(spawned[0].terminated).toBe(true);
+    expect(spawned[0]!.terminated).toBe(true);
 
     // The Upscale button is not dead: the next job runs on a new worker.
     const retry = upscaler.upscale(pixels(), 4, 4, SWIN);
     await flush();
     expect(spawned).toHaveLength(2);
-    spawned[1].resolveCall(0, { pixels: new ArrayBuffer(4), width: 1, height: 1 });
+    spawned[1]!.resolveCall(0, { pixels: new ArrayBuffer(4), width: 1, height: 1 });
     await expect(retry).resolves.toMatchObject({ width: 1, height: 1 });
     expect(upscaler.isBusy()).toBe(false);
   });
@@ -71,10 +71,10 @@ describe('Upscaler', () => {
     const { upscaler, spawned } = upscalerWithScriptedWorkers();
     const job = upscaler.upscale(pixels(), 4, 4, SWIN);
     await flush();
-    spawned[0].rejectCall(0, 'HTTP 404 fetching swin_unet/art/scale2x.onnx');
+    spawned[0]!.rejectCall(0, 'HTTP 404 fetching swin_unet/art/scale2x.onnx');
     await expect(job).rejects.toThrow('HTTP 404');
     expect(upscaler.isBusy()).toBe(false);
-    expect(spawned[0].terminated).toBe(false); // a handled error keeps the worker
+    expect(spawned[0]!.terminated).toBe(false); // a handled error keeps the worker
   });
 
   it('refuses a second job while one is running, without disturbing the first', async () => {
@@ -83,7 +83,7 @@ describe('Upscaler', () => {
     await expect(upscaler.upscale(pixels(), 4, 4, SWIN)).rejects.toThrow('already running');
     expect(upscaler.isBusy()).toBe(true);
     await flush();
-    spawned[0].resolveCall(0, { pixels: new ArrayBuffer(4), width: 1, height: 1 });
+    spawned[0]!.resolveCall(0, { pixels: new ArrayBuffer(4), width: 1, height: 1 });
     await expect(first).resolves.toMatchObject({ width: 1 });
   });
 
@@ -93,7 +93,7 @@ describe('Upscaler', () => {
     await flush();
     upscaler.destroy();
     await expect(job).rejects.toThrow('upscaler destroyed');
-    expect(spawned[0].terminated).toBe(true);
+    expect(spawned[0]!.terminated).toBe(true);
     expect(upscaler.isBusy()).toBe(false);
   });
 });

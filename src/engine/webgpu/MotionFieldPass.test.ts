@@ -87,12 +87,12 @@ describe('MotionFieldPass.encodeAndSubmit', () => {
     expect(result).toBe(fieldTexture);
     // A dedicated encoder was created for this call — the caller passed none in.
     expect(createCommandEncoder).toHaveBeenCalledTimes(1);
-    const [encArg] = encodeMotionFieldInto.mock.calls[0];
+    const [encArg] = encodeMotionFieldInto.mock.calls[0]!;
     expect(encArg).toBe(encoders[0]);
     expect(encodeMotionFlowInto).not.toHaveBeenCalled();
     // And that buffer was submitted on its own, immediately.
     expect(submit).toHaveBeenCalledTimes(1);
-    expect(submit).toHaveBeenCalledWith([encoders[0].finish()]);
+    expect(submit).toHaveBeenCalledWith([encoders[0]!.finish()]);
   });
 
   it('runs the Lucas–Kanade flow dispatch in the same isolated buffer as the field', () => {
@@ -112,7 +112,7 @@ describe('MotionFieldPass.encodeAndSubmit', () => {
     // The field texture is swapped for the flow one — proof the `hasFlow`
     // branch ran — and both dispatches landed in the same isolated buffer.
     expect(result).toBe(flowTexture);
-    const [flowEncArg] = encodeMotionFlowInto.mock.calls[0];
+    const [flowEncArg] = encodeMotionFlowInto.mock.calls[0]!;
     expect(flowEncArg).toBe(encoders[0]);
   });
 
@@ -185,7 +185,7 @@ describe('MotionFieldPass CPU fallback', () => {
   function cpuDevice() {
     const textures: { width: number; height: number; destroy: ReturnType<typeof vi.fn> }[] = [];
     const createTexture = vi.fn((desc: GPUTextureDescriptor) => {
-      const [width, height] = desc.size as number[];
+      const [width = 0, height = 0] = desc.size as number[];
       const texture = { width, height, format: desc.format, destroy: vi.fn() };
       textures.push(texture);
       return texture;
@@ -217,12 +217,12 @@ describe('MotionFieldPass CPU fallback', () => {
     });
 
     expect(createTexture).toHaveBeenCalledWith(expect.objectContaining({ format: 'rgba16float' }));
-    const [, data, layout] = writeTexture.mock.calls[0];
+    const [, data, layout] = writeTexture.mock.calls[0]!;
     expect(Array.from(data as Uint16Array)).toEqual([0x3c00, 0x3c00, 0xc000, 0x3c00, 0x3800, 0, 0, 0x3c00]);
     expect(layout).toEqual({ bytesPerRow: 16, rowsPerImage: 1 });
 
     const result = pass.encodeAndSubmit(source, 640, 480, { threshold: 0.04 }, true);
-    expect(result).toBe(createTexture.mock.results[0].value);
+    expect(result).toBe(createTexture.mock.results[0]!.value);
     expect(pass.hasFlowField()).toBe(true);
   });
 
@@ -237,7 +237,7 @@ describe('MotionFieldPass CPU fallback', () => {
     expect(pass.hasFlowField()).toBe(false);
 
     pass.setCpuField(null);
-    expect(textures[0].destroy).toHaveBeenCalled();
+    expect(textures[0]!.destroy).toHaveBeenCalled();
     expect(pass.encodeAndSubmit(source, 640, 480, { threshold: 0.04 }, false)).toBeNull();
   });
 });

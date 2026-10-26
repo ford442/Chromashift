@@ -92,6 +92,6 @@ describe('the WebGL passes', () => {
       .matchAll(/(?:uniform1[fi]|bindTexture)\(\s*gl,\s*[\w.]+,\s*'(\w+)'/g)]
       .map((match) => `${basename(path)}: ${match[1]}`));
     expect(used.length).toBeGreaterThan(20);
-    expect(used.filter((entry) => !declared.has(entry.split(': ')[1]))).toEqual([]);
+    expect(used.filter((entry) => !declared.has(entry.split(': ')[1]!))).toEqual([]);
   });
 });

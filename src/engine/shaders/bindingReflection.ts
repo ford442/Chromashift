@@ -115,7 +115,7 @@ function resourceFor(addressSpace: string | undefined, type: string, where: stri
     throw new Error(`${where}: address space <${addressSpace}> cannot be bound`);
   }
 
-  const base = type.split('<')[0].trim();
+  const base = type.split('<')[0]!.trim();
   if (base === 'sampler') return { type: 'sampler', sampler: { type: 'filtering' } };
   if (base === 'sampler_comparison') return { type: 'sampler', sampler: { type: 'comparison' } };
   if (base === 'texture_external') return { type: 'externalTexture', externalTexture: {} };
@@ -127,8 +127,8 @@ function resourceFor(addressSpace: string | undefined, type: string, where: stri
       type: 'storageTexture',
       storageTexture: {
         format: format as GPUTextureFormat,
-        access: STORAGE_ACCESS[access] ?? 'write-only',
-        viewDimension: VIEW_DIMENSIONS[storage[1]],
+        access: STORAGE_ACCESS[access ?? 'write'] ?? 'write-only',
+        viewDimension: VIEW_DIMENSIONS[storage[1]!],
       },
     };
   }
@@ -137,18 +137,19 @@ function resourceFor(addressSpace: string | undefined, type: string, where: stri
   if (depth) {
     return {
       type: 'texture',
-      texture: { sampleType: 'depth', viewDimension: VIEW_DIMENSIONS[depth[2]], multisampled: Boolean(depth[1]) },
+      texture: { sampleType: 'depth', viewDimension: VIEW_DIMENSIONS[depth[2]!], multisampled: Boolean(depth[1]) },
     };
   }
 
   const sampled = /^texture_(multisampled_)?(\w+)$/.exec(base);
-  if (sampled && VIEW_DIMENSIONS[sampled[2]]) {
-    const [component] = templateArgs(type);
+  const dimension = sampled && VIEW_DIMENSIONS[sampled[2]!];
+  if (sampled && dimension) {
+    const [component = ''] = templateArgs(type);
     const sampleType = SAMPLE_TYPES[component];
     if (!sampleType) throw new Error(`${where}: unsupported texture component type "${component}"`);
     return {
       type: 'texture',
-      texture: { sampleType, viewDimension: VIEW_DIMENSIONS[sampled[2]], multisampled: Boolean(sampled[1]) },
+      texture: { sampleType, viewDimension: dimension, multisampled: Boolean(sampled[1]) },
     };
   }
 
@@ -163,7 +164,8 @@ export function reflectBindings(source: string): ReflectedBinding[] {
   const declaration = /((?:@\s*\w+\s*(?:\([^)]*\))?\s*)+)var\s*(?:<([^>]*)>)?\s*(\w+)\s*:\s*([^;]+);/g;
   const bindings: ReflectedBinding[] = [];
   for (const match of code.matchAll(declaration)) {
-    const [, attributes, addressSpace, name, type] = match;
+    // Every group but the address space is required by the pattern.
+    const [, attributes = '', addressSpace, name = '', type = ''] = match;
     const group = /@\s*group\s*\(\s*(\d+)\s*\)/.exec(attributes);
     const binding = /@\s*binding\s*\(\s*(\d+)\s*\)/.exec(attributes);
     if (!group || !binding) continue;

@@ -36,7 +36,7 @@ function stridedAverageReference(
   for (let y = 0; y < height; y += safeStride) {
     for (let x = 0; x < width; x += safeStride) {
       const o = (y * width + x) * 4;
-      sum += bt709Luminance(pixels[o], pixels[o + 1], pixels[o + 2]);
+      sum += bt709Luminance(pixels[o]!, pixels[o + 1]!, pixels[o + 2]!);
       n += 1;
     }
   }
@@ -75,7 +75,7 @@ function stubCanvasImageData(data: Uint8ClampedArray, width: number, height: num
             }
             // drawImage(src, dx, dy, dw, dh) draws the whole image; the 9-arg
             // form copies the source rect (sx, sy, sw, sh) to (dx, dy).
-            const [sx, sy, sw, sh, dx, dy] = args.length === 8 ? args : [0, 0, width, height, 0, 0];
+            const [sx = 0, sy = 0, sw = 0, sh = 0, dx = 0, dy = 0] = args.length === 8 ? args : [0, 0, width, height, 0, 0];
             for (let row = 0; row < sh; row++) {
               const from = ((sy + row) * width + sx) * 4;
               pixels.set(data.subarray(from, from + sw * 4), ((dy + row) * canvas.width + dx) * 4);

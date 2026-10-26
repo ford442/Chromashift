@@ -48,7 +48,7 @@ function resizePerLayer(
   fill: (index: number) => number,
 ): number[] {
   if (values.length === count) return values as number[];
-  return Array.from({ length: count }, (_, i) => (i < values.length ? values[i] : fill(i)));
+  return Array.from({ length: count }, (_, i) => (i < values.length ? values[i]! : fill(i)));
 }
 
 /**

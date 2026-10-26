@@ -105,21 +105,22 @@ export function estimatePassBandwidthMBps(
   return (totalBytes / (1024 * 1024)) / (totalMs / 1000);
 }
 
+/** `stamps` is one frame's slot: `GPU_TIMESTAMP_MARKERS` markers, in pass order. */
 export function parseTimestampMarkers(
   stamps: BigUint64Array,
   timestampPeriodNs: number,
 ): GpuPassTimings {
-  const toMs = (start: bigint, end: bigint) =>
-    Number(end - start) * timestampPeriodNs / 1_000_000;
+  const toMs = (start: number, end: number) =>
+    Number(stamps[end]! - stamps[start]!) * timestampPeriodNs / 1_000_000;
 
   return {
-    layersMs: toMs(stamps[0], stamps[1]),
-    motionMs: toMs(stamps[1], stamps[2]),
-    motionFlowMs: toMs(stamps[2], stamps[3]),
-    persistenceMs: toMs(stamps[3], stamps[4]),
-    compositorMs: toMs(stamps[4], stamps[5]),
-    readbackMs: toMs(stamps[5], stamps[6]),
-    totalGpuMs: toMs(stamps[0], stamps[6]),
+    layersMs: toMs(0, 1),
+    motionMs: toMs(1, 2),
+    motionFlowMs: toMs(2, 3),
+    persistenceMs: toMs(3, 4),
+    compositorMs: toMs(4, 5),
+    readbackMs: toMs(5, 6),
+    totalGpuMs: toMs(0, 6),
   };
 }
 

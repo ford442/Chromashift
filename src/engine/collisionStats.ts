@@ -36,11 +36,11 @@ export function collisionStatsFromPixels(
   };
   let sum = 0;
   for (let i = 0; i < pixels.length; i += 4) {
-    const sample = decode(pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]);
+    const sample = decode(pixels[i]!, pixels[i + 1]!, pixels[i + 2]!, pixels[i + 3]!);
     sum += sample.collision;
     if (sample.overlap === 'full') stats.threeOverlapPixels += 1;
     else if (sample.overlap === 'partial') stats.twoOverlapPixels += 1;
-    if (sample.dominantLayer !== null) stats.dominantLayerWins[sample.dominantLayer] += 1;
+    if (sample.dominantLayer !== null) stats.dominantLayerWins[sample.dominantLayer]! += 1;
   }
   stats.averageCollision = sum / stats.sampledPixels;
   return stats;

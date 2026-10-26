@@ -86,8 +86,9 @@ export function createFakeGpu(): FakeGpu {
   const scopes: { filter: GPUErrorFilter; error: GPUError | null }[] = [];
   const raise = (filter: GPUErrorFilter, message: string) => {
     for (let i = scopes.length - 1; i >= 0; i -= 1) {
-      if (scopes[i].filter !== filter) continue;
-      scopes[i].error ??= { message } as GPUError;
+      const scope = scopes[i]!;
+      if (scope.filter !== filter) continue;
+      scope.error ??= { message } as GPUError;
       return;
     }
   };
@@ -99,8 +100,8 @@ export function createFakeGpu(): FakeGpu {
       const size = descriptor.size as number[];
       const record: RecordedTexture = {
         label: nextId('tex'),
-        width: size[0],
-        height: size[1],
+        width: size[0]!,
+        height: size[1]!,
         format: String(descriptor.format),
         sampleCount: descriptor.sampleCount ?? 1,
         destroyed: false,

@@ -73,7 +73,7 @@ describe('chromashiftReducer no-op patches', () => {
       type: 'layers/setPerLayer',
       field: 'angles',
       layer: 1,
-      value: base.layers.angles[1],
+      value: base.layers.angles[1]!,
     });
     expect(same).toBe(base);
 
@@ -81,9 +81,9 @@ describe('chromashiftReducer no-op patches', () => {
       type: 'layers/setPerLayer',
       field: 'angles',
       layer: 1,
-      value: base.layers.angles[1] + 5,
+      value: base.layers.angles[1]! + 5,
     });
-    expect(changed.layers.angles[1]).toBe(base.layers.angles[1] + 5);
+    expect(changed.layers.angles[1]).toBe(base.layers.angles[1]! + 5);
     expect(changed.layers.angles[0]).toBe(base.layers.angles[0]);
   });
 });

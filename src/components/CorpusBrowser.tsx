@@ -213,14 +213,14 @@ const VirtualCardRow = memo(function VirtualCardRow({
   return (
     <div className="relative h-[11.5rem]" style={{ width: virtualizer.getTotalSize() }}>
       {virtualizer.getVirtualItems().map((item) => {
-        const corpusIndex = matches[item.index];
+        const corpusIndex = matches[item.index]!;
         const entry = index.entries[corpusIndex];
         if (!entry) return null;
         return (
           <Card
             key={corpusIndex}
             entry={entry}
-            label={index.labels[corpusIndex]}
+            label={index.labels[corpusIndex]!}
             corpusIndex={corpusIndex}
             isCurrent={corpusIndex === currentIndex}
             isReference={entry.url === referenceUrl}

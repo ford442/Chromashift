@@ -17,7 +17,7 @@ export interface ProgramInfo {
 /** `uniform [precision] type name[N];` declarations, by name. */
 export function declaredUniforms(source: string): string[] {
   const declaration = /\buniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+(\w+)\s*(?:\[[^\]]*\])?\s*;/g;
-  return [...source.matchAll(declaration)].map((match) => match[1]);
+  return [...source.matchAll(declaration)].map((match) => match[1]!);
 }
 
 function activeUniforms(gl: WebGL2RenderingContext, program: WebGLProgram): string[] {

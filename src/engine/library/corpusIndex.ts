@@ -41,10 +41,10 @@ export function buildCorpusIndex(entries: readonly ImageEntry[], baseUrl = defau
   const haystack: string[] = new Array(entries.length);
   const allIndices: number[] = new Array(entries.length);
 
-  for (let i = 0; i < entries.length; i += 1) {
-    const label = corpusEntryLabel(entries[i], i, baseUrl);
+  for (const [i, entry] of entries.entries()) {
+    const label = corpusEntryLabel(entry, i, baseUrl);
     labels[i] = label;
-    haystack[i] = `${label}\n${entries[i].url}`.toLowerCase();
+    haystack[i] = `${label}\n${entry.url}`.toLowerCase();
     allIndices[i] = i;
   }
 
@@ -67,10 +67,10 @@ export function filterCorpusIndex(index: CorpusIndex, query: string): readonly n
   const { haystack } = index;
   const matches: number[] = [];
   for (let i = 0; i < haystack.length; i += 1) {
-    const candidate = haystack[i];
+    const candidate = haystack[i]!;
     let hit = true;
     for (let t = 0; t < terms.length; t += 1) {
-      if (!candidate.includes(terms[t])) {
+      if (!candidate.includes(terms[t]!)) {
         hit = false;
         break;
       }

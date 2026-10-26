@@ -325,8 +325,8 @@ export class WebGpuGraphExecutor {
       return {
         layers: outputs.layers.map((id) => this.pool.transient(id)),
         tracers,
-        tracerBelow: tracers[0],
-        tracerAbove: tracers[1],
+        tracerBelow: tracers[0]!,
+        tracerAbove: tracers[1]!,
         diagnostic: this.pool.diagnostic(outputs.diagnostic).read,
         pingPong: this.pool.readPhase,
       };
@@ -370,7 +370,7 @@ export class WebGpuGraphExecutor {
     let marksFired = 0;
     const fireThrough = (limit: number): void => {
       while (marksFired <= limit) {
-        params.marks?.[MARK_ORDER[marksFired]]?.();
+        params.marks?.[MARK_ORDER[marksFired]!]?.();
         marksFired += 1;
       }
     };
@@ -709,7 +709,7 @@ export class WebGpuGraphExecutor {
         { binding: 1, resource: source.createView() },
       ]);
       const pass = enc.beginRenderPass({
-        colorAttachments: [clearAttachment(ring.textures[ring.head].createView())],
+        colorAttachments: [clearAttachment(ring.textures[ring.head]!.createView())],
       });
       pass.setPipeline(write.pipeline);
       pass.setBindGroup(0, write.bindGroup!);
@@ -754,7 +754,7 @@ export class WebGpuGraphExecutor {
     params: GraphEncodeParams,
   ): void {
     const node = this.nodePipeline(step.nodeId);
-    const source = this.textureFor(step.inputs[0], inputs);
+    const source = this.textureFor(step.inputs[0]!, inputs);
     const target = this.pool.transient(step.nodeId);
     const graphNode = this.graphNode(step.nodeId);
 
@@ -785,7 +785,7 @@ export class WebGpuGraphExecutor {
     const bound = step.kind === 'lut'
       ? [source, inputs.profileLut]
       : step.kind === 'displace'
-        ? [source, this.textureFor(step.inputs[1], inputs)]
+        ? [source, this.textureFor(step.inputs[1]!, inputs)]
         : [source];
     this.bindIfChanged(node, bound, () => [
       { binding: 0, resource: this.passSampler },

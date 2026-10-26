@@ -153,16 +153,15 @@ export class WebGPUPipelines {
     format: GPUTextureFormat,
   ): Promise<GPURenderPipeline> {
     const device = this.device;
-    const modules = [
-      device.createShaderModule({ code: fullscreenVertexSource }),
-      device.createShaderModule({ code: fragment }),
-    ];
+    const vertexModule = device.createShaderModule({ code: fullscreenVertexSource });
+    const fragmentModule = device.createShaderModule({ code: fragment });
+    const modules = [vertexModule, fragmentModule];
     try {
       return await device.createRenderPipelineAsync({
         label,
         layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-        vertex: { module: modules[0], entryPoint: 'main' },
-        fragment: { module: modules[1], entryPoint: 'main', targets: [{ format }] },
+        vertex: { module: vertexModule, entryPoint: 'main' },
+        fragment: { module: fragmentModule, entryPoint: 'main', targets: [{ format }] },
         primitive: { topology: 'triangle-list' },
         multisample: { count: 1 },
       });

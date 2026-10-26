@@ -14,7 +14,7 @@ export function extractFrequencyBands(mags: Uint8Array | Float32Array): Pick<Aud
     const end = Math.min(to, mags.length);
     if (end <= from) return 0;
     let sum = 0;
-    for (let i = from; i < end; i += 1) sum += mags[i];
+    for (let i = from; i < end; i += 1) sum += mags[i]!;
     return sum / (end - from) / 255;
   };
   return {
@@ -28,7 +28,7 @@ export function extractFrequencyBands(mags: Uint8Array | Float32Array): Pick<Aud
 export function extractEnergy(samples: Uint8Array): number {
   let sumSq = 0;
   for (let i = 0; i < samples.length; i += 1) {
-    const v = (samples[i] - 128) / 128;
+    const v = (samples[i]! - 128) / 128;
     sumSq += v * v;
   }
   return clamp(Math.sqrt(sumSq / samples.length) * 2.5, 0, 1);
@@ -43,12 +43,12 @@ export function computeAudioModulation(
 
   // Layers cycle mid / high / bass, so the canonical three keep their bands
   // and a session of any count gets one modulated rate per layer.
-  const bandLevels = [levels.mid, levels.high, levels.bass];
-  const bandGains = [0.6, 0.6, 0.4];
+  const bandLevels = [levels.mid, levels.high, levels.bass] as const;
+  const bandGains = [0.6, 0.6, 0.4] as const;
 
   return {
     extensions: layers.extensions.map((ext, i) => {
-      const band = i % bandLevels.length;
+      const band = (i % bandLevels.length) as 0 | 1 | 2;
       return clamp(ext * (1 + bandLevels[band] * bandGains[band] * s), 0, 360);
     }),
     tracerAboveIntensity: clamp(

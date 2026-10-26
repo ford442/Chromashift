@@ -11,19 +11,18 @@ import { emitBandLayerWgsl, emitCoincidenceDecayWgsl, emitCompositorWgsl } from 
  * the shader tests can name a pass, and `shaders/{layers,persistence,
  * compositor}.ts` re-export them under their old paths.
  */
-const [redOrange, violetBlue, greenYellow] = CANONICAL_LAYER_SPECS.map((spec) =>
+/** Every default-graph layer shader, in layer order. */
+export const layerFragmentSources: readonly string[] = CANONICAL_LAYER_SPECS.map((spec) =>
   emitBandLayerWgsl(spec, WGSL_COLOR_HELPERS),
 );
 
+// The canonical table is the three layers named below.
 /** Layer 0 — high luminance → red / orange. */
-export const fragmentShaderRedOrange = redOrange;
+export const fragmentShaderRedOrange = layerFragmentSources[0]!;
 /** Layer 1 — mid-high luminance → violet / blue. */
-export const fragmentShaderVioletBlue = violetBlue;
+export const fragmentShaderVioletBlue = layerFragmentSources[1]!;
 /** Layer 2 — mid luminance → green / yellow. */
-export const fragmentShaderGreenYellow = greenYellow;
-
-/** Every default-graph layer shader, in layer order. */
-export const layerFragmentSources: readonly string[] = [redOrange, violetBlue, greenYellow];
+export const fragmentShaderGreenYellow = layerFragmentSources[2]!;
 
 /** The fused coincidence + decay accumulator pass. */
 export const persistenceFragmentSource = emitCoincidenceDecayWgsl(CANONICAL_LAYER_COUNT);

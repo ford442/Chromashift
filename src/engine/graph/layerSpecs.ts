@@ -250,24 +250,26 @@ export function buildLayerSpecs(layerCount: number): readonly LayerSpec[] {
   assertLayerCount(layerCount);
   if (layerCount === CANONICAL_LAYER_COUNT) return CANONICAL_LAYER_SPECS;
 
+  // `assertLayerCount` caps the count at the band count, so every run is
+  // non-empty and every index below is in range by construction.
   return partition(BAND_NAMES.length, layerCount).map((bandIndices, index) => {
     const hue = (360 * index) / layerCount;
-    const names = bandIndices.map((i) => BAND_NAMES[i]);
+    const names = bandIndices.map((i) => BAND_NAMES[i]!);
     const lowers = names.map((name) => B[name]);
     // Upper bound of the layer's top band: the threshold just above it, or open
     // for the layer that owns band 0.
-    const topIndex = bandIndices[0];
-    const cropUpper = topIndex === 0 ? null : B[BAND_NAMES[topIndex - 1]];
+    const topIndex = bandIndices[0]!;
+    const cropUpper = topIndex === 0 ? null : B[BAND_NAMES[topIndex - 1]!];
 
     const fixed: FixedBand[] = bandIndices.map((bandIndex, i) => {
       const name = `${names[i]}`;
-      const upper = i === 0 ? cropUpper : B[names[i - 1]];
+      const upper = i === 0 ? cropUpper : B[names[i - 1]!];
       const lightness = 0.55 - 0.1 * i;
       if (bandIndex === 0) {
-        return { lower: lowers[i], upper: null, rgba: '', maskBand: 0, name, highlight: true };
+        return { lower: lowers[i]!, upper: null, rgba: '', maskBand: 0, name, highlight: true };
       }
       return {
-        lower: lowers[i],
+        lower: lowers[i]!,
         upper,
         rgba: `${rgbLiteral(hue + 10 * i, 1.0, lightness)}, 1.0`,
         maskBand: bandIndex,
@@ -275,7 +277,7 @@ export function buildLayerSpecs(layerCount: number): readonly LayerSpec[] {
       };
     });
 
-    const lowest = fixed[fixed.length - 1];
+    const lowest = fixed[fixed.length - 1]!;
     return {
       index,
       id: `band-${index}`,
@@ -284,17 +286,17 @@ export function buildLayerSpecs(layerCount: number): readonly LayerSpec[] {
       darkFade: { name: lowest.name, rgba: lowest.rgba || `${rgbLiteral(hue, 1.0, 0.5)}, 1.0` },
       darkMaskBand: DARK_MASK_BAND,
       crop: bandIndices.map((_, i) => ({
-        name: names[i],
+        name: names[i]!,
         rgb: rgbLiteral(hue + 10 * i, 1.0, 0.55 - 0.1 * i),
-        lower: lowers[i],
+        lower: lowers[i]!,
       })),
       cropUpper,
       nunif2Alpha: index === 0 ? '0.5' : '0.777',
       // One arm per band, highest first, so a group that owns a single band
       // still renders in gradient mode instead of staying fully transparent.
       gradient: bandIndices.map((_, i) => ({
-        lo: lowers[i],
-        hi: i === 0 ? cropUpper ?? '255.0' : lowers[i - 1],
+        lo: lowers[i]!,
+        hi: i === 0 ? cropUpper ?? '255.0' : lowers[i - 1]!,
         hueLo: (hue + 10 * i).toFixed(1),
         hueHi: (hue + 10 * (i + 1)).toFixed(1),
         sat: '1.0',

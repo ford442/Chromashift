@@ -64,7 +64,7 @@ export const BAND_INDEX_COUNT = BAND_THRESHOLDS.length + 1;
  */
 export function classifyBandIndex(rgb: number): number {
   for (let i = 0; i < BAND_THRESHOLDS.length; i += 1) {
-    if (rgb > BAND_THRESHOLDS[i]) return i;
+    if (rgb > BAND_THRESHOLDS[i]!) return i;
   }
   return BAND_THRESHOLDS.length;
 }
@@ -142,8 +142,9 @@ export function classifyPixelBandsLut(
   }
   const l0 = Math.floor(lum);
   const l1 = l0 + 1;
+  // 0 <= l0 < l1 <= 255 here, inside the 256-entry LUT.
   if (lut[l0] === lut[l1]) {
-    return lut[l0];
+    return lut[l0]!;
   }
   return classifyBandIndex(rgb);
 }

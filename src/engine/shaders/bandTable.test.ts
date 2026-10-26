@@ -32,7 +32,7 @@ const STALE_BAND_LITERALS = BAND_NAMES.filter((name) => name !== 'yellow').map(
 describe('canonical band table', () => {
   it('orders thresholds strictly descending (band index = position)', () => {
     for (let i = 1; i < BAND_THRESHOLDS.length; i += 1) {
-      expect(BAND_THRESHOLDS[i]).toBeLessThan(BAND_THRESHOLDS[i - 1]);
+      expect(BAND_THRESHOLDS[i]).toBeLessThan(BAND_THRESHOLDS[i - 1]!);
     }
   });
 

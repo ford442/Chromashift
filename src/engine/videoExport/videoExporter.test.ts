@@ -335,11 +335,11 @@ describe('exportVideo (offline render loop)', () => {
     expect(run30.frameAngles).toHaveLength(30);
     expect(run60.frameAngles).toHaveLength(60);
     for (const i of [0, 10, 20, 29] as const) {
-      const a = run30.frameAngles[i];
-      const b = run60.frameAngles[i * 2];
-      expect(a[0]).toBeCloseTo(b[0], 5);
-      expect(a[1]).toBeCloseTo(b[1], 5);
-      expect(a[2]).toBeCloseTo(b[2], 5);
+      const a = run30.frameAngles[i]!;
+      const b = run60.frameAngles[i * 2]!;
+      expect(a[0]).toBeCloseTo(b[0]!, 5);
+      expect(a[1]).toBeCloseTo(b[1]!, 5);
+      expect(a[2]).toBeCloseTo(b[2]!, 5);
     }
   });
 
@@ -402,9 +402,9 @@ describe('exportVideo (offline render loop)', () => {
       makeRequest({ includeTracers: false, passMode: 'composite', durationSec: 0.5, fps: 4 }),
     );
 
-    expect(fake.frameOptions[0].passMode).toBe('layers');
-    expect(fake.frameStates[0].tracerAboveIntensity).toBe(0);
-    expect(fake.frameStates[0].tracerBelowIntensity).toBe(0);
+    expect(fake.frameOptions[0]!.passMode).toBe('layers');
+    expect(fake.frameStates[0]!.tracerAboveIntensity).toBe(0);
+    expect(fake.frameStates[0]!.tracerBelowIntensity).toBe(0);
   });
 });
 

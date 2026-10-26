@@ -94,7 +94,7 @@ describe('concurrent loadTexture of one URL', () => {
 
     const failed = manager.loadTexture('/missing.png');
     await flush();
-    FakeImage.created[0].onerror?.();
+    FakeImage.created[0]!.onerror?.();
     await expect(failed).rejects.toThrow('Failed to load image: /missing.png');
 
     void manager.loadTexture('/missing.png');

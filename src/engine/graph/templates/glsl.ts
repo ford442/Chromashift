@@ -50,7 +50,7 @@ export function emitCropColorGlsl(specs: readonly LayerSpec[]): string {
       .map((band, i) => {
         const upper = spec.cropUpper === null
           ? ''
-          : ` && bandLum < ${i === 0 ? spec.cropUpper : spec.crop[i - 1].lower}`;
+          : ` && bandLum < ${i === 0 ? spec.cropUpper : spec.crop[i - 1]!.lower}`;
         return `    if (bandLum >= ${band.lower}${upper}) return ${localName(i)};`;
       })
       .join('\n');
@@ -156,7 +156,8 @@ export function emitGradientBranchGlsl(specs: readonly LayerSpec[]): string {
  * rest share" case stays a two-arm ternary.
  */
 export function emitNunifAlphaGlsl(specs: readonly LayerSpec[]): string {
-  const tail = specs[specs.length - 1].nunif2Alpha;
+  // A layer table is never empty (`assertLayerCount`).
+  const tail = specs[specs.length - 1]!.nunif2Alpha;
   const head = specs
     .slice(0, -1)
     .filter((spec) => spec.nunif2Alpha !== tail)

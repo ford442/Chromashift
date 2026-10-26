@@ -45,12 +45,14 @@ export const MULTI_VIEW_LAYER_SCALE_FACTORS: Record<CompareLayoutMode, number> =
   swipe: 0.85,
 };
 
-/** Quad grid cells — first three are stationary; only Composite animates (see docs/PREVIEW_VIEWS.md). */
-export const QUAD_VIEW_CELLS: ReadonlyArray<{
+interface QuadViewCell {
   id: CompareSlotConfig['id'];
   label: string;
   mainViewMode: MainViewMode;
-}> = [
+}
+
+/** Quad grid cells — first three are stationary; only Composite animates (see docs/PREVIEW_VIEWS.md). */
+export const QUAD_VIEW_CELLS: readonly [QuadViewCell, QuadViewCell, QuadViewCell, QuadViewCell] = [
   { id: 'a', label: 'Original', mainViewMode: MAIN_VIEW_MODES.SOURCE_IMAGE },
   { id: 'b', label: 'Layers', mainViewMode: MAIN_VIEW_MODES.LAYER_0 },
   { id: 'c', label: 'Tracer', mainViewMode: MAIN_VIEW_MODES.FULL_RES_TRACER },

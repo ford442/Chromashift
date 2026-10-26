@@ -175,6 +175,11 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
     // Every motion node is absorbed by now; one that is not was refused above.
     if (pass.kind === 'motion') continue;
     const node = byId.get(pass.nodeId)!;
+    // Positional inputs come from the node, not `pass.inputs`: that list drops
+    // feedback edges, which would shift or empty the slots. The executors bind
+    // a feedback read of a decay to its ping-pong read side — last frame's.
+    // Arity is validated, so the fixed slots below are in range.
+    const nodeInputs = node.inputs;
 
     // A `coincidence` node that is *not* absorbed by decay consumers would need
     // a history texture of its own to bind the emitted shader's `prevTex`, and
@@ -196,18 +201,18 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
           kind: 'band-layer',
           nodeId: pass.nodeId,
           layerIndex: intParam(node, 'layerIndex', 0),
-          source: pass.inputs[0],
+          source: nodeInputs[0]!,
         });
         break;
 
       case 'decay': {
-        let producerId = pass.inputs[0];
+        let producerId = nodeInputs[0]!;
         let motionField: string | null = null;
         const producer = byId.get(producerId)!;
         if (producer.kind === 'motion') {
           // Absorbed above: this pass runs the motion variant and binds the field.
-          motionField = producer.inputs[1];
-          producerId = producer.inputs[0];
+          motionField = producer.inputs[1]!;
+          producerId = producer.inputs[0]!;
         }
         const stampInputs = fused.has(producerId)
           ? byId.get(producerId)!.inputs
@@ -236,7 +241,7 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
 
       case 'blend': {
         const layerInputs = intParam(node, 'layerInputs', compiled.layerCount);
-        const tracerInputs = pass.inputs.slice(layerInputs);
+        const tracerInputs = nodeInputs.slice(layerInputs);
         // The emitted compositor binds every tracer input (at least the below /
         // above pair; the compiler refuses fewer). A `tracerInputs` param that
         // disagrees with the edges is an authoring error, not a hint to follow.
@@ -252,7 +257,7 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
         steps.push({
           kind: 'blend',
           nodeId: pass.nodeId,
-          layerInputs: pass.inputs.slice(0, layerInputs),
+          layerInputs: nodeInputs.slice(0, layerInputs),
           tracerInputs,
         });
         break;
@@ -262,13 +267,13 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
         steps.push({
           kind: 'history',
           nodeId: pass.nodeId,
-          input: pass.inputs[0],
+          input: nodeInputs[0]!,
           frames: intParam(node, 'frames', 2),
         });
         break;
 
       default:
-        steps.push({ kind: pass.kind, nodeId: pass.nodeId, inputs: [...pass.inputs] });
+        steps.push({ kind: pass.kind, nodeId: pass.nodeId, inputs: [...nodeInputs] });
         break;
     }
   }

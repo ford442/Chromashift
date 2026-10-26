@@ -469,7 +469,7 @@ export function useAppWebGPUInit({
           console.warn('Failed to load specific image from URL:', e);
           setSpecificImageError(`Failed to load image: ${specificUrl}`);
           if (entries.length > 0) {
-            const tex = await localTextureManager.loadTexture(entries[0].url);
+            const tex = await localTextureManager.loadTexture(entries[0]!.url);
             if (bailIfCancelled()) return;
 
             localRenderer.setTexture(tex);
@@ -478,7 +478,7 @@ export function useAppWebGPUInit({
           }
         }
       } else if (entries.length > 0) {
-        const tex = await localTextureManager.loadTexture(entries[0].url);
+        const tex = await localTextureManager.loadTexture(entries[0]!.url);
         if (bailIfCancelled()) return;
 
         localRenderer.setTexture(tex);

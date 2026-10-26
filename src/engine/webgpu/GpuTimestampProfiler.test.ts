@@ -250,7 +250,7 @@ describe('GpuTimestampProfiler.create', () => {
 
     expect(enc.resolveQuerySet).toHaveBeenCalledTimes(1);
     expect(enc.copyBufferToBuffer).toHaveBeenCalledTimes(1);
-    const copy = enc.copyBufferToBuffer.mock.calls[0];
+    const copy = enc.copyBufferToBuffer.mock.calls[0]!;
     const resolveBuf = (device.createBuffer as ReturnType<typeof vi.fn>).mock.results[0]?.value;
     const readbackBuf = (device.createBuffer as ReturnType<typeof vi.fn>).mock.results[1]?.value;
     expect(copy[0]).toBe(resolveBuf);

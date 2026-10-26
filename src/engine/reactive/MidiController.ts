@@ -56,12 +56,12 @@ export class MidiController {
     const listener = (event: MIDIMessageEvent) => {
       const data = event.data;
       if (!data || data.length < 3 || !this.handler) return;
-      const status = data[0];
+      const status = data[0]!;
       const type = status & 0xf0;
       if (type !== 0xb0) return; // Control Change only
       const channel = status & 0x0f;
-      const controller = data[1];
-      const value = data[2];
+      const controller = data[1]!;
+      const value = data[2]!;
       this.handler(channel, controller, value);
     };
     input.addEventListener('midimessage', listener);

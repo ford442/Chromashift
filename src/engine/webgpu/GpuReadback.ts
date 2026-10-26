@@ -34,8 +34,8 @@ export function packRgbaRows(
   }
   if (format.startsWith('bgra')) {
     for (let i = 0; i < packed.length; i += 4) {
-      const b = packed[i];
-      packed[i] = packed[i + 2];
+      const b = packed[i]!;
+      packed[i] = packed[i + 2]!;
       packed[i + 2] = b;
     }
   }

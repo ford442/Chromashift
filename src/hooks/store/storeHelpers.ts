@@ -5,7 +5,7 @@ import type { ChromashiftDispatch } from '../../state/actions';
 
 export function ensureReferenceImage(list: ImageEntry[], preferredCurrentIndex: number): ImageEntry | null {
   if (list.length <= 1) return null;
-  return preferredCurrentIndex === 0 ? list[1] : list[0];
+  return preferredCurrentIndex === 0 ? list[1]! : list[0]!;
 }
 
 export function useSelectSourceIndex(

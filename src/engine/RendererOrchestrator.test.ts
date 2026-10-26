@@ -196,11 +196,11 @@ describe('RendererOrchestrator', () => {
     const source = presetGraphSource('default');
 
     orchestrator.setPassGraph(source);
-    expect(renderers[0].setPassGraph).toHaveBeenCalledWith(source, { slot: PRIMARY_SLOT_ID, primary: true });
+    expect(renderers[0]!.setPassGraph).toHaveBeenCalledWith(source, { slot: PRIMARY_SLOT_ID, primary: true });
 
     // A compare slot opened later draws the same graph, with its own executor.
     orchestrator.createSlot('compare-b', mockCanvas('compare-b'));
-    expect(renderers[1].setPassGraph).toHaveBeenCalledWith(source, { slot: 'compare-b', primary: false });
+    expect(renderers[1]!.setPassGraph).toHaveBeenCalledWith(source, { slot: 'compare-b', primary: false });
 
     orchestrator.setPassGraph(null);
     for (const renderer of renderers) expect(renderer.setPassGraph).toHaveBeenLastCalledWith(null, expect.anything());

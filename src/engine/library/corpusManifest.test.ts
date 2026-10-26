@@ -32,7 +32,7 @@ describe('fetchCorpusManifest', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(BODY, { etag: 'W/"v1"' }));
     await fetchCorpusManifest(ENDPOINT, { store: createMemoryManifestStore(), fetchImpl });
 
-    expect(fetchImpl.mock.calls[0][1].headers).toEqual({});
+    expect(fetchImpl.mock.calls[0]![1].headers).toEqual({});
   });
 
   it('revalidates with the stored ETag and reuses the cache on a 304', async () => {
@@ -47,11 +47,11 @@ describe('fetchCorpusManifest', () => {
     expect(first.fromCache).toBe(false);
     expect(second.fromCache).toBe(true);
     expect(second.entries).toEqual(first.entries);
-    expect(fetchImpl.mock.calls[1][1].headers).toEqual({
+    expect(fetchImpl.mock.calls[1]![1].headers).toEqual({
       'If-None-Match': 'W/"v1"',
       'If-Modified-Since': 'Wed, 01 Jan 2025 00:00:00 GMT',
     });
-    expect(fetchImpl.mock.calls[1][1].cache).toBe('no-cache');
+    expect(fetchImpl.mock.calls[1]![1].cache).toBe('no-cache');
   });
 
   it('reuses the cache when the browser replays a 200 with the same ETag', async () => {
@@ -90,7 +90,7 @@ describe('fetchCorpusManifest', () => {
     // …and the refreshed copy is what the next visit revalidates against.
     const third = vi.fn().mockResolvedValue(notModified());
     const after = await fetchCorpusManifest(ENDPOINT, { store, fetchImpl: third });
-    expect(third.mock.calls[0][1].headers['If-None-Match']).toBe('W/"v2"');
+    expect(third.mock.calls[0]![1].headers['If-None-Match']).toBe('W/"v2"');
     expect(after.entries).toEqual(next);
   });
 

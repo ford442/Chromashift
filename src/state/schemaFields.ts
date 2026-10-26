@@ -333,8 +333,7 @@ function decodeShape<S extends Shape>(
       report(ctx, join(path, key), 'unknown field, ignored');
     }
   }
-  for (const key of Object.keys(shape)) {
-    const node = shape[key];
+  for (const [key, node] of Object.entries(shape)) {
     const present = Object.prototype.hasOwnProperty.call(input, key);
     if (!present) {
       if (required && node.kind !== 'ignored') {

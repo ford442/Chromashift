@@ -243,7 +243,7 @@ const LEAVES_BY_TEMPLATE: ReadonlyMap<string, NumericLeaf> = new Map(
  */
 export function numericLeafAt(path: string): { leaf: NumericLeaf; index: number | null } | null {
   const parts = path.split('.');
-  const last = parts[parts.length - 1];
+  const last = parts[parts.length - 1]!;
   if (/^\d+$/.test(last)) {
     const leaf = LEAVES_BY_TEMPLATE.get([...parts.slice(0, -1), '*'].join('.'));
     const index = Number(last);

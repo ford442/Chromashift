@@ -135,11 +135,11 @@ function toInput(rgba: Uint8Array, width: number, height: number): ort.Tensor {
   const hw = height * width;
   for (let y = 0; y < height; ++y) {
     for (let x = 0; x < width; ++x) {
-      const a = rgba[(y * width * 4) + (x * 4) + 3] / 255.0;
+      const a = rgba[(y * width * 4) + (x * 4) + 3]! / 255.0;
       for (let c = 0; c < 3; ++c) {
         const i = (y * width * 4) + (x * 4) + c;
         const j = (y * width + x) + c * hw;
-        rgb[j] = a * (rgba[i] / 255.0) + (1 - a) * bg;
+        rgb[j] = a * (rgba[i]! / 255.0) + (1 - a) * bg;
       }
     }
   }
@@ -155,7 +155,7 @@ function toRgba(z: Float32Array, width: number, height: number): Uint8ClampedArr
       for (let c = 0; c < 3; ++c) {
         const i = (y * width * 4) + (x * 4) + c;
         const j = (y * width + x) + c * hw;
-        rgba[i] = (z[j] * 255.0) + 0.49999;
+        rgba[i] = (z[j]! * 255.0) + 0.49999;
       }
       rgba[(y * width * 4) + (x * 4) + 3] = 255;
     }
@@ -165,7 +165,7 @@ function toRgba(z: Float32Array, width: number, height: number): Uint8ClampedArr
 
 /** Crop an [B,C,H,W] tensor to a [B,C,height,width] window at (x,y). */
 function cropTensor(t: ort.Tensor, x: number, y: number, width: number, height: number): ort.Tensor {
-  const [B, C, H, W] = t.dims as number[];
+  const [B, C, H, W] = t.dims as readonly [number, number, number, number];
   const data = t.data as Float32Array;
   const roi = new Float32Array(B * C * height * width);
   let i = 0;
@@ -175,7 +175,7 @@ function cropTensor(t: ort.Tensor, x: number, y: number, width: number, height: 
       const ci = bi + c * H * W;
       for (let h = y; h < y + height; ++h) {
         const hi = ci + h * W;
-        for (let w = x; w < x + width; ++w) roi[i++] = data[hi + w];
+        for (let w = x; w < x + width; ++w) roi[i++] = data[hi + w]!;
       }
     }
   }
@@ -184,10 +184,10 @@ function cropTensor(t: ort.Tensor, x: number, y: number, width: number, height: 
 
 /** If the whole tile is one colour, skip inference (returns [r,g,b] in 0-1). */
 function checkSingleColor(t: ort.Tensor): [number, number, number] | null {
-  const [B, C, H, W] = t.dims as number[];
+  const [B, C, H, W] = t.dims as readonly [number, number, number, number];
   const d = t.data as Float32Array;
   const hw = H * W;
-  const r = d[0], g = d[hw], b = d[2 * hw];
+  const r = d[0]!, g = d[hw]!, b = d[2 * hw]!;
   for (let bi = 0; bi < B; ++bi) {
     for (let h = 0; h < H; ++h) {
       for (let w = 0; w < W; ++w) {
@@ -201,11 +201,7 @@ function checkSingleColor(t: ort.Tensor): [number, number, number] | null {
 
 function singleColorTensor([r, g, b]: [number, number, number], size: number): ort.Tensor {
   const rgb = new Float32Array(size * size * 3);
-  const channel = [r, g, b];
-  for (let c = 0; c < 3; ++c) {
-    const v = channel[c];
-    for (let i = 0; i < size * size; ++i) rgb[c * size * size + i] = v;
-  }
+  [r, g, b].forEach((v, c) => { rgb.fill(v, c * size * size, (c + 1) * size * size); });
   return new ort.Tensor('float32', rgb, [1, 3, size, size]);
 }
 
@@ -273,7 +269,7 @@ class SeamBlending {
 
   update(x: ort.Tensor, tileI: number, tileJ: number): { data: Float32Array; w: number; h: number } {
     const step = this.param.output_tile_step;
-    const [, H, W] = this.blendFilter.dims as number[];
+    const [, H, W] = this.blendFilter.dims as readonly [number, number, number];
     const HW = H * W;
     const bufW = this.param.y_buffer_w;
     const bufHW = this.param.y_buffer_h * this.param.y_buffer_w;
@@ -281,18 +277,24 @@ class SeamBlending {
     const wI = step * tileJ;
     const filt = this.blendFilter.data as Float32Array;
     const xd = x.data as Float32Array;
+    // The tile comes from a downloaded model; a size mismatch would otherwise
+    // blend NaN into the buffer and come out as black pixels.
+    if (xd.length !== filt.length) {
+      throw new Error(`Model tile has ${xd.length} values; seam blending expects ${filt.length}`);
+    }
 
     for (let c = 0; c < 3; ++c) {
       for (let i = 0; i < H; ++i) {
         for (let j = 0; j < W; ++j) {
           const ti = c * HW + i * W + j;
           const bi = c * bufHW + (hI + i) * bufW + (wI + j);
-          const oldW = this.weights[bi];
-          const nextW = oldW + filt[ti];
+          const oldW = this.weights[bi]!;
+          const nextW = oldW + filt[ti]!;
           const ow = oldW / nextW;
-          this.pixels[bi] = this.pixels[bi] * ow + xd[ti] * (1.0 - ow);
+          const px = this.pixels[bi]! * ow + xd[ti]! * (1.0 - ow);
+          this.pixels[bi] = px;
           this.weights[bi] = nextW;
-          this.output[ti] = this.pixels[bi];
+          this.output[ti] = px;
         }
       }
     }
@@ -300,8 +302,7 @@ class SeamBlending {
   }
 
   static calcParameters(xDims: readonly number[], scale: number, offset: number, tileSize: number, blendSize: number): SeamParams {
-    const x_h = xDims[2];
-    const x_w = xDims[3];
+    const [, , x_h, x_w] = xDims as readonly [number, number, number, number];
     const input_offset = Math.ceil(offset / scale);
     const input_blend_size = Math.ceil(blendSize / scale);
     const input_tile_step = tileSize - (input_offset * 2 + input_blend_size);
@@ -364,8 +365,7 @@ async function tiledRender(
   }
 
   const total = tiles.length;
-  for (let k = 0; k < total; ++k) {
-    const [i, j, ii, jj, hI, wI] = tiles[k];
+  for (const [k, [i, j, ii, jj, hI, wI]] of tiles.entries()) {
     const tileX = cropTensor(x, j, i, tileSize, tileSize);
 
     let tileY: ort.Tensor;
@@ -399,9 +399,9 @@ function blitTile(
       if (ox < 0 || ox >= outW) continue;
       const si = (y * tw + x) * 4;
       const di = (oy * outW + ox) * 4;
-      out[di] = tile[si];
-      out[di + 1] = tile[si + 1];
-      out[di + 2] = tile[si + 2];
+      out[di] = tile[si]!;
+      out[di + 1] = tile[si + 1]!;
+      out[di + 2] = tile[si + 2]!;
       out[di + 3] = 255;
     }
   }
@@ -411,6 +411,9 @@ exposeWorkerRpc<NunifProtocol, UpscaleProgress>(self, {
   async upscale(req, ctx) {
     if (req.scale === 1 && req.noise === -1) {
       throw new Error('Scale 1× requires a noise-reduction level');
+    }
+    if (req.pixels.byteLength !== req.width * req.height * 4) {
+      throw new Error(`Expected ${req.width}×${req.height} RGBA8 pixels, got ${req.pixels.byteLength} bytes`);
     }
     ctx.progress({ progress: 0, info: 'Preparing…' });
 
