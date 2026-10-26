@@ -8,7 +8,7 @@
  * `filterCorpusIndex` then does a single pass over flat string arrays.
  */
 
-import type { ImageEntry } from '../webgpu/TextureManager';
+import type { ImageEntry } from './imageEntry';
 
 export interface CorpusIndex {
   entries: readonly ImageEntry[];

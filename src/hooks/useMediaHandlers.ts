@@ -6,7 +6,7 @@ import {
   computeImageAverageLuminanceWith,
 } from '../engine/WasmEngine';
 import { addLocalImage, clearLocalLibrary } from '../engine/library/LocalLibrary';
-import type { ImageEntry } from '../engine/webgpu/TextureManager';
+import type { ImageEntry } from '../engine/library/imageEntry';
 import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
 interface MediaHandlersOptions {

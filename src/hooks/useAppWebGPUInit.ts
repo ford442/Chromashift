@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useState, type MutableRefObject } from 'react';
 import { computeAverageLuminanceWith } from '../engine/WasmEngine';
-import type { ImageEntry } from '../engine/webgpu/TextureManager';
+import type { ImageEntry } from '../engine/library/imageEntry';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/types/RendererContracts';
 import type { ChromashiftTextureHandle } from '../engine/types/TextureHandle';
 import { getRendererPreference, publishRendererBootFailure, publishRendererBreadcrumbs } from '../engine/rendererMode';

@@ -134,8 +134,9 @@ src/
     ├── gpu/                  # Backend-agnostic GPU setup
     │   ├── gpuOptions.ts         # Canvas/context options matrix both backends build from
     │   └── gpuErrors.ts          # GpuRuntimeError + mappings, error scopes, device diagnostics, fatal breaker
-    ├── textures/             # Texture-cache policy (LRU budget, eviction) + breadcrumbs, shared by both texture managers
+    ├── textures/             # TextureCache: URL cache, LRU byte budget, in-flight dedupe — both texture managers sit on it
     ├── library/              # Where images come from
+    │   ├── imageEntry.ts         # ImageEntry: one corpus URL or local upload
     │   ├── corpusManifest.ts, corpusIndex.ts  # Remote corpus list (revalidated IndexedDB copy) + search index
     │   ├── LocalLibrary.ts       # IndexedDB-backed local image library (drag-and-drop uploads)
     │   ├── fileDrop.ts           # Flattens a drop's DataTransfer (incl. folders) into File[]
@@ -155,6 +156,8 @@ src/
     ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
     ├── types/                # RendererState, RendererContracts (renderer/texture-manager interfaces), TextureHandle — import the module directly
     ├── motionModes.ts         # MotionMode enum + defaults for the temporal tracer term
+    ├── stationaryPreview.ts  # Side-preview plan/states shared by both StationaryPreviewRenderers
+    ├── collisionStats.ts     # Collision-stats tally + one-at-a-time request, shared by both readbacks
     ├── telemetryStore.ts     # useSyncExternalStore telemetry (angles, CPU/GPU timing, collision stats) — outside React state
     ├── videoExport/          # Offline frame-by-frame WebM/MP4 export (WebCodecs + mediabunny, MediaRecorder fallback) — see docs/VIDEO_EXPORT.md
     ├── color/               # Named colour profiles — schema, validation, LUT baking

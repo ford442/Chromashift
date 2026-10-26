@@ -1,11 +1,12 @@
 import { ProfileLutTexture } from '../color/ProfileLutTexture';
 import { GpuReadback } from './GpuReadback';
-import { MAX_LAYER_COUNT, buildDefaultGraph, compileGraph } from '../graph';
+import { buildDefaultGraph, compileGraph } from '../graph';
 import { WebGpuGraphExecutor, type GraphExternalInputs } from '../graph/exec/WebGpuGraphExecutor';
 import { tracerInspectSettings } from '../graph/exec/uniforms';
 import {
-  STATIONARY_PREVIEW_SIZE,
-  STATIONARY_TRACER_WARMUP_FRAMES,
+  planStationaryPreview,
+  separatedPreviewState,
+  tracerWarmupState,
   type StationaryPreviewOptions,
   type StationaryPreviewResult,
 } from '../stationaryPreview';
@@ -94,25 +95,19 @@ export class StationaryPreviewRenderer {
   ): Promise<StationaryPreviewResult> {
     if (!this.sourceTexture) return EMPTY;
 
-    const size = STATIONARY_PREVIEW_SIZE;
-    const fps = options.fps ?? 30;
-    const warmupFrames = options.tracerWarmupFrames ?? STATIONARY_TRACER_WARMUP_FRAMES;
-    const wantSeparated = options.separated !== false;
-    const wantTracer = options.tracer !== false;
-    const layerCount = Math.max(1, Math.min(MAX_LAYER_COUNT, state.layers.length));
+    const plan = planStationaryPreview(state, options);
+    const { size, fps } = plan;
 
     // Validated before the first encode, as the main canvas's graph is: an
     // invalid pipeline would drop the whole command buffer, not just a pass.
-    this.executor.setGraph(compileGraph(buildDefaultGraph(layerCount), 'webgpu'));
+    this.executor.setGraph(compileGraph(buildDefaultGraph(plan.layerCount), 'webgpu'));
     const verdict = await this.executor.prepare();
     if (verdict !== null || this.destroyed || !this.sourceTexture) return EMPTY;
 
     this.ensureOutput(size);
-    // The thumbnail's own size at every scale: the session's layer and tracer
-    // scales are for the main canvas.
-    const preview: RendererState = { ...state, layerScale: 1, tracerScale: 1 };
+    const preview = plan.state;
 
-    const separated = wantSeparated
+    const separated = plan.separated
       ? await this.renderSeparated(preview, this.inputs(preview), size, fps)
       : null;
 
@@ -120,13 +115,12 @@ export class StationaryPreviewRenderer {
     // Inputs are read again after the readback await: a new image or mask may
     // have landed meanwhile, and its predecessor been destroyed — submitting
     // a bind group that holds it is a validation error, every warmup frame.
-    if (wantTracer && !this.destroyed && this.sourceTexture) {
+    if (plan.tracer && !this.destroyed && this.sourceTexture) {
       const inputs = this.inputs(preview);
       this.executor.clearAccumulators();
-      // The preview state is a paused one (it is a still), but the warmup has
-      // to accumulate; and no motion field is bound, so the temporal term is off.
-      const warmup: RendererState = { ...preview, paused: false };
-      for (let frame = 0; frame < warmupFrames; frame += 1) {
+      // No motion field is bound, so the temporal term is off.
+      const warmup = tracerWarmupState(preview);
+      for (let frame = 0; frame < plan.warmupFrames; frame += 1) {
         const enc = this.device.createCommandEncoder();
         this.executor.encode(enc, inputs, {
           state: warmup,
@@ -166,7 +160,7 @@ export class StationaryPreviewRenderer {
     });
   }
 
-  /** The bands alone: the graph's composite with no tracers and no diagnostics overlay. */
+  /** The bands alone (see `separatedPreviewState`). */
   private async renderSeparated(
     state: RendererState,
     inputs: GraphExternalInputs,
@@ -175,15 +169,7 @@ export class StationaryPreviewRenderer {
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
     const enc = this.device.createCommandEncoder();
     this.executor.encode(enc, inputs, {
-      state: {
-        ...state,
-        tracerAboveIntensity: 0,
-        tracerBelowIntensity: 0,
-        diagnosticsOpacity: 0,
-        diagnosticsMode: false,
-        // A still: the accumulators neither advance nor flip.
-        paused: true,
-      },
+      state: separatedPreviewState(state),
       outputView: this.outputTexture!.createView(),
       width: size,
       height: size,

@@ -5,7 +5,7 @@ import {
   countLocalEntries,
   filterCorpusIndex,
 } from './corpusIndex';
-import type { ImageEntry } from '../webgpu/TextureManager';
+import type { ImageEntry } from './imageEntry';
 
 const BASE = 'https://chromashift.test/app/';
 

@@ -1,5 +1,11 @@
 import { bindGroupSlot, cachedBindGroup, type LayerTextures } from './bindGroups';
 import type { CollisionStats } from '../types/RendererState';
+import {
+  COLLISION_STATS_SIZE,
+  CollisionStatsRequest,
+  collisionStatsFromPixels,
+  type CollisionSample,
+} from '../collisionStats';
 import type { ExportTracerOptions, ExportTracerResult } from '../types/RendererContracts';
 import type { TracerInspectPass } from './TracerInspectPass';
 import type { WebGPUPipelines } from './WebGPUPipelines';
@@ -37,7 +43,7 @@ export function packRgbaRows(
 }
 
 export class GpuReadback {
-  static readonly DIAGNOSTIC_SIZE = 64;
+  static readonly DIAGNOSTIC_SIZE = COLLISION_STATS_SIZE;
 
   private readonly device: GPUDevice;
   private readonly format: GPUTextureFormat;
@@ -51,7 +57,7 @@ export class GpuReadback {
   private diagnosticStagingBuffer: GPUBuffer | null = null;
   private diagnosticReadPending = false;
   private diagnosticCaptureQueued = false;
-  private diagnosticReadCallback: ((stats: CollisionStats) => void) | null = null;
+  private readonly stats = new CollisionStatsRequest();
 
   constructor(device: GPUDevice, format: GPUTextureFormat, pipelines: WebGPUPipelines) {
     this.device = device;
@@ -80,9 +86,8 @@ export class GpuReadback {
     callback: (stats: CollisionStats) => void,
     layerCount: number,
   ): boolean {
-    if (this.diagnosticReadPending || this.diagnosticCaptureQueued || this.diagnosticReadCallback) return false;
-    this.diagnosticReadCallback = callback;
-    this.diagnosticLayerCount = Math.max(1, layerCount);
+    if (this.diagnosticReadPending || this.diagnosticCaptureQueued) return false;
+    if (!this.stats.request(callback, layerCount)) return false;
     this.diagnosticCaptureQueued = true;
     return true;
   }
@@ -96,7 +101,7 @@ export class GpuReadback {
       this.ensureDiagnosticResources();
     }
     if (!this.diagnosticCaptureQueued || !this.diagnosticTexture || !this.diagnosticStagingBuffer
-      || !this.diagnosticReadCallback) {
+      || !this.stats.outstanding) {
       return false;
     }
     if (persistDiagnostic) {
@@ -271,51 +276,37 @@ export class GpuReadback {
     pass.end();
   }
 
-  /** Layer count the queued diagnostic frame was rendered with. */
-  private diagnosticLayerCount = 3;
-
   private beginDiagnosticReadback(): void {
-    if (!this.diagnosticStagingBuffer || !this.diagnosticReadCallback || this.diagnosticReadPending) return;
-    const callback = this.diagnosticReadCallback;
-    this.diagnosticReadCallback = null;
+    if (!this.diagnosticStagingBuffer || !this.stats.outstanding || this.diagnosticReadPending) return;
     this.diagnosticReadPending = true;
     this.diagnosticStagingBuffer.mapAsync(GPUMapMode.READ).then(() => {
       const mapped = new Uint8Array(this.diagnosticStagingBuffer!.getMappedRange());
-      const layerCount = this.diagnosticLayerCount;
-      const stats: CollisionStats = {
-        sampledPixels: GpuReadback.DIAGNOSTIC_SIZE * GpuReadback.DIAGNOSTIC_SIZE,
-        twoOverlapPixels: 0,
-        threeOverlapPixels: 0,
-        dominantLayerWins: Array.from({ length: layerCount }, () => 0),
-        averageCollision: 0,
-      };
-      // The shader writes `dominantLayer / (layerCount - 1)`; invert it. At the
-      // default three this puts the same pixels in the same buckets as the
-      // 0.33 / 0.66 thresholds this replaced.
-      const dominantScale = Math.max(1, layerCount - 1);
-      let collisionSum = 0;
-      for (let i = 0; i < mapped.length; i += 4) {
-        const r = mapped[i] / 255;
-        const g = mapped[i + 1] / 255;
-        const a = mapped[i + 3] / 255;
-        collisionSum += a;
-        if (a > 0.5) {
-          if (g >= 0.75) {
-            stats.threeOverlapPixels += 1;
-          } else {
-            stats.twoOverlapPixels += 1;
-          }
-          const dominant = Math.min(Math.round(r * dominantScale), layerCount - 1);
-          stats.dominantLayerWins[dominant] += 1;
-        }
-      }
-      stats.averageCollision = collisionSum / stats.sampledPixels;
+      const { layerCount } = this.stats;
+      const stats = collisionStatsFromPixels(mapped, layerCount, decodePersistDiagnostic(layerCount));
       this.diagnosticStagingBuffer!.unmap();
       this.diagnosticReadPending = false;
-      callback(stats);
+      this.stats.settle(stats);
     }).catch(() => {
       this.diagnosticReadPending = false;
-      this.diagnosticReadCallback = null;
+      this.stats.drop();
     });
   }
+}
+
+/**
+ * The persistence diagnostic, blitted down: alpha is the collision, green
+ * the overlap depth, red the dominant layer as `index / (layerCount - 1)`.
+ * At the default three layers this puts the same pixels in the same buckets
+ * as the 0.33 / 0.66 thresholds it replaced.
+ */
+function decodePersistDiagnostic(layerCount: number) {
+  const dominantScale = Math.max(1, layerCount - 1);
+  return (r: number, g: number, _b: number, a: number): CollisionSample => {
+    if (a / 255 <= 0.5) return { collision: a / 255, overlap: 'none', dominantLayer: null };
+    return {
+      collision: a / 255,
+      overlap: g / 255 >= 0.75 ? 'full' : 'partial',
+      dominantLayer: Math.min(Math.round((r / 255) * dominantScale), layerCount - 1),
+    };
+  };
 }

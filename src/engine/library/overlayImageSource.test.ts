@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ImageEntry } from '../webgpu/TextureManager';
+import type { ImageEntry } from './imageEntry';
 import { isOverlayImageSourceAvailable } from './overlayImageSource';
 
 const entry: ImageEntry = { url: 'https://example.com/a.jpg' };

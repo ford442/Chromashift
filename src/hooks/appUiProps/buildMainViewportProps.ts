@@ -1,4 +1,4 @@
-import type { ImageEntry } from '../../engine/webgpu/TextureManager';
+import type { ImageEntry } from '../../engine/library/imageEntry';
 import type { ChromashiftActions } from '../../state/actions';
 import type { ChromashiftState } from '../../state/types';
 import type { AppUIMainViewportProps } from '../../components/AppUI.types';

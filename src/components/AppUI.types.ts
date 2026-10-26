@@ -2,7 +2,7 @@ import type { MotionMode } from '../engine/motionModes';
 import type { ColorProfileControls } from '../hooks/useColorProfiles';
 import type { RefObject } from 'react';
 import type { ChromashiftRefs } from '../hooks/useChromashiftStore';
-import type { ImageEntry } from '../engine/webgpu/TextureManager';
+import type { ImageEntry } from '../engine/library/imageEntry';
 import type { GpuRuntimeError } from '../engine/gpu/gpuErrors';
 import type { RendererBackend } from '../engine/types/RendererContracts';
 import type { CompareLayoutMode } from '../engine/compareViews';

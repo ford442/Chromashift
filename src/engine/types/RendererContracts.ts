@@ -13,7 +13,6 @@ export interface PassGraphSlotOptions {
   primary: boolean;
 }
 import type { CollisionStats, RendererState } from './RendererState';
-import type { ImageEntry } from '../webgpu/TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { ChromashiftTextureHandle } from './TextureHandle';
 import type { GpuRuntimeError } from '../gpu/gpuErrors';
@@ -162,7 +161,6 @@ export interface ChromashiftRenderer {
 }
 
 export interface ChromashiftTextureManager {
-  fetchImageList(endpoint: string, signal?: AbortSignal): Promise<ImageEntry[]>;
   loadTexture(url: string): Promise<ChromashiftTextureHandle>;
   uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): ChromashiftTextureHandle;
   /**

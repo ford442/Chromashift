@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextureManager } from '../webgpu/TextureManager';
 import { WebGLTextureManager } from '../webgl/WebGLTextureManager';
+import { readDiagnostics } from '../diagnostics';
+import { estimateRgba8MipChainBytes } from './textureCachePolicy';
 
 /** `Image` whose loads finish only when the test says so. */
 class FakeImage {
@@ -23,6 +25,17 @@ class FakeImage {
   }
 }
 
+/**
+ * A `GPUDevice` whose every other member is a no-op returning another no-op
+ * object, so the mipmap pass runs without a GPU.
+ */
+function fakeDevice(createTexture: () => unknown): GPUDevice {
+  const anything: unknown = new Proxy(() => anything, { get: () => anything });
+  return new Proxy({ createTexture }, {
+    get: (target, key) => (key in target ? target[key as keyof typeof target] : anything),
+  }) as unknown as GPUDevice;
+}
+
 /** Let the queued `onload` → upload continuations run. */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -30,7 +43,12 @@ beforeEach(() => {
   FakeImage.created = [];
   vi.stubGlobal('Image', FakeImage);
   vi.stubGlobal('GPUTextureUsage', { TEXTURE_BINDING: 4, COPY_DST: 2, RENDER_ATTACHMENT: 16 });
-  vi.stubGlobal('createImageBitmap', () => Promise.resolve({ width: 1, height: 1, close: () => {} }));
+  vi.stubGlobal('GPUShaderStage', { FRAGMENT: 2 });
+  // Like the real thing, a closed bitmap reports a 0×0 size.
+  vi.stubGlobal('createImageBitmap', () => {
+    const bitmap = { width: 64, height: 32, close: () => { bitmap.width = 0; bitmap.height = 0; } };
+    return Promise.resolve(bitmap);
+  });
 });
 
 afterEach(() => {
@@ -39,12 +57,8 @@ afterEach(() => {
 
 describe('concurrent loadTexture of one URL', () => {
   it('WebGPU: decodes and uploads once, and both callers get that texture', async () => {
-    const createTexture = vi.fn(() => ({ destroy: () => {} }));
-    const device = {
-      createTexture,
-      queue: { copyExternalImageToTexture: () => {} },
-    } as unknown as GPUDevice;
-    const manager = new TextureManager(device);
+    const createTexture = vi.fn(() => ({ destroy: () => {}, createView: () => ({}) }));
+    const manager = new TextureManager(fakeDevice(createTexture));
 
     const first = manager.loadTexture('/a.png');
     const second = manager.loadTexture('/a.png');
@@ -86,5 +100,20 @@ describe('concurrent loadTexture of one URL', () => {
     void manager.loadTexture('/missing.png');
     await flush();
     expect(FakeImage.created).toHaveLength(2);
+  });
+});
+
+describe('WebGPU texture byte estimate', () => {
+  it('counts the decoded image, not the closed bitmap', async () => {
+    vi.stubGlobal('window', {});
+    const manager = new TextureManager(fakeDevice(() => ({ destroy: () => {}, createView: () => ({}) })));
+
+    const load = manager.loadTexture('/a.png');
+    await flush();
+    FakeImage.finishAll();
+    await load;
+    manager.evictExcept(['/a.png']);
+
+    expect(readDiagnostics().textureCacheBytes).toBe(estimateRgba8MipChainBytes(64, 32));
   });
 });

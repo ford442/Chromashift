@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import type { MutableRefObject } from 'react';
-import type { ImageEntry } from '../../engine/webgpu/TextureManager';
+import type { ImageEntry } from '../../engine/library/imageEntry';
 import type { ChromashiftDispatch } from '../../state/actions';
 
 export function ensureReferenceImage(list: ImageEntry[], preferredCurrentIndex: number): ImageEntry | null {

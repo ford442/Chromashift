@@ -1,4 +1,4 @@
-import type { ImageEntry } from '../engine/webgpu/TextureManager';
+import type { ImageEntry } from '../engine/library/imageEntry';
 import type { RendererBackend } from '../engine/types/RendererContracts';
 import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';

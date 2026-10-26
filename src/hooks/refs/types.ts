@@ -1,5 +1,5 @@
 import type { MutableRefObject, RefObject } from 'react';
-import type { ImageEntry } from '../../engine/webgpu/TextureManager';
+import type { ImageEntry } from '../../engine/library/imageEntry';
 import type { ChromashiftTextureHandle } from '../../engine/types/TextureHandle';
 import type { EngineKind } from '../../engine/WasmEngine';
 import type { ReactiveModulation } from '../../engine/reactive/types';

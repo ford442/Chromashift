@@ -14,7 +14,7 @@
  * fetch rather than failing the boot.
  */
 
-import type { ImageEntry } from '../webgpu/TextureManager';
+import type { ImageEntry } from './imageEntry';
 
 export interface CachedManifest {
   etag: string | null;

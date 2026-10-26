@@ -94,7 +94,6 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
 function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): RendererOrchestratorDeps {
   const textureManager = {
     destroy: vi.fn(),
-    fetchImageList: vi.fn(),
     loadTexture: vi.fn(),
     uploadPixels: vi.fn(),
     evictExcept: vi.fn(),
@@ -116,7 +115,6 @@ function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): Rend
     createTextureManager: vi.fn(() => textureManager),
     createWebGLTextureManager: vi.fn(() => ({
       destroy: vi.fn(),
-      fetchImageList: vi.fn(),
       loadTexture: vi.fn(),
       uploadPixels: vi.fn(),
       evictExcept: vi.fn(),

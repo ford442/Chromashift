@@ -1,4 +1,4 @@
-import type { ImageEntry } from '../engine/webgpu/TextureManager';
+import type { ImageEntry } from '../engine/library/imageEntry';
 import { countLocalEntries } from '../engine/library/corpusIndex';
 import { parseDisplayColorSpace } from '../engine/gpu/gpuOptions';
 import { clampLayerCount } from '../engine/graph/layerSpecs';

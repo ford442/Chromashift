@@ -1,4 +1,4 @@
-import type { ImageEntry } from '../webgpu/TextureManager';
+import type { ImageEntry } from './imageEntry';
 import type { OverlayImageSource } from '../../components/overlay/types';
 
 export function isOverlayImageSourceAvailable(
