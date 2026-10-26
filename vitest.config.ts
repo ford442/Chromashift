@@ -9,7 +9,25 @@ export default defineConfig({
     ],
   },
   test: {
-    environment: 'node',
-    include: ['src/**/*.test.ts'],
+    projects: [
+      // Engine and state tests stay on plain Node: no DOM to lean on by accident.
+      { extends: true, test: { name: 'node', environment: 'node', include: ['src/**/*.test.ts'] } },
+      // Hooks and components, through React Testing Library on happy-dom.
+      {
+        extends: true,
+        test: {
+          name: 'dom',
+          environment: 'happy-dom',
+          include: ['src/**/*.dom.test.tsx'],
+          setupFiles: ['src/test/domSetup.ts'],
+        },
+      },
+    ],
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/**/__fixtures__/**', 'src/test/**'],
+      reporter: ['text-summary', 'json-summary', 'html'],
+    },
   },
 });
