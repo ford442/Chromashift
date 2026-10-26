@@ -38,7 +38,7 @@ export interface CompareViewState {
 }
 
 /** Layer scale multiplier applied per active GPU view to stay inside memory budget. */
-export const MULTI_VIEW_LAYER_SCALE_FACTORS: Record<CompareLayoutMode, number> = {
+const MULTI_VIEW_LAYER_SCALE_FACTORS: Record<CompareLayoutMode, number> = {
   single: 1,
   dual: 0.75,
   quad: 0.6,

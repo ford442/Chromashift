@@ -83,7 +83,7 @@ const colorProfileSchema = custom<ColorProfile>((input) => {
   return profile ? { value: profile } : { error: error ?? 'invalid colour profile' };
 });
 
-export const layersSchema = object({
+const layersSchema = object({
   count: num({
     min: 1, max: MAX_LAYER_COUNT, step: 1, default: DEFAULT_LAYER_COUNT,
     integer: true, automatable: false, label: 'Layer count',
@@ -115,7 +115,7 @@ export const layersSchema = object({
   colorProfile: nullable(colorProfileSchema),
 });
 
-export const tracersSchema = object({
+const tracersSchema = object({
   aboveIntensity: unitInterval('Tracer above intensity', DEFAULT_TRACER_ABOVE_INTENSITY),
   belowIntensity: unitInterval('Tracer below intensity', DEFAULT_TRACER_BELOW_INTENSITY),
   aboveDuration: num({ min: 0, max: 5000, step: 100, default: 500, unit: 'ms', label: 'Tracer above duration' }),
@@ -175,9 +175,9 @@ const outputShape = {
   performanceAutoDegrade: bool(),
 };
 
-export const outputSchema = object(outputShape);
+const outputSchema = object(outputShape);
 
-export const engineSchema = object({
+const engineSchema = object({
   fps: num({
     min: 1, max: 60, step: 1, default: DEFAULT_FPS, integer: true, automatable: false, unit: 'fps', label: 'Frame rate',
   }),
@@ -186,7 +186,7 @@ export const engineSchema = object({
   avgLuminance: num({ min: 0, max: 255, step: 1, default: 128, label: 'Avg luminance' }),
 });
 
-export const uiSchema = object({
+const uiSchema = object({
   isAutoPlayActive: bool(),
   imageChangeInterval: num({
     min: 2, max: 30, step: 1, default: 5, integer: true, automatable: false, unit: 's', label: 'Image interval',
@@ -253,10 +253,6 @@ export function numericLeafAt(path: string): { leaf: NumericLeaf; index: number 
   return leaf ? { leaf, index: null } : null;
 }
 
-export function isNumericSettingPath(value: unknown): value is NumericSettingPath {
-  return typeof value === 'string' && numericLeafAt(value) !== null;
-}
-
 export function isParamPath(value: unknown): value is ParamPath {
   return typeof value === 'string' && numericLeafAt(value)?.leaf.meta.automatable === true;
 }
@@ -269,7 +265,7 @@ const midiBindingSchema = struct({
   )),
 });
 
-export const reactiveSchema = object({
+const reactiveSchema = object({
   enabled: bool(),
   audioEnabled: bool(),
   midiEnabled: bool(),
@@ -277,14 +273,14 @@ export const reactiveSchema = object({
   midiBindings: array(midiBindingSchema, { maxLength: MAX_MIDI_BINDINGS }),
 });
 
-export const viewportSchema = object({
+const viewportSchema = object({
   quarterZoom: bool(),
   halfOverlay: bool(),
   colorSpace: oneOf(DISPLAY_COLOR_SPACES),
   canvasHdr: bool(),
 });
 
-export const kioskSchema = object({
+const kioskSchema = object({
   kioskEnabled: bool(),
   kioskUiHidden: bool(),
   kioskAttractMode: bool(),
@@ -309,7 +305,7 @@ const compareSlotSchema = object({
   mainViewMode: oneOf(MAIN_VIEW_MODE_VALUES),
 });
 
-export const compareSchema = object({
+const compareSchema = object({
   layout: oneOf(COMPARE_LAYOUTS),
   syncPlay: bool(),
   swipePosition: num({ min: 0, max: 1, step: 0.01, default: 0.5, automatable: false, label: 'Swipe position' }),

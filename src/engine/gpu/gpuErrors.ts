@@ -93,7 +93,7 @@ export async function withErrorScope<T>(
   }
 }
 
-export function createScopedGpuError(label: string, gpuError: GPUError): Error {
+function createScopedGpuError(label: string, gpuError: GPUError): Error {
   const err = new Error(`[WebGPU:${label}] ${gpuError.message}`);
   (err as Error & { gpuError: GPUError }).gpuError = gpuError;
   return err;
@@ -141,15 +141,6 @@ export function pipelineRuntimeError(what: string, error: unknown): GpuRuntimeEr
     kind: 'pipeline',
     message: `${what} failed to build — that view is unavailable.`,
     detail: error instanceof Error ? error.message : String(error),
-    recoverable: false,
-  };
-}
-
-export function uncapturedRuntimeError(error: GPUError): GpuRuntimeError {
-  return {
-    kind: 'uncaptured',
-    message: 'Uncaptured WebGPU error',
-    detail: error.message,
     recoverable: false,
   };
 }

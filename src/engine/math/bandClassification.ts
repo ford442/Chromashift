@@ -43,9 +43,6 @@ export type BandName = keyof typeof BAND;
  */
 export const BAND_THRESHOLDS: readonly number[] = Object.values(BAND);
 
-/** How many band indices there are: one per threshold, plus dark/grey. C++'s `BAND_COUNT + 1`. */
-export const BAND_INDEX_COUNT = BAND_THRESHOLDS.length + 1;
-
 /**
  * Classify adjusted rgb into a Chromashift colour band index (0–10).
  *
@@ -106,7 +103,7 @@ export function classifyPixelBandsF32(
 }
 
 /** lightDark/2 offset from average luminance — shared by LUT build and lookup. */
-export function bandLutOffset(avgLum: number): number {
+function bandLutOffset(avgLum: number): number {
   const lightDark = 128 + Math.abs(avgLum - 128) / 2;
   return lightDark / 2;
 }

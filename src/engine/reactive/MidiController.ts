@@ -86,18 +86,3 @@ export function findBinding(
     (b) => b.controller === controller && (b.channel < 0 || b.channel === channel),
   );
 }
-
-export function upsertBinding(
-  bindings: MidiBinding[],
-  binding: MidiBinding,
-): MidiBinding[] {
-  const next = bindings.filter(
-    (b) => !(b.param === binding.param && b.controller === binding.controller
-      && (b.channel < 0 || binding.channel < 0 || b.channel === binding.channel)),
-  );
-  return [...next, binding];
-}
-
-export function bindingKey(binding: MidiBinding): string {
-  return `${binding.channel}:${binding.controller}→${binding.param}`;
-}

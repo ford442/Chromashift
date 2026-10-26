@@ -9,7 +9,7 @@ import type { OverlayImageSource, ReferenceBlendMode } from '../components/overl
 import type { CompareViewState } from '../engine/compareViews';
 import type { ColorProfile } from '../engine/color/colorProfile';
 import type { MotionMode } from '../engine/motionModes';
-export type { ReactiveSlice } from '../engine/reactive/types';
+import type { ReactiveSlice } from '../engine/reactive/types';
 export type { MotionMode } from '../engine/motionModes';
 
 export type DisplayColorSpace = import('../engine/gpu/gpuOptions').DisplayColorSpace;
@@ -218,5 +218,5 @@ export interface ChromashiftState {
   output: OutputSlice;
   engine: EngineSlice;
   ui: UiSlice;
-  reactive: import('../engine/reactive/types').ReactiveSlice;
+  reactive: ReactiveSlice;
 }

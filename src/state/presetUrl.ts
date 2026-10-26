@@ -67,7 +67,7 @@ export interface UrlPresetResult {
 }
 
 /** Read and validate the preset parameter from a location search string. */
-export function readPresetFromSearch(search: string): UrlPresetResult {
+function readPresetFromSearch(search: string): UrlPresetResult {
   let param: string | null = null;
   try {
     param = new URLSearchParams(search).get(PRESET_URL_PARAM);

@@ -20,18 +20,3 @@ export function isOverlayImageSourceAvailable(
       return false;
   }
 }
-
-export function overlayImageSourceLabel(source: OverlayImageSource): string {
-  switch (source) {
-    case 'source':
-      return 'Source';
-    case 'reference':
-      return 'Reference';
-    case 'previous':
-      return 'Previous';
-    case 'separated':
-      return 'Separated';
-    default:
-      return source;
-  }
-}

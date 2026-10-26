@@ -20,7 +20,7 @@ const MOTION_FLOW_MIN_SPEED_GLSL = MOTION_FLOW_MIN_SPEED.toFixed(3);
  * GLSL twin of `WGSL_MOTION_HELPERS` — same maths, same names, so the two
  * backends stay comparable by eye when a motion preset diverges.
  */
-export const GLSL_MOTION_HELPERS = `
+const GLSL_MOTION_HELPERS = `
 vec3 motionDirectionRgb(vec2 flow, float magnitude, float gain) {
   // See the WGSL twin: below the minimum speed there is no direction to show,
   // so the hue pins to zero — which is what a Stage 1 zero vector already did.
@@ -39,7 +39,7 @@ float motionDecayScale(float magnitude, float bias, bool enabled) {
 `;
 
 /** `cropColor` — every layer's CROP ramp behind one `int layer` switch. */
-export function emitCropColorGlsl(specs: readonly LayerSpec[]): string {
+function emitCropColorGlsl(specs: readonly LayerSpec[]): string {
   const bodies = specs.map((spec, index) => {
     const last = index === specs.length - 1;
     const localName = (i: number) => spec.crop[i]?.glslName ?? spec.crop[i]?.name ?? 'dark';
@@ -91,7 +91,7 @@ ${bodies.join('\n')}
 }
 
 /** `fixedLayerColor` — every layer's CR0P-fixed ramp behind one `int layer` switch. */
-export function emitFixedLayerColorGlsl(specs: readonly LayerSpec[]): string {
+function emitFixedLayerColorGlsl(specs: readonly LayerSpec[]): string {
   const bodies = specs.map((spec, index) => {
     const last = index === specs.length - 1;
     const arms = spec.fixed.map((band) => {

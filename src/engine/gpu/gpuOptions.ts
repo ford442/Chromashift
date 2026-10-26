@@ -29,7 +29,7 @@ export interface RendererCanvasOptions {
  * Overrides the automation heuristic below; mainly an escape hatch for
  * reproducing a capture problem in a normal browser tab.
  */
-export const PRESERVE_DRAWING_BUFFER_PARAM = 'preserve_drawing_buffer';
+const PRESERVE_DRAWING_BUFFER_PARAM = 'preserve_drawing_buffer';
 
 function readPreserveDrawingBufferParam(): boolean | null {
   if (typeof window === 'undefined') return null;
@@ -66,7 +66,7 @@ export function resolveWebGL2PreserveDrawingBuffer(): boolean {
  * only when preserve-drawing-buffer resolved off — see
  * {@link resolveWebGL2Desynchronized}.
  */
-export const DESYNCHRONIZED_PARAM = 'desynchronized';
+const DESYNCHRONIZED_PARAM = 'desynchronized';
 
 /**
  * Decide `desynchronized` for the live WebGL2 diagnostic session, given what
@@ -124,7 +124,7 @@ export type CanvasPresentation = 'sdr' | 'hdr-extended';
 
 export type DisplayColorSpace = Extract<PredefinedColorSpace, 'srgb' | 'display-p3'>;
 
-export function isDisplayColorSpace(value: unknown): value is DisplayColorSpace {
+function isDisplayColorSpace(value: unknown): value is DisplayColorSpace {
   return value === 'srgb' || value === 'display-p3';
 }
 

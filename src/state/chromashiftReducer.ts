@@ -59,7 +59,7 @@ function resizePerLayer(
  * layer-count control — so every writer funnels through here rather than each
  * one remembering to resize all three arrays.
  */
-export function normalizeLayersSlice(layers: LayersSlice): LayersSlice {
+function normalizeLayersSlice(layers: LayersSlice): LayersSlice {
   const count = clampLayerCount(layers.count);
   const resized = {} as Record<PerLayerField, number[]>;
   let moved = count !== layers.count;

@@ -6,7 +6,7 @@ import {
   type WebGlTextureHandle,
 } from '../types/TextureHandle';
 
-export type { WebGLImageTexture, WebGlTextureHandle } from '../types/TextureHandle';
+export type { WebGlTextureHandle } from '../types/TextureHandle';
 
 /** WebGL2 texture uploads; caching, eviction and load dedupe are `TextureCache`'s. */
 export class WebGLTextureManager implements ChromashiftTextureManager {

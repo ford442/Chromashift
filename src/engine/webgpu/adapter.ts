@@ -41,7 +41,7 @@ export interface WebGpuCapabilityReport {
  * retry that asks for as much or more cannot succeed where its predecessor
  * failed.
  */
-export const MAX_DEVICE_REQUEST_STRATEGIES = 2;
+const MAX_DEVICE_REQUEST_STRATEGIES = 2;
 
 export type GpuDeviceRequestStrategy =
   | 'default-limits'

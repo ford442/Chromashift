@@ -29,10 +29,10 @@ export const SETTINGS_SCHEMA_VERSION = 8 as const;
 export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 /** First schema version that carries `layers.count` and variable-length arrays. */
-export const LAYER_COUNT_SCHEMA_VERSION = 7;
+const LAYER_COUNT_SCHEMA_VERSION = 7;
 
 /** First schema version that carries `viewport.canvasHdr`. */
-export const CANVAS_HDR_SCHEMA_VERSION = 8;
+const CANVAS_HDR_SCHEMA_VERSION = 8;
 
 export interface ChromashiftSettingsDocument {
   version: typeof SETTINGS_SCHEMA_VERSION;

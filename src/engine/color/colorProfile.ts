@@ -261,7 +261,7 @@ export function isClassicProfile(profile: ColorProfile | string | null | undefin
 }
 
 /** `diff` — the avgLuminance-driven desaturation term. */
-export function colorProfileDiff(avgLum: number, preprocess: ColorProfilePreprocess): number {
+function colorProfileDiff(avgLum: number, preprocess: ColorProfilePreprocess): number {
   return (avgLum / 255) * preprocess.diffScale;
 }
 

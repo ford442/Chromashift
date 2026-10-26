@@ -78,7 +78,7 @@ export interface LayerSpec {
 }
 
 /** Mask index of the dark/grey band — one past the last threshold. */
-export const DARK_MASK_BAND = BAND_NAMES.length;
+const DARK_MASK_BAND = BAND_NAMES.length;
 
 /**
  * Upper bound on a session's layer count.

@@ -63,11 +63,11 @@ export function listAllColorProfiles(): ColorProfile[] {
   return [...BUILTIN_COLOR_PROFILES, ...readAll()];
 }
 
-export function getUserColorProfile(id: string): ColorProfile | null {
+function getUserColorProfile(id: string): ColorProfile | null {
   return readAll().find((profile) => profile.id === id) ?? null;
 }
 
-export function saveUserColorProfile(profile: ColorProfile): ColorProfile[] {
+function saveUserColorProfile(profile: ColorProfile): ColorProfile[] {
   const others = readAll().filter((entry) => entry.id !== profile.id);
   writeAll([{ ...profile, builtin: false }, ...others]);
   return listUserColorProfiles();

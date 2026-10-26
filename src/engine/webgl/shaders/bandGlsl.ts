@@ -18,7 +18,7 @@ export const GLSL_BAND_COLOR_HELPERS = emitBandColorHelpersGlsl(CANONICAL_LAYER_
 export const GLSL_GRADIENT_LAYER_BRANCH = emitGradientBranchGlsl(CANONICAL_LAYER_SPECS);
 
 /** CROP NUNIF2 per-layer alpha selector, emitted from the same specs. */
-export const GLSL_NUNIF2_ALPHA = emitNunifAlphaGlsl(CANONICAL_LAYER_SPECS);
+const GLSL_NUNIF2_ALPHA = emitNunifAlphaGlsl(CANONICAL_LAYER_SPECS);
 
 /** Layer-isolation debug wrapper around shared band colour paths. */
 export const GLSL_COMPUTE_LAYER_COLOR_FN = `

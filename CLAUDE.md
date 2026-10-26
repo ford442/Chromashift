@@ -12,6 +12,7 @@ AGENTS.md wins.
 npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
+npm run knip      # Unused files, exports and dependencies (knip.json)
 npm test          # Vitest unit tests
 npm run shaders:validate  # naga + glslangValidator over every shader variant (needs naga-cli, glslang)
 npm run test:e2e  # Playwright smoke (WebGL)

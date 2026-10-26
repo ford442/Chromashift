@@ -170,7 +170,7 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 |---|---|---|
 | `device.lost` (non-destroyed) | `deviceLostRuntimeError` | Recoverable overlay: **Retry GPU** or reload |
 | `webglcontextlost` (WebGL) | `watchWebGL2Context` → `webglContextLostRuntimeError` | The same recoverable overlay; `webglcontextrestored` re-boots on the same context, or **Reload page** if it never comes |
-| `device.onuncapturederror` | Logged + `uncapturedRuntimeError` | Console + non-recoverable notice |
+| `device.onuncapturederror` | `attachDeviceDiagnostics` → logged; rendering continues | Console only |
 | A pipeline the device refused (inspect views, a compare slot's renderer, the collision-stats blit) | `PipelineCompileError` → `pipelineRuntimeError` | Dismissable notice with the compiler's `line:column` messages; the frame keeps drawing (that view shows the composite) |
 | Bootstrap failure | `toBootstrapRuntimeError` | Blocking overlay; **not** recoverable (no Retry GPU). Queue OOM names command-queue exhaustion. **Open WebGL diagnostic session** remains. |
 

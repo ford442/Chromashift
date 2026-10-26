@@ -20,10 +20,3 @@ export function tsAdvanceAngles(
   // step holds still rather than turning NaN for the rest of the export.
   return angles.map((angle, i) => ((angle + (steps[i] ?? 0)) % 360 + 360) % 360);
 }
-
-export function tsSimulateTracerDecay(buffer: Float32Array, decayFactor: number): void {
-  const pixelCount = Math.floor(buffer.length / 4);
-  for (let i = 0; i < pixelCount * 4; i++) {
-    buffer[i]! *= decayFactor;
-  }
-}

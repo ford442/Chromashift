@@ -18,19 +18,13 @@
 
 export type { EngineKind } from './wasm/types';
 
-export { isWasmSimdSupported, loadWasmEngine, isWasmReady } from './wasm/loadEngine';
+export { loadWasmEngine, isWasmReady } from './wasm/loadEngine';
 
 export {
   computeAverageLuminanceWith,
   computeAverageLuminanceStridedWith,
   computeImageAverageLuminanceWith,
-  classifyPixelWith,
-  classifyPixelsBulkWith,
   classifyImageMaskWith,
-  computeLuminanceHistogramWith,
-  computeColorBandCountsWith,
   durationToDecayWith,
   advanceAnglesBy,
-  buildRotationMat3With,
-  simulateTracerDecayWith,
 } from './wasm/dispatch';

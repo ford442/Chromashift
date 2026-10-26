@@ -66,13 +66,8 @@ export interface NodeProgramContext {
  * The uniform layout one emitted pass is packed with: the one its shader's
  * struct was emitted from, carried on the pass by the compiler.
  */
-export function uniformLayoutFor(emitted: EmittedPass): UniformLayout | null {
+function uniformLayoutFor(emitted: EmittedPass): UniformLayout | null {
   return emitted.uniformLayout;
-}
-
-/** Uniform block size, in bytes, for one emitted pass. */
-export function uniformBytes(emitted: EmittedPass): number {
-  return emitted.uniformLayout?.bytes ?? 0;
 }
 
 /** The vertex stage a pass of `kind` runs: the rotating layer quad, or the fullscreen triangle. */
@@ -103,7 +98,7 @@ export function nodeLayoutEntries(emitted: EmittedPass): GPUBindGroupLayoutEntry
  * `outputFormat` is the SDR canvas format; a pass presenting `hdr-extended`
  * targets the float canvas instead.
  */
-export function targetFormats(
+function targetFormats(
   kind: NodeKind,
   internalFormat: GPUTextureFormat,
   outputFormat: GPUTextureFormat,

@@ -21,14 +21,14 @@ export function xrSessionScheduler(session: XRSession): FrameScheduler {
 }
 
 /** The XR renderer's slot in `window.passGraphSlotsExecuting`. */
-export const XR_GRAPH_SLOT = 'xr';
+const XR_GRAPH_SLOT = 'xr';
 
 /**
  * The layer's framebuffer scale: the headset's recommended resolution × this,
  * per eye. Half resolution is the UA's job (`framebufferScaleFactor`), not a
  * centred quarter-area patch of a full-size viewport.
  */
-export const XR_RENDER_SCALE = 0.5;
+const XR_RENDER_SCALE = 0.5;
 
 export interface WebXrRenderViewport {
   x: number;

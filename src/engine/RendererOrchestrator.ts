@@ -97,7 +97,7 @@ export interface RendererOrchestratorDeps {
   getRendererPreference: () => RendererBackend;
 }
 
-export const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
+const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
   bootstrapWebGpu,
   configureWebGpuCanvas,
   createWebGL2Context,

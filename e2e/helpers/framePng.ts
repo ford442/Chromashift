@@ -13,7 +13,7 @@ import type { CanvasFrame } from './gpuCanvasReadback';
  * device to compare against. PNG so a reviewer can open one; RGBA8 because
  * that is what `readGpuCanvasFrame` returns, an HDR canvas included.
  */
-export const FRAME_GOLDEN_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '__golden__');
+const FRAME_GOLDEN_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '__golden__');
 
 /**
  * `UPDATE_FRAME_GOLDENS=1` writes the frame a test reads instead of comparing
@@ -94,7 +94,7 @@ export function encodeFramePng(frame: Pick<CanvasFrame, 'width' | 'height' | 'pi
 }
 
 /** Decode an 8-bit RGBA, non-interlaced PNG — the kind `encodeFramePng` writes. */
-export function decodeFramePng(png: Buffer): { width: number; height: number; pixels: Buffer } {
+function decodeFramePng(png: Buffer): { width: number; height: number; pixels: Buffer } {
   if (!png.subarray(0, 8).equals(SIGNATURE)) throw new Error('not a PNG');
   let offset = 8;
   let width = 0;

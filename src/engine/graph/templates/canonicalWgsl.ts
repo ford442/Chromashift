@@ -12,7 +12,7 @@ import { emitBandLayerWgsl, emitCoincidenceDecayWgsl, emitCompositorWgsl } from 
  * compositor}.ts` re-export them under their old paths.
  */
 /** Every default-graph layer shader, in layer order. */
-export const layerFragmentSources: readonly string[] = CANONICAL_LAYER_SPECS.map((spec) =>
+const layerFragmentSources: readonly string[] = CANONICAL_LAYER_SPECS.map((spec) =>
   emitBandLayerWgsl(spec, WGSL_COLOR_HELPERS),
 );
 

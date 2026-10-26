@@ -68,7 +68,7 @@ export function getWasmModule(): ChromashiftWasmModule | null {
   return wasmModule;
 }
 
-export function wasmHas(fn: WasmApiFunction): boolean {
+function wasmHas(fn: WasmApiFunction): boolean {
   return wasmModule !== null && typeof wasmModule[fn] === 'function';
 }
 
@@ -101,7 +101,7 @@ export function getPersistentBuf(size: number): number {
  * `ALLOW_MEMORY_GROWTH` a failed allocation returns `0` rather than aborting,
  * and every caller would then write the pixels over heap offset 0.
  */
-export function checkedMalloc(mod: ChromashiftWasmModule, size: number): number {
+function checkedMalloc(mod: ChromashiftWasmModule, size: number): number {
   const ptr = mod._malloc(size);
   if (ptr === 0) throw new Error(`[WasmEngine] _malloc(${size}) failed: the WASM heap cannot grow that far`);
   return ptr;

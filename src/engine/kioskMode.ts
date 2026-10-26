@@ -1,7 +1,7 @@
 import { publishDiagnostic } from './diagnostics';
 import type { ParamPath } from '../state/params';
 
-export const KIOSK_URL_PARAM = 'kiosk';
+const KIOSK_URL_PARAM = 'kiosk';
 
 /** True when `?kiosk=1`, `?kiosk=true`, or `?kiosk` is present. */
 export function isKioskModeSearch(search: string): boolean {
@@ -24,7 +24,7 @@ export function publishKioskBreadcrumbs(enabled: boolean): void {
  * The attract loop's slow drift: each parameter swings `amplitude` around
  * `center` with its own period, so the combined look never quite repeats.
  */
-export const ATTRACT_DRIFT: readonly {
+const ATTRACT_DRIFT: readonly {
   path: ParamPath;
   center: number;
   amplitude: number;

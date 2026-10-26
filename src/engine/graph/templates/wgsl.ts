@@ -30,7 +30,7 @@ const indent = (depth: number) => '  '.repeat(depth);
 const MOTION_FLOW_MIN_SPEED_WGSL = MOTION_FLOW_MIN_SPEED.toFixed(3);
 
 /** `cropLayer<N>Color` — the CROP / CROP-NUNIF2 colour ramp for one layer. */
-export function emitCropHelperWgsl(spec: LayerSpec): string {
+function emitCropHelperWgsl(spec: LayerSpec): string {
   const { crop, cropUpper } = spec;
   const decls = crop
     .map((band) => `  let ${band.name} = vec4<f32>(${band.rgb}, nonAlpha);`)
@@ -83,17 +83,17 @@ ${softArms}
 `;
 }
 
-export function cropFnName(spec: LayerSpec): string {
+function cropFnName(spec: LayerSpec): string {
   return `cropLayer${spec.index}Color`;
 }
 
 /** Every layer's crop helper, concatenated in layer order. */
-export function emitCropHelpersWgsl(specs: readonly LayerSpec[]): string {
+function emitCropHelpersWgsl(specs: readonly LayerSpec[]): string {
   return specs.map(emitCropHelperWgsl).join('');
 }
 
 /** Backend-agnostic colour maths every `band-layer` shader links against. */
-export const WGSL_COLOR_HELPER_PRELUDE = /* wgsl */ `
+const WGSL_COLOR_HELPER_PRELUDE = /* wgsl */ `
 fn hsl2rgb(h: f32, s: f32, l: f32) -> vec3<f32> {
   let a = s * min(l, 1.0 - l);
   let k = vec3<f32>(0.0, 8.0, 4.0) + h * 12.0;
@@ -325,7 +325,7 @@ export const BAND_LAYER_UNIFORMS = defineUniformLayout('FragUniforms', [
 export type BandLayerUniformName = UniformNames<typeof BAND_LAYER_UNIFORMS>;
 
 /** Bindings + uniforms shared by every `band-layer` fragment shader. */
-export const BAND_LAYER_HEADER_WGSL = /* wgsl */ `
+const BAND_LAYER_HEADER_WGSL = /* wgsl */ `
 @group(0) @binding(1) var texSampler : sampler;
 @group(0) @binding(2) var tex        : texture_2d<f32>;
 @group(0) @binding(4) var classMask  : texture_2d<u32>;
@@ -435,7 +435,7 @@ export interface CoincidenceDecayOptions {
  * pass. Kept as its own emitted block so the pass-graph work (#154) can lift it
  * into a `motion` node's template without untangling it from the decay maths.
  */
-export const WGSL_MOTION_HELPERS = /* wgsl */ `
+const WGSL_MOTION_HELPERS = /* wgsl */ `
 // Flow angle -> hue, magnitude -> intensity.
 //
 // Below \`MOTION_FLOW_MIN_SPEED\` the solve has no direction worth showing, and
@@ -863,14 +863,6 @@ export function compositorUniformLayout(
   const layout = defineUniformLayout('CompositorUniforms', fields, { column: 19 });
   compositorLayouts.set(key, layout);
   return layout;
-}
-
-/** Uniform buffer size in bytes for a compositor with `layerCount` layers. */
-export function compositorUniformBytes(
-  layerCount: number,
-  tracerCount: number = SHIPPED_TRACER_COUNT,
-): number {
-  return compositorUniformLayout(layerCount, tracerCount).bytes;
 }
 
 /** Indices of the tracers past the shipped below / above pair. */

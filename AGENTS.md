@@ -29,6 +29,7 @@ For what's already shipped vs. planned next, see [docs/ROADMAP.md](docs/ROADMAP.
 npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
+npm run knip      # Unused files, exports and dependencies (knip.json)
 npm test          # Vitest unit tests (src/**/*.test.ts)
 npm run shaders:validate  # Dump every WGSL/GLSL variant; naga + glslangValidator over each
 npm run test:e2e  # Playwright E2E (all projects; install browsers first)
@@ -556,7 +557,8 @@ Edit `public/images.json` to change the image list:
 ## Code Style & Conventions
 
 - **Linting**: ESLint v9 flat config (`eslint.config.js`). Extends `@eslint/js/recommended`, `typescript-eslint/recommended`, `react-hooks/flat/recommended`, and `react-refresh/vite`, plus four type-aware rules (`parserOptions.projectService`, so every linted file must belong to one of the tsconfig projects): `no-floating-promises`, `no-misused-promises`, `await-thenable`, and `switch-exhaustiveness-check`. GPU lifecycle is promise-shaped (`requestDevice`, `mapAsync`, `onSubmittedWorkDone`, `device.lost`), and a dropped promise is a dropped error — mark a deliberate fire-and-forget with `void`. An async handler a component calls from a DOM event is typed `() => Promise<void>` in its props and voided at the DOM edge (`onClick={() => void onExportVideo()}`), not wrapped in `buildOverlayProps.ts` (that would break reference stability), and must catch and report its own errors.
-- **TypeScript**: Strict mode is enabled. Three project references are used:
+- **Dead code**: `knip` (`knip.json`, CI `web` job) fails on unused files, exports, dependencies and duplicate exports. Tests count as users. Entries beyond what its Vite/Vitest/Playwright plugins find: `scripts/*.mjs` and `src/engine/compute/chores/index.ts` (the `gpu-chores` public surface sibling apps import, so its exports are not checked). Exported types used in their own file are allowed; values are not — drop the `export` instead. An intentional second name for one value (the `*_WGSL` / `*_GLSL` literal aliases) is tagged `@alias`.
+- **TypeScript**: Strict mode is enabled, plus `noImplicitOverride` and `noUncheckedIndexedAccess` in `tsconfig.app.json`. For an index the compiler cannot prove in range, prefer restructuring (iterate entries, a tuple type) or a real guard; use `!` only when the index is in range by construction, and keep guards out of hot per-pixel loops. Three project references are used:
   - `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`.
   - `tsconfig.node.json` — compiles `vite.config.ts` and `vitest.config.ts`, includes `@types/node`.
   - `tsconfig.e2e.json` — type-checks `e2e/` and `playwright.config.ts` (Playwright itself only strips types), so a spec reading a renamed breadcrumb fails `tsc -b`.
@@ -582,7 +584,7 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | Job | What it runs |
 |-----|----------------|
 | `guard` | Blocks `dist/` and accidental secrets in PR diffs |
-| `web` | `npm run lint`, `npx tsc -b`, `npm run build` |
+| `web` | `npm run lint`, `npm run knip`, `npx tsc -b`, `npm run build` |
 | `unit` | `npm test` (Vitest) |
 | `shaders` | `node scripts/validate-shaders.mjs --require-glslang`: dumps every WGSL/GLSL variant (`shaderBindings.test.ts`), then `naga` + `glslangValidator` (naga-cli pinned and cached) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |

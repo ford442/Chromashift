@@ -110,35 +110,6 @@ export async function listLocalImages(): Promise<LocalImageRecord[]> {
   return records.sort((a, b) => a.addedAt - b.addedAt);
 }
 
-export async function touchLocalImage(
-  id: string,
-  patch: Partial<Pick<LocalImageMeta, 'lastUsedAt' | 'avgLuminance'>>,
-): Promise<void> {
-  const db = await openDB();
-  const tx = db.transaction(STORE, 'readwrite');
-  const store = tx.objectStore(STORE);
-  const record = await requestToPromise(store.get(id) as IDBRequest<LocalImageRecord | undefined>);
-  if (record) {
-    store.put({ ...record, ...patch });
-  }
-  await new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error('Failed to update local image'));
-  });
-  db.close();
-}
-
-export async function deleteLocalImage(id: string): Promise<void> {
-  const db = await openDB();
-  const tx = db.transaction(STORE, 'readwrite');
-  tx.objectStore(STORE).delete(id);
-  await new Promise<void>((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error('Failed to delete local image'));
-  });
-  db.close();
-}
-
 /** Wipe the entire local library (used by the "Clear Library" button). */
 export async function clearLocalLibrary(): Promise<void> {
   const db = await openDB();
