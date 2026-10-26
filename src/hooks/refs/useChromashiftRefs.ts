@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useCompareRefs } from './compareRefs';
 import { useDomRefs } from './domRefs';
+import { useFrameRefs } from './frameRefs';
 import { useGpuRefs } from './gpuRefs';
 import { useMediaRefs } from './mediaRefs';
 import { useReactiveRefs } from './reactiveRefs';
@@ -23,9 +24,10 @@ export function useChromashiftRefs(): ChromashiftRefs {
   const media = useMediaRefs();
   const compare = useCompareRefs();
   const reactive = useReactiveRefs();
+  const frame = useFrameRefs();
 
   return useMemo(
-    () => ({ ...dom, ...gpu, ...media, ...compare, ...reactive }),
-    [dom, gpu, media, compare, reactive],
+    () => ({ ...dom, ...gpu, ...media, ...compare, ...reactive, ...frame }),
+    [dom, gpu, media, compare, reactive, frame],
   );
 }

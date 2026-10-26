@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { xrEyeViewports, xrRendererStateOverrides } from './WebXrPresenter';
+import { describe, expect, it, vi } from 'vitest';
+import { FrameClock } from '../frame/FrameClock';
+import { xrEyeViewports, xrRendererStateOverrides, xrSessionScheduler } from './WebXrPresenter';
 import type { RendererState } from '../types/RendererState';
 
 const state = (paused: boolean) => ({ paused } as RendererState);
@@ -33,5 +34,30 @@ describe('xrEyeViewports', () => {
       { x: 0, y: 0, width: 960, height: 1080 },
       { x: 960, y: 0, width: 960, height: 1080 },
     ]);
+  });
+});
+
+describe('xrSessionScheduler', () => {
+  it('ticks the frame clock on the session loop and hands tasks the XR frame', () => {
+    let pending: ((time: number, frame: XRFrame) => void) | null = null;
+    const session = {
+      requestAnimationFrame: vi.fn((callback: (time: number, frame: XRFrame) => void) => {
+        pending = callback;
+        return 7;
+      }),
+      cancelAnimationFrame: vi.fn(),
+    } as unknown as XRSession;
+    const clock = new FrameClock({ scheduler: { request: () => 1, cancel: () => {} } });
+    const seen: (XRFrame | null)[] = [];
+    clock.register('render', (tick) => { seen.push(tick.xrFrame); });
+
+    const restore = clock.useScheduler(xrSessionScheduler(session));
+    const frame = { session } as unknown as XRFrame;
+    pending!(1000, frame);
+    expect(seen).toEqual([frame]);
+    expect(session.requestAnimationFrame).toHaveBeenCalledTimes(2);
+
+    restore();
+    expect(session.cancelAnimationFrame).toHaveBeenCalledWith(7);
   });
 });
