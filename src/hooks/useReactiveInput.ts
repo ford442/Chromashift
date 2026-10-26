@@ -23,12 +23,16 @@ export function useReactiveInput(refs: ChromashiftRefs, store: ChromashiftStore)
 
     reactiveModRef.current = null;
     let cancelled = false;
+    // Take the instances now: after an `await`, the refs may already hold the
+    // capture a quick re-enable started, which this teardown must not stop.
+    const audio = audioRef.current;
+    const midi = midiRef.current;
+    audioRef.current = null;
+    midiRef.current = null;
 
     void (async () => {
-      await audioRef.current?.stop();
-      audioRef.current = null;
-      await midiRef.current?.stop();
-      midiRef.current = null;
+      await audio?.stop();
+      await midi?.stop();
       if (!cancelled) {
         dispatch({
           type: 'reactive/patch',
@@ -45,12 +49,16 @@ export function useReactiveInput(refs: ChromashiftRefs, store: ChromashiftStore)
   // Microphone capture when audio reactive is on.
   useEffect(() => {
     if (!reactive.enabled || !reactive.audioEnabled) {
+      const audio = audioRef.current;
+      audioRef.current = null;
+      let cancelled = false;
       void (async () => {
-        await audioRef.current?.stop();
-        audioRef.current = null;
-        dispatch({ type: 'reactive/patch', patch: { micActive: false } });
+        await audio?.stop();
+        if (!cancelled) dispatch({ type: 'reactive/patch', patch: { micActive: false } });
       })();
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
     if (!navigator.mediaDevices?.getUserMedia) {
