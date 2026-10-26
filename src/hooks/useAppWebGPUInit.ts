@@ -613,12 +613,24 @@ export function useAppWebGPUInit({
 
       destroyActiveOrchestrator();
     };
-    // Page-lifetime GPU boot (#157 / #158). `init` changes every render because
-    // `useChromashiftRefs()` returns a new object, which used to re-run this
-    // effect, reset requestDevice to attempt 1, and OOM D3D12 command queues.
-    // Resize / antialias / colour-space changes must reconfigure, not reboot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Page-lifetime GPU boot (#157 / #158): every dependency here is stable —
+    // refs, the store's memoized actions, a `[]` callback — so this runs once.
+    // `init` is read through `initRef` because it is rebuilt every render; a
+    // re-run would reset requestDevice to attempt 1 and could OOM D3D12
+    // command queues. Resize / antialias / colour-space changes must
+    // reconfigure, not reboot.
+  }, [
+    setGpuError,
+    setGpuReady,
+    destroyActiveOrchestrator,
+    orchestratorRef,
+    deviceRef,
+    webGpuSessionRef,
+    gpuImageAnalysisRef,
+    rendererRef,
+    textureManagerRef,
+    sourceTextureRef,
+  ]);
 
   useEffect(() => {
     orchestratorRef.current?.setCanvasColorSpace(displayColorSpace);
