@@ -13,17 +13,14 @@ import {
 import { acquireGpuChoreSession, type GpuChoreLease } from './compute/GpuChoreSession';
 import { getRendererPreference } from './rendererMode';
 import {
-  bootstrapWebGpu,
-  configureWebGpuCanvas,
-  createWebGL2Context,
-  watchWebGL2Context,
   pipelineRuntimeError,
   webglContextLostRuntimeError,
   withErrorScope,
   type GpuRuntimeError,
-  type WebGpuCanvasOptions,
-  type WebGpuSession,
-} from './gpu/gpuBootstrap';
+} from './gpu/gpuErrors';
+import { configureWebGpuCanvas, type WebGpuCanvasOptions } from './webgpu/canvasConfig';
+import { bootstrapWebGpu, type WebGpuSession } from './webgpu/webgpuSession';
+import { createWebGL2Context, watchWebGL2Context } from './webgl/webgl2Context';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './types/RendererContracts';
 
 /** Default slot id for the main viewport canvas. */

@@ -50,7 +50,7 @@ export interface ChromashiftDiagnostics {
   /** Set while the WebGL pool is 8-bit, so tracers clip (see `webglInternalFormatNote`). */
   webglInternalFormatNote: string | null;
 
-  // ── Canvas presentation (gpuBootstrap.ts, WebGPURenderer.ts) ────────────────
+  // ── Canvas presentation (canvasConfig.ts, WebGPURenderer.ts) ────────────────
   /** Whether `hdr-extended` canvas presentation is available this session. */
   canvasHdrAvailable: boolean;
   /** Why (or why not), for diagnostics and E2E. */

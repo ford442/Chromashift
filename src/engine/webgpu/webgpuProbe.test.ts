@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { resetGpuDeviceGateForTests } from '../gpu/gpuBootstrap';
+import { resetGpuDeviceGateForTests } from './adapter';
 import {
   detectBrowserBrand,
   probeFailureMessage,

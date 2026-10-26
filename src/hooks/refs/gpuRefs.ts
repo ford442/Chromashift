@@ -6,7 +6,7 @@ export function useGpuRefs(): GpuRefs {
   const rendererRef = useRef<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>(null);
   const textureManagerRef = useRef<import('../../engine/types/RendererContracts').ChromashiftTextureManager | null>(null);
   const deviceRef = useRef<GPUDevice | null>(null);
-  const webGpuSessionRef = useRef<import('../../engine/gpu/gpuBootstrap').WebGpuSession | null>(null);
+  const webGpuSessionRef = useRef<import('../../engine/webgpu/webgpuSession').WebGpuSession | null>(null);
   const maskTextureRef = useRef<GPUTexture | null>(null);
   const gpuImageAnalysisRef = useRef<import('../../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>(null);
   const upscalerRef = useRef<import('../../engine/upscale/Upscaler').Upscaler | null>(null);

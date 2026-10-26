@@ -182,7 +182,7 @@ export function internalColorFormatBytesPerPixel(format: GPUTextureFormat): numb
  * `requestAdapter` power-preference attempt list, in order.
  *
  * These are **adapter** attempts, not the two `requestDevice` strategies in
- * `gpuBootstrap.ts` (`default-limits` → `no-optional-features`). They are easy
+ * `webgpu/adapter.ts` (`default-limits` → `no-optional-features`). They are easy
  * to confuse and count separately: an adapter is requested once per device
  * (Retry GPU after a loss needs a fresh one), then at most
  * `MAX_DEVICE_REQUEST_STRATEGIES` device requests run against it.

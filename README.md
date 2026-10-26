@@ -48,7 +48,7 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 | Chrome flags | On older builds, enable WebGPU via `chrome://flags/#enable-unsafe-webgpu` |
 | Fallback | **Off.** Failed WebGPU boots show a blocking probe screen. Explicit WebGL: `?renderer=webgl` ([webgl-fallback.md](docs/webgl-fallback.md)) |
 
-GPU bootstrap (`src/engine/gpu/gpuBootstrap.ts`) logs adapter info at startup, derives conservative `requiredLimits`, handles `device.lost`, and surfaces uncaptured errors. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) for the WebGPU/WebGL options matrix.
+GPU bootstrap (`src/engine/webgpu/webgpuSession.ts`, over `adapter.ts` and `canvasConfig.ts`) logs adapter info at startup, derives conservative `requiredLimits`, handles `device.lost`, and surfaces uncaptured errors. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) for the WebGPU/WebGL options matrix.
 
 ```bash
 npm install

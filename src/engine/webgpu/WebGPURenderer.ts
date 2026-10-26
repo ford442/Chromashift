@@ -23,7 +23,7 @@ import { MOTION_FIELD_DIVISOR, MOTION_MODE_DIRECTION } from '../motionModes';
 import { TracerInspectPass } from './TracerInspectPass';
 import { compositorUniforms, rendererStateValue, tracerInspectSettings } from '../graph/exec/uniforms';
 import { GpuReadback } from './GpuReadback';
-import { pipelineRuntimeError, type GpuRuntimeError } from '../gpu/gpuBootstrap';
+import { pipelineRuntimeError, type GpuRuntimeError } from '../gpu/gpuErrors';
 import { GpuTimestampProfiler, publishGpuTimestampBreadcrumbs } from './GpuTimestampProfiler';
 import { StationaryPreviewRenderer } from './StationaryPreviewRenderer';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';

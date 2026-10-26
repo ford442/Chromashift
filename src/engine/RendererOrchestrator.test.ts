@@ -7,13 +7,9 @@ import {
 } from './RendererOrchestrator';
 import type { ChromashiftRenderer } from './types/RendererContracts';
 import { presetGraphSource } from './graph/variants';
-import {
-  WebGL2ContextLostError,
-  createWebGL2Context,
-  watchWebGL2Context,
-  type GpuRuntimeError,
-  type WebGpuSession,
-} from './gpu/gpuBootstrap';
+import { type GpuRuntimeError } from './gpu/gpuErrors';
+import { type WebGpuSession } from './webgpu/webgpuSession';
+import { WebGL2ContextLostError, createWebGL2Context, watchWebGL2Context } from './webgl/webgl2Context';
 import type { TextureManager } from './webgpu/TextureManager';
 import type { WebGLTextureManager } from './webgl/WebGLTextureManager';
 import type { GpuImageAnalysis } from './compute/GpuImageAnalysis';

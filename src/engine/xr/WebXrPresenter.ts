@@ -2,7 +2,7 @@ import { WebGLRenderer } from '../webgl/WebGLRenderer';
 import { WebGLTextureManager } from '../webgl/WebGLTextureManager';
 import type { RendererState } from '../types/RendererState';
 import { rendererStateValue } from '../graph/exec/uniforms';
-import { createWebGL2Context } from '../gpu/gpuBootstrap';
+import { createWebGL2Context } from '../webgl/webgl2Context';
 import { passGraphSelection } from '../graph/gate';
 import { presetGraphSource } from '../graph/variants';
 import type { FrameClock, FrameScheduler } from '../frame/FrameClock';

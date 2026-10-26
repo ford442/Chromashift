@@ -115,6 +115,9 @@ src/
     │   └── diagnostics.ts    # Tracer view, display, heatmap, diagnostic, compare passes
     ├── webgpu/               # The WebGPU backend
     │   ├── WebGPURenderer.ts     # One canvas's WebGPU frame: picks the graph variant, the executor draws it
+    │   ├── webgpuSession.ts      # bootstrapWebGpu(): one canvas's session on the page's leased device
+    │   ├── adapter.ts            # Adapter + page device gate (≤ 2 requestDevice strategies), capability reports
+    │   ├── canvasConfig.ts       # Canvas configure: SDR / hdr-extended, tone-mapping + HDR probes
     │   ├── webgpuProbe.ts        # Boot probe: adapter/device pre-flight + the failure overlay's report
     │   ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache, evictExcept()
     │   ├── MotionFieldPass.ts    # WebGPU motion field (borrows the shared chore backend); halfFloat.ts packs its upload
@@ -125,10 +128,12 @@ src/
     │   ├── WebGLRenderer.ts, WebGLDebugPasses.ts, WebGLReadback.ts,
     │   │   WebGLMotionField.ts, WebGLStationaryPreviewRenderer.ts
     │   ├── WebGLTextureManager.ts  # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
+    │   ├── webgl2Context.ts      # createWebGL2Context (sticky per canvas) + context-loss watch
     │   ├── resources.ts, programUtils.ts
     │   └── shaders/          # GLSL sources — layers/persistence/compositor emitted from graph/templates/glsl.ts
     ├── gpu/                  # Backend-agnostic GPU setup
-    │   └── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
+    │   ├── gpuOptions.ts         # Canvas/context options matrix both backends build from
+    │   └── gpuErrors.ts          # GpuRuntimeError + mappings, error scopes, device diagnostics, fatal breaker
     ├── textures/             # Texture-cache policy (LRU budget, eviction) + breadcrumbs, shared by both texture managers
     ├── library/              # Where images come from
     │   ├── corpusManifest.ts, corpusIndex.ts  # Remote corpus list (revalidated IndexedDB copy) + search index
@@ -563,7 +568,7 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 
 | Tier | Command | Scope |
 |------|---------|-------|
-| **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `settingsSchema`, a `fast-check` property test over `deserializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
+| **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `settingsSchema`, a `fast-check` property test over `deserializeSettings`, `presetUrl`), engine (`blendModes`, `adapter` / `canvasConfig` / `gpuErrors` / `gpuOptions` (GPU bootstrap), `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
 | **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`), the WASM engine loading on the page and in both workers (`wasm-engine.spec.ts`, `window.wasmEngineState` / `wasmEngineWorkers`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`), export readback on a forced `bgra8unorm` canvas (`webgpu-bgra-export.spec.ts`; run with `--workers=1`), **Retry GPU** after a simulated `device.destroy()` loss (`webgpu-device-loss.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/test_engine.cpp` via `g++` — band ladder vs the original linear scan, bulk-kernel/single-pixel parity, luminance, decay and motion-flow math against the engine's scalar path; no Emscripten required |
 | **C++ SIMD128** | `npm run test:cpp:simd` | The same suite built with `em++ -msimd128` and run under Node — the code the browser runs — then `cpp/tests/simd_parity.cpp`: the SIMD engine and a `CS_FORCE_SCALAR` copy linked into one module and compared **bit for bit** on every kernel, at odd sizes and on NaN/denormal/extreme inputs. Needs emsdk |

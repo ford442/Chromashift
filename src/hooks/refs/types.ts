@@ -23,7 +23,7 @@ export interface GpuRefs {
   rendererRef: RefObject<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>;
   textureManagerRef: RefObject<import('../../engine/types/RendererContracts').ChromashiftTextureManager | null>;
   deviceRef: RefObject<GPUDevice | null>;
-  webGpuSessionRef: RefObject<import('../../engine/gpu/gpuBootstrap').WebGpuSession | null>;
+  webGpuSessionRef: RefObject<import('../../engine/webgpu/webgpuSession').WebGpuSession | null>;
   maskTextureRef: MutableRefObject<GPUTexture | null>;
   gpuImageAnalysisRef: RefObject<import('../../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>;
   upscalerRef: RefObject<import('../../engine/upscale/Upscaler').Upscaler | null>;

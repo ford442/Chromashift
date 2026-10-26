@@ -16,7 +16,7 @@ import type { CollisionStats, RendererState } from './RendererState';
 import type { ImageEntry } from '../webgpu/TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { ChromashiftTextureHandle } from './TextureHandle';
-import type { GpuRuntimeError } from '../gpu/gpuBootstrap';
+import type { GpuRuntimeError } from '../gpu/gpuErrors';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 

@@ -2,7 +2,7 @@ import type { ImageEntry } from '../engine/webgpu/TextureManager';
 import type { RendererBackend } from '../engine/types/RendererContracts';
 import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';
-import type { GpuRuntimeError } from '../engine/gpu/gpuBootstrap';
+import type { GpuRuntimeError } from '../engine/gpu/gpuErrors';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
 import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';

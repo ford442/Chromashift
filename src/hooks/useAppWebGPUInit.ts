@@ -11,13 +11,9 @@ import {
   recordProbeStageFailure,
   recordProbeSuccess,
 } from '../engine/webgpu/webgpuProbe';
-import {
-  getGpuFatalError,
-  releasePageGpuDevice,
-  toBootstrapRuntimeError,
-  type GpuRuntimeError,
-  type WebGpuSession,
-} from '../engine/gpu/gpuBootstrap';
+import { getGpuFatalError, toBootstrapRuntimeError, type GpuRuntimeError } from '../engine/gpu/gpuErrors';
+import { releasePageGpuDevice } from '../engine/webgpu/adapter';
+import { type WebGpuSession } from '../engine/webgpu/webgpuSession';
 import { listLocalImages } from '../engine/library/LocalLibrary';
 import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/library/corpusManifest';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';

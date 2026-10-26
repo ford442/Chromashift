@@ -5,7 +5,7 @@ import { KioskRemote } from './KioskRemote';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { openWebGlDiagnosticSession, readRequestedBackend } from '../engine/rendererMode';
-import { isFatalGpuDeviceRequestError } from '../engine/gpu/gpuBootstrap';
+import { isFatalGpuDeviceRequestError } from '../engine/gpu/gpuErrors';
 import { useCollisionStats, useRenderCpuTiming } from '../engine/telemetryStore';
 import { useRenderCount } from '../debug/renderCounts';
 import type { ChromeShellProps } from './AppUI.types';

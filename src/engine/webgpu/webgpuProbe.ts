@@ -20,7 +20,7 @@
  * `docs/webgl-fallback.md`.
  */
 
-import { readAdapterInfo, requestWebGpuAdapter } from '../gpu/gpuBootstrap';
+import { readAdapterInfo, requestWebGpuAdapter } from './adapter';
 import { publishDiagnostic } from '../diagnostics';
 
 /** How far boot got before it stopped. */
