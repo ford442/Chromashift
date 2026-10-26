@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInitialState } from './defaults';
 import { applySettingsToState, chromashiftReducer } from './chromashiftReducer';
 import {
@@ -10,6 +10,15 @@ import {
 } from './serializeSettings';
 import { fromBase64Url, toBase64Url } from './presetUrl';
 import type { ColorProfile } from '../engine/color/colorProfile';
+
+// Several cases load deliberately bad documents; the decoder's warning is expected.
+beforeEach(() => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('serializeSettings', () => {
   it('round-trips render settings through JSON', () => {

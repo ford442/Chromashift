@@ -13,7 +13,8 @@ import type { BuiltinPreset } from '../state/presetGallery';
 import type { StoredPreset } from '../state/presetLibrary';
 import type { LiveSourceState, VideoExportSettings } from '../state/types';
 import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
-import type { AudioLevelSnapshot, MidiBinding, MidiParamId } from '../engine/reactive/types';
+import type { AudioLevelSnapshot, MidiBinding } from '../engine/reactive/types';
+import type { ParamPath } from '../state/params';
 import type {
   EngineMode,
   LayerIndex,
@@ -329,18 +330,17 @@ export interface AppUIControlProps {
   micError: string | null;
   midiAvailable: boolean;
   midiError: string | null;
-  midiLearnTarget: MidiParamId | null;
+  midiLearnTarget: ParamPath | null;
   midiBindings: MidiBinding[];
   audioLevels: AudioLevelSnapshot;
   audioSensitivity: number;
-  layerExtension0: number;
   onReactiveEnabledChange: (enabled: boolean) => void;
   onAudioEnabledChange: (enabled: boolean) => void;
   onMidiEnabledChange: (enabled: boolean) => void;
   onAudioSensitivityChange: (value: number) => void;
   onStartMicDemo: () => void;
-  onMidiLearnTargetChange: (target: MidiParamId | null) => void;
-  onRemoveMidiBinding: (param: MidiParamId) => void;
+  onMidiLearnTargetChange: (target: ParamPath | null) => void;
+  onRemoveMidiBinding: (param: ParamPath) => void;
 }
 
 export type AppUIProps =

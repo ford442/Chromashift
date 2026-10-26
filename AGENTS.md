@@ -81,6 +81,7 @@ src/
 │   ├── chromashiftReducer.ts, defaults.ts, types.ts
 │   ├── actions/                  # Dispatch wrapper factories mirroring reducer slices (media, compare, reactive, …)
 │   ├── settingsSchema.ts, schemaFields.ts  # The preset schema (ranges + metadata) and its lenient decoder
+│   ├── params.ts                 # ParamPath registry: ParamSpec, getParam/withParam, sliderProps
 │   └── serializeSettings.ts, presetUrl.ts, presetLibrary.ts, presetGallery.ts  # see docs/PRESETS.md
 └── engine/
     ├── graph/                # Pass-graph IR + compiler + WebGPU executor — see docs/PASS_GRAPH.md
@@ -269,6 +270,15 @@ indices only. Band bounds for `cr0p-classic` must stay in sync with `shared/band
 ### Presets & Shareable URLs
 
 Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 8`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Every untrusted document is decoded through `state/settingsSchema.ts` (`ChromashiftSettingsInput` is inferred from it): bad fields are clamped or dropped with one warning listing their paths, and only an unusable envelope (bad JSON, unsupported version) falls back to defaults with `ui.presetLoadError` set. Schema v3 adds `layers.colorProfileId` (+ an embedded table in file exports only — share URLs carry the id alone); v4 adds `viewport.colorSpace` (`srgb` / `display-p3`); v7 adds `layers.count`; v8 adds `viewport.canvasHdr` (opt-in `hdr-extended` canvas presentation, see `docs/gpu-bootstrap.md`). v1/v2 documents migrate to the classic profile and sRGB canvas. See `docs/PRESETS.md`.
+
+### Parameter registry (`state/params.ts`)
+
+Every numeric session setting has a dotted path that is the same in the preset schema and in `ChromashiftState` (`tracers.aboveIntensity`, `layers.extensions.7`). `ParamPath` — the automatable subset — and `NumericSettingPath` — all of them — are **types generated from `settingLeavesSchema`** in `settingsSchema.ts`; a leaf is a parameter unless its `num()` says `automatable: false` (layer count, modes, resolution scales, inspector view, …, each with a reason). There is no hand-kept list: `params.test.ts` pins the two lists, so a new numeric leaf fails that test until it is classified.
+
+- `paramSpec(path)` / `listParams(layerCount)` — range, default, curve, label and unit; per-layer parameters are listed once per layer of the session.
+- `getParam` / `withParam` — pure read / write with structural sharing; `withParam` coerces exactly as a preset load would and never grows a per-layer array past `layers.count`. The reducer's `param/set` action is `withParam`.
+- `sliderProps(path)` — `min`/`max`/`step` for a panel slider; the panels spread it instead of repeating literals.
+- MIDI bindings target any `ParamPath` (`paramFromUnit` maps CC 0–127 along the curve); the Reactive panel lists every parameter for MIDI learn. The kiosk attract drift (`engine/kioskMode.ts` `attractValues`) writes through `setParam` too.
 
 ### Kiosk / gallery installation
 

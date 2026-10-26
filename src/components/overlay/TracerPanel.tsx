@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { sliderProps } from '../../state/params';
 import { getBlendModeInfo } from '../../engine/blendModes';
 import { MOTION_MODES, type MotionMode } from '../../engine/motionModes';
 import type { ReferenceBlendMode, OverlayImageSource, TracerPanelProps } from './types';
@@ -157,9 +158,7 @@ export const TracerPanel = memo(function TracerPanel({
           <span className="text-xs text-amber-400/80 font-mono">Opac:</span>
           <input
             type="range"
-            min={0}
-            max={1}
-            step={0.01}
+            {...sliderProps('tracers.aboveIntensity')}
             value={tracerAboveIntensity}
             onChange={(e) => onTracerAboveIntensityChange(Number(e.target.value))}
             className="w-16 h-1 accent-amber-400"
@@ -170,9 +169,7 @@ export const TracerPanel = memo(function TracerPanel({
           <span className="text-xs text-amber-400/80 font-mono">Hold:</span>
           <input
             type="range"
-            min={0}
-            max={5000}
-            step={100}
+            {...sliderProps('tracers.aboveDuration')}
             value={tracerAboveDuration}
             onChange={(e) => onTracerAboveDurationChange(Number(e.target.value))}
             className="w-16 h-1 accent-amber-400"
@@ -187,9 +184,7 @@ export const TracerPanel = memo(function TracerPanel({
           <span className="text-xs text-amber-400/80 font-mono">Opac:</span>
           <input
             type="range"
-            min={0}
-            max={1}
-            step={0.01}
+            {...sliderProps('tracers.belowIntensity')}
             value={tracerBelowIntensity}
             onChange={(e) => onTracerBelowIntensityChange(Number(e.target.value))}
             className="w-16 h-1 accent-amber-400"
@@ -200,9 +195,7 @@ export const TracerPanel = memo(function TracerPanel({
           <span className="text-xs text-amber-400/80 font-mono">Hold:</span>
           <input
             type="range"
-            min={0}
-            max={10000}
-            step={100}
+            {...sliderProps('tracers.belowDuration')}
             value={tracerBelowDuration}
             onChange={(e) => onTracerBelowDurationChange(Number(e.target.value))}
             className="w-16 h-1 accent-amber-400"
@@ -295,9 +288,7 @@ export const TracerPanel = memo(function TracerPanel({
               <span className="text-[10px] text-cyan-200/70 font-mono">{Math.round(referenceOpacity * 100)}%</span>
               <input
                 type="range"
-                min={0.05}
-                max={1}
-                step={0.01}
+                {...sliderProps('ui.referenceOpacity')}
                 value={referenceOpacity}
                 onChange={(e) => onReferenceOpacityChange(Number(e.target.value))}
                 className="flex-1 h-1 accent-cyan-400"
@@ -381,27 +372,21 @@ export const TracerPanel = memo(function TracerPanel({
             <MotionSlider
               label="Gain"
               value={motionGain}
-              min={0}
-              max={4}
-              step={0.05}
+              {...sliderProps('tracers.motionGain')}
               format={(v) => `${v.toFixed(2)}×`}
               onChange={onMotionGainChange}
             />
             <MotionSlider
               label="Hold"
               value={motionDecayBias}
-              min={0}
-              max={1}
-              step={0.01}
+              {...sliderProps('tracers.motionDecayBias')}
               format={(v) => `${Math.round(v * 100)}%`}
               onChange={onMotionDecayBiasChange}
             />
             <MotionSlider
               label="Floor"
               value={motionThreshold}
-              min={0}
-              max={0.3}
-              step={0.005}
+              {...sliderProps('tracers.motionThreshold')}
               format={(v) => v.toFixed(3)}
               onChange={onMotionThresholdChange}
             />

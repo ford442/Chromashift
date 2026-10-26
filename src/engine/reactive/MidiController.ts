@@ -1,4 +1,4 @@
-import type { MidiBinding, MidiParamId } from './types';
+import type { MidiBinding } from './types';
 
 export type MidiCcHandler = (
   channel: number,
@@ -100,15 +100,4 @@ export function upsertBinding(
 
 export function bindingKey(binding: MidiBinding): string {
   return `${binding.channel}:${binding.controller}→${binding.param}`;
-}
-
-export function isMidiParamId(value: string): value is MidiParamId {
-  return value in {
-    'layers.extensions.0': 1,
-    'layers.extensions.1': 1,
-    'layers.extensions.2': 1,
-    'tracers.aboveIntensity': 1,
-    'tracers.belowIntensity': 1,
-    'engine.avgLuminance': 1,
-  };
 }

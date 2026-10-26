@@ -68,7 +68,7 @@ load, so a hand-edited preset degrades to the default look instead of nothing.
 |-----|---------|
 | `layers` / `tracers` / `output` / `engine` / `ui` | Core render + playback settings (same as v1) |
 | `output.performanceHudEnabled` / `performanceAutoDegrade` | Diagnostics perf HUD toggles |
-| `reactive` | Master toggles (`enabled`, `audioEnabled`, `midiEnabled`) plus sensitivity and MIDI bindings |
+| `reactive` | Master toggles (`enabled`, `audioEnabled`, `midiEnabled`) plus sensitivity and MIDI bindings. A binding's `param` is any automatable `ParamPath` (`layers.extensions.7`, `output.stampBoost`, …); one naming anything else is dropped on load |
 | `viewport` | Quarter-zoom, half-overlay, and canvas `colorSpace` (`srgb` / `display-p3`, v4) |
 | `compare` | Multi-view layout, sync play, swipe position, and slot A/B `ChromashiftSettingsInput` bags |
 | `kiosk` | Installation-mode flags (`kioskEnabled`, `kioskUiHidden`, `kioskAttractMode`) |

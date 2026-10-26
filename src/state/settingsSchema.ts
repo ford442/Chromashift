@@ -25,7 +25,6 @@ import {
 import { MAX_LAYER_COUNT } from '../engine/graph/layerSpecs';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { parseColorProfile, type ColorProfile } from '../engine/color/colorProfile';
-import { MIDI_PARAM_LABELS, type MidiParamId } from '../engine/reactive/types';
 import type { MainViewMode } from '../engine/viewModes';
 import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
 import type { CompareLayoutMode, QuadLayerIndex } from '../engine/compareViews';
@@ -49,9 +48,12 @@ import {
   num,
   object,
   oneOf,
+  numericLeaves,
   str,
   struct,
   type Infer,
+  type NumericLeaf,
+  type PathsOf,
 } from './schemaFields';
 
 /** Number of composite blend modes (`engine/blendModes.ts`, ids 0–12). */
@@ -72,7 +74,6 @@ const OVERLAY_IMAGE_SOURCES = [
 const DISPLAY_COLOR_SPACES = ['srgb', 'display-p3'] as const satisfies readonly DisplayColorSpace[];
 const COMPARE_LAYOUTS = ['single', 'dual', 'quad', 'swipe'] as const satisfies readonly CompareLayoutMode[];
 const QUAD_LAYER_INDICES = [0, 1, 2] as const satisfies readonly QuadLayerIndex[];
-const MIDI_PARAM_IDS = Object.keys(MIDI_PARAM_LABELS) as MidiParamId[];
 
 const unitInterval = (label: string, defaultValue: number) =>
   num({ min: 0, max: 1, step: 0.01, default: defaultValue, label });
@@ -88,18 +89,23 @@ export const layersSchema = object({
     integer: true, automatable: false, label: 'Layer count',
   }),
   angles: array(
-    num({ min: 0, max: 360, step: 1, default: 0, curve: 'angle', unit: '°', label: 'Layer angle' }),
+    // The preset baseline: the live rotation clock never reads it per frame,
+    // so driving it would only move the stationary previews.
+    num({
+      min: 0, max: 360, step: 1, default: 0, curve: 'angle', unit: '°', automatable: false, label: 'Layer {n} angle',
+    }),
     { maxLength: MAX_LAYER_COUNT, fill: () => 0 },
   ),
   extensions: array(
     // Per-frame spin at 30 FPS; wall-clock °/s = value × 30. Not modular —
     // 360 at 60 FPS is a half turn a frame, 0 is still — so it clamps.
-    num({ min: 0, max: 360, step: 1, default: defaultExtensionForLayer(0), unit: '°', label: 'Layer rate' }),
+    num({ min: 0, max: 360, step: 1, default: defaultExtensionForLayer(0), unit: '°', label: 'Layer {n} rate' }),
     { maxLength: MAX_LAYER_COUNT, fill: defaultExtensionForLayer },
   ),
   opacity: unitInterval('Layer opacity', 1),
-  opacities: array(unitInterval('Layer opacity', 1), { maxLength: MAX_LAYER_COUNT, fill: () => 1 }),
-  scale: num({ min: 0.1, max: 2, step: 0.1, default: 1, unit: '×', label: 'Layer scale' }),
+  opacities: array(unitInterval('Layer {n} opacity', 1), { maxLength: MAX_LAYER_COUNT, fill: () => 1 }),
+  // Render-target resolution: a sweep would reallocate textures every frame.
+  scale: num({ min: 0.1, max: 2, step: 0.1, default: 1, unit: '×', automatable: false, label: 'Layer scale' }),
   colorMode: num({
     min: 0, max: 3, step: 1, default: 1, integer: true, automatable: false, label: 'Spectrum',
   }),
@@ -115,7 +121,8 @@ export const tracersSchema = object({
   aboveDuration: num({ min: 0, max: 5000, step: 100, default: 500, unit: 'ms', label: 'Tracer above duration' }),
   belowDuration: num({ min: 0, max: 10000, step: 100, default: 2000, unit: 'ms', label: 'Tracer below duration' }),
   mode: num({ min: 0, max: 1, step: 1, default: 0, integer: true, automatable: false, label: 'Tracer mode' }),
-  scale: num({ min: 0.1, max: 2, step: 0.1, default: 1, unit: '×', label: 'Tracer scale' }),
+  // Tracer-target resolution, as for `layers.scale`.
+  scale: num({ min: 0.1, max: 2, step: 0.1, default: 1, unit: '×', automatable: false, label: 'Tracer scale' }),
   layerBlendMode: num({
     min: 0, max: BLEND_MODE_MAX, step: 1, default: 0, integer: true, automatable: false, label: 'Layer blend',
   }),
@@ -130,8 +137,11 @@ export const tracersSchema = object({
   }),
 });
 
+/** The tracer inspector is a diagnostic view, not part of the look — nothing in it is a parameter. */
 const tracerInspectSchema = object({
-  zoom: num({ min: 1, max: 12, step: 0.1, default: 1, curve: 'log', unit: '×', label: 'Inspect zoom' }),
+  zoom: num({
+    min: 1, max: 12, step: 0.1, default: 1, curve: 'log', unit: '×', automatable: false, label: 'Inspect zoom',
+  }),
   // `useTracerInspectInteraction` keeps |pan| ≤ (zoom − 1) / 2·zoom, which is < ½.
   pan: struct({
     x: num({ min: -0.5, max: 0.5, default: 0, automatable: false, label: 'Inspect pan X' }),
@@ -139,7 +149,8 @@ const tracerInspectSchema = object({
   }),
   heatmap: bool(),
   exposure: num({
-    min: 0.5, max: 2, step: 0.01, default: DEFAULT_TRACER_INSPECT_EXPOSURE, unit: '×', label: 'Inspect exposure',
+    min: 0.5, max: 2, step: 0.01, default: DEFAULT_TRACER_INSPECT_EXPOSURE, unit: '×', automatable: false,
+    label: 'Inspect exposure',
   }),
   tonemap: bool(),
   showLayers: bool(),
@@ -186,17 +197,83 @@ export const uiSchema = object({
   upscaleModel: str({ maxLength: MAX_ID_LENGTH }),
 });
 
+/** The numeric `reactive` fields — everything but the MIDI bindings, which point at parameters. */
+const reactiveNumericShape = {
+  audioSensitivity: num({ min: 0.2, max: 2, step: 0.05, default: 1, unit: '×', label: 'Audio sensitivity' }),
+};
+
+/**
+ * The slices whose numeric leaves are session settings, at the same paths as
+ * in `ChromashiftState`. {@link ParamPath} and {@link NumericSettingPath} are
+ * generated from this, and `state/params.ts` reads and writes through it.
+ * `compare` is deliberately absent: its slots hold settings *snapshots*,
+ * and its swipe position is layout.
+ */
+export const settingLeavesSchema = object({
+  layers: layersSchema,
+  tracers: tracersSchema,
+  output: outputSchema,
+  engine: engineSchema,
+  ui: uiSchema,
+  reactive: object(reactiveNumericShape),
+});
+
+/**
+ * Every continuous, automatable session value — a MIDI target today, a
+ * modulation destination later (#227): `'tracers.aboveIntensity'`,
+ * `'layers.extensions.${number}'`, … A numeric leaf is one unless its `num()`
+ * says `automatable: false`.
+ */
+export type ParamPath = PathsOf<typeof settingLeavesSchema, true>;
+
+/** Every numeric session setting, automatable or not — what a slider can be bound to. */
+export type NumericSettingPath = PathsOf<typeof settingLeavesSchema, false>;
+
+/** Every numeric setting leaf in schema order; per-layer ones read `layers.extensions.*`. */
+export const SETTING_LEAVES: readonly NumericLeaf[] = numericLeaves(settingLeavesSchema);
+
+const LEAVES_BY_TEMPLATE: ReadonlyMap<string, NumericLeaf> = new Map(
+  SETTING_LEAVES.map((leaf) => [leaf.path, leaf]),
+);
+
+/**
+ * The schema leaf behind a concrete path (`layers.extensions.7` →
+ * the `layers.extensions.*` leaf), or null when the path names no numeric
+ * setting or an array position past the schema's limit.
+ */
+export function numericLeafAt(path: string): { leaf: NumericLeaf; index: number | null } | null {
+  const parts = path.split('.');
+  const last = parts[parts.length - 1];
+  if (/^\d+$/.test(last)) {
+    const leaf = LEAVES_BY_TEMPLATE.get([...parts.slice(0, -1), '*'].join('.'));
+    const index = Number(last);
+    return leaf && leaf.maxIndex !== undefined && index <= leaf.maxIndex ? { leaf, index } : null;
+  }
+  const leaf = LEAVES_BY_TEMPLATE.get(path);
+  return leaf ? { leaf, index: null } : null;
+}
+
+export function isNumericSettingPath(value: unknown): value is NumericSettingPath {
+  return typeof value === 'string' && numericLeafAt(value) !== null;
+}
+
+export function isParamPath(value: unknown): value is ParamPath {
+  return typeof value === 'string' && numericLeafAt(value)?.leaf.meta.automatable === true;
+}
+
 const midiBindingSchema = struct({
   channel: num({ min: -1, max: 15, default: -1, integer: true, automatable: false, label: 'MIDI channel' }),
   controller: num({ min: 0, max: 127, default: 0, integer: true, automatable: false, label: 'MIDI controller' }),
-  param: oneOf(MIDI_PARAM_IDS),
+  param: custom<ParamPath>((input) => (
+    isParamPath(input) ? { value: input } : { error: 'not an automatable parameter' }
+  )),
 });
 
 export const reactiveSchema = object({
   enabled: bool(),
   audioEnabled: bool(),
   midiEnabled: bool(),
-  audioSensitivity: num({ min: 0.2, max: 2, step: 0.05, default: 1, unit: '×', label: 'Audio sensitivity' }),
+  ...reactiveNumericShape,
   midiBindings: array(midiBindingSchema, { maxLength: MAX_MIDI_BINDINGS }),
 });
 
@@ -235,7 +312,7 @@ const compareSlotSchema = object({
 export const compareSchema = object({
   layout: oneOf(COMPARE_LAYOUTS),
   syncPlay: bool(),
-  swipePosition: num({ min: 0, max: 1, step: 0.01, default: 0.5, label: 'Swipe position' }),
+  swipePosition: num({ min: 0, max: 1, step: 0.01, default: 0.5, automatable: false, label: 'Swipe position' }),
   quadLayerIndex: oneOf(QUAD_LAYER_INDICES),
   slotA: compareSlotSchema,
   slotB: compareSlotSchema,

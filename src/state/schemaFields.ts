@@ -65,9 +65,15 @@ interface SchemaBase<T> {
   readonly __type?: T;
 }
 
-export interface NumberSchema extends SchemaBase<number> {
+/**
+ * `A` mirrors `meta.automatable` at the type level, so {@link PathsOf} can
+ * build the `ParamPath` union from the schema without a hand-kept list.
+ */
+export interface NumberSchema<A extends boolean = boolean> extends SchemaBase<number> {
   readonly kind: 'number';
   readonly meta: NumberMeta;
+  /** Phantom, for `PathsOf` only — never set. */
+  readonly __automatable?: A;
 }
 
 export interface BooleanSchema extends SchemaBase<boolean> {
@@ -89,10 +95,12 @@ export interface NullableSchema<T> extends SchemaBase<T | null> {
   readonly inner: Schema<T>;
 }
 
-export interface ArraySchema<T> extends SchemaBase<T[]> {
+export interface ArraySchema<T, N extends Schema<unknown> = Schema<T>> extends SchemaBase<T[]> {
   readonly kind: 'array';
-  readonly item: Schema<T>;
+  readonly item: N;
   readonly maxLength: number;
+  /** Per-index default for positional arrays (see {@link ArrayOptions.fill}). */
+  readonly fill?: (index: number) => T;
 }
 
 export type Shape = Record<string, Schema<unknown>>;
@@ -171,7 +179,9 @@ export type NumberOptions =
   & Partial<Pick<NumberMeta, 'step' | 'unit' | 'curve' | 'integer' | 'automatable'>>;
 
 /** A finite number in `[min, max]`; clamped (or wrapped, for `angle`) on decode. */
-export function num(options: NumberOptions): NumberSchema {
+export function num<const O extends NumberOptions>(
+  options: O,
+): NumberSchema<O extends { automatable: false } ? false : true> {
   const meta: NumberMeta = {
     curve: 'linear',
     integer: false,
@@ -276,11 +286,16 @@ export interface ArrayOptions<T> {
   fill?: (index: number) => T;
 }
 
-export function array<T>(item: Schema<T>, options: ArrayOptions<T>): ArraySchema<T> {
+export function array<N extends Schema<unknown>>(
+  item: N,
+  options: ArrayOptions<Infer<N>>,
+): ArraySchema<Infer<N>, N> {
+  type T = Infer<N>;
   return {
     kind: 'array',
     item,
     maxLength: options.maxLength,
+    fill: options.fill,
     decode(input, path, ctx) {
       if (!Array.isArray(input)) {
         report(ctx, path, `expected an array, got ${describe(input)}`);
@@ -292,7 +307,7 @@ export function array<T>(item: Schema<T>, options: ArrayOptions<T>): ArraySchema
       const out: T[] = [];
       const length = Math.min(input.length, options.maxLength);
       for (let i = 0; i < length; i += 1) {
-        const value = item.decode(input[i], join(path, i), ctx);
+        const value = item.decode(input[i], join(path, i), ctx) as Decoded<T>;
         if (value !== DROP) out.push(value);
         else if (options.fill) out.push(options.fill(i));
       }
@@ -410,6 +425,12 @@ export function formatIssues(issues: readonly SchemaIssue[]): string {
 export interface NumericLeaf {
   path: string;
   meta: NumberMeta;
+  /** The leaf's own node, to coerce a value exactly as decoding would. */
+  schema: NumberSchema;
+  /** For a leaf inside a positional array: how many positions there can be. */
+  maxIndex?: number;
+  /** For a leaf inside a positional array: its default at each position. */
+  defaultAt?: (index: number) => number;
 }
 
 /** Every numeric leaf under `schema`, depth-first in shape order. */
@@ -417,14 +438,35 @@ export function numericLeaves(schema: Schema<unknown>, path = ''): NumericLeaf[]
   const node = schema as SchemaNode;
   switch (node.kind) {
     case 'number':
-      return [{ path, meta: node.meta }];
+      return [{ path, meta: node.meta, schema: node }];
     case 'nullable':
       return numericLeaves(node.inner, path);
-    case 'array':
-      return numericLeaves(node.item, join(path, '*'));
+    case 'array': {
+      const fill = node.fill as ((index: number) => number) | undefined;
+      return numericLeaves(node.item, join(path, '*')).map((leaf) => (
+        leaf.path === join(path, '*')
+          ? { ...leaf, maxIndex: node.maxLength - 1, defaultAt: fill }
+          : leaf
+      ));
+    }
     case 'object':
       return Object.entries(node.shape).flatMap(([key, child]) => numericLeaves(child, join(path, key)));
     default:
       return [];
   }
 }
+
+/**
+ * Dotted paths to the numeric leaves of a schema, as a string-literal union.
+ * Array positions become `${number}`; with `Only = true`, only leaves whose
+ * `num()` did not say `automatable: false`. Struct-valued arrays (MIDI
+ * bindings) are not walked — their numbers are not settings.
+ */
+export type PathsOf<N, Only extends boolean, P extends string = ''> =
+  N extends NumberSchema<infer A>
+    ? (Only extends true ? (A extends true ? P : never) : P)
+    : N extends ArraySchema<number, infer I>
+      ? PathsOf<I, Only, `${P}.${number}`>
+      : N extends ObjectSchema<infer S, unknown>
+        ? { [K in keyof S & string]: PathsOf<S[K], Only, P extends '' ? K : `${P}.${K}`> }[keyof S & string]
+        : never;

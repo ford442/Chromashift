@@ -1,5 +1,5 @@
 import type { ChromashiftState } from '../../state/types';
-import type { AudioLevelSnapshot, MidiParamId, ReactiveModulation } from './types';
+import type { AudioLevelSnapshot, ReactiveModulation } from './types';
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -67,21 +67,4 @@ export function computeAudioModulation(
       255,
     ),
   };
-}
-
-export function midiValueToParam(param: MidiParamId, ccNorm: number): number {
-  const t = clamp(ccNorm, 0, 1);
-  switch (param) {
-    case 'layers.extensions.0':
-    case 'layers.extensions.1':
-    case 'layers.extensions.2':
-      return t * 360;
-    case 'tracers.aboveIntensity':
-    case 'tracers.belowIntensity':
-      return t;
-    case 'engine.avgLuminance':
-      return t * 255;
-    default:
-      return t;
-  }
 }

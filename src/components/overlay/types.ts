@@ -208,18 +208,19 @@ export interface ReactivePanelProps {
   micError: string | null;
   midiAvailable: boolean;
   midiError: string | null;
-  midiLearnTarget: import('../../engine/reactive/types').MidiParamId | null;
+  midiLearnTarget: import('../../state/params').ParamPath | null;
   midiBindings: import('../../engine/reactive/types').MidiBinding[];
   audioLevels: import('../../engine/reactive/types').AudioLevelSnapshot;
   audioSensitivity: number;
-  layerExtension0: number;
+  /** Lists the per-layer parameters once per layer of the session. */
+  layerCount: number;
   onReactiveEnabledChange: (enabled: boolean) => void;
   onAudioEnabledChange: (enabled: boolean) => void;
   onMidiEnabledChange: (enabled: boolean) => void;
   onAudioSensitivityChange: (value: number) => void;
   onStartMicDemo: () => void;
-  onMidiLearnTargetChange: (target: import('../../engine/reactive/types').MidiParamId | null) => void;
-  onRemoveMidiBinding: (param: import('../../engine/reactive/types').MidiParamId) => void;
+  onMidiLearnTargetChange: (target: import('../../state/params').ParamPath | null) => void;
+  onRemoveMidiBinding: (param: import('../../state/params').ParamPath) => void;
 }
 
 export type OverlayProps =
