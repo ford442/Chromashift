@@ -1,8 +1,8 @@
-import type { ImageEntry } from '../engine/TextureManager';
+import type { ImageEntry } from '../engine/webgpu/TextureManager';
 import type { RendererBackend } from '../engine/types/RendererContracts';
 import type { MainViewMode } from '../engine/viewModes';
 import type { EngineKind } from '../engine/WasmEngine';
-import type { GpuRuntimeError } from '../engine/gpuBootstrap';
+import type { GpuRuntimeError } from '../engine/gpu/gpuBootstrap';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
 import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
@@ -12,7 +12,7 @@ import type { MotionMode } from '../engine/motionModes';
 export type { ReactiveSlice } from '../engine/reactive/types';
 export type { MotionMode } from '../engine/motionModes';
 
-export type DisplayColorSpace = import('../engine/gpuOptions').DisplayColorSpace;
+export type DisplayColorSpace = import('../engine/gpu/gpuOptions').DisplayColorSpace;
 
 /**
  * A value carried once per band layer.

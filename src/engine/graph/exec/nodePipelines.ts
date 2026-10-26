@@ -1,7 +1,7 @@
 import { fullscreenVertexSource, vertexShaderSource } from '../../shaders';
 import { layoutFromReflection } from '../../shaders/bindingReflection';
 import { BAND_LAYER_UNIFORMS, emitHistoryWriteWgsl } from '../templates/wgsl';
-import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../../gpuOptions';
+import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../../gpu/gpuOptions';
 import { createUniformData, type UniformData, type UniformLayout } from '../templates/uniformLayout';
 import type { EmittedPass, NodeKind } from '../types';
 

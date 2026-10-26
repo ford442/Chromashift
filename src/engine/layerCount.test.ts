@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { emitCoincidenceHeatmapWgsl, emitCompareWgsl, emitTracerViewWgsl } from './shaders/diagnostics';
-import { WebGPUPipelines } from './WebGPUPipelines';
+import { WebGPUPipelines } from './webgpu/WebGPUPipelines';
 import { compileGraph } from './graph/compile';
 import { buildDefaultGraph } from './graph/defaultGraph';
 import { nodeLayoutEntries } from './graph/exec/nodePipelines';
 import { buildRendererState } from './buildRendererState';
 import { MAX_LAYER_COUNT, assertLayerCount, clampLayerCount } from './graph/layerSpecs';
-import { sameLayerTextures } from './bindGroups';
+import { sameLayerTextures } from './webgpu/bindGroups';
 import { chromashiftReducer } from '../state/chromashiftReducer';
 import { createInitialState } from '../state/defaults';
 import type { LayerState, RendererState } from './types/RendererState';

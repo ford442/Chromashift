@@ -1,4 +1,4 @@
-import type { CanvasPresentation } from '../gpuOptions';
+import type { CanvasPresentation } from '../gpu/gpuOptions';
 import { buildGraphPreset, type GraphPresetName } from './altGraphs';
 import type { GraphNode, PassGraph } from './types';
 

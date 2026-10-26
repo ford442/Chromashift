@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useState, type MutableRefObject } from 'react';
 import { computeAverageLuminanceWith } from '../engine/WasmEngine';
-import type { ImageEntry } from '../engine/TextureManager';
+import type { ImageEntry } from '../engine/webgpu/TextureManager';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/types/RendererContracts';
 import type { ChromashiftTextureHandle } from '../engine/types/TextureHandle';
 import { getRendererPreference, publishRendererBootFailure, publishRendererBreadcrumbs } from '../engine/rendererMode';
@@ -10,23 +10,23 @@ import {
   publishWebGpuProbe,
   recordProbeStageFailure,
   recordProbeSuccess,
-} from '../engine/webgpuProbe';
+} from '../engine/webgpu/webgpuProbe';
 import {
   getGpuFatalError,
   releasePageGpuDevice,
   toBootstrapRuntimeError,
   type GpuRuntimeError,
   type WebGpuSession,
-} from '../engine/gpuBootstrap';
-import { listLocalImages } from '../engine/LocalLibrary';
-import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/corpusManifest';
+} from '../engine/gpu/gpuBootstrap';
+import { listLocalImages } from '../engine/library/LocalLibrary';
+import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/library/corpusManifest';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
 import { activatePassGraph, passGraphSelection, presetGraphSource } from '../engine/graph';
 
 export interface UseAppWebGPUInitProps {
   mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
   antialiasEnabled: boolean;
-  displayColorSpace: import('../engine/gpuOptions').DisplayColorSpace;
+  displayColorSpace: import('../engine/gpu/gpuOptions').DisplayColorSpace;
   canvasHdr: boolean;
   setGpuError: (err: GpuRuntimeError | null) => void;
   orchestratorRef: MutableRefObject<RendererOrchestrator | null>;

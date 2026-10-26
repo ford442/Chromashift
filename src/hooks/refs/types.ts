@@ -1,5 +1,5 @@
 import type { MutableRefObject, RefObject } from 'react';
-import type { ImageEntry } from '../../engine/TextureManager';
+import type { ImageEntry } from '../../engine/webgpu/TextureManager';
 import type { ChromashiftTextureHandle } from '../../engine/types/TextureHandle';
 import type { EngineKind } from '../../engine/WasmEngine';
 import type { ReactiveModulation } from '../../engine/reactive/types';
@@ -23,10 +23,10 @@ export interface GpuRefs {
   rendererRef: RefObject<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>;
   textureManagerRef: RefObject<import('../../engine/types/RendererContracts').ChromashiftTextureManager | null>;
   deviceRef: RefObject<GPUDevice | null>;
-  webGpuSessionRef: RefObject<import('../../engine/gpuBootstrap').WebGpuSession | null>;
+  webGpuSessionRef: RefObject<import('../../engine/gpu/gpuBootstrap').WebGpuSession | null>;
   maskTextureRef: MutableRefObject<GPUTexture | null>;
   gpuImageAnalysisRef: RefObject<import('../../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>;
-  upscalerRef: RefObject<import('../../engine/Upscaler').Upscaler | null>;
+  upscalerRef: RefObject<import('../../engine/upscale/Upscaler').Upscaler | null>;
 }
 
 export interface MediaRefs {
@@ -37,7 +37,7 @@ export interface MediaRefs {
   engineModeRef: MutableRefObject<EngineKind>;
   renderStateRef: MutableRefObject<ChromashiftState>;
   sourceTextureRef: MutableRefObject<ChromashiftTextureHandle | null>;
-  liveSourceManagerRef: MutableRefObject<import('../../engine/LiveSource').LiveSourceManager | null>;
+  liveSourceManagerRef: MutableRefObject<import('../../engine/live/LiveSource').LiveSourceManager | null>;
 }
 
 export interface CompareRefs {

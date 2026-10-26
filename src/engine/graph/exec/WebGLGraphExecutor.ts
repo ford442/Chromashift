@@ -7,7 +7,7 @@ import {
   uniform1f,
   uniform1i,
 } from '../../webgl/programUtils';
-import type { WebGLInternalFormat } from '../../gpuOptions';
+import type { WebGLInternalFormat } from '../../gpu/gpuOptions';
 import {
   createMultisampleTarget,
   createTarget,

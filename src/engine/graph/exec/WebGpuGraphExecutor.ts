@@ -35,11 +35,11 @@ import {
   type NodeProgram,
   type NodeProgramContext,
 } from './nodePipelines';
-import { resourceKey } from '../../bindGroups';
+import { resourceKey } from '../../webgpu/bindGroups';
 import { GraphTexturePool, type PoolSizes } from './pool';
 import { GraphProgramCache, type ProgramSet } from './programCache';
 import type { CompiledGraph, EmittedPass } from '../types';
-import type { CanvasPresentation } from '../../gpuOptions';
+import type { CanvasPresentation } from '../../gpu/gpuOptions';
 
 /** Externally supplied textures a `source` node and the band layers bind. */
 export interface GraphExternalInputs {

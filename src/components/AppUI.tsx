@@ -5,7 +5,7 @@ import { PreviewStrip } from './PreviewStrip';
 import { ChromeShell } from './ChromeShell';
 import { useOverlayProps } from './useOverlayProps';
 import { useRenderCount } from '../debug/renderCounts';
-import { collectImageFilesFromDataTransfer } from '../engine/fileDrop';
+import { collectImageFilesFromDataTransfer } from '../engine/library/fileDrop';
 import type { AppUIProps } from './AppUI.types';
 
 export function AppUI(props: AppUIProps) {

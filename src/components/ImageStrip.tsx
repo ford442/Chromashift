@@ -1,5 +1,5 @@
 import { memo, useRef } from 'react';
-import type { ImageEntry } from '../engine/TextureManager';
+import type { ImageEntry } from '../engine/webgpu/TextureManager';
 import type { LiveSourceState } from '../state/types';
 import { useRenderCount } from '../debug/renderCounts';
 import { CorpusBrowser } from './CorpusBrowser';

@@ -13,9 +13,9 @@ import {
   watchWebGL2Context,
   type GpuRuntimeError,
   type WebGpuSession,
-} from './gpuBootstrap';
-import type { TextureManager } from './TextureManager';
-import type { WebGLTextureManager } from './WebGLTextureManager';
+} from './gpu/gpuBootstrap';
+import type { TextureManager } from './webgpu/TextureManager';
+import type { WebGLTextureManager } from './webgl/WebGLTextureManager';
 import type { GpuImageAnalysis } from './compute/GpuImageAnalysis';
 
 function mockRenderer(): ChromashiftRenderer {

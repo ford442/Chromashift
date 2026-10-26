@@ -28,7 +28,7 @@ import { parseColorProfile, type ColorProfile } from '../engine/color/colorProfi
 import type { MainViewMode } from '../engine/viewModes';
 import type { OverlayImageSource, ReferenceBlendMode } from '../components/overlay/types';
 import type { CompareLayoutMode, QuadLayerIndex } from '../engine/compareViews';
-import type { DisplayColorSpace } from '../engine/gpuOptions';
+import type { DisplayColorSpace } from '../engine/gpu/gpuOptions';
 import {
   DEFAULT_DIAGNOSTICS_OPACITY,
   DEFAULT_FPS,

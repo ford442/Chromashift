@@ -13,10 +13,10 @@ export interface PassGraphSlotOptions {
   primary: boolean;
 }
 import type { CollisionStats, RendererState } from './RendererState';
-import type { ImageEntry } from '../TextureManager';
+import type { ImageEntry } from '../webgpu/TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { ChromashiftTextureHandle } from './TextureHandle';
-import type { GpuRuntimeError } from '../gpuBootstrap';
+import type { GpuRuntimeError } from '../gpu/gpuBootstrap';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 

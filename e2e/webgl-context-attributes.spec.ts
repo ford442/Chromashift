@@ -8,7 +8,7 @@ import { expect, test } from '@playwright/test';
  * it. Getting that backwards blanks every capture in the WebGL project without
  * failing anything locally, so it is asserted directly rather than inferred.
  *
- * See `resolveWebGL2PreserveDrawingBuffer` in `src/engine/gpuOptions.ts`.
+ * See `resolveWebGL2PreserveDrawingBuffer` in `src/engine/gpu/gpuOptions.ts`.
  */
 
 async function contextAttributes(page: import('@playwright/test').Page) {

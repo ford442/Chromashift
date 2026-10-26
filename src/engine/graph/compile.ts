@@ -36,7 +36,7 @@ import {
   toHdrPresentWgsl,
 } from './templates/wgsl';
 import type { UniformLayout } from './templates/uniformLayout';
-import type { CanvasPresentation } from '../gpuOptions';
+import type { CanvasPresentation } from '../gpu/gpuOptions';
 import { WGSL_BLEND_HELPERS } from '../shaders/common';
 import type {
   CompiledGraph,

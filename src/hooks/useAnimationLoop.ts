@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { GPU_TIMING_HISTORY_SIZE } from '../engine/GpuTimestampProfiler';
+import { GPU_TIMING_HISTORY_SIZE } from '../engine/webgpu/GpuTimestampProfiler';
 import { buildRendererState } from '../engine/buildRendererState';
 import { advanceAngles, effectiveLayerScaleForMultiView, isQuadCompareLayout, isTwoSlotCompareLayout } from '../engine/compareViews';
 import { renderTelemetry } from '../engine/telemetryStore';

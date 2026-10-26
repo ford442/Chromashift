@@ -100,11 +100,11 @@ and the unit/C++ host tests — see "Test / benchmark only" above.
 | `loadWasmEngine` | `hooks/useAppLifecycle.ts` | App startup |
 | `isWasmReady` | `hooks/appUiProps/buildControlProps.ts` | UI state (Engine badge) |
 | `computeAverageLuminanceWith` | `hooks/useAppWebGPUInit.ts` | Load-time (image load) |
-| `computeAverageLuminanceStridedWith` | `engine/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
+| `computeAverageLuminanceStridedWith` | `engine/live/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
 | `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts` (both only on the mask-generation error path); also called by `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage`/`computeAverageLuminance` | Load-time |
 | `classifyImageMaskWith` | `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage` | Load-time (mask generation) |
 | `advanceAnglesBy` | `engine/videoExport/exportVideoFrameLoop.ts` | Video export |
-| `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
+| `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/live/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
 
 No `*With()` dispatcher is called from a per-frame render or animation-loop path
 (`useAnimationLoop.ts`, `WebGPURenderer.ts` and the graph executor / `WebGLRenderer.ts`

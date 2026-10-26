@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { ImageEntry } from '../engine/TextureManager';
-import { buildCorpusIndex, filterCorpusIndex, type CorpusIndex } from '../engine/corpusIndex';
+import type { ImageEntry } from '../engine/webgpu/TextureManager';
+import { buildCorpusIndex, filterCorpusIndex, type CorpusIndex } from '../engine/library/corpusIndex';
 
 /** Card width (`w-36`) plus the `gap-3` between cards, in px. */
 const TILE_WIDTH = 144;

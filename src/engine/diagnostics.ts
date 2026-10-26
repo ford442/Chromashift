@@ -24,12 +24,12 @@
 import type { RenderCountsApi } from '../debug/renderCounts';
 import type { CompareLayoutMode } from './compareViews';
 import type { GpuComputeDiagnostics } from './compute/chores/support';
-import type { WebGLInternalFormat } from './gpuOptions';
+import type { WebGLInternalFormat } from './gpu/gpuOptions';
 import type { MotionFlowStats } from './compute/chores/motionKernel';
 import type { GraphPresetName } from './graph/altGraphs';
-import type { LiveSourceKind } from './LiveSource';
+import type { LiveSourceKind } from './live/LiveSource';
 import type { RendererBackend } from './types/RendererContracts';
-import type { WebGpuProbeResult } from './webgpuProbe';
+import type { WebGpuProbeResult } from './webgpu/webgpuProbe';
 import type { WasmEngineState, WasmEngineStatus } from './wasm/loadEngine';
 
 export interface ChromashiftDiagnostics {

@@ -350,7 +350,7 @@ additionally holds every sampling emitter to "no branch around
 `compileGraph` memoises on the structural hash and the executor keys its
 pipelines on the same hash, so a parameter change re-enters `encode()` with the
 same `CompiledGraph` and creates nothing. Bind groups are rebuilt only when a
-bound texture changes identity (`engine/bindGroups.ts`, which the inspect views
+bound texture changes identity (`engine/webgpu/bindGroups.ts`, which the inspect views
 and the readback blit use too): creating one per pass per frame is an
 allocation no frame needs.
 

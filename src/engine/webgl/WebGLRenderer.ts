@@ -50,7 +50,7 @@ import { createTarget, destroyTarget, type RenderTarget } from './resources';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { WebGLRenderViewport } from './types';
 import { publishDiagnostic, publishDiagnostics } from '../diagnostics';
-import { webglInternalFormatNote } from '../gpuOptions';
+import { webglInternalFormatNote } from '../gpu/gpuOptions';
 
 export type { WebGLRenderViewport } from './types';
 

@@ -26,7 +26,7 @@ import {
   MOTION_FLOW_REFINE_COMPUTE_SHADER,
 } from './kernels';
 import { EMPTY_MOTION_FIELD_STATS, motionFieldSize, type MotionFieldStats } from './motionKernel';
-import { layerTextureEntries, sameLayerTextures, type LayerTextures } from '../../bindGroups';
+import { layerTextureEntries, sameLayerTextures, type LayerTextures } from '../../webgpu/bindGroups';
 import { CANONICAL_LAYER_COUNT } from '../../graph/layerSpecs';
 import { emitCoincidenceComputeWgsl } from '../../graph/templates/wgsl';
 import type {

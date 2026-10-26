@@ -1,6 +1,6 @@
-import type { ImageEntry } from '../engine/TextureManager';
-import { countLocalEntries } from '../engine/corpusIndex';
-import { parseDisplayColorSpace } from '../engine/gpuOptions';
+import type { ImageEntry } from '../engine/webgpu/TextureManager';
+import { countLocalEntries } from '../engine/library/corpusIndex';
+import { parseDisplayColorSpace } from '../engine/gpu/gpuOptions';
 import { clampLayerCount } from '../engine/graph/layerSpecs';
 import {
   DEFAULT_FPS,

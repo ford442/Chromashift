@@ -113,29 +113,43 @@ src/
     │   ├── persistence.ts    # Tracer persistence pass (emitted coincidence+decay template)
     │   ├── compositor.ts     # Final compositor pass (emitted blend template)
     │   └── diagnostics.ts    # Tracer view, display, heatmap, diagnostic, compare passes
-    ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache, evictExcept()
-    ├── WebGLTextureManager.ts # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
-    ├── LocalLibrary.ts       # IndexedDB-backed local image library (drag-and-drop uploads)
-    ├── fileDrop.ts           # Flattens a drop's DataTransfer (incl. folders) into File[]
-    ├── workers/              # rpc.ts: the one typed main-thread ↔ worker channel all four workers use
-    ├── Upscaler.ts           # Lazy Web Worker wrapper for the two upscale backends below
-    ├── upscaler.worker.ts    # TF.js Real-ESRGAN / Real-CUGAN
-    ├── nunif.worker.ts       # onnxruntime-web swin_unet (waifu2x)
-    ├── viewModes.ts          # MAIN_VIEW_MODES enum (composite, tracer, layers, quarter-zoom, …)
-    ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
-    ├── types/                # RendererState, RendererContracts (renderer/texture-manager interfaces), TextureHandle — import the module directly
-    ├── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
+    ├── webgpu/               # The WebGPU backend
+    │   ├── WebGPURenderer.ts     # One canvas's WebGPU frame: picks the graph variant, the executor draws it
+    │   ├── webgpuProbe.ts        # Boot probe: adapter/device pre-flight + the failure overlay's report
+    │   ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache, evictExcept()
+    │   ├── MotionFieldPass.ts    # WebGPU motion field (borrows the shared chore backend); halfFloat.ts packs its upload
+    │   ├── WebGPUPipelines.ts, TracerInspectPass.ts, GpuReadback.ts  # inspect views + readback (they read the graph's outputs)
+    │   ├── StationaryPreviewRenderer.ts  # Isolated 128×128 side-preview thumbnails at preset angles
+    │   └── bindGroups.ts, GpuTimestampProfiler.ts  # identity-keyed bind-group slots; WebGPU perf HUD
     ├── webgl/                # WebGL2 diagnostic / XR renderer — draws the pass graph (graph/exec/WebGLGraphExecutor.ts)
     │   ├── WebGLRenderer.ts, WebGLDebugPasses.ts, WebGLReadback.ts,
     │   │   WebGLMotionField.ts, WebGLStationaryPreviewRenderer.ts
+    │   ├── WebGLTextureManager.ts  # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
     │   ├── resources.ts, programUtils.ts
     │   └── shaders/          # GLSL sources — layers/persistence/compositor emitted from graph/templates/glsl.ts
-    ├── WebGPURenderer.ts     # One canvas's WebGPU frame: picks the graph variant, the executor draws it
+    ├── gpu/                  # Backend-agnostic GPU setup
+    │   └── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
+    ├── textures/             # Texture-cache policy (LRU budget, eviction) + breadcrumbs, shared by both texture managers
+    ├── library/              # Where images come from
+    │   ├── corpusManifest.ts, corpusIndex.ts  # Remote corpus list (revalidated IndexedDB copy) + search index
+    │   ├── LocalLibrary.ts       # IndexedDB-backed local image library (drag-and-drop uploads)
+    │   ├── fileDrop.ts           # Flattens a drop's DataTransfer (incl. folders) into File[]
+    │   └── overlayImageSource.ts # Whether an overlay image source (source/reference/previous) is loaded
+    ├── live/                 # Camera / screen / video-file source: LiveSource.ts, its texture, breadcrumbs,
+    │                         # and liveMotionField.ts (CPU-lane motion sampler for the WebGL backend)
+    ├── upscale/              # Lazy-loaded AI upscalers (see "Upscaler (lazy-loaded)")
+    │   ├── Upscaler.ts           # Lazy Web Worker wrapper for the two upscale backends below
+    │   ├── upscaler.worker.ts    # TF.js Real-ESRGAN / Real-CUGAN
+    │   └── nunif.worker.ts       # onnxruntime-web swin_unet (waifu2x)
+    ├── workers/              # rpc.ts: the one typed main-thread ↔ worker channel all four workers use
+    ├── frame/                # FrameClock: the one requestAnimationFrame loop, in ordered phases
+    ├── reactive/             # Audio analyser, MIDI controller, modulation
+    ├── xr/                   # WebXR presenter (immersive-vr spike)
+    ├── wasm/                 # WASM engine loader, dispatch, TypeScript fallbacks (WasmEngine.ts is the barrel)
+    ├── viewModes.ts          # MAIN_VIEW_MODES enum (composite, tracer, layers, quarter-zoom, …)
+    ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
+    ├── types/                # RendererState, RendererContracts (renderer/texture-manager interfaces), TextureHandle — import the module directly
     ├── motionModes.ts         # MotionMode enum + defaults for the temporal tracer term
-    ├── MotionFieldPass.ts     # WebGPU motion field (borrows the shared chore backend)
-    ├── liveMotionField.ts     # CPU-lane motion sampler for the WebGL diagnostic backend
-    ├── WebGPUPipelines.ts, TracerInspectPass.ts, GpuReadback.ts  # inspect views + readback (they read the graph's outputs)
-    ├── bindGroups.ts, GpuTimestampProfiler.ts  # identity-keyed bind-group slots; WebGPU perf HUD
     ├── telemetryStore.ts     # useSyncExternalStore telemetry (angles, CPU/GPU timing, collision stats) — outside React state
     ├── videoExport/          # Offline frame-by-frame WebM/MP4 export (WebCodecs + mediabunny, MediaRecorder fallback) — see docs/VIDEO_EXPORT.md
     ├── color/               # Named colour profiles — schema, validation, LUT baking
@@ -195,7 +209,7 @@ http://localhost:5173/?renderer=webgpu   # default
 http://localhost:5173/?renderer=webgl    # diagnostic / XR / Playwright
 ```
 
-**Boot probe**: `probeWebGPU()` (`src/engine/webgpuProbe.ts`) pre-flights the
+**Boot probe**: `probeWebGPU()` (`src/engine/webgpu/webgpuProbe.ts`) pre-flights the
 WebGPU path only: secure context → `navigator.gpu` → `requestAdapter`, publishing
 `window.webgpuProbe` `{ ok, browser, stage, reason, adapter, features, limits }`.
 It stops before `requestDevice()` and shares the page-lifetime adapter cache
@@ -234,7 +248,7 @@ Uniforms follow the same single-source rule. A uniform block is declared as a ty
 
 ### Rendering Pipeline (Detailed)
 
-1. `fetchCorpusManifest('./images.json')` (`src/engine/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
+1. `fetchCorpusManifest('./images.json')` (`src/engine/library/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
 2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
    a `WebGpuGraphExecutor`, which builds — from the compiled graph, cached per device on its
@@ -290,7 +304,7 @@ Dual 2-up, swipe split, and quad analytical grid are shipped on WebGPU (see [doc
 
 ### Local Image Library (drag-and-drop)
 
-Dropping image files (or whole folders) anywhere on `#chromashift-container` persists them to IndexedDB (`src/engine/LocalLibrary.ts`, db `chromashift-library`) — labels, dimensions, and a small WebP thumbnail alongside the original bytes — so the personal library survives page reloads without any server upload. `src/engine/fileDrop.ts` flattens a drop's `DataTransfer` (including nested folders, via `webkitGetAsEntry`) into a plain `File[]`; `useMediaHandlers.handleDropFiles` writes them to IndexedDB and appends `ImageEntry`s carrying a `localId` and a `blob:` URL — the corpus, image strip, and texture pipeline don't otherwise distinguish local from remote entries.
+Dropping image files (or whole folders) anywhere on `#chromashift-container` persists them to IndexedDB (`src/engine/library/LocalLibrary.ts`, db `chromashift-library`) — labels, dimensions, and a small WebP thumbnail alongside the original bytes — so the personal library survives page reloads without any server upload. `src/engine/library/fileDrop.ts` flattens a drop's `DataTransfer` (including nested folders, via `webkitGetAsEntry`) into a plain `File[]`; `useMediaHandlers.handleDropFiles` writes them to IndexedDB and appends `ImageEntry`s carrying a `localId` and a `blob:` URL — the corpus, image strip, and texture pipeline don't otherwise distinguish local from remote entries.
 
 `CorpusBrowser` shows a LOCAL/REMOTE badge per entry (using `thumbUrl`, not the full-res `url`, to avoid decoding full images just for a 144px thumbnail) and a "Clear Library" button that wipes IndexedDB and drops every `localId`-tagged entry from the corpus. Local and remote entries are the same `ImageEntry` shape all the way through the browser — virtualization, search, and the badge all read the one list.
 
@@ -301,12 +315,12 @@ Dropping image files (or whole folders) anywhere on `#chromashift-container` per
 - **Virtualized.** `@tanstack/react-virtual`'s `useVirtualizer({ horizontal: true })` renders the visible window plus `OVERSCAN` cards on each side. The virtualizer lives in the `VirtualCardRow` leaf because `useVirtualizer` is a library the React Compiler cannot memoize around (`react-hooks/incompatible-library`); keeping it there would leave the header and search index compilable. The compiler itself is **not** enabled — only the `react-hooks` v7 lint rules are — so today the memoization is the manual discipline under "Subscription model". Enabling it needs `render-churn.spec.ts` stable first, and an audit of components that read mutable `window` breadcrumbs during render (`CanvasHdrNote`, the HDR toggle in `ViewportPanel`), which the compiler would be free to memoize. It receives the scroll element *through state* (a callback ref), not a ref object: a child's mount effect runs before an ancestor's ref is attached, so a ref object is still `null` when the virtualizer first looks for something to observe.
 - **Mounted only while open.** `ImageStrip` renders `CorpusBrowser` only when the strip is open, so a closed browser costs no observers and no index — and `ImageStrip` itself keeps rendering as rarely as `e2e/render-churn.spec.ts` demands.
 - **Thumbnails are guarded, not just lazy.** Every `<img>` carries `loading="lazy" decoding="async"`, but the actual `src` is withheld until an `IntersectionObserver` says the card has stayed on screen for `THUMB_SETTLE_MS`. Flinging the strip therefore does not queue a request per card swept past.
-- **Searchable.** `engine/corpusIndex.ts` precomputes a display label and a lowercased `label + url` haystack per entry once per corpus identity (`buildCorpusIndex`, memoized on the array); `filterCorpusIndex` then does one pass of AND-ed substring terms. It returns *corpus* indices, so a click in a filtered view still selects the right entry.
+- **Searchable.** `engine/library/corpusIndex.ts` precomputes a display label and a lowercased `label + url` haystack per entry once per corpus identity (`buildCorpusIndex`, memoized on the array); `filterCorpusIndex` then does one pass of AND-ed substring terms. It returns *corpus* indices, so a click in a filtered view still selects the right entry.
 - **`localCount` is derived in the reducer.** `media.localCount` is recomputed by `chromashiftReducer` whenever `media.imageList` is replaced (`countLocalEntries`), so the browser never scans thousands of entries per render.
 
 `e2e/corpus-browser.spec.ts` pins all of this against a stubbed 3137-entry corpus (`stubLargeCorpus` in `e2e/helpers/mockCorpus.ts`).
 
-### Corpus manifest (`engine/corpusManifest.ts`)
+### Corpus manifest (`engine/library/corpusManifest.ts`)
 
 The manifest is ~360 kB fetched before the first frame. `fetchCorpusManifest` keeps the parsed entries in IndexedDB (db `chromashift-corpus`) alongside the response's `ETag`/`Last-Modified`, and revalidates on the next visit with `If-None-Match` / `If-Modified-Since` and `cache: 'no-cache'`. A 304 — or a 200 whose ETag matches what was stored, which is what the browser returns when it satisfies the revalidation from its own HTTP cache — reuses the cached entries and skips the parse. Every cache path is best-effort: no IndexedDB, no validators, a storage error, or a dead network all degrade to a plain fetch (or to serving the last good copy), never to a failed boot. `TextureManager.fetchImageList` remains on the renderer contract for direct callers, but the boot path goes through the cached loader.
 
@@ -316,7 +330,7 @@ Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureM
 
 A webcam feed, shared screen, or looping local video file can drive the main composite in
 place of a still image — same rotating layers, tracers, and audio-reactive/MIDI modulation.
-`LiveSourceManager` (`src/engine/LiveSource.ts`) owns one `HTMLVideoElement` fed by a
+`LiveSourceManager` (`src/engine/live/LiveSource.ts`) owns one `HTMLVideoElement` fed by a
 `MediaStream` or file; `TextureManager`/`WebGLTextureManager.updateVideoTexture()` re-upload
 the current frame into a texture reused across calls (recreated only on resolution change, no
 mip chain) so memory stays stable over long sessions. `useLiveSource` (`src/hooks/useLiveSource.ts`)
@@ -328,7 +342,7 @@ requests camera/screen access. See [LIVE_SOURCE.md](docs/LIVE_SOURCE.md).
 
 ### Upscaler (lazy-loaded)
 
-`Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web is fetched on initial page load — only after the user actually invokes an upscale. `npm run build` runs `check:dist`, which asserts `dist/` contains no `ort-wasm*.wasm` and that `dist/assets/index-*.js` has no `tfjs`/`ort-wasm` references.
+`Upscaler` (`src/engine/upscale/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web is fetched on initial page load — only after the user actually invokes an upscale. `npm run build` runs `check:dist`, which asserts `dist/` contains no `ort-wasm*.wasm` and that `dist/assets/index-*.js` has no `tfjs`/`ort-wasm` references.
 
 - **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not** bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
 - **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Model ONNX files default to `NUNIF_DEFAULT_BASE` in `Upscaler.ts`; override with `VITE_NUNIF_BASE` to self-host `models/swin_unet/` and `models/utils/`. The ORT wasm runtime is **not** bundled in `dist/` — Vite resolves `onnxruntime-web-use-extern-wasm` (see `vite.config.ts`) and the worker loads `ort-wasm-simd-threaded.{mjs,wasm}` at runtime from `VITE_NUNIF_ORT_WASM_BASE` (default `https://test.1ink.us/nunif/ort`). Mirror those two files from `node_modules/onnxruntime-web/dist/` on the server once per ORT version upgrade; for local dev without the mirror, point `VITE_NUNIF_ORT_WASM_BASE` at jsDelivr in `.env.local`.
@@ -424,7 +438,7 @@ MSAA pipelines must match the render-pass attachment `sampleCount`. A 4× pipeli
 
 Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, Chromashift requests every adapter-supported entry in `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`): `timestamp-query`, `rg11b10ufloat-renderable` and `texture-formats-tier1`. Missing features skip the corresponding path (CPU-only HUD, rgba8 internal targets, CPU classification mask). Breadcrumbs: `window.gpuTimestampAvailable`, `window.gpuTimestampReason`.
 
-`GpuTimestampProfiler` (`src/engine/GpuTimestampProfiler.ts`) wraps the live render path in `WebGPURenderer`:
+`GpuTimestampProfiler` (`src/engine/webgpu/GpuTimestampProfiler.ts`) wraps the live render path in `WebGPURenderer`:
 
 1. **Layers** — three colour-band passes (MSAA resolve when enabled).
 2. **Motion** — the quarter-resolution motion field, when `tracers.motionMode` is not `off`. The marker is written every frame regardless, so the row reads `0.00 ms` when the pass did not run rather than shifting every row below it.

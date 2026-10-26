@@ -1,12 +1,12 @@
 import { useCallback, useEffect } from 'react';
-import { Upscaler, type UpscaleModel } from '../engine/Upscaler';
+import { Upscaler, type UpscaleModel } from '../engine/upscale/Upscaler';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import {
   computeAverageLuminanceStridedWith,
   computeImageAverageLuminanceWith,
 } from '../engine/WasmEngine';
-import { addLocalImage, clearLocalLibrary } from '../engine/LocalLibrary';
-import type { ImageEntry } from '../engine/TextureManager';
+import { addLocalImage, clearLocalLibrary } from '../engine/library/LocalLibrary';
+import type { ImageEntry } from '../engine/webgpu/TextureManager';
 import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
 interface MediaHandlersOptions {
