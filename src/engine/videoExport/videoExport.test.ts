@@ -107,8 +107,8 @@ describe('deterministic angle stepping', () => {
     let a = [...start];
     let b = [...start];
     for (let i = 0; i < 150; i += 1) {
-      a = advanceAnglesBy(a, extensions, false);
-      b = advanceAnglesBy(b, extensions, false);
+      a = advanceAnglesBy(a, extensions);
+      b = advanceAnglesBy(b, extensions);
       expect(a).toEqual(b);
     }
   });

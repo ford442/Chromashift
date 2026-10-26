@@ -1,6 +1,5 @@
 import {
   CHROMASHIFT_OPTIONAL_FEATURES,
-  CHROMASHIFT_TARGET_MAX_TEXTURE,
   WEBGPU_POWER_PREFERENCE_ATTEMPTS,
   WEBGL2_POWER_PREFERENCE_ATTEMPTS,
   HDR_CANVAS_FORMAT,
@@ -10,7 +9,7 @@ import {
 } from './gpuOptions';
 import { publishDiagnostics } from './diagnostics';
 
-export type GpuErrorKind = 'bootstrap' | 'device-lost' | 'uncaptured';
+export type GpuErrorKind = 'bootstrap' | 'device-lost' | 'uncaptured' | 'pipeline';
 
 export interface GpuRuntimeError {
   kind: GpuErrorKind;
@@ -54,7 +53,6 @@ export interface WebGpuCanvasOptions {
 export interface WebGpuBootstrapOptions extends RendererCanvasOptions {
   canvas: HTMLCanvasElement;
   powerPreference?: GPUPowerPreference;
-  targetMaxTexture?: number;
   canvasOptions?: WebGpuCanvasOptions;
   onRuntimeError?: (error: GpuRuntimeError) => void;
 }
@@ -77,29 +75,22 @@ export interface WebGpuSession {
   detach: () => void;
 }
 
-type SupportedLimits = GPUAdapter['limits'];
-
-/** Floor for canvas-derived `requiredLimits` so a collapsed 150px layout cannot reshape a device. */
-export const MIN_DEVICE_TEXTURE_DIMENSION = 256;
-
-/** Hard cap on `requestDevice` strategies per acquire. Never reset from rAF / resize / React. */
-export const MAX_DEVICE_REQUEST_STRATEGIES = 3;
+/**
+ * Hard cap on `requestDevice` strategies per acquire. Never reset from rAF /
+ * resize / React. Each strategy asks for *less* than the one before it: a
+ * retry that asks for as much or more cannot succeed where its predecessor
+ * failed.
+ */
+export const MAX_DEVICE_REQUEST_STRATEGIES = 2;
 
 export type GpuDeviceRequestStrategy =
   | 'default-limits'
-  | 'canvas-limits'
   | 'no-optional-features';
 
-export interface DeriveRequiredLimitsOptions {
-  targetMaxTexture?: number;
-  /** When true, request up to 8K texture headroom; when false, only canvas size (safer for requestDevice). */
-  requestHeadroom?: boolean;
-}
-
 /**
- * Page-lifetime GPU lease. `requestAdapter` runs once; `requestDevice` runs at
- * most three strategies, then either the live device is reused or `gpuFatal`
- * blocks every later call until reload. React effect re-runs, ResizeObserver,
+ * Page-lifetime GPU lease. `requestAdapter` runs once per device; `requestDevice`
+ * runs at most two strategies, then either the live device is reused or
+ * `gpuFatal` blocks every later call until reload. React effect re-runs, ResizeObserver,
  * and canvas-size glitches must not start another acquire (#157 / #158).
  */
 interface GpuDeviceGate {
@@ -136,8 +127,17 @@ function markGpuFatal(error: GpuRuntimeError): void {
   gpuDeviceGate.fatal ??= error;
 }
 
-/** Drop a lost/abandoned device so Retry GPU can acquire a new one. Does not clear `gpuFatal`. */
+/**
+ * Drop a lost/abandoned device so Retry GPU can acquire a new one. Does not
+ * clear `gpuFatal`.
+ *
+ * The adapter goes with it: an adapter that has produced a device is
+ * *consumed*, and a second `requestDevice` on it is refused — so a retry on
+ * the cached adapter failed every strategy and then marked the GPU fatal.
+ */
 export function releasePageGpuDevice(): void {
+  gpuDeviceGate.adapter = null;
+  gpuDeviceGate.adapterPromise = null;
   gpuDeviceGate.device = null;
   gpuDeviceGate.devicePromise = null;
   gpuDeviceGate.requestAttempt = 0;
@@ -147,35 +147,6 @@ export function releasePageGpuDevice(): void {
 /** Test-only: restore the page gate so Vitest cases do not share a live device. */
 export function resetGpuDeviceGateForTests(): void {
   gpuDeviceGate = emptyGpuDeviceGate();
-}
-
-export function deriveRequiredLimits(
-  adapterLimits: SupportedLimits,
-  canvasPixelWidth: number,
-  canvasPixelHeight: number,
-  targetMaxTextureOrOptions: number | DeriveRequiredLimitsOptions = { requestHeadroom: false },
-): GPUDeviceDescriptor['requiredLimits'] {
-  const options = typeof targetMaxTextureOrOptions === 'number'
-    ? { targetMaxTexture: targetMaxTextureOrOptions, requestHeadroom: true }
-    : { requestHeadroom: false, ...targetMaxTextureOrOptions };
-  const targetMaxTexture = options.targetMaxTexture ?? CHROMASHIFT_TARGET_MAX_TEXTURE;
-  const requestHeadroom = options.requestHeadroom ?? false;
-
-  const longestEdge = Math.max(MIN_DEVICE_TEXTURE_DIMENSION, canvasPixelWidth, canvasPixelHeight);
-  const desiredMax = requestHeadroom
-    ? Math.max(longestEdge, Math.min(targetMaxTexture, adapterLimits.maxTextureDimension2D))
-    : longestEdge;
-  const maxTextureDimension2D = Math.min(adapterLimits.maxTextureDimension2D, desiredMax);
-
-  return {
-    maxTextureDimension2D,
-    maxTextureDimension1D: Math.min(adapterLimits.maxTextureDimension1D, maxTextureDimension2D),
-    maxBufferSize: Math.min(adapterLimits.maxBufferSize, 256 * 1024 * 1024),
-    maxStorageBufferBindingSize: Math.min(adapterLimits.maxStorageBufferBindingSize, 64 * 1024 * 1024),
-    maxUniformBufferBindingSize: Math.min(adapterLimits.maxUniformBufferBindingSize, 64 * 1024),
-    maxColorAttachments: Math.min(adapterLimits.maxColorAttachments, 8),
-    maxColorAttachmentBytesPerSample: adapterLimits.maxColorAttachmentBytesPerSample,
-  };
 }
 
 export async function requestWebGpuAdapter(
@@ -221,29 +192,17 @@ interface DeviceRequestStrategy {
   features: GPUFeatureName[];
 }
 
-function buildDeviceRequestStrategies(
-  adapter: GPUAdapter,
-  canvasPixelWidth: number,
-  canvasPixelHeight: number,
-  targetMaxTexture: number | undefined,
-  requestedFeatures: GPUFeatureName[],
-): DeviceRequestStrategy[] {
-  const canvasLimits = deriveRequiredLimits(
-    adapter.limits,
-    canvasPixelWidth,
-    canvasPixelHeight,
-    { targetMaxTexture, requestHeadroom: false },
-  );
+/**
+ * Default limits with the optional features, then default limits without
+ * them. Limits are never raised: the frame fits the defaults, so asking for
+ * more could only make a request fail that would otherwise succeed.
+ */
+function buildDeviceRequestStrategies(requestedFeatures: GPUFeatureName[]): DeviceRequestStrategy[] {
   const strategies: DeviceRequestStrategy[] = [
     { name: 'default-limits', requiredLimits: undefined, features: requestedFeatures },
-    { name: 'canvas-limits', requiredLimits: canvasLimits, features: requestedFeatures },
   ];
   if (requestedFeatures.length > 0) {
-    strategies.push({
-      name: 'no-optional-features',
-      requiredLimits: canvasLimits,
-      features: [],
-    });
+    strategies.push({ name: 'no-optional-features', requiredLimits: undefined, features: [] });
   }
   return strategies.slice(0, MAX_DEVICE_REQUEST_STRATEGIES);
 }
@@ -270,19 +229,9 @@ function logDeviceRequest(
 
 async function acquireWebGpuDevice(
   adapter: GPUAdapter,
-  canvasPixelWidth: number,
-  canvasPixelHeight: number,
-  targetMaxTexture: number | undefined,
   requiredFeatures: readonly GPUFeatureName[],
 ): Promise<GPUDevice> {
-  const requestedFeatures = [...requiredFeatures];
-  const strategies = buildDeviceRequestStrategies(
-    adapter,
-    canvasPixelWidth,
-    canvasPixelHeight,
-    targetMaxTexture,
-    requestedFeatures,
-  );
+  const strategies = buildDeviceRequestStrategies([...requiredFeatures]);
 
   let lastError: unknown;
   for (const strategy of strategies) {
@@ -319,9 +268,6 @@ async function acquireWebGpuDevice(
 
 export async function requestWebGpuDevice(
   adapter: GPUAdapter,
-  canvasPixelWidth: number,
-  canvasPixelHeight: number,
-  targetMaxTexture?: number,
   requiredFeatures: readonly GPUFeatureName[] = [],
 ): Promise<GPUDevice> {
   if (gpuDeviceGate.fatal) {
@@ -334,17 +280,17 @@ export async function requestWebGpuDevice(
     return gpuDeviceGate.devicePromise;
   }
 
-  const pending = acquireWebGpuDevice(
-    adapter,
-    canvasPixelWidth,
-    canvasPixelHeight,
-    targetMaxTexture,
-    requiredFeatures,
-  );
+  const pending = acquireWebGpuDevice(adapter, requiredFeatures);
   gpuDeviceGate.devicePromise = pending;
   try {
     const device = await pending;
     gpuDeviceGate.device = device;
+    // The page lease lets go of a lost device itself, once — not through each
+    // bootstrap's listener, which would leave a lost device leased whenever
+    // no orchestrator happened to be alive to hear it.
+    void device.lost.then(() => {
+      if (gpuDeviceGate.device === device) releasePageGpuDevice();
+    });
     return device;
   } finally {
     if (gpuDeviceGate.devicePromise === pending) {
@@ -416,12 +362,11 @@ export function buildAdapterReport(
   };
 }
 
-export function logAdapterReport(report: GpuAdapterReport, requiredLimits: GPUDeviceDescriptor['requiredLimits']): void {
+export function logAdapterReport(report: GpuAdapterReport): void {
   if (gpuDeviceGate.adapterReadyLogged) return;
   gpuDeviceGate.adapterReadyLogged = true;
   console.info('[Chromashift:GPU] Adapter ready', {
     ...report,
-    requiredLimits,
     optionalFeatures: CHROMASHIFT_OPTIONAL_FEATURES.filter((f) => report.features.includes(f)),
   });
 }
@@ -436,9 +381,10 @@ export function buildWebGpuCanvasConfiguration(
     device,
     format: hdr ? HDR_CANVAS_FORMAT : format,
     alphaMode: 'opaque',
-    // COPY_SRC in both modes: preview thumbnails and the collision-stats blit
-    // copy out of the swap chain.
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    // Render target only. Nothing copies out of the swap chain — previews,
+    // exports and the collision-stats blit all read offscreen targets — and
+    // an unused COPY_SRC can keep the compositor off its scanout path.
+    usage: GPUTextureUsage.RENDER_ATTACHMENT,
     colorSpace: options?.colorSpace ?? 'srgb',
   };
 
@@ -617,8 +563,13 @@ export function attachDeviceDiagnostics(
     onUncapturedError?: (error: GPUError) => void;
   },
 ): () => void {
+  // The device outlives every bootstrap on it (it is page-leased), and a
+  // promise reaction cannot be removed — so the detach silences it instead.
+  // Without that, each Retry or React re-run added a listener that a later
+  // `device.lost` fired for every orchestrator that ever existed.
+  let attached = true;
   void device.lost.then((info) => {
-    handlers.onLost?.(info);
+    if (attached) handlers.onLost?.(info);
   });
 
   const previous = device.onuncapturederror;
@@ -628,6 +579,7 @@ export function attachDeviceDiagnostics(
   };
 
   return () => {
+    attached = false;
     device.onuncapturederror = previous ?? null;
   };
 }
@@ -639,15 +591,20 @@ export async function withErrorScope<T>(
   work: () => T | Promise<T>,
 ): Promise<T> {
   device.pushErrorScope(filter);
+  // Pop exactly once. The scoped error is thrown from inside the `try`, so
+  // without the flag the `catch` popped a second time — taking an enclosing
+  // caller's scope with it.
+  let popped = false;
   try {
     const result = await work();
+    popped = true;
     const scopedError = await device.popErrorScope();
     if (scopedError) {
       throw createScopedGpuError(label, scopedError);
     }
     return result;
   } catch (error) {
-    await device.popErrorScope().catch(() => null);
+    if (!popped) await device.popErrorScope().catch(() => null);
     throw error;
   }
 }
@@ -686,6 +643,21 @@ export function deviceLostRuntimeError(info: GPUDeviceLostInfo): GpuRuntimeError
     message: 'GPU device lost — rendering has stopped.',
     detail: `${reason} Message: ${info.message || '(none)'}`,
     recoverable: true,
+  };
+}
+
+/**
+ * A pipeline the device refused to build: an emitted shader that does not
+ * compile, or a layout that does not match it. Not recoverable by a retry —
+ * the same source is refused again — but not fatal either: the frame keeps
+ * drawing without whatever needed that pipeline.
+ */
+export function pipelineRuntimeError(what: string, error: unknown): GpuRuntimeError {
+  return {
+    kind: 'pipeline',
+    message: `${what} failed to build — that view is unavailable.`,
+    detail: error instanceof Error ? error.message : String(error),
+    recoverable: false,
   };
 }
 
@@ -740,27 +712,12 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
     throw new Error('No WebGPU adapter found.');
   }
 
-  const canvasPixelWidth = Math.max(1, options.canvas.width);
-  const canvasPixelHeight = Math.max(1, options.canvas.height);
-  const requiredLimits = deriveRequiredLimits(
-    adapter.limits,
-    canvasPixelWidth,
-    canvasPixelHeight,
-    { targetMaxTexture: options.targetMaxTexture, requestHeadroom: false },
-  );
-
   const adapterInfo = await readAdapterInfo(adapter);
   const adapterReport = buildAdapterReport(adapterInfo, adapter);
-  logAdapterReport(adapterReport, requiredLimits);
+  logAdapterReport(adapterReport);
   const requestedOptionalFeatures = listAvailableOptionalFeatures(adapter);
 
-  const device = await requestWebGpuDevice(
-    adapter,
-    canvasPixelWidth,
-    canvasPixelHeight,
-    options.targetMaxTexture,
-    requestedOptionalFeatures,
-  );
+  const device = await requestWebGpuDevice(adapter, requestedOptionalFeatures);
   const capabilities = buildWebGpuCapabilityReport(adapter, device, requestedOptionalFeatures);
   const timestampQueryAvailable = capabilities.timestampQueryAvailable;
   const context = options.canvas.getContext('webgpu');
@@ -784,7 +741,6 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
 
   const detach = attachDeviceDiagnostics(device, {
     onLost: (info) => {
-      releasePageGpuDevice();
       if (info.reason === 'destroyed') return;
       options.onRuntimeError?.(deviceLostRuntimeError(info));
     },

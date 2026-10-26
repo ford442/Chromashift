@@ -45,6 +45,7 @@ export function AppUI(props: AppUIProps) {
     setLivePreviewEnabled,
     gpuError,
     onRetryGpu,
+    onDismissGpuError,
     isGpuRetrying,
     avgLuminance,
     engineMode,
@@ -197,6 +198,7 @@ export function AppUI(props: AppUIProps) {
         showKioskRemote={showKioskRemote}
         gpuError={gpuError}
         onRetryGpu={onRetryGpu}
+        onDismissGpuError={onDismissGpuError}
         isGpuRetrying={isGpuRetrying}
         avgLuminance={avgLuminance}
         engineMode={engineMode}

@@ -3,8 +3,8 @@ import type { ChromashiftTextureManager } from './types/RendererContracts';
 import { shouldRecreateVideoTexture, videoFrameSizeKey } from './liveSourceTexture';
 import { publishTextureCacheBreadcrumbs } from './textureCacheBreadcrumbs';
 import {
+  estimateRgba8MipChainBytes,
   estimateRgba8SingleLevelBytes,
-  estimateWebGlTextureBytes,
   TextureCacheTracker,
 } from './textureCachePolicy';
 import {
@@ -19,6 +19,8 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
   private gl: WebGL2RenderingContext;
   private textures = new Map<string, WebGlTextureHandle>();
   private cacheTracker = new TextureCacheTracker();
+  /** In-flight loads by URL — see `TextureManager.pending`. */
+  private pending = new Map<string, Promise<ChromashiftTextureHandle>>();
   /** Frame size (`"WxH"`) of the texture currently cached under each live-source key. */
   private videoTextureSizes = new Map<string, string>();
 
@@ -41,7 +43,15 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
       if (bytes !== undefined) this.cacheTracker.touch(url, bytes);
       return cached;
     }
+    const inFlight = this.pending.get(url);
+    if (inFlight) return inFlight;
 
+    const load = this.uploadFromUrl(url).finally(() => this.pending.delete(url));
+    this.pending.set(url, load);
+    return load;
+  }
+
+  private async uploadFromUrl(url: string): Promise<ChromashiftTextureHandle> {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -58,7 +68,7 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
       url,
     );
     this.textures.set(url, entry);
-    this.cacheTracker.touch(url, estimateWebGlTextureBytes(image.naturalWidth, image.naturalHeight));
+    this.cacheTracker.touch(url, estimateRgba8MipChainBytes(image.naturalWidth, image.naturalHeight));
     return entry;
   }
 
@@ -76,11 +86,11 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    this.configureTexture(width, height);
+    this.configureTexture();
 
     const entry = createWebGlTextureHandle(texture, width, height, cacheKey);
     this.textures.set(cacheKey, entry);
-    this.cacheTracker.touch(cacheKey, estimateWebGlTextureBytes(width, height));
+    this.cacheTracker.touch(cacheKey, estimateRgba8MipChainBytes(width, height));
     publishTextureCacheBreadcrumbs(this.cacheTracker.entryCount, this.cacheTracker.estimatedBytes);
     return entry;
   }
@@ -152,22 +162,22 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
-    this.configureTexture(source.width, source.height);
+    this.configureTexture();
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     return texture;
   }
 
-  private configureTexture(width: number, height: number): void {
+  /**
+   * Clamp, linear, and a full mip chain. WebGL2 mipmaps non-power-of-two
+   * textures (WebGL1 couldn't), and most photos are NPOT: without the chain a
+   * large image drawn small aliased, where the WebGPU path filters trilinearly.
+   */
+  private configureTexture(): void {
     const gl = this.gl;
-    const isPowerOfTwo = (value: number) => (value & (value - 1)) === 0;
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    if (isPowerOfTwo(width) && isPowerOfTwo(height)) {
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-      gl.generateMipmap(gl.TEXTURE_2D);
-    } else {
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    }
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    gl.generateMipmap(gl.TEXTURE_2D);
   }
 }

@@ -73,7 +73,7 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
         await presenter.syncTexture(image.url);
       }
 
-      presenter.setFrameRenderer((renderer, viewport, fps) => {
+      presenter.setFrameRenderer((renderer, viewport, fps, advance) => {
         const live = renderStateRef.current;
         const imageUrl = live.media.imageList[live.media.currentIndex]?.url;
         if (imageUrl) {
@@ -81,7 +81,7 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
         }
         const angles = animAnglesRef.current.slice();
         const built = buildRendererState(live, angles);
-        renderer.render({ ...built, ...xrRendererStateOverrides(built) }, fps, viewport);
+        renderer.render({ ...built, ...xrRendererStateOverrides(built, advance) }, fps, viewport);
       }, current.engine.fps);
 
       await presenter.enter(() => {

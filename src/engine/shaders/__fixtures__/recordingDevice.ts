@@ -92,6 +92,9 @@ export function createPipelineRecorder(): PipelineRecorder {
       recorder.pipelines.push({ context: recorder.context, stages, layouts: layoutsOf(descriptor.layout) });
       return {};
     },
+    createRenderPipelineAsync(descriptor: GPURenderPipelineDescriptor) {
+      return Promise.resolve(recorder.device.createRenderPipeline(descriptor));
+    },
     createComputePipeline(descriptor: GPUComputePipelineDescriptor) {
       recorder.pipelines.push({
         context: recorder.context,

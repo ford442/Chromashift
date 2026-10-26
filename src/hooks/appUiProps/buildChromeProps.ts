@@ -13,6 +13,7 @@ export function buildChromeProps(
   return {
     gpuError: engine.gpuError,
     onRetryGpu: () => { void handlers.retryGpuBootstrap(); },
+    onDismissGpuError: () => actions.setGpuError(null),
     isGpuRetrying: handlers.isGpuRetrying,
     avgLuminance: engine.avgLuminance,
     engineMode: engine.engineMode,

@@ -17,6 +17,7 @@ import {
   configureWebGpuCanvas,
   createWebGL2Context,
   watchWebGL2Context,
+  pipelineRuntimeError,
   webglContextLostRuntimeError,
   withErrorScope,
   type GpuRuntimeError,
@@ -458,9 +459,10 @@ export class RendererOrchestrator {
       antialias: this.antialias,
       canvasOptions: this.canvasOptions,
       onRuntimeError: (error) => {
-        if (error.kind === 'device-lost' && !this.destroyed) {
-          this.destroy();
-        }
+        // A destroyed orchestrator has been replaced (Retry GPU, a React
+        // re-run); its successor reports for the device now.
+        if (this.destroyed) return;
+        if (error.kind === 'device-lost') this.destroy();
         this.onRuntimeError?.(error);
       },
     });
@@ -568,9 +570,20 @@ export class RendererOrchestrator {
     );
 
     const slot: RendererSlot = { id, canvas, renderer, webgpuContext: context };
+    this.watchRendererErrors(slot);
     this.slots.set(id, slot);
     this.applyPassGraph(slot);
     return slot;
+  }
+
+  /** Forward the slot renderer's refused pipelines to the overlay while this orchestrator lives. */
+  private watchRendererErrors(slot: RendererSlot): void {
+    slot.renderer.setRuntimeErrorHandler?.((error) => this.reportRuntimeError(error));
+  }
+
+  /** A non-fatal runtime error (a refused pipeline): reported unless this orchestrator was replaced. */
+  private reportRuntimeError(error: GpuRuntimeError): void {
+    if (!this.destroyed) this.onRuntimeError?.(error);
   }
 
   private createWebGpuSlot(id: string, canvas: HTMLCanvasElement): RendererSlot {
@@ -579,14 +592,24 @@ export class RendererOrchestrator {
     }
 
     const context = this.resolveWebGpuContext(canvas);
-    const renderer = this.deps.createSecondaryWebGPURenderer(
-      this.session.device,
-      context,
-      this.session.format,
-      this.antialias,
-    );
+    // Synchronous (a compare layout opens its slots in one go), so the scope
+    // is checked after the fact: the slot is in use by the time the device
+    // answers, but whatever it created invalidly is named, not silent.
+    const device = this.session.device;
+    device.pushErrorScope('validation');
+    let renderer: ChromashiftRenderer;
+    try {
+      renderer = this.deps.createSecondaryWebGPURenderer(device, context, this.session.format, this.antialias);
+    } finally {
+      void device.popErrorScope().then((error) => {
+        if (!error) return;
+        console.error(`[RendererOrchestrator] Slot "${id}" renderer failed validation:`, error.message);
+        this.reportRuntimeError(pipelineRuntimeError(`The "${id}" view's renderer`, error.message));
+      }, () => {});
+    }
 
     const slot: RendererSlot = { id, canvas, renderer, webgpuContext: context };
+    this.watchRendererErrors(slot);
     this.slots.set(id, slot);
     this.applyPassGraph(slot);
     return slot;

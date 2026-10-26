@@ -26,21 +26,9 @@ export function estimateRgba8MipChainBytes(width: number, height: number): numbe
   return total;
 }
 
-/** Single-level rgba8 when mips are not generated (non-PO2 WebGL textures). */
+/** Single-level rgba8: the live-source textures, which have no mip chain. */
 export function estimateRgba8SingleLevelBytes(width: number, height: number): number {
   return Math.max(1, Math.floor(width)) * Math.max(1, Math.floor(height)) * 4;
-}
-
-function isPowerOfTwo(value: number): boolean {
-  return value > 0 && (value & (value - 1)) === 0;
-}
-
-/** WebGL mip policy: PO2 dimensions get a full mip chain; otherwise one level. */
-export function estimateWebGlTextureBytes(width: number, height: number): number {
-  if (isPowerOfTwo(width) && isPowerOfTwo(height)) {
-    return estimateRgba8MipChainBytes(width, height);
-  }
-  return estimateRgba8SingleLevelBytes(width, height);
 }
 
 /**

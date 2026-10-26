@@ -1,8 +1,12 @@
 /**
- * Host-side unit tests for chromashift_engine.cpp
+ * Unit tests for the C++ engine (chromashift_engine.cpp, motion_flow.cpp).
  *
- * Compiled with plain g++ (no Emscripten) so band thresholds and tracer math
- * can be verified in CI without the WASM toolchain.
+ * Built twice from the same source:
+ *   make -C cpp test       plain g++, no Emscripten — the scalar bodies
+ *   make -C cpp test-simd  em++ -msimd128, run under Node — the SIMD128 bodies
+ *                          the browser actually executes
+ * Everything here therefore has to hold for both. Bit-exact agreement between
+ * the two builds is checked separately by tests/simd_parity.cpp.
  */
 
 #include "../chromashift_engine.h"
@@ -108,6 +112,36 @@ TEST(classification_mask_lut_matches_branchy_on_golden_image)
     }
 }
 
+// The mask kernels take a float avgLum and round it themselves. std::lround of
+// a NaN or an out-of-range value is unspecified, so they map NaN to the neutral
+// 128 and clamp the rest to [0, 255] first.
+TEST(classification_mask_guards_non_finite_avg_lum)
+{
+    constexpr uint32_t pixelCount = 23u;
+    uint8_t rgba[pixelCount * 4u];
+    for (uint32_t i = 0u; i < pixelCount * 4u; ++i) {
+        rgba[i] = static_cast<uint8_t>(i * 11u);
+    }
+
+    struct Case { float avgLum; float equivalent; };
+    const Case cases[] = {
+        { std::nanf(""), 128.0f },
+        { HUGE_VALF, 255.0f },
+        { -HUGE_VALF, 0.0f },
+        { 1e30f, 255.0f },
+        { -7.0f, 0.0f },
+    };
+    uint8_t mask[pixelCount];
+    uint8_t expected[pixelCount];
+    for (const Case& c : cases) {
+        computeClassificationMask(rgba, pixelCount, 1u, c.equivalent, expected);
+        computeClassificationMask(rgba, pixelCount, 1u, c.avgLum, mask);
+        EXPECT_EQ(std::memcmp(mask, expected, pixelCount), 0);
+        computeClassificationMaskLut(rgba, pixelCount, 1u, c.avgLum, mask);
+        EXPECT_EQ(std::memcmp(mask, expected, pixelCount), 0);
+    }
+}
+
 TEST(build_rotation_mat3_matches_typescript_layout)
 {
     float m[9];
@@ -184,9 +218,8 @@ TEST(duration_to_decay_edge_cases)
 // ─── Branchless band ladder ──────────────────────────────────────────────────
 //
 // classifyRgb() counts cleared thresholds instead of scanning for the first
-// match. These pin that rewrite against the original linear scan — and, because
-// the host build compiles without -msimd128, they are what keeps the scalar
-// path honest now that the WASM build runs a vectorised ladder.
+// match. These pin that rewrite against the original linear scan. The SIMD
+// ladder is held to the scalar one by tests/simd_parity.cpp.
 
 /** The original linear scan, verbatim, as the reference implementation. */
 static int classifyRgbLinearScan(float rgb)
@@ -481,24 +514,6 @@ TEST(advance_layer_angles_zero_count_is_a_no_op)
     float out[1] = { 123.0f };
     advanceLayerAngles(out, out, out, 0u);
     EXPECT_NEAR(out[0], 123.0f, 1e-9);
-}
-
-// The deprecated three-wide wrapper must agree with the general form exactly —
-// it is what keeps a not-yet-rebuilt .wasm honest for one release.
-TEST(advance_layer_angles3_matches_the_general_form)
-{
-    const float angles[3] = { 359.5f, 0.0f, 123.25f };
-    const float steps[3]  = { 1.0f, -0.5f, 400.0f };
-    float general[3] = { 0 };
-    float legacy[3]  = { 0 };
-
-    advanceLayerAngles(angles, steps, general, 3u);
-    advanceLayerAngles3(angles[0], angles[1], angles[2],
-                        steps[0], steps[1], steps[2], legacy);
-
-    for (int i = 0; i < 3; ++i) {
-        EXPECT_NEAR(legacy[i], general[i], 1e-9);
-    }
 }
 
 // ─── computeMotionFlow ───────────────────────────────────────────────────────

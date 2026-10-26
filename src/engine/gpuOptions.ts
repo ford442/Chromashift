@@ -86,9 +86,6 @@ export function resolveWebGL2Desynchronized(preserveDrawingBuffer: boolean): boo
   }
 }
 
-/** Maximum 2D texture edge Chromashift targets (8K long edge). Capped by adapter limits. */
-export const CHROMASHIFT_TARGET_MAX_TEXTURE = 8192;
-
 /**
  * WebGPU features Chromashift actually consumes when the adapter grants them.
  * None are required for the core renderer — missing features skip the
@@ -184,11 +181,11 @@ export function internalColorFormatBytesPerPixel(format: GPUTextureFormat): numb
 /**
  * `requestAdapter` power-preference attempt list, in order.
  *
- * These are **adapter** attempts, not the three `requestDevice` strategies in
- * `gpuBootstrap.ts` (`default-limits` → `canvas-limits` →
- * `no-optional-features`). They are easy to confuse and count separately: the
- * adapter is requested once per page, then at most `MAX_DEVICE_REQUEST_STRATEGIES`
- * device requests run against it.
+ * These are **adapter** attempts, not the two `requestDevice` strategies in
+ * `gpuBootstrap.ts` (`default-limits` → `no-optional-features`). They are easy
+ * to confuse and count separately: an adapter is requested once per device
+ * (Retry GPU after a loss needs a fresh one), then at most
+ * `MAX_DEVICE_REQUEST_STRATEGIES` device requests run against it.
  *
  * `high-performance` first (discrete GPU on a laptop), `low-power` second (some
  * Chrome builds return null for `high-performance` under battery saver), then a

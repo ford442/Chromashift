@@ -42,6 +42,7 @@ export const ChromeShell = memo(function ChromeShell({
   showKioskRemote,
   gpuError,
   onRetryGpu,
+  onDismissGpuError,
   isGpuRetrying,
   avgLuminance,
   engineMode,
@@ -180,20 +181,32 @@ export const ChromeShell = memo(function ChromeShell({
           <div className="bg-gray-900/90 backdrop-blur-md border border-red-500/50 rounded-lg p-6 max-w-md text-center shadow-2xl shadow-red-900/20">
             <p className="text-red-400 font-mono text-sm">{gpuError.message}</p>
             {gpuError.detail && (
-              <p className="text-red-300/80 font-mono text-xs mt-2 break-words">{gpuError.detail}</p>
+              <p className="text-red-300/80 font-mono text-xs mt-2 break-words whitespace-pre-wrap">{gpuError.detail}</p>
             )}
             <p className="text-amber-200/70 text-xs mt-3">
               {gpuError.kind === 'device-lost'
                 ? 'The GPU process may have restarted. Try Retry GPU, or reload the page.'
-                : isFatalGpuDeviceRequestError(gpuError.detail ?? gpuError.message)
-                  ? 'The GPU could not create a command queue (out of memory). Do not retry WebGPU on this session — open a WebGL diagnostic session, close other GPU apps, or reload later.'
-                  : 'WebGPU is required for the default session. Update or switch to a browser with working '
-                    + 'WebGPU, or check chrome://gpu (edge://gpu) for a blocked adapter.'}
+                : gpuError.kind === 'pipeline'
+                  ? 'A shader failed to compile, so that view stays on the composite; the rest of the session is '
+                    + 'unaffected. This is a bug — please report the compiler message above.'
+                  : isFatalGpuDeviceRequestError(gpuError.detail ?? gpuError.message)
+                    ? 'The GPU could not create a command queue (out of memory). Do not retry WebGPU on this session — open a WebGL diagnostic session, close other GPU apps, or reload later.'
+                    : 'WebGPU is required for the default session. Update or switch to a browser with working '
+                      + 'WebGPU, or check chrome://gpu (edge://gpu) for a blocked adapter.'}
             </p>
             <p className="text-slate-400/70 text-[11px] mt-2 font-mono">
               Automatic WebGL fallback is off. Open a new diagnostic session if you need WebGL2 / XR / screenshots.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
+              {gpuError.kind === 'pipeline' && (
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded bg-zinc-500/20 border border-zinc-400/40 text-zinc-100 text-xs font-mono hover:bg-zinc-500/30"
+                  onClick={onDismissGpuError}
+                >
+                  Dismiss
+                </button>
+              )}
               {gpuError.recoverable && (
                 <button
                   type="button"

@@ -58,6 +58,8 @@ function mockWebGpuContext(canvas?: HTMLCanvasElement): GPUCanvasContext {
 function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
   const device = {
     destroy: vi.fn(),
+    pushErrorScope: vi.fn(),
+    popErrorScope: vi.fn(async () => null),
   } as unknown as GPUDevice;
 
   return {
@@ -434,6 +436,50 @@ describe('RendererOrchestrator', () => {
       message: 'lost',
       recoverable: true,
     });
+  });
+
+  it('reports a secondary slot renderer that failed validation as a pipeline error', async () => {
+    const session = mockSession(mockWebGpuContext());
+    vi.mocked(session.device.popErrorScope).mockResolvedValueOnce({ message: 'invalid bind group layout' } as GPUError);
+    const deps = createMockDeps({ bootstrapWebGpu: vi.fn(async () => session) });
+    const onRuntimeError = vi.fn();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { orchestrator } = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: mockCanvas('main'), antialias: false, backend: 'webgpu', onRuntimeError },
+      deps,
+    );
+
+    orchestrator.createSlot('compare-b', mockCanvas('compare-b', mockWebGpuContext()));
+    await vi.waitFor(() => expect(onRuntimeError).toHaveBeenCalledOnce());
+
+    expect(onRuntimeError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'pipeline',
+      detail: 'invalid bind group layout',
+      recoverable: false,
+    }));
+    // Shown, not torn down: the slot keeps drawing.
+    expect(orchestrator.slotIds()).toContain('compare-b');
+  });
+
+  it('a destroyed orchestrator forwards nothing', async () => {
+    let capturedOnRuntimeError: ((error: GpuRuntimeError) => void) | undefined;
+    const deps = createMockDeps({
+      bootstrapWebGpu: vi.fn(async (options) => {
+        capturedOnRuntimeError = options.onRuntimeError;
+        return mockSession(mockWebGpuContext());
+      }),
+    });
+    const onRuntimeError = vi.fn();
+    const { orchestrator } = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: mockCanvas('main'), antialias: false, backend: 'webgpu', onRuntimeError },
+      deps,
+    );
+
+    // Replaced (Retry GPU, a React re-run): its successor reports for the device.
+    orchestrator.destroy();
+    capturedOnRuntimeError?.({ kind: 'device-lost', message: 'lost', recoverable: true });
+
+    expect(onRuntimeError).not.toHaveBeenCalled();
   });
 
   it('rejects a second WebGL slot', async () => {

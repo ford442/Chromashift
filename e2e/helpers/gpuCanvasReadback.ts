@@ -24,8 +24,10 @@ import type { Page } from '@playwright/test';
  * `render()` is synchronous, so its submit has already happened — copies out
  * the main canvas's current texture if a read is waiting.
  *
- * The canvas is configured with `COPY_SRC` usage by the app itself
- * (`buildWebGpuCanvasConfiguration`), so nothing here changes what is drawn.
+ * The app configures its swap chain `RENDER_ATTACHMENT` only — nothing in it
+ * copies out of the canvas, and an unused `COPY_SRC` can cost the compositor
+ * its scanout path — so the `configure` wrapper adds `COPY_SRC` for the copy.
+ * Usage changes what may be done with the texture, not what is drawn into it.
  */
 
 export interface CanvasFrame {
@@ -74,7 +76,10 @@ export async function installGpuCanvasReadback(page: Page): Promise<void> {
       void config.device.lost.then((info) => {
         lost = `${info.reason}: ${info.message}`;
       });
-      return configure.call(this, config);
+      return configure.call(this, {
+        ...config,
+        usage: (config.usage ?? GPUTextureUsage.RENDER_ATTACHMENT) | GPUTextureUsage.COPY_SRC,
+      });
     };
 
     const getCurrentTexture = proto.getCurrentTexture;

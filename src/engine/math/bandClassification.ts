@@ -43,6 +43,9 @@ export type BandName = keyof typeof BAND;
  */
 export const BAND_THRESHOLDS: readonly number[] = Object.values(BAND);
 
+/** How many band indices there are: one per threshold, plus dark/grey. C++'s `BAND_COUNT + 1`. */
+export const BAND_INDEX_COUNT = BAND_THRESHOLDS.length + 1;
+
 /**
  * Classify adjusted rgb into a Chromashift colour band index (0–10).
  *
@@ -73,6 +76,33 @@ export function classifyPixelBands(
   avgLum: number,
 ): number {
   return classifyBandIndex(computeAdjustedRgb(r, g, b, avgLum));
+}
+
+const BT709_R_F32 = Math.fround(0.2126);
+const BT709_G_F32 = Math.fround(0.7152);
+const BT709_B_F32 = Math.fround(0.0722);
+
+/**
+ * `classifyPixelBands` evaluated in float32, rounding after every operation in
+ * the order C++ `classifyPixel` and the WGSL `classify_band()` mask kernel use.
+ *
+ * The plain version computes in doubles, so a pixel whose luminance lands
+ * within float32 rounding of a threshold can fall on the other side of it (a
+ * handful per 4K frame). The classification-mask lanes — WebGPU, WASM and this
+ * TypeScript fallback — must produce the same bytes, so the mask uses this one.
+ * The thresholds are integers, exact in float32, so only the arithmetic needs
+ * rounding.
+ */
+export function classifyPixelBandsF32(
+  r: number,
+  g: number,
+  b: number,
+  avgLum: number,
+): number {
+  const f = Math.fround;
+  const lum = f(f(f(r * BT709_R_F32) + f(g * BT709_G_F32)) + f(b * BT709_B_F32));
+  const lightDark = f(128 + f(Math.abs(f(f(avgLum) - 128)) / 2));
+  return classifyBandIndex(f(lum + f(lightDark / 2)));
 }
 
 /** lightDark/2 offset from average luminance — shared by LUT build and lookup. */

@@ -9,6 +9,11 @@ import { presetGraphSource } from '../graph/variants';
 /** The XR renderer's slot in `window.passGraphSlotsExecuting`. */
 export const XR_GRAPH_SLOT = 'xr';
 
+/**
+ * The layer's framebuffer scale: the headset's recommended resolution × this,
+ * per eye. Half resolution is the UA's job (`framebufferScaleFactor`), not a
+ * centred quarter-area patch of a full-size viewport.
+ */
 export const XR_RENDER_SCALE = 0.5;
 
 export interface WebXrRenderViewport {
@@ -20,10 +25,16 @@ export interface WebXrRenderViewport {
   framebuffer: WebGLFramebuffer | null;
 }
 
+/**
+ * Draws one eye. `advance` is true for the last eye of an XR frame only: the
+ * tracers decay and flip once per frame, not once per eye, so every eye shows
+ * the same accumulation (see {@link xrRendererStateOverrides}).
+ */
 export type WebXrFrameRenderer = (
   renderer: WebGLRenderer,
   viewport: WebXrRenderViewport,
   fps: number,
+  advance: boolean,
 ) => void;
 
 /**
@@ -105,7 +116,7 @@ export class WebXrPresenter {
     this.session = session;
 
     await this.gl.makeXRCompatible();
-    const layer = new XRWebGLLayer(session, this.gl);
+    const layer = new XRWebGLLayer(session, this.gl, { framebufferScaleFactor: XR_RENDER_SCALE });
     this.layer = layer;
     // The spec returns undefined; @types/webxr says Promise. Nothing to await either way.
     void session.updateRenderState({ baseLayer: layer });
@@ -154,32 +165,46 @@ export class WebXrPresenter {
       this.gl.disable(this.gl.CULL_FACE);
       this.gl.disable(this.gl.BLEND);
 
-      for (const view of pose.views) {
-        const viewport = layer.getViewport(view);
-        if (!viewport) continue;
-
-        const width = Math.max(1, Math.floor(viewport.width * XR_RENDER_SCALE));
-        const height = Math.max(1, Math.floor(viewport.height * XR_RENDER_SCALE));
-        const x = viewport.x + Math.floor((viewport.width - width) / 2);
-        const y = viewport.y + Math.floor((viewport.height - height) / 2);
-
-        this.gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-        this.gl.clearColor(0, 0, 0, 1);
-        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
-
-        this.frameRenderer(this.renderer, { x, y, width, height, framebuffer: layer.framebuffer }, this.fps);
-      }
+      const viewports = xrEyeViewports(pose.views.map((view) => layer.getViewport(view)));
+      viewports.forEach((viewport, index) => {
+        this.frameRenderer!(
+          this.renderer,
+          { ...viewport, framebuffer: layer.framebuffer },
+          this.fps,
+          index === viewports.length - 1,
+        );
+      });
     }
 
     session.requestAnimationFrame(this.onXrFrame);
   };
 }
 
-/** Renderer overrides for XR (half internal scale, no readback/HUD). */
-export function xrRendererStateOverrides(state: RendererState): Partial<RendererState> {
+/**
+ * Each eye's whole viewport in the layer's framebuffer — already at
+ * `XR_RENDER_SCALE`, since the layer was sized with it. Views the layer has no
+ * viewport for are skipped.
+ */
+export function xrEyeViewports(
+  viewports: readonly (XRViewport | null | undefined)[],
+): { x: number; y: number; width: number; height: number }[] {
+  return viewports
+    .filter((viewport): viewport is XRViewport => viewport != null)
+    .map(({ x, y, width, height }) => ({ x, y, width, height }));
+}
+
+/**
+ * Renderer overrides for one eye (no readback/HUD).
+ *
+ * Every eye but the last draws `paused`, which skips the accumulator passes
+ * and the ping-pong flip: the compositor reads the previous frame's
+ * accumulation either way, so all eyes show the same tracers, and the last
+ * eye advances them — once per XR frame. Advancing per eye decayed the
+ * tracers twice as fast as the desktop and left the eyes a frame apart.
+ */
+export function xrRendererStateOverrides(state: RendererState, advance = true): Partial<RendererState> {
   return {
-    layerScale: rendererStateValue(state, 'layerScale') * XR_RENDER_SCALE,
-    tracerScale: rendererStateValue(state, 'tracerScale') * XR_RENDER_SCALE,
+    paused: rendererStateValue(state, 'paused') || !advance,
     livePreviewEnabled: false,
     profilePerformance: false,
     viewportQuarterZoom: false,

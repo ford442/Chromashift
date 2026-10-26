@@ -35,6 +35,7 @@ npm run test:e2e  # Playwright E2E (all projects; install browsers first)
 npm run test:e2e:webgl   # Playwright chromium: explicit WebGL diagnostic backend
 npm run test:e2e:webgpu  # WebGPU smoke + compare layouts (chromium-webgpu project)
 npm run test:cpp  # C++ host tests (g++, no Emscripten); :werror / :asan variants exist
+npm run test:cpp:simd # the same suite on the em++ -msimd128 build + bit-exact SIMD/scalar parity (needs emsdk)
 npm run bench:wasm # WASM kernel throughput (add -- --assert to enforce the CI floors)
 npm run preview   # Preview the production build locally
 ```
@@ -122,7 +123,6 @@ src/
     ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
     ├── types/                # RendererState, RendererContracts (renderer/texture-manager interfaces), TextureHandle — import the module directly
     ├── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
-    ├── WebGLRenderer.ts      # Re-export shim → webgl/WebGLRenderer.ts
     ├── webgl/                # WebGL2 diagnostic / XR renderer — draws the pass graph (graph/exec/WebGLGraphExecutor.ts)
     │   ├── WebGLRenderer.ts, WebGLDebugPasses.ts, WebGLReadback.ts,
     │   │   WebGLMotionField.ts, WebGLStationaryPreviewRenderer.ts
@@ -197,9 +197,10 @@ http://localhost:5173/?renderer=webgl    # diagnostic / XR / Playwright
 WebGPU path only: secure context → `navigator.gpu` → `requestAdapter`, publishing
 `window.webgpuProbe` `{ ok, browser, stage, reason, adapter, features, limits }`.
 It stops before `requestDevice()` and shares the page-lifetime adapter cache
-with bootstrap. One `GPUDevice` per page: `requestDevice` walks at most three
-strategies (`default-limits` → `canvas-limits` → `no-optional-features`), then
-stops. `E_OUTOFMEMORY` sets a fatal circuit breaker — no further
+with bootstrap. One `GPUDevice` per page: `requestDevice` walks at most two
+strategies (`default-limits` → `no-optional-features`), then stops; a lost
+device releases the page's adapter too, so **Retry GPU** requests a fresh one
+(an adapter that has made a device cannot make another). `E_OUTOFMEMORY` sets a fatal circuit breaker — no further
 `requestDevice` until reload. Resize reconfigures the existing device; it
 must not boot again. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) and
 issues #157 / #158. The GPU error overlay may offer **Open WebGL
@@ -531,14 +532,15 @@ Edit `public/images.json` to change the image list:
 
 ## Testing Strategy
 
-Chromashift has three test tiers. CI runs all of them on every push/PR (see `.github/workflows/ci.yml`).
+Chromashift has three test tiers. CI runs them on every push/PR: `.github/workflows/ci.yml` for the web side, `.github/workflows/wasm.yml` for the C++ engine (path-filtered to its inputs).
 
 | Tier | Command | Scope |
 |------|---------|-------|
 | **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
-| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
-| **C++ host** | `npm run test:cpp` | `cpp/tests/` via `g++` — band ladder vs the original linear scan, bulk-kernel/single-pixel parity, luminance and decay math against `chromashift_engine.cpp`'s scalar path; no Emscripten required |
-| **WASM perf gate** | `npm run bench:wasm -- --assert` | Runs every bulk kernel of the committed `public/chromashift_engine.wasm` over a deterministic 4K golden image and fails below the throughput floors in `public/wasm-benchmark-core.mjs` — catches a silent loss of the SIMD128 path. Same image and floors as `/wasm-benchmark.html` |
+| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`), the WASM engine loading on the page and in both workers (`wasm-engine.spec.ts`, `window.wasmEngineState` / `wasmEngineWorkers`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`), export readback on a forced `bgra8unorm` canvas (`webgpu-bgra-export.spec.ts`; run with `--workers=1`), **Retry GPU** after a simulated `device.destroy()` loss (`webgpu-device-loss.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
+| **C++ host** | `npm run test:cpp` | `cpp/tests/test_engine.cpp` via `g++` — band ladder vs the original linear scan, bulk-kernel/single-pixel parity, luminance, decay and motion-flow math against the engine's scalar path; no Emscripten required |
+| **C++ SIMD128** | `npm run test:cpp:simd` | The same suite built with `em++ -msimd128` and run under Node — the code the browser runs — then `cpp/tests/simd_parity.cpp`: the SIMD engine and a `CS_FORCE_SCALAR` copy linked into one module and compared **bit for bit** on every kernel, at odd sizes and on NaN/denormal/extreme inputs. Needs emsdk |
+| **WASM perf gate** | `npm run bench:wasm -- --assert` | Runs every bulk kernel of the committed `public/chromashift_engine.wasm` over a deterministic 3841×2161 golden image (odd on purpose, so the scalar tails run) and fails below the throughput floors in `public/wasm-benchmark-core.mjs` — catches a silent loss of the SIMD128 path — and checks both mask kernels against the scalar `classifyPixel` export. Same image and floors as `/wasm-benchmark.html` |
 
 ### CI job matrix
 
@@ -550,7 +552,13 @@ Chromashift has three test tiers. CI runs all of them on every push/PR (see `.gi
 | `shaders` | `node scripts/validate-shaders.mjs --require-glslang`: dumps every WGSL/GLSL variant (`shaderBindings.test.ts`), then `naga` + `glslangValidator` (naga-cli pinned and cached) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu` + SwiftShader Vulkan) |
-| `wasm` | `npm run test:cpp:werror` + emsdk pin check (`make -C cpp check`) + `make -C cpp verify-exports` + `npm run build:wasm` + artifact check + `npm run bench:wasm -- --assert` |
+
+`ci.yml` has no C++ job. The engine is built and tested by **`wasm.yml`** alone, on any change to `cpp/**`, `shared/*.json`, `scripts/codegen-*.mjs`, the bench, or the committed artifacts:
+
+| Job (`wasm.yml`) | What it runs |
+|-----|----------------|
+| `host-tests` | `npm run test:cpp:werror` (g++, no emsdk) |
+| `wasm` | installs the emsdk pinned in `cpp/emsdk.version` + `make -C cpp check` (pin) + `make -C cpp verify-exports` + `npm run test:cpp:simd` (`-Werror`) + `npm run build:wasm:force` + `npm run bench:wasm -- --assert` + fails if `public/chromashift_engine.{js,wasm}` or `cpp/*_table.h` differ from the clean rebuild |
 
 WebGPU E2E runs in the `chromium-webgpu` Playwright project with
 `--enable-unsafe-webgpu` plus the SwiftShader Vulkan flags (see
@@ -591,7 +599,7 @@ Chromashift layers four independent capability checks:
 |---|---|---|---|
 | **WebGPU** | Primary renderer (5-pass pipeline, GPU compute analysis) | Chrome 113+ / Edge 113+ / Chrome Canary | Blocking probe screen; optional **new** `?renderer=webgl` diagnostic session |
 | **WebGL2** | Diagnostic / XR / Playwright screenshots, shader-porting | Any browser with WebGL2 (Firefox, Safari included) | XR and WebGL E2E cannot run |
-| **WASM SIMD128** | Accelerated CPU luminance/classification — hand-written `wasm_simd128.h` kernels in `cpp/chromashift_engine.cpp` (4 px per `v128_t`), 2.6–7× over the scalar build on 4K | Chrome/Edge 91+, Firefox 89+, Safari 16.4+; requires `npm run build:wasm` (Emscripten). SIMD128 is a hard requirement of the binary — `loadEngine.ts` probes for it before loading | Silently uses the TypeScript engine (`WasmEngine.ts`) — same public API either way |
+| **WASM SIMD128** | Accelerated CPU luminance/classification — hand-written `wasm_simd128.h` kernels in `cpp/chromashift_engine.cpp` and `cpp/motion_flow.cpp` (4 px per `v128_t`, bit-identical to the scalar bodies), 2.6–7× over the scalar build on 4K | Chrome/Edge 91+, Firefox 89+, Safari 16.4+; requires `npm run build:wasm` (Emscripten). SIMD128 is a hard requirement of the binary — `loadEngine.ts` probes for it before loading | Silently uses the TypeScript engine (`WasmEngine.ts`) — same public API either way |
 | **ORT (onnxruntime-web)** | Optional waifu2x upscaling (`nunif.worker.ts`) | Any WebGPU/WebGL2 browser; loaded lazily only when "Upscale" is clicked | Real-ESRGAN/Real-CUGAN via TF.js (`upscaler.worker.ts`) covers the other upscale path |
 
 Firefox and Safari do not yet have stable WebGPU support — use `?renderer=webgl` there for diagnostics, not as a silent production fallback.

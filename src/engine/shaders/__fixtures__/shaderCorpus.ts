@@ -100,12 +100,9 @@ export function buildShaderCorpus(): ShaderCorpus {
     for (const presentation of PRESENTATIONS) {
       recorder.context = `inspect-${layerCount}-${presentation}`;
       const pipelines = new WebGPUPipelines(device, 'bgra8unorm', layerCount, presentation);
-      pipelines.createTracerViewPipeline();
-      pipelines.createDisplayPipeline();
-      pipelines.createHeatmapPipeline();
-      pipelines.createComparePipeline();
-      pipelines.createPersistDiagnosticBlitPipeline();
-      pipelines.createStampDiagnosticViewPipeline();
+      // Async builders, but each records its pipeline before its first await.
+      void pipelines.createInspectPipelines();
+      void pipelines.createPersistDiagnosticBlitPipeline();
     }
   }
 
