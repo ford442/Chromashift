@@ -188,6 +188,8 @@ export function useAppWebGPUInit({
   const canvasHdrRef = useRef(canvasHdr);
   canvasHdrRef.current = canvasHdr;
   const [isGpuRetrying, setIsGpuRetrying] = useState(false);
+  /** `retryGpuBootstrap`, for the WebGL restore path that runs before it is defined. */
+  const retryGpuBootstrapRef = useRef<(() => Promise<void>) | null>(null);
 
   const destroyActiveOrchestrator = useCallback(() => {
     activeOrchestratorRef.current?.destroy();
@@ -294,6 +296,14 @@ export function useAppWebGPUInit({
           antialias: antialiasEnabledRef.current,
           backend: 'webgl',
           onRuntimeError,
+          // The browser restored a lost context: boot again on it, exactly as
+          // Retry GPU would. Not gated on this boot's cancel token — a Retry
+          // pressed while the context was still lost aborts it, and the
+          // restore must still land. The canvas ref is null once unmounted.
+          onContextRestored: () => {
+            if (mainCanvasRef.current !== canvas) return;
+            void retryGpuBootstrapRef.current?.();
+          },
         });
         orchestrator = bootstrapped.orchestrator;
         activeOrchestratorRef.current = orchestrator;
@@ -559,6 +569,8 @@ export function useAppWebGPUInit({
     setGpuReady,
     setGpuError,
   ]);
+
+  retryGpuBootstrapRef.current = retryGpuBootstrap;
 
   const initRef = useRef(init);
   initRef.current = init;

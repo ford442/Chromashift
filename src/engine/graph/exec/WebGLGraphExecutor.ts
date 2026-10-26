@@ -7,7 +7,18 @@ import {
   uniform1f,
   uniform1i,
 } from '../../webgl/programUtils';
-import { createTarget, destroyTarget, type RenderTarget } from '../../webgl/resources';
+import type { WebGLInternalFormat } from '../../gpuOptions';
+import {
+  createMultisampleTarget,
+  createTarget,
+  destroyMultisampleTarget,
+  destroyTarget,
+  resolveMultisampleTarget,
+  selectWebGLInternalFormat,
+  supportedSampleCount,
+  type MultisampleTarget,
+  type RenderTarget,
+} from '../../webgl/resources';
 import {
   BLIT_FRAGMENT_SOURCE,
   PASSTHROUGH_VERTEX_SOURCE,
@@ -99,11 +110,14 @@ interface Frame extends WebGLGraphFrame {
   readonly set: WebGLProgramSet;
 }
 
-/** The pool's textures on WebGL: `RGBA` / `UNSIGNED_BYTE` FBO targets. */
-function webglTargetFactory(gl: WebGL2RenderingContext): PoolTextureFactory<RenderTarget> {
+/**
+ * The pool's textures on WebGL: FBO targets in the context's internal format.
+ * No stamp side-channel on this backend, and the MSAA renderbuffer is not a
+ * texture, so the executor owns it: every pooled use is a colour target.
+ */
+function webglTargetFactory(gl: WebGL2RenderingContext, format: WebGLInternalFormat): PoolTextureFactory<RenderTarget> {
   return {
-    // No MSAA pass and no stamp side-channel on this backend: every use is a colour target.
-    create: (size) => createTarget(gl, Math.max(1, size.width), Math.max(1, size.height)),
+    create: (size) => createTarget(gl, Math.max(1, size.width), Math.max(1, size.height), format),
     destroy: (target) => destroyTarget(gl, target),
   };
 }
@@ -131,6 +145,18 @@ export class WebGLGraphExecutor {
   private readonly pool: TexturePool<RenderTarget>;
   private readonly programs: WebGLProgramCache;
   private zeroField: WebGLTexture | null = null;
+  /** Format of every pooled target: `rgba16f` where the context renders it. */
+  readonly internalFormat: WebGLInternalFormat;
+  /** Requested band-layer samples — 1, or 4 under MSAA. */
+  private sampleCount = 1;
+  /**
+   * The band layers' shared multisample renderbuffer, as WebGPU shares one
+   * MSAA texture: each layer draws into it and resolves into its pooled
+   * target. Reallocated when the layer size or the sample count changes.
+   */
+  private msaa: MultisampleTarget | null = null;
+  /** Size and request `msaa` was made for — set even when the format allows no multisampling. */
+  private msaaKey: string | null = null;
 
   /** The target graph: what `setGraph()` adopted. */
   private compiled: CompiledGraph | null = null;
@@ -146,8 +172,25 @@ export class WebGLGraphExecutor {
 
   constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
-    this.pool = new TexturePool(webglTargetFactory(gl));
+    this.internalFormat = selectWebGLInternalFormat(gl);
+    this.pool = new TexturePool(webglTargetFactory(gl, this.internalFormat));
     this.programs = WebGLProgramCache.retain(gl);
+  }
+
+  /**
+   * Band-layer MSAA: `4` draws every band layer into a multisample
+   * renderbuffer and blits it into the layer's target; `1` draws the target
+   * directly. Persistence and the compositor are always single-sample, as on
+   * WebGPU. Programs do not depend on it, so nothing relinks — the next frame
+   * reallocates the renderbuffer.
+   */
+  setSampleCount(sampleCount: number): void {
+    this.sampleCount = Math.max(1, Math.floor(sampleCount));
+  }
+
+  /** Samples the last frame's band layers drew at: the request, capped by what the format supports. */
+  get layerSampleCount(): number {
+    return this.msaa?.samples ?? 1;
   }
 
   /**
@@ -303,6 +346,7 @@ export class WebGLGraphExecutor {
       this.programs.release();
     }
     this.pool.release();
+    this.releaseMsaa();
     this.frame = null;
     this.compiled = null;
     this.plan = null;
@@ -377,8 +421,13 @@ export class WebGLGraphExecutor {
     const gl = this.gl;
     const { state } = params;
     const source = this.textureFor(step.source, inputs);
-    this.beginPass(this.pool.transient(step.nodeId));
-    if (params.drawLayer?.(step.layerIndex, source)) return;
+    const target = this.pool.transient(step.nodeId);
+    const msaa = this.msaaTargetFor(target);
+    this.beginPass(msaa ?? target);
+    if (params.drawLayer?.(step.layerIndex, source)) {
+      if (msaa) resolveMultisampleTarget(gl, msaa, target);
+      return;
+    }
 
     const program = this.program(step.nodeId);
     // The same `FragUniforms` values WebGPU packs. This backend has no
@@ -405,6 +454,7 @@ export class WebGLGraphExecutor {
     uniform1f(gl, program, 'u_profileMode', values.profileMode);
     uniform1f(gl, program, 'u_profileLightDark', values.profileLightDark);
     this.draw();
+    if (msaa) resolveMultisampleTarget(gl, msaa, target);
   }
 
   /** The fused coincidence+decay accumulator — the shipped persistence pass. */
@@ -602,8 +652,35 @@ export class WebGLGraphExecutor {
     return node;
   }
 
+  /**
+   * The multisample renderbuffer a band layer drawing into `target` renders
+   * to, or `null` to draw the target itself — MSAA off, or no multisampling
+   * for this format on this context.
+   */
+  private msaaTargetFor(target: RenderTarget): MultisampleTarget | null {
+    if (this.sampleCount <= 1) {
+      this.releaseMsaa();
+      return null;
+    }
+    const key = `${target.width}x${target.height}@${this.sampleCount}`;
+    if (key === this.msaaKey) return this.msaa;
+    this.releaseMsaa();
+    this.msaaKey = key;
+    const samples = supportedSampleCount(this.gl, this.internalFormat, this.sampleCount);
+    if (samples > 1) {
+      this.msaa = createMultisampleTarget(this.gl, target.width, target.height, samples, this.internalFormat);
+    }
+    return this.msaa;
+  }
+
+  private releaseMsaa(): void {
+    if (this.msaa) destroyMultisampleTarget(this.gl, this.msaa);
+    this.msaa = null;
+    this.msaaKey = null;
+  }
+
   /** Bind `target`, size the viewport to it and, unless the pass overwrites every texel anyway, clear it. */
-  private beginPass(target: RenderTarget, clear = true): void {
+  private beginPass(target: Pick<RenderTarget, 'framebuffer' | 'width' | 'height'>, clear = true): void {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
     gl.viewport(0, 0, target.width, target.height);

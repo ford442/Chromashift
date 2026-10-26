@@ -24,6 +24,7 @@
 import type { RenderCountsApi } from '../debug/renderCounts';
 import type { CompareLayoutMode } from './compareViews';
 import type { GpuComputeDiagnostics } from './compute/chores/support';
+import type { WebGLInternalFormat } from './gpuOptions';
 import type { MotionFlowStats } from './compute/chores/motionKernel';
 import type { GraphPresetName } from './graph/altGraphs';
 import type { LiveSourceKind } from './LiveSource';
@@ -43,6 +44,10 @@ export interface ChromashiftDiagnostics {
   webgpuProbe: WebGpuProbeResult;
   /** WebGL internal render-target scale (`webgl/WebGLRenderer.ts`). */
   webglInternalScale: number;
+  /** The WebGL pool's layer/tracer format: `rgba16f` when the context renders it (`selectWebGLInternalFormat`). */
+  webglInternalFormat: WebGLInternalFormat;
+  /** Set while the WebGL pool is 8-bit, so tracers clip (see `webglInternalFormatNote`). */
+  webglInternalFormatNote: string | null;
 
   // ── Canvas presentation (gpuBootstrap.ts, WebGPURenderer.ts) ────────────────
   /** Whether `hdr-extended` canvas presentation is available this session. */
@@ -165,6 +170,8 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   rendererFallbackReason: true,
   webgpuProbe: true,
   webglInternalScale: true,
+  webglInternalFormat: true,
+  webglInternalFormatNote: true,
   canvasHdrAvailable: true,
   canvasHdrReason: true,
   canvasHdrNote: true,

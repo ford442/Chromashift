@@ -220,6 +220,90 @@ describe('WebGLGraphExecutor', () => {
     expect(compileGraph(buildDefaultGraph(), 'webgl').outputs.tracers)
       .toEqual([DEFAULT_GRAPH_IDS.tracerBelow, DEFAULT_GRAPH_IDS.tracerAbove]);
   });
+
+  describe('MSAA', () => {
+    it('multisamples the band layers only, resolving each into its layer texture', () => {
+      adopt();
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+
+      const [l0, l1, l2, below, above, composite] = fake.draws;
+      for (const layer of [l0, l1, l2]) {
+        expect(layer.samples).toBe(4);
+        expect(layer.target).toBeNull();
+        expect([layer.renderbuffer?.width, layer.renderbuffer?.height]).toEqual([400, 300]);
+      }
+      // One shared renderbuffer, as WebGPU shares one MSAA texture.
+      expect(new Set([l0, l1, l2].map((draw) => draw.renderbuffer)).size).toBe(1);
+      for (const pass of [below, above, composite]) expect(pass.samples).toBe(1);
+      expect(composite.target).toBeNull();
+      expect(composite.renderbuffer).toBeNull();
+
+      const layers = executor.outputTargets()!.layers.map((t) => t.texture);
+      expect(fake.blits.map((blit) => blit.to)).toEqual(layers);
+      expect(fake.blits.every((blit) => blit.from === l0.renderbuffer)).toBe(true);
+      // The accumulators read the resolved textures, never the renderbuffer.
+      expect(below.samplers.u_layer0).toBe(layers[0]);
+      expect(executor.layerSampleCount).toBe(4);
+    });
+
+    it('reallocates the renderbuffer on a toggle, on the same context', () => {
+      adopt();
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+      const first = fake.renderbuffers[0];
+
+      executor.setSampleCount(1);
+      executor.encode(inputs, params());
+      expect(first.deleted).toBe(true);
+      expect(fake.draws.slice(-6).every((draw) => draw.samples === 1)).toBe(true);
+      expect(executor.layerSampleCount).toBe(1);
+
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+      expect(fake.renderbuffers).toHaveLength(2);
+      expect(fake.renderbuffers[1].deleted).toBe(false);
+    });
+
+    it('draws single-sample where the format allows no multisampling', () => {
+      fake = createFakeWebGl({ sampleCounts: [] });
+      executor = new WebGLGraphExecutor(fake.gl);
+      adopt();
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+      expect(fake.renderbuffers).toHaveLength(0);
+      expect(fake.draws.every((draw) => draw.samples === 1)).toBe(true);
+    });
+  });
+
+  describe('internal format', () => {
+    const gl = (fakeGl: FakeWebGl) => fakeGl.gl as unknown as Record<'RGBA8' | 'RGBA16F', number>;
+
+    it('stays RGBA8 without a renderable half-float extension, and still draws', () => {
+      adopt();
+      executor.encode(inputs, params());
+      expect(executor.internalFormat).toBe('rgba8');
+      expect(fake.draws).toHaveLength(6);
+      const pooled = fake.draws.slice(0, 5).map((draw) => draw.target!);
+      expect(pooled.every((t) => t.internalFormat === gl(fake).RGBA8)).toBe(true);
+    });
+
+    it('allocates layer, tracer and MSAA targets as RGBA16F under EXT_color_buffer_half_float', () => {
+      fake = createFakeWebGl({ extensions: ['EXT_color_buffer_half_float'] });
+      executor = new WebGLGraphExecutor(fake.gl);
+      adopt();
+      executor.encode(inputs, params());
+      expect(executor.internalFormat).toBe('rgba16f');
+      const pooled = fake.draws.slice(0, 5).map((draw) => draw.target!);
+      expect(pooled.every((t) => t.internalFormat === gl(fake).RGBA16F)).toBe(true);
+
+      // The resolve blits between equal formats (the fake throws otherwise).
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+      expect(fake.renderbuffers[0].internalFormat).toBe(gl(fake).RGBA16F);
+      expect(fake.blits).toHaveLength(3);
+    });
+  });
 });
 
 describe('the context program cache', () => {

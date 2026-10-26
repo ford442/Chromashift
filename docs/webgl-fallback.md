@@ -111,7 +111,7 @@ The live view therefore:
 
 - Maps a pixel-pack buffer only after its fence reports signaled, and does not fall back to a synchronous `readPixels` for thumbnails. The live collision poll and the repeating tracer-thumbnail refresh stay on WebGPU: on WebGL that map drains every pass still queued on the shared context. WebGL thumbnails refresh when playback is paused.
 - Caps the internal long edge at 960 px and steps it down (floor 480 px) while main-thread frame time stays over the FPS budget. The canvas CSS size is unchanged; the composite is upscaled. `window.webglInternalScale` is the scale in use. Export and WebXR keep the resolution they asked for.
-- Requests `powerPreference: 'high-performance'` on the WebGL2 context.
+- Asks for the WebGL2 context with `powerPreference: 'high-performance'`, then `'low-power'`, then no preference, and never requests a WebGPU adapter on the way. A lost context raises the recoverable overlay, and the session boots again on the same context once the browser restores it. See [gpu-bootstrap.md](gpu-bootstrap.md#options-matrix) for the attribute matrix, MSAA, half-float targets and `desynchronized`.
 
 Layer and tracer scale sliders apply on this backend the same way they do on WebGPU.
 
