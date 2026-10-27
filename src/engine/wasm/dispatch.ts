@@ -20,16 +20,10 @@ export {
 } from './dispatch/luminance';
 
 export {
-  classifyPixelWith,
-  classifyPixelsBulkWith,
   classifyImageMaskWith,
-  computeLuminanceHistogramWith,
-  computeColorBandCountsWith,
 } from './dispatch/classification';
 
 export {
   durationToDecayWith,
   advanceAnglesBy,
-  buildRotationMat3With,
-  simulateTracerDecayWith,
 } from './dispatch/animation';

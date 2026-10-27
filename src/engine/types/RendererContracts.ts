@@ -1,9 +1,21 @@
-import type { GraphPresetName } from '../graph/altGraphs';
-import type { CompiledGraph } from '../graph/types';
+import type { MotionFieldUse } from '../graph/exec/plan';
+import type { PassGraphSource } from '../graph/variants';
+
+/** Which orchestrator slot a renderer draws, for the pass-graph breadcrumbs. */
+export interface PassGraphSlotOptions {
+  /** The slot id, keying `window.passGraphSlotsExecuting`. */
+  slot: string;
+  /**
+   * Whether this is the primary canvas. Only it publishes the session-wide
+   * `window.passGraph*` breadcrumbs; a compare slot drawing preset B with the
+   * temporal term on must not describe the main canvas's graph.
+   */
+  primary: boolean;
+}
 import type { CollisionStats, RendererState } from './RendererState';
-import type { ImageEntry } from '../TextureManager';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { ChromashiftTextureHandle } from './TextureHandle';
+import type { GpuRuntimeError } from '../gpu/gpuErrors';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 
@@ -114,22 +126,30 @@ export interface ChromashiftRenderer {
    */
   wantsCpuMotionField?(): boolean;
   /**
-   * Adopt a compiled pass graph and encode `compiled.passes` instead of the
-   * hand-written topology, or `null` to go back to it.
-   *
-   * Implemented by the WebGPU renderer. The WebGL diagnostic backend compiles
-   * the graph — that is where `unsupported-node` refusals come from — but does
-   * not execute it, so it does not implement this. See docs/PASS_GRAPH.md.
+   * What the drawn graph needs of the CPU motion field whatever the motion
+   * mode — a `displace` steered by it reads the field and its flow. Absent
+   * means nothing: only the temporal term asks for a field.
    */
-  setPassGraph?(compiled: CompiledGraph | null, name?: GraphPresetName | null): void;
+  cpuMotionFieldUse?(): MotionFieldUse;
+  /**
+   * Adopt a pass-graph source (`null`: the default graph) and draw the variant
+   * each frame needs — the layer count, the temporal term, the canvas it
+   * presents to. Both backends' renderers execute the graph; see
+   * docs/PASS_GRAPH.md.
+   */
+  setPassGraph?(source: PassGraphSource | null, options?: PassGraphSlotOptions): void;
+  /**
+   * Where the renderer reports a pipeline the device refused to build
+   * (`kind: 'pipeline'`), compiled off the frame. The orchestrator forwards it
+   * to the error overlay.
+   */
+  setRuntimeErrorHandler?(handler: ((error: GpuRuntimeError) => void) | null): void;
   render(state: RendererState, fps?: number): void;
   /** Stationary side previews at panel preset angles (Original/Separated/Tracer strip). */
   renderStationaryPreviews(
     state: RendererState,
     options?: StationaryPreviewOptions,
   ): Promise<StationaryPreviewResult>;
-  /** @deprecated Side previews use {@link renderStationaryPreviews}. */
-  requestPreviewReadback(callback: (data: Uint8ClampedArray<ArrayBuffer>) => void): boolean;
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean;
   getRenderTiming(): RenderTiming;
   exportTracerView(options: ExportTracerOptions): Promise<ExportTracerResult | null>;
@@ -141,7 +161,6 @@ export interface ChromashiftRenderer {
 }
 
 export interface ChromashiftTextureManager {
-  fetchImageList(endpoint: string, signal?: AbortSignal): Promise<ImageEntry[]>;
   loadTexture(url: string): Promise<ChromashiftTextureHandle>;
   uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): ChromashiftTextureHandle;
   /**

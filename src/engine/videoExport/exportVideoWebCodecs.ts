@@ -20,8 +20,9 @@ function qualityBitrate(quality: VideoExportRequest['quality'], mediabunny: Medi
       return mediabunny.QUALITY_LOW;
     case 'medium':
       return mediabunny.QUALITY_MEDIUM;
+    case 'high':
+      return mediabunny.QUALITY_HIGH;
   }
-  return mediabunny.QUALITY_HIGH;
 }
 
 /**

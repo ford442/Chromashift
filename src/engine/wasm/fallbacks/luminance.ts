@@ -11,7 +11,7 @@ export function tsComputeAverageLuminance(image: PixelSource): number {
   if (!bytes) return 128;
   let sum = 0;
   for (let i = 0; i < bytes.length; i += 4) {
-    sum += bytes[i] * 0.2126 + bytes[i + 1] * 0.7152 + bytes[i + 2] * 0.0722;
+    sum += bytes[i]! * 0.2126 + bytes[i + 1]! * 0.7152 + bytes[i + 2]! * 0.0722;
   }
   return sum / (bytes.length / 4);
 }
@@ -28,7 +28,7 @@ export function tsComputeAverageLuminanceStrided(
   for (let y = 0; y < height; y += safeStride) {
     for (let x = 0; x < width; x += safeStride) {
       const o = (y * width + x) * 4;
-      sum += pixels[o] * 0.2126 + pixels[o + 1] * 0.7152 + pixels[o + 2] * 0.0722;
+      sum += pixels[o]! * 0.2126 + pixels[o + 1]! * 0.7152 + pixels[o + 2]! * 0.0722;
       n++;
     }
   }

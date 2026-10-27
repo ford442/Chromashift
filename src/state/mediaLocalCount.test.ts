@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { chromashiftReducer, createInitialState } from './chromashiftReducer';
-import type { ImageEntry } from '../engine/TextureManager';
+import type { ImageEntry } from '../engine/library/imageEntry';
 
 /**
  * `ImageStrip` used to recount local entries on every render, a full scan of a

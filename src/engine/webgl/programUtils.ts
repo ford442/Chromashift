@@ -1,6 +1,34 @@
 export interface ProgramInfo {
   program: WebGLProgram;
-  uniforms: Map<string, WebGLUniformLocation>;
+  /**
+   * Location per uniform name, looked up once. `null` is cached too: a uniform
+   * the compiler optimised out has no location, and asking the driver again
+   * every frame is a wasted round trip.
+   */
+  uniforms: Map<string, WebGLUniformLocation | null>;
+  /**
+   * Every name the program knows: its active uniforms plus everything either
+   * source declares `uniform` (the compiler may drop a declared one). A name
+   * outside this set is a typo, not an optimised-out uniform.
+   */
+  knownUniforms: ReadonlySet<string>;
+}
+
+/** `uniform [precision] type name[N];` declarations, by name. */
+export function declaredUniforms(source: string): string[] {
+  const declaration = /\buniform\s+(?:(?:lowp|mediump|highp)\s+)?\w+\s+(\w+)\s*(?:\[[^\]]*\])?\s*;/g;
+  return [...source.matchAll(declaration)].map((match) => match[1]!);
+}
+
+function activeUniforms(gl: WebGL2RenderingContext, program: WebGLProgram): string[] {
+  const count = gl.getProgramParameter(program, gl.ACTIVE_UNIFORMS) as number;
+  const names: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const name = gl.getActiveUniform(program, i)?.name;
+    // Arrays are reported as `u_x[0]`; `u_x` addresses the same element.
+    if (name) names.push(name, name.replace(/\[0\]$/, ''));
+  }
+  return names;
 }
 
 export function createProgram(
@@ -22,7 +50,15 @@ export function createProgram(
     gl.deleteProgram(program);
     throw new Error(`WebGL program link failed: ${log}`);
   }
-  return { program, uniforms: new Map() };
+  return {
+    program,
+    uniforms: new Map(),
+    knownUniforms: new Set([
+      ...activeUniforms(gl, program),
+      ...declaredUniforms(vertexSource),
+      ...declaredUniforms(fragmentSource),
+    ]),
+  };
 }
 
 function createShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
@@ -47,12 +83,19 @@ function uniformLocation(
   info: ProgramInfo,
   name: string,
 ): WebGLUniformLocation | null {
-  if (!info.uniforms.has(name)) {
-    const location = gl.getUniformLocation(info.program, name);
-    if (location) info.uniforms.set(name, location);
-    return location;
+  const cached = info.uniforms.get(name);
+  if (cached !== undefined) return cached;
+  // A misspelled uniform used to be a silent no-op: `getUniformLocation`
+  // returns null and the setter skips it. Fail loudly in development instead.
+  if (import.meta.env.DEV && !info.knownUniforms.has(name)) {
+    throw new Error(
+      `WebGL uniform "${name}" is not declared by this program `
+      + `(known: ${[...info.knownUniforms].sort().join(', ')})`,
+    );
   }
-  return info.uniforms.get(name) ?? null;
+  const location = gl.getUniformLocation(info.program, name);
+  info.uniforms.set(name, location);
+  return location;
 }
 
 export function uniform1f(

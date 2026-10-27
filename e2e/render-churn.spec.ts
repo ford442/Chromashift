@@ -15,15 +15,6 @@ import { domClick } from './helpers/domClick';
  * `src/debug/renderCounts.ts` so the property is observable here.
  */
 
-declare global {
-  interface Window {
-    __renderCounts?: {
-      snapshot(): Record<string, number>;
-      reset(): void;
-    };
-  }
-}
-
 /** Components that must be completely still while the app idles. */
 const IDLE_SILENT = [
   'AppUI',

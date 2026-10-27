@@ -61,7 +61,7 @@ export const BAND_THRESHOLDS: readonly number[] = Object.values(BAND);
  */
 export function classifyBandIndex(rgb: number): number {
   for (let i = 0; i < BAND_THRESHOLDS.length; i += 1) {
-    if (rgb > BAND_THRESHOLDS[i]) return i;
+    if (rgb > BAND_THRESHOLDS[i]!) return i;
   }
   return BAND_THRESHOLDS.length;
 }
@@ -75,8 +75,35 @@ export function classifyPixelBands(
   return classifyBandIndex(computeAdjustedRgb(r, g, b, avgLum));
 }
 
+const BT709_R_F32 = Math.fround(0.2126);
+const BT709_G_F32 = Math.fround(0.7152);
+const BT709_B_F32 = Math.fround(0.0722);
+
+/**
+ * `classifyPixelBands` evaluated in float32, rounding after every operation in
+ * the order C++ `classifyPixel` and the WGSL `classify_band()` mask kernel use.
+ *
+ * The plain version computes in doubles, so a pixel whose luminance lands
+ * within float32 rounding of a threshold can fall on the other side of it (a
+ * handful per 4K frame). The classification-mask lanes — WebGPU, WASM and this
+ * TypeScript fallback — must produce the same bytes, so the mask uses this one.
+ * The thresholds are integers, exact in float32, so only the arithmetic needs
+ * rounding.
+ */
+export function classifyPixelBandsF32(
+  r: number,
+  g: number,
+  b: number,
+  avgLum: number,
+): number {
+  const f = Math.fround;
+  const lum = f(f(f(r * BT709_R_F32) + f(g * BT709_G_F32)) + f(b * BT709_B_F32));
+  const lightDark = f(128 + f(Math.abs(f(f(avgLum) - 128)) / 2));
+  return classifyBandIndex(f(lum + f(lightDark / 2)));
+}
+
 /** lightDark/2 offset from average luminance — shared by LUT build and lookup. */
-export function bandLutOffset(avgLum: number): number {
+function bandLutOffset(avgLum: number): number {
   const lightDark = 128 + Math.abs(avgLum - 128) / 2;
   return lightDark / 2;
 }
@@ -112,8 +139,9 @@ export function classifyPixelBandsLut(
   }
   const l0 = Math.floor(lum);
   const l1 = l0 + 1;
+  // 0 <= l0 < l1 <= 255 here, inside the 256-entry LUT.
   if (lut[l0] === lut[l1]) {
-    return lut[l0];
+    return lut[l0]!;
   }
   return classifyBandIndex(rgb);
 }

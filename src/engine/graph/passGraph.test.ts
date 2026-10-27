@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { presentingTo } from './variants';
 import {
   DEFAULT_GRAPH_IDS,
   PassGraphError,
@@ -304,39 +305,48 @@ describe('compilation cache', () => {
 });
 
 describe('backend capabilities', () => {
-  it('lists warp, blur, history and displace as WebGPU-only', () => {
-    const webgpuOnly = ['warp', 'blur', 'history', 'displace'] as const;
-    expect(supportedNodeKinds('webgpu')).toEqual(expect.arrayContaining([...webgpuOnly]));
-    for (const kind of webgpuOnly) expect(supportedNodeKinds('webgl')).not.toContain(kind);
+  it('lists warp, blur, history and displace on both backends', () => {
+    const kinds = ['warp', 'blur', 'history', 'displace'] as const;
+    for (const backend of ['webgpu', 'webgl'] as const) {
+      expect(supportedNodeKinds(backend)).toEqual(expect.arrayContaining([...kinds]));
+    }
+    expect(new Set(supportedNodeKinds('webgl'))).toEqual(new Set(supportedNodeKinds('webgpu')));
   });
 
-  it('refuses an unsupported node on WebGL, naming it', () => {
+  it('emits GLSL for every pass a WebGL graph draws', () => {
     const graph = graphOf(
       [
         node('src', 'source'),
-        node('soften', 'blur', ['src'], { radius: 3 }),
-        node('out', 'output', ['soften']),
+        node('field', 'source', [], { role: 'motion-field' }),
+        node('trail', 'history', ['src'], { frames: 3 }),
+        node('push', 'displace', ['trail', 'field'], { field: 'motion' }),
+        node('soften', 'blur', ['push'], { radius: 3 }),
+        node('turn', 'warp', ['soften'], { mode: 'feedback' }),
+        node('out', 'output', ['turn']),
       ],
       'out',
     );
-    expect(() => compileGraph(graph, 'webgl')).toThrow(PassGraphError);
-    try {
-      compileGraph(graph, 'webgl');
-    } catch (error) {
-      const failure = error as PassGraphError;
-      expect(failure.code).toBe('unsupported-node');
-      expect(failure.nodeId).toBe('soften');
-      expect(failure.message).toContain("'blur'");
-      expect(failure.message).toContain("'soften'");
+    const compiled = compileGraph(graph, 'webgl');
+    for (const kind of ['history', 'displace', 'blur', 'warp'] as const) {
+      const pass = compiled.emitted.find((p) => p.kind === kind)!;
+      expect(pass.fragment.startsWith('#version 300 es'), kind).toBe(true);
+      // The GLSL emitters bind uniforms by name, never through a WGSL block.
+      expect(pass.uniformLayout, kind).toBeNull();
     }
-    // ...and compiles happily for WebGPU.
-    expect(compileGraph(graph, 'webgpu').emitted.some((p) => p.kind === 'blur')).toBe(true);
   });
 
-  it('ignores an unsupported node that the output cannot reach', () => {
-    const graph = buildDefaultGraph();
-    graph.nodes.push(node('orphan', 'blur', [DEFAULT_GRAPH_IDS.source], { radius: 2 }));
-    expect(() => compileGraph(graph, 'webgl')).not.toThrow();
+  it('still refuses what the WebGL backend cannot present, naming the node', () => {
+    const graph = presentingTo(buildDefaultGraph(), 'hdr-extended');
+    try {
+      compileGraph(graph, 'webgl');
+      expect.unreachable();
+    } catch (error) {
+      const failure = error as PassGraphError;
+      expect(failure).toBeInstanceOf(PassGraphError);
+      expect(failure.code).toBe('unsupported-node');
+      expect(failure.nodeId).toBe(DEFAULT_GRAPH_IDS.composite);
+      expect(failure.message).toContain('hdr-extended');
+    }
   });
 });
 
@@ -488,7 +498,7 @@ describe('history and displace', () => {
   it('runs a tracer-resolution ring at tracer scale, output and ring alike', () => {
     const graph = withParams(smearGraph(), 'smear-history', { frames: 3, resolution: 'tracer' });
     const allocation = plan(graph);
-    expect(allocation.rings[0].resolution).toBe('tracer');
+    expect(allocation.rings[0]?.resolution).toBe('tracer');
     expect(allocation.assignment['smear-history']).toMatch(/^tracer:/);
   });
 
@@ -535,7 +545,7 @@ describe('history and displace', () => {
     // before, which is what this key spells out (empty structural brackets).
     expect(structuralKey(buildDefaultGraph(), 'webgpu')).toContain(';source:source()[];');
     const motion = buildDefaultGraph();
-    motion.nodes[0].params = { role: 'motion-field' };
+    motion.nodes[0]!.params = { role: 'motion-field' };
     expect(structuralHash(motion, 'webgpu')).not.toBe(structuralHash(buildDefaultGraph(), 'webgpu'));
   });
 });

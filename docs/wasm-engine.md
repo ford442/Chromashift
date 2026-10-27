@@ -28,7 +28,7 @@ for real-time rendering.
 | **In scope (export / offline)** | `advanceAnglesBy` | Video-export angle stepping when Engine = C++ WASM |
 | **In scope (per frame)** | `computeMotionFlowWith` | Optical flow behind `motionMode: 'direction'`, on backends with no compute lane (WebGL, or WebGPU with `?no_gpu_compute` / a compute decline). The only per-frame WASM call, and it runs in `motion.worker.ts`, never on the animation thread |
 | **Out of scope (GPU)** | Layer rotation, persistence/compositing, tracer decay, tracer overlap detection | Handled by WGSL/GLSL shaders in `WebGPURenderer` / `WebGLRenderer`; the per-frame decay multiplier is the pure `durationToDecay()` in `math/decay.ts` (constants from `shared/decay.json`, see [Shared decay table](#shared-decay-table-shareddecayjson)), and the 3-layer overlap ("coincidence") detection is a `gpu-chores` compute pass (`op: 'coincidence'`, see `docs/gpu-bootstrap.md`) with a fragment-shader fallback — neither is ever dispatched through WASM |
-| **Test / benchmark only** | `durationToDecayWith`, `simulateTracerDecayWith`, `buildRotationMat3With`, `computeLuminanceHistogramWith`, `computeColorBandCountsWith`, bulk classify helpers | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
+| **Test / benchmark only** | `durationToDecayWith`, `classifyPixelsBulkWith`; the C++ `classifyPixel`, `buildRotationMat3`, `simulateTracerDecay`, `computeLuminanceHistogram` and `computeColorBandCounts` exports (no TS dispatcher) | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
 
 **Selection order for image analysis** — encoded in the **`gpu-chores`** facade
 (`src/engine/compute/chores/`) as `CHORE_BACKEND_ORDER` and walked by
@@ -100,14 +100,14 @@ and the unit/C++ host tests — see "Test / benchmark only" above.
 | `loadWasmEngine` | `hooks/useAppLifecycle.ts` | App startup |
 | `isWasmReady` | `hooks/appUiProps/buildControlProps.ts` | UI state (Engine badge) |
 | `computeAverageLuminanceWith` | `hooks/useAppWebGPUInit.ts` | Load-time (image load) |
-| `computeAverageLuminanceStridedWith` | `engine/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
+| `computeAverageLuminanceStridedWith` | `engine/live/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
 | `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts` (both only on the mask-generation error path); also called by `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage`/`computeAverageLuminance` | Load-time |
 | `classifyImageMaskWith` | `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage` | Load-time (mask generation) |
 | `advanceAnglesBy` | `engine/videoExport/exportVideoFrameLoop.ts` | Video export |
-| `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
+| `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/live/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
 
 No `*With()` dispatcher is called from a per-frame render or animation-loop path
-(`useAnimationLoop.ts`, `PersistencePass.ts`, `WebGPURenderer.ts` / `WebGLRenderer.ts`
+(`useAnimationLoop.ts`, `WebGPURenderer.ts` and the graph executor / `WebGLRenderer.ts`
 compositor and persistence passes). Tracer decay used to be the one documented exception
 (`durationToDecayWith`, routed through WASM per frame for formula parity only); it now
 calls `durationToDecay()` from `math/decay.ts` directly (see [#145](https://github.com/ford442/Chromashift/issues/145)).
@@ -124,37 +124,35 @@ update this table if one is ever intentionally added.
 |---|---|---|
 | `computeAverageLuminance` | `computeAverageLuminanceWith` | ITU-R BT.709 average luminance over an RGBA pixel buffer |
 | `computeAverageLuminanceStrided` | `computeAverageLuminanceStridedWith` | Strided luminance for large (4K–8K) images |
-| `classifyPixel` | `classifyPixelWith` | Maps a single pixel's RGB + avgLum to a colour-band index (0–10) |
+| `classifyPixel` | — (benchmark / C++ tests) | Maps a single pixel's RGB + avgLum to a colour-band index (0–10) |
 | `buildBandLut` | `buildBandLut` (TS) / WASM heap | 256-entry band LUT from avgLuminance |
 | `classifyPixelsBulk` | `classifyPixelsBulkWith` | Batch version of `classifyPixel` — one WASM call for the whole image |
 | `classifyPixelsBulkLut` | — | Bulk classification via the band LUT (scalar) / the SIMD ladder |
 | `computeClassificationMask` | `classifyImageMaskWith` | Generates compact uint8 band mask (`width × height`) for GPU `r8uint` texture upload |
 | `computeClassificationMaskLut` | `classifyImageMaskWith` (preferred WASM path) | Byte-identical mask via the LUT shortcut (scalar) / the SIMD ladder |
-| `computeLuminanceHistogram` | `computeLuminanceHistogramWith` | 256-bucket ITU-R BT.709 luminance histogram |
-| `computeColorBandCounts` | `computeColorBandCountsWith` | 11-bucket pixel count per Chromashift colour band |
-| `buildRotationMat3` | `buildRotationMat3With` | Column-major 3×3 rotation matrix (matches `rotation.ts`) |
+| `computeLuminanceHistogram` | — (benchmark / C++ tests) | 256-bucket ITU-R BT.709 luminance histogram |
+| `computeColorBandCounts` | — (benchmark / C++ tests) | 11-bucket pixel count per Chromashift colour band |
+| `buildRotationMat3` | — (benchmark / C++ tests; TS is `math/rotation.ts`) | Column-major 3×3 rotation matrix (matches `rotation.ts`) |
 
 ### Frame timing & tracer helpers
 
 | C++ function | TS dispatcher | Description |
 |---|---|---|
 | `durationToDecay` | `durationToDecayWith` | Per-frame decay multiplier for tracer persistence timing |
-| `advanceLayerAngles` | `advanceAnglesBy` | Step `count` layer angles with 360° wrapping |
-| `advanceLayerAngles3` | — | Deprecated three-wide wrapper; see below |
-| `simulateTracerDecay` | `simulateTracerDecayWith` | Apply per-frame decay to a Float32 RGBA buffer in-place (CPU-side tracer simulation) |
+| `advanceLayerAngles` | — (reference for `advanceAnglesBy`) | Step `count` layer angles with 360° wrapping |
+| `simulateTracerDecay` | — (benchmark / C++ tests) | Apply per-frame decay to a Float32 RGBA buffer in-place (CPU-side tracer simulation) |
 | `computeMotionFlow` | `computeMotionFlowWith` | Coarse-to-fine Lucas–Kanade optical flow over two low-resolution luminance planes; mirrors `chores/motionKernel.ts` and the WGSL flow passes (see `docs/LIVE_SOURCE.md`) |
 
 `advanceLayerAngles` takes `(const float* angles, const float* steps, float* out,
-uint32_t count)` — a session runs 1–10 band layers, so the angle list is a heap
-array rather than a fixed argument list. `out` may alias `angles`.
+uint32_t count)` — a session runs 1–10 band layers, so the angle list is a pointer
+and a count rather than a fixed argument list. `out` may alias `angles`.
 
-`advanceLayerAngles3` is the previous six-float signature, kept for one release
-so a not-yet-rebuilt `public/chromashift_engine.wasm` stays usable. It doubles as
-the ABI-generation marker: an older module exports `_advanceLayerAngles` with the
-*old* signature and no `_advanceLayerAngles3`, so `advanceAnglesBy()` requires
-both symbols before taking the WASM path and otherwise falls back to TypeScript.
-Rebuild the artifact (`npm run build:wasm`), then drop the wrapper and that gate
-together.
+`advanceAnglesBy()` does not call it: for at most ten floats, a `_malloc`, two heap
+copies and a `_free` per exported frame cost more than the loop, so the dispatcher
+always runs the TypeScript mirror (`fallbacks/decay.ts`). The export stays as the
+reference that mirror follows, with its wrap and aliasing rules pinned by the host
+tests. (The deprecated six-float `advanceLayerAngles3` wrapper is gone; every
+committed artifact since #194 exports the count-taking ABI.)
 
 ### Colour band classification logic
 
@@ -249,7 +247,11 @@ time, branch-free, and — crucially — vectorisable as a chain of `wasm_f32x4_
 
 ### SIMD128 kernels
 
-Every bulk kernel has a hand-written `wasm_simd128.h` path guarded by `__wasm_simd128__`:
+Every bulk kernel has a hand-written `wasm_simd128.h` path guarded by `CS_HAS_SIMD`
+(`cpp/simd_util.h`: set under `__wasm_simd128__` unless `CS_FORCE_SCALAR` is defined),
+followed by the scalar loop that finishes its tail. The vector helpers more than one
+kernel uses — BT.709 luminance of four pixels, the vector ladder, a NaN-preserving clamp —
+live in `simd_util.h`:
 
 | Kernel | Vector strategy |
 |---|---|
@@ -259,21 +261,40 @@ Every bulk kernel has a hand-written `wasm_simd128.h` path guarded by `__wasm_si
 | `computeLuminanceHistogram` | Vectorised luminance + `trunc_sat`; the bucket increment is a scatter, so lanes are drained scalar |
 | `computeColorBandCounts` | Vectorised ladder, scalar tally |
 | `simulateTracerDecay` | Straight `f32x4` multiply |
-| `computeMotionFlow` | 2×2 `halvePlane` deinterleaves even/odd lanes with `wasm_i32x4_shuffle`; the coarse LK level solves 4 interior cells per lane (`pmin`/`pmax` clamps keep the scalar NaN behaviour). The fine level stays scalar: its warped bilinear fetch is a per-cell gather |
+| `computeMotionFlow` (`cpp/motion_flow.cpp`) | 2×2 `halvePlane` deinterleaves even/odd lanes with `wasm_i32x4_shuffle` and sums them `((a + b) + c) + d`, the scalar order; the coarse LK level solves 4 interior cells per lane (`clampQuad` passes a NaN through, as the scalar clamp does). The fine level stays scalar: its warped bilinear fetch is a per-cell gather |
 
-Output is bit-identical to the scalar path. The luminance step issues its three multiplies
-and two adds in the same order as the scalar code and f32 lanes round exactly like scalar
-f32, and the ladder is the same comparison set. The average-luminance kernels changed
-formulation — integer channel sums weighted once, instead of a running `double` sum — which
-removes accumulated rounding error rather than adding any, and returns the same `float`.
+Output is bit-identical to the scalar path, for every kernel. The luminance step issues its
+three multiplies and two adds in the same order as the scalar code and f32 lanes round
+exactly like scalar f32, and the ladder is the same comparison set. The average-luminance
+kernels changed formulation — integer channel sums weighted once, instead of a running
+`double` sum — which removes accumulated rounding error rather than adding any, and returns
+the same `float`. Floating-point addition does not associate, so any vector body that sums
+must keep the scalar operation order; `halvePlane` once paired its four taps as
+`(a + b) + (c + d)` and differed from the scalar path on 99,157 of 120,608 outputs over 40
+random sizes (max |Δ| 1.5e-5) — invisible to the `2e-3` cross-language fixture tolerance.
 
-`computeMotionFlow` is the exception to that claim: its lanes are pinned to one shared fixture
-within `2e-3` instead (TypeScript solves in doubles; C++ and WGSL in f32). `npm run bench:wasm`
-is the only place its SIMD128 body runs, because the host `g++` build compiles the scalar one.
+**How that is proven.** The host `g++` build never compiles a `CS_HAS_SIMD` block, so it
+cannot test them. `make -C cpp test-simd` (`npm run test:cpp:simd`, run by `wasm.yml`):
 
-The scalar bodies are still compiled and are what the host `g++` build runs, so
-`cpp/tests/test_engine.cpp` keeps checking them against a verbatim copy of the original
-linear scan.
+1. builds `cpp/tests/test_engine.cpp` with `em++ -msimd128` and runs it under Node — the
+   whole host suite against the SIMD128 build; then
+2. builds `cpp/tests/simd_parity.cpp`: the engine as shipped plus a second copy of every
+   engine translation unit compiled with `CS_FORCE_SCALAR` and its exports renamed to
+   `cs_scalar_*` (`tests/scalar_names.h`), linked into one module. Every bulk kernel runs on
+   both and must match **bit for bit** — widths and pixel counts at every residue mod 16 and
+   mod 4 (1×1 … 97×61), trailing partial-pixel bytes, and NaN / ±inf / denormal / ±0 /
+   out-of-range inputs. NaN matches NaN regardless of payload, which WebAssembly leaves
+   nondeterministic for scalar and vector arithmetic alike.
+
+A tolerance belongs only where two languages meet: `computeMotionFlow`'s TypeScript
+reference solves in doubles, so the C++ and TypeScript lanes are pinned to one shared
+fixture within `2e-3` (`test_engine.cpp`, `motionKernel.test.ts`, and the bench's run of the
+release artifact). Between two compilations of one C++ source, any difference is a bug.
+
+Every build disables FP contraction (`-ffp-contract=off` in `CXXFLAGS_COMMON`): a host where
+clang fuses `a*b + c` by default (aarch64) would otherwise round `lkSolve` differently from
+wasm32, which has no scalar FMA. For the same reason the build never uses
+`-mrelaxed-simd`, whose fused and relaxed ops have implementation-defined results.
 
 ### Band LUT
 
@@ -288,6 +309,10 @@ ladder for all lanes in the `…Lut` kernels and still produce identical bytes. 
 remains the scalar path (and the host-test subject); with the ladder now constant time, the
 LUT's data-dependent shortcut no longer buys anything on the vector path.
 
+The mask kernels take `avgLum` as a `float` and round it themselves. `std::lround` of a NaN
+or of anything outside `long` is unspecified, so NaN maps to the neutral 128 and every other
+value is clamped to [0, 255] before rounding.
+
 ### Benchmark and the CI perf gate
 
 ```bash
@@ -297,9 +322,13 @@ npm run bench:wasm -- --assert # enforce the floors (how CI runs it)
 
 `scripts/bench-wasm.mjs` loads the committed artifacts in Node (passing `wasmBinary`, since
 `-s ENVIRONMENT=web,worker` leaves the glue with no Node file loader) and runs every bulk
-kernel over a deterministic 3840×2160 golden image. It fails when a kernel drops below its
+kernel over a deterministic 3841×2161 golden image. It fails when a kernel drops below its
 throughput floor, so losing the SIMD path fails the `wasm` job instead of silently
-un-accelerating the CPU fallback lane. The golden image, kernel list and floors live in
+un-accelerating the CPU fallback lane. The size is 4K plus one pixel each way on purpose:
+3840×2160 is a multiple of 16 pixels, so the mask kernels' scalar tail never ran on it. It
+also checks both mask kernels against the scalar reference — the `classifyPixel` export,
+which has no vector path — rather than against each other: the two share one SIMD body, so
+comparing them proved nothing. The golden image, kernel list and floors live in
 `public/wasm-benchmark-core.mjs`, which `/wasm-benchmark.html` imports too — open that page
 after `npm run build:wasm` to run the identical benchmark in a browser.
 
@@ -370,8 +399,9 @@ next build is not a silent no-op. If you still see `Nothing to be done for 'all'
 with stale glue (common after a git checkout of committed WASM), run
 `make -C cpp rebuild` or `npm run build:wasm:force`.
 
-The release build also passes `-fno-exceptions`, `-flto` and `--closure 1` for smaller
-output; debug builds skip the last two so stack traces and `ASSERTIONS` output stay readable.
+The release build also passes `-fno-exceptions`, `-fno-rtti`, `-flto` and `--closure 1` for
+smaller output; debug builds skip the last two so stack traces and `ASSERTIONS` output stay
+readable.
 
 ### Build
 
@@ -387,18 +417,20 @@ The output lands in `public/` so Vite's dev server and production build both ser
 npm run check:wasm          # checks that emcc is on PATH
 make -C cpp verify-exports  # EXPORTED_FUNCTIONS matches chromashift_engine.h 1:1
 npm run test:cpp            # host-side g++ unit tests (band ladder, bulk kernels, durationToDecay)
-npm run test:cpp:werror     # same tests, -Werror — what CI's wasm job runs
+npm run test:cpp:werror     # same tests, -Werror — what wasm.yml's host-tests job runs
+npm run test:cpp:simd       # same tests on em++ -msimd128 + bit-exact SIMD/scalar parity (needs emsdk)
 npm run bench:wasm -- --assert  # kernel throughput floors (the CI perf gate)
 ```
 
 ### Warnings and sanitizers
 
-The host test compile and the `emcc` build both carry `-Wall -Wextra`, so a warning cannot be present in the shipped `.wasm` while being invisible to the test gate.
+Every compile — host tests, SIMD tests, the shipped `emcc` build and the clangd database — starts from `CXXFLAGS_COMMON` in `cpp/Makefile` (`-std=c++17 -Wall -Wextra -ffp-contract=off -I.`), so a warning cannot be present in the shipped `.wasm` while being invisible to the test gate.
 
 | Command | What it does |
 |---|---|
 | `npm run test:cpp` | Host tests, warnings printed |
-| `npm run test:cpp:werror` | Host tests with `-Werror` — **the CI gate**; a new implicit conversion or unused parameter fails the `wasm` job |
+| `npm run test:cpp:werror` | Host tests with `-Werror` — **the CI gate** (`wasm.yml` `host-tests`); a new implicit conversion or unused parameter fails it |
+| `npm run test:cpp:simd` | The host suite built with `em++ -msimd128 -Werror` and run under Node, then the SIMD/scalar parity harness — `wasm.yml`'s `wasm` job. Needs emsdk on `PATH` |
 | `npm run test:cpp:asan` | Host tests under `-fsanitize=address,undefined`. Optional: the instrumented binary is several times slower, so it is **not** part of the per-PR gate. Run it when touching pointer arithmetic in the bulk/LUT kernels. Host-only — sanitizers are never applied to the shipped `.wasm`. |
 
 ### Editor setup (clangd)
@@ -407,9 +439,9 @@ The host test compile and the `emcc` build both carry `-Wall -Wextra`, so a warn
 npm run compile-commands    # writes cpp/compile_commands.json
 ```
 
-This emits a database for the **host** (`g++`) compile — the same invocation as `make -C cpp test` — so clangd gives diagnostics and jump-to-definition on the engine's scalar bodies (`classifyRgb`, `computeAverageLuminance`, …). It is gitignored because it embeds an absolute `directory` path; regenerate it per checkout. `cpp/.clangd` points clangd at it.
+This emits one real `-c <file> -o <file>.o` command per translation unit, with the compiler and flags passed in by `cpp/Makefile` — there is no second copy of the flags to keep in sync. It is gitignored because it embeds absolute paths; regenerate it per checkout. `cpp/.clangd` points clangd at it.
 
-The SIMD kernels are guarded by `__wasm_simd128__`, which a host target never defines, so clangd greys those blocks out. That is expected — they are built by `emcc -msimd128`, not by the host compiler, and there is no attempt to coax clangd onto a wasm32 target.
+With emsdk active (`$EMSDK` set, e.g. after `source emsdk_env.sh`), the engine TUs (`chromashift_engine.cpp`, `motion_flow.cpp`) and the parity harness get a **wasm32** entry — emsdk's own `clang++ --target=wasm32-unknown-emscripten --sysroot=$EMSDK/upstream/emscripten/cache/sysroot` plus `WASM_CXXFLAGS` (`-msimd128` included), i.e. what emcc compiles. Every `#if CS_HAS_SIMD` block sits in front of a scalar tail that is always compiled, so clangd then sees **all** of the code: diagnostics and navigation inside the SIMD kernels as well as the scalar bodies. Without emsdk the engine TUs fall back to the host (`g++`) entry and the SIMD blocks grey out; `tests/test_engine.cpp` always gets the host entry. Rerun `npm run compile-commands` after activating emsdk.
 
 ### Clean
 
@@ -437,11 +469,11 @@ mod._computeClassificationMaskLut(inPtr, width, height, avgLum, outPtr);
 There used to be a second ABI: an `EMSCRIPTEN_BINDINGS(chromashift_engine)` block of
 `optional_override` lambdas whose bodies were nothing but `reinterpret_cast<T*>(uintptr_t)`
 — i.e. a re-implementation of the same C ABI through embind. It was removed, along with the
-`--bind`, `-fno-rtti` and `-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0` flags it needed.
+`--bind` and `-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0` flags it needed.
 
 `make -C cpp verify-exports` is the single source of truth for the export list: it fails if
 any `EMSCRIPTEN_KEEPALIVE` symbol in the header is missing from `EXPORTED_FUNCS`. It runs in
-both the `wasm` job of `ci.yml` and the `wasm-freshness` job of `wasm.yml`. Adding a function
+the `wasm` job of `wasm.yml`. Adding a function
 means touching three places — the header, `EXPORTED_FUNCS`, and `WASM_API_FUNCTIONS` in
 `src/engine/wasm/types.ts` (which `loadEngine.ts` checks at load time to warn about a stale
 build).
@@ -454,29 +486,34 @@ build).
 
 | Flag | Verdict | Reasoning |
 |---|---|---|
-| `--bind` (embind) | **Removed** | Every binding was a `reinterpret_cast` passthrough over the C ABI the module already exported. The TS bridge now calls `mod._name(...)` directly — see "Export strategy" above. Dropping it also dropped `-fno-rtti` and `-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0`, which existed only to make embind compile. |
-| `-Wall -Wextra` | **Added** | Warning parity with the host test compile, which CI runs at `-Werror` (`npm run test:cpp:werror`). Both builds see the same sources, so a warning that fails the test gate must not be silently absent from the shipped build. |
+| `--bind` (embind) | **Removed** | Every binding was a `reinterpret_cast` passthrough over the C ABI the module already exported. The TS bridge now calls `mod._name(...)` directly — see "Export strategy" above. Dropping it also dropped `-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0`, which existed only to make embind compile. |
+| `CXXFLAGS_COMMON` (`-std=c++17 -Wall -Wextra -ffp-contract=off -I.`) | **Added** | The one compile-flag set every build shares — host tests (CI runs them at `-Werror`), SIMD tests, this build and the clangd database — so a warning that fails the test gate cannot be silently absent from the shipped build. `-ffp-contract=off` keeps every target from fusing `a*b + c`, which bit-exact parity depends on (see "SIMD128 kernels"). |
+| `-mrelaxed-simd` | **Never** | Relaxed ops (FMA, swizzle, min/max) have implementation-defined results: output would differ between browsers and from the scalar path. |
+| `-fno-rtti` | **Added** | Nothing uses `typeid` / `dynamic_cast`; with embind gone there is nothing that needs type info. |
 | `-msse2` | **Removed** | Nothing includes `<emmintrin.h>`; the SIMD kernels use `<wasm_simd128.h>` directly, which needs only `-msimd128`. |
 | `-s EXPORTED_FUNCTIONS=[...]` | **Keep — now the only ABI** | Produces `_malloc` / `_free` and every engine entry point. Guarded by `verify-exports`. |
 | `-msimd128` | **Keep — load-bearing** | Enables the hand-written `wasm_simd128.h` kernels (`__wasm_simd128__`). See "SIMD status" below. |
-| `-flto` (release) | **Added** | Whole-program optimisation across the single TU and libc; part of the drop from 47.2 kB to 33.4 kB of `.wasm`. |
+| `-flto` (release) | **Added** | Whole-program optimisation across the engine's TUs (`chromashift_engine.cpp`, `motion_flow.cpp`) and libc; part of the drop from 47.2 kB to 33.4 kB of `.wasm`. |
 | `--closure 1` (release) | **Added** | The glue is a thin C-ABI shim, so Closure has nothing to break: 10.7 kB → 4.9 kB. Off in debug builds. Output is reproducible for a pinned emsdk version, which `wasm.yml`'s freshness check relies on. |
 | `-s ENVIRONMENT=web,worker` | **Added** | The engine only ever runs in a browser window or a Web Worker (the analysis worker included); this drops the Node/shell detection branches from the glue. Node callers such as `scripts/bench-wasm.mjs` pass `wasmBinary` instead of relying on a file loader. |
 | `-s FILESYSTEM=0` | **Added** | Nothing in the engine touches a file; this drops the FS glue entirely. |
-| `-s INITIAL_MEMORY=67108864` (64 MiB) | **Keep — documented, not dead** | 64 MiB = 8192 × 8192 bytes, i.e. exactly one full-resolution single-channel classification mask for an 8K-square image (`classifyImageMaskWith`'s `computeClassificationMask(Lut)` output buffer). Sizing the initial heap to cover that common load-time allocation without a growth event avoids the first-touch pause `ALLOW_MEMORY_GROWTH` growth otherwise causes on the largest images Chromashift documents supporting (4K–8K). Larger simultaneous allocations (input RGBA + mask output together can exceed 64 MiB for 8K) still rely on `ALLOW_MEMORY_GROWTH=1` to grow past this floor — 64 MiB is a "no growth stall for the common case" starting point, not a hard ceiling. |
-| `-s ALLOW_MEMORY_GROWTH=1` | **Keep** | Required so allocations above the 64 MiB floor (e.g. concurrent input + output buffers for `classifyPixelsBulkWith` / `classifyImageMaskWith` on 8K images) don't hard-fail. |
+| `-s DYNAMIC_EXECUTION=0` | **Added** | Keeps `eval` / `new Function` out of the glue, so the engine loads under a strict Content-Security-Policy without `'unsafe-eval'`. |
+| `-s MALLOC=emmalloc` | **Added** | The engine holds a few long-lived buffers (the TypeScript side pools its inputs; `computeMotionFlow` keeps a grow-only arena), so dlmalloc's small-object bins buy nothing. emmalloc made the `.wasm` ~13% smaller (38,959 → 34,174 bytes on emsdk 3.1.64) with throughput unchanged. |
+| `-s INITIAL_MEMORY=16777216` (16 MiB) | **Changed from 64 MiB** | Up to three instances exist at once — the main thread, the analysis worker and the motion worker each load their own module — and each reserved 64 MiB up front, 192 MiB before any image arrived. The big buffers (a 4K–8K RGBA image and its mask) now grow the heap on first use, and the TypeScript side's persistent buffer keeps it from churning afterwards: a steady image size costs one growth, not one per call. |
+| `-s ALLOW_MEMORY_GROWTH=1` | **Keep** | Required: any image above ~2K grows the heap past the 16 MiB start. |
 | `-s MODULARIZE=1` + `-s EXPORT_ES6=1` | **Keep** | Correct for Vite — `loadEngine.ts` does a dynamic `import()` of `/chromashift_engine.js` and calls the default export as a factory (`await glue.default()`); a non-modularized build would attach a global instead. |
 | `-fno-exceptions` | **Keep** | Smaller output; the C API surface in `chromashift_engine.h` does not throw. |
 
-**Net result:** artifact sizes dropped from 33.9 kB glue + 47.2 kB wasm to **4.9 kB glue +
-33.4 kB wasm**.
+**Net result:** artifact sizes dropped from 33.9 kB glue + 47.2 kB wasm to 4.9 kB glue +
+33.4 kB wasm; adding `motion_flow.cpp` took the wasm to 39.0 kB, and emmalloc brought it back
+to **34.2 kB** (emsdk 3.1.64).
 
 ---
 
 ## SIMD status and browser support
 
 The WASM engine is compiled with `-msimd128` and its pixel kernels contain real `v128`
-instructions (`cpp/chromashift_engine.cpp`, guarded by `__wasm_simd128__`). SIMD128 is
+instructions (`cpp/chromashift_engine.cpp`, `cpp/motion_flow.cpp`, guarded by `CS_HAS_SIMD`). SIMD128 is
 therefore a **hard requirement** of the binary, not an opportunistic optimisation.
 
 | Browser | SIMD128 support |
@@ -503,18 +540,35 @@ or, on older browsers:
 [WasmEngine] WebAssembly SIMD128 unsupported — using the TypeScript engine.
 ```
 
+The probe module is built from its sections (`wasmSection` + `leb128` in `loadEngine.ts`),
+so every size field is computed rather than typed in. The hand-written bytes it replaced
+had two section sizes short (`0x0f`/`0x0d` for 22/20-byte bodies): `WebAssembly.validate`
+rejected the module on every browser, and the engine silently never loaded.
+`loadEngine.test.ts` pins `isWasmSimdSupported() === true` under Node 22, which has SIMD128.
+
+**Load status breadcrumbs.** The main thread publishes `window.wasmEngineState`
+(`'idle' | 'loading' | 'ready' | 'unavailable' | 'error'`) and `window.wasmEngineError`
+(the caught message, or `null`). `unavailable` means no SIMD128; `error` means the fetch or
+instantiation threw, and is also logged once as
+`[WasmEngine] C++ WASM engine failed to load — using the TypeScript engine:` with the error.
+Workers have no `window`, so `analysis.worker.ts` and `motion.worker.ts` return their
+module's status with every response and their hosts merge it into
+`window.wasmEngineWorkers` (`{ analysis?, motion? }`, each `{ state, error }`).
+`e2e/wasm-engine.spec.ts` asserts `ready` on the main thread and in both workers.
+
 > **Note:** there is deliberately no separate scalar WASM build. The scalar kernel bodies are
-> still compiled — by the host `g++` test build, which has no `-msimd128` — so
-> `cpp/tests/test_engine.cpp` keeps proving the two paths agree; they are just not shipped as
-> a second browser artifact. Browsers without SIMD128 get the TypeScript engine, which has
-> the same public API.
+> still compiled — they finish every SIMD loop's tail, the host `g++` test build runs them
+> alone, and `make -C cpp test-simd` links a `CS_FORCE_SCALAR` copy next to the SIMD engine
+> to prove the two bit-identical — they are just not shipped as a second browser artifact.
+> Browsers without SIMD128 get the TypeScript engine, which has the same public API.
 
 ---
 
 ## Memory management
 
-The WASM linear memory starts at **64 MB** (`INITIAL_MEMORY=67108864`) and grows
-automatically as needed (`ALLOW_MEMORY_GROWTH=1`).
+The WASM linear memory starts at **16 MiB** (`INITIAL_MEMORY=16777216`) and grows
+automatically as needed (`ALLOW_MEMORY_GROWTH=1`). Each module instance — main thread,
+analysis worker, motion worker — has its own memory.
 
 ### How pixel buffers are managed in `WasmEngine.ts`
 
@@ -524,17 +578,32 @@ never shrunk between calls.  This avoids repeated `_malloc` / `_free` overhead o
 consecutive calls with the same or smaller image sizes (the common case during
 auto-play).
 
+`classifyImageMaskWith` and `computeMotionFlowWith` put their outputs in the same
+persistent buffer, after the inputs, so a mask or flow field costs no allocation per call.
 Separate small output buffers (histogram: 1 KB, band counts: 44 bytes) are still
-allocated per-call because they are fixed-size and inexpensive.
+allocated per-call because they are fixed-size and inexpensive, through
+`withWasmScratch` (freed in a `finally`).
+
+Every allocation goes through `checkedMalloc`: with `ALLOW_MEMORY_GROWTH` a `_malloc`
+the heap cannot grow to fit returns `0` instead of aborting, and the caller would then
+copy the pixels over heap offset 0. `checkedMalloc` throws instead.
+
+Strided luminance copies only its samples. `computeAverageLuminanceStridedWith` with
+`stride > 1` packs the sampled pixels in JS and hands C++ a contiguous run (stride 1), and
+`computeImageAverageLuminanceWith` reads only the sampled rows out of the image
+(`getStridedRows`). At 8K and stride 30 that is ~37k pixels instead of a ~132 MB frame,
+and the result is the same: the C++ sums are exact. On the C++ side,
+`computeMotionFlow` keeps its half-resolution scratch planes in a grow-only arena for the
+same reason.
 
 ### Guidelines for future WASM integrations
 
-- **Always free** temporary allocations (`_malloc` / `_free`) unless you are
-  intentionally keeping a persistent buffer.
+- **Always free** temporary allocations: use `withWasmScratch` (or `getPersistentBuf`
+  for a buffer you mean to keep), never a bare `_malloc`, which returns `0` on failure.
 - **Do not hold** a heap pointer across `await` boundaries — memory may have moved
   if `ALLOW_MEMORY_GROWTH` caused a reallocation.
 - **Prefer bulk operations** (`classifyPixelsBulkWith`) over per-pixel calls
-  (`classifyPixelWith`) to minimise JS↔WASM boundary crossings.
+  to minimise JS↔WASM boundary crossings.
 - **Avoid accessing** `HEAPU8` / `HEAPF32` etc. after calling any function that
   may trigger heap growth, as typed array views can be invalidated.
 
@@ -590,8 +659,8 @@ src/engine/
     │   └── decay.ts         Pure TS decay/angle fallbacks (re-exports math/decay.ts)
     └── dispatch/
         ├── luminance.ts      computeAverageLuminance(Strided)?With, computeImageAverageLuminanceWith
-        ├── classification.ts classifyPixel(sBulk)?With, classifyImageMaskWith, histogram/band-count
-        └── animation.ts      durationToDecayWith, advanceAnglesBy, buildRotationMat3With, simulateTracerDecayWith
+        ├── classification.ts classifyPixelsBulkWith, classifyImageMaskWith
+        └── animation.ts      durationToDecayWith, advanceAnglesBy
 ```
 
 `WasmEngine.ts` is the single integration point consumed by `App.tsx`, and stays a thin
@@ -644,20 +713,6 @@ The WASM binary has not been built yet.  Run `npm run build:wasm` (requires Emsc
 Not in the current phase.  The GPU pipeline (WebGPU / WGSL shaders) lives entirely in
 `WebGPURenderer.ts` and is not planned to be moved into WASM.  The C++ engine handles
 CPU-side computations (luminance analysis, pixel classification, frame timing helpers).
-
-**Q: When should I use `classifyPixelsBulkWith` vs `classifyPixelWith`?**
-
-For analysis of a full image, always use `classifyPixelsBulkWith`.  It avoids `N` separate
-JS↔WASM boundary crossings and processes the entire buffer inside a single C++ call, which
-is significantly faster at high pixel counts.  Use `classifyPixelWith` only when you need
-to classify a handful of pixels on-demand.
-
-**Q: What is `simulateTracerDecayWith` useful for?**
-
-It provides a CPU-side equivalent of the WGSL persistence shader's decay step.  Useful for
-unit tests, offline thumbnail generation, or any scenario where the full GPU pipeline is not
-available.  For real-time rendering the GPU persistence pipeline in `WebGPURenderer.ts` is
-always more efficient.
 
 **Q: Does switching engines restart the current image/level?**
 

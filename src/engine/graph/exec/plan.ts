@@ -1,5 +1,5 @@
 import { PassGraphError } from '../errors';
-import type { CompiledGraph, GraphNode, NodeKind } from '../types';
+import type { CompiledGraph, GraphNode, ScheduledPass } from '../types';
 
 /** One encodable step, with every input already resolved to a producer node id. */
 export type EncodeStep =
@@ -20,7 +20,10 @@ export type EncodeStep =
      */
     stampInputs: string[];
     /**
-     * Which tracer timescale this accumulator is — picks its state uniforms.
+     * Which tracer timescale this accumulator is — picks where its duration
+     * comes from. `below` and `above` are the shipped pair, timed by the
+     * session's tracer settings; an `extra` timescale (a third tracer and on)
+     * is timed by its own node's `durationMs`.
      *
      * Derived from the compositor's input order, never from a node param:
      * `compileGraph` memoises on a structural hash and returns the *first*
@@ -28,7 +31,13 @@ export type EncodeStep =
      * stale one from an earlier graph of the same shape. Topology cannot be
      * stale — it is what the hash covers.
      */
-    role: 'below' | 'above';
+    role: TracerTimescale;
+    /**
+     * The motion-field `source` this pass weights its stamp by, when a `motion`
+     * node is absorbed into it — the temporal term — or `null` for the
+     * pre-motion pass.
+     */
+    motionField: string | null;
   }
   | {
     kind: 'blend';
@@ -51,19 +60,13 @@ export type EncodeStep =
     inputs: string[];
   };
 
-/** Node ids playing the roles the renderer's ancillary passes still need. */
-export interface GraphRoles {
-  /** `band-layer` node ids in `layerIndex` order. */
-  layers: string[];
-  tracerBelow: string | null;
-  tracerAbove: string | null;
-}
+/** A tracer accumulator's timescale: the shipped below / above pair, or an extra one. */
+export type TracerTimescale = 'below' | 'above' | 'extra';
 
 export interface EncodePlan {
   steps: EncodeStep[];
-  /** `coincidence` nodes whose pass their `decay` consumers absorbed. */
+  /** `coincidence` and `motion` nodes whose pass their `decay` consumers absorbed. */
   fused: Set<string>;
-  roles: GraphRoles;
   layerCount: number;
   /**
    * True when a scheduled `source` node binds the motion field. The renderer
@@ -71,6 +74,12 @@ export interface EncodePlan {
    * without one costs exactly what it did before.
    */
   wantsMotionField: boolean;
+  /**
+   * True when a pass reads the field's *velocity* — a `displace` steered by
+   * it — so the chore has to solve flow whatever the motion mode. The temporal
+   * term alone needs flow only for `direction`, which is the renderer's call.
+   */
+  motionFieldNeedsFlow: boolean;
 }
 
 const intParam = (node: GraphNode, name: string, fallback: number): number =>
@@ -81,55 +90,80 @@ const intParam = (node: GraphNode, name: string, fallback: number): number =>
  *
  * This is the half of the executor that has nothing to do with WebGPU: which
  * passes run, in what order, reading which producers. Keeping it here means the
- * fusion rule below — the one thing that has to match the hand-written encoder
- * exactly — is checked by a unit test rather than by a screenshot.
+ * fusion rule below — the one thing that had to match the hand-written encoder
+ * exactly, and still has to match its frames pinned in `e2e/__golden__` — is
+ * checked by a unit test rather than by a screenshot.
  *
  * **Fusion.** The compiler emits one fused coincidence+decay shader for both
- * kinds, because that is what shipped: `PersistencePass` runs the overlap math
- * twice, once per tracer timescale, and there is no standalone stamp pass. So a
+ * kinds, because that is what shipped: the hand encoder ran the overlap math
+ * twice, once per tracer timescale, with no standalone stamp pass. So a
  * `coincidence` node read *only* by `decay` nodes emits no pass of its own and
  * each consumer inherits its inputs. A `coincidence` read by anything else
  * keeps its own pass.
+ *
+ * The temporal term fuses the same way: a `motion` node read only by `decay`
+ * nodes is absorbed into them — they run the motion variant of the pass and
+ * bind its field — and a `coincidence` read only by such a node counts as read
+ * by the decays. That is the shipped motion persistence pass, node for node.
  */
 export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
   const byId = new Map(compiled.graph.nodes.map((node) => [node.id, node]));
-  const scheduled = new Set(compiled.passes.map((pass) => pass.nodeId));
 
-  // Consumers, excluding feedback edges: those read the previous frame and so
+  // Readers, excluding feedback edges: those read the previous frame and so
   // cannot make a producer's pass necessary this frame.
-  const consumers = new Map<string, NodeKind[]>();
+  const readers = new Map<string, ScheduledPass[]>();
   for (const pass of compiled.passes) {
     for (const inputId of pass.inputs) {
-      consumers.set(inputId, [...(consumers.get(inputId) ?? []), pass.kind]);
+      readers.set(inputId, [...(readers.get(inputId) ?? []), pass]);
     }
   }
+  const readOnlyBy = (nodeId: string, absorbs: (reader: ScheduledPass) => boolean): boolean => {
+    const list = readers.get(nodeId) ?? [];
+    return list.length > 0 && list.every(absorbs);
+  };
 
+  // Motion first: whether a coincidence fuses depends on whether its motion
+  // reader does.
   const fused = new Set<string>();
   for (const pass of compiled.passes) {
-    if (pass.kind !== 'coincidence') continue;
-    const kinds = consumers.get(pass.nodeId) ?? [];
-    if (kinds.length > 0 && kinds.every((kind) => kind === 'decay')) fused.add(pass.nodeId);
+    if (pass.kind === 'motion' && readOnlyBy(pass.nodeId, (reader) => reader.kind === 'decay')) {
+      fused.add(pass.nodeId);
+    }
   }
-
-  const layerNodes = compiled.graph.nodes
-    .filter((node) => node.kind === 'band-layer' && scheduled.has(node.id))
-    .sort((a, b) => intParam(a, 'layerIndex', 0) - intParam(b, 'layerIndex', 0));
+  for (const pass of compiled.passes) {
+    if (pass.kind !== 'coincidence') continue;
+    const absorbs = (reader: ScheduledPass) =>
+      reader.kind === 'decay' || (reader.kind === 'motion' && fused.has(reader.nodeId));
+    if (readOnlyBy(pass.nodeId, absorbs)) fused.add(pass.nodeId);
+  }
 
   const decayNodes = compiled.passes.filter((pass) => pass.kind === 'decay');
 
-  // The compositor binds its two tracer textures as (below, above), so its
-  // input order is what names the timescales. A graph whose accumulators do not
-  // reach a blend falls back to schedule order.
-  const blendPass = compiled.passes.find((pass) => pass.kind === 'blend');
-  const blendNode = blendPass ? byId.get(blendPass.nodeId) : undefined;
-  const tracerOrder = blendNode
-    ? blendPass!.inputs.slice(intParam(blendNode, 'layerInputs', compiled.layerCount))
-    : [];
-  const roleOf = (nodeId: string, index: number): 'below' | 'above' => {
+  // The compositor binds its tracer textures as (below, above, extras…), so
+  // its input order is what names the timescales (`compiled.outputs.tracers`;
+  // schedule order for accumulators that reach no blend).
+  const tracerOrder = compiled.outputs.tracers;
+  const roleOf = (nodeId: string, index: number): TracerTimescale => {
     const position = tracerOrder.indexOf(nodeId);
-    if (position >= 0) return position === 0 ? 'below' : 'above';
-    return index === 0 ? 'below' : 'above';
+    const at = position >= 0 ? position : index;
+    return at === 0 ? 'below' : at === 1 ? 'above' : 'extra';
   };
+
+  // The temporal term exists only inside an accumulator: its decay-rate bias
+  // acts on the decay itself, so a weighted stamp written out on its own would
+  // have lost half of what the term does. Refused with the motion node named —
+  // checked first, because the coincidence it reads is then unfused too and
+  // would otherwise be the node the refusal names.
+  for (const pass of compiled.passes) {
+    if (pass.kind !== 'motion' || fused.has(pass.nodeId)) continue;
+    throw new PassGraphError(
+      'unsupported-node',
+      `Node '${pass.nodeId}' (motion) is read by something other than a decay `
+      + 'node. The temporal term is part of the accumulator pass and has no pass '
+      + 'of its own; feed it only to decay nodes.',
+      pass.nodeId,
+    );
+  }
 
   const steps: EncodeStep[] = [];
   for (const pass of compiled.passes) {
@@ -138,7 +172,14 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
     // rather than via a set so the switch below narrows to the drawable kinds.
     if (pass.kind === 'source' || pass.kind === 'output') continue;
     if (pass.kind === 'coincidence' && fused.has(pass.nodeId)) continue;
+    // Every motion node is absorbed by now; one that is not was refused above.
+    if (pass.kind === 'motion') continue;
     const node = byId.get(pass.nodeId)!;
+    // Positional inputs come from the node, not `pass.inputs`: that list drops
+    // feedback edges, which would shift or empty the slots. The executors bind
+    // a feedback read of a decay to its ping-pong read side — last frame's.
+    // Arity is validated, so the fixed slots below are in range.
+    const nodeInputs = node.inputs;
 
     // A `coincidence` node that is *not* absorbed by decay consumers would need
     // a history texture of its own to bind the emitted shader's `prevTex`, and
@@ -160,15 +201,22 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
           kind: 'band-layer',
           nodeId: pass.nodeId,
           layerIndex: intParam(node, 'layerIndex', 0),
-          source: pass.inputs[0],
+          source: nodeInputs[0]!,
         });
         break;
 
       case 'decay': {
-        const producerId = pass.inputs[0];
+        let producerId = nodeInputs[0]!;
+        let motionField: string | null = null;
+        const producer = byId.get(producerId)!;
+        if (producer.kind === 'motion') {
+          // Absorbed above: this pass runs the motion variant and binds the field.
+          motionField = producer.inputs[1]!;
+          producerId = producer.inputs[0]!;
+        }
         const stampInputs = fused.has(producerId)
           ? byId.get(producerId)!.inputs
-          : pass.inputs;
+          : [producerId];
         // The emitted shader unrolls exactly `layerCount` stamp samplers, so a
         // decay reading a different number of textures is a refusal, not a
         // best-effort bind of whatever happens to be available.
@@ -186,25 +234,30 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
           nodeId: pass.nodeId,
           stampInputs: [...stampInputs],
           role: roleOf(pass.nodeId, decayNodes.findIndex((d) => d.nodeId === pass.nodeId)),
+          motionField,
         });
         break;
       }
 
       case 'blend': {
         const layerInputs = intParam(node, 'layerInputs', compiled.layerCount);
-        const tracerInputs = pass.inputs.slice(layerInputs);
-        if (tracerInputs.length !== 2) {
+        const tracerInputs = nodeInputs.slice(layerInputs);
+        // The emitted compositor binds every tracer input (at least the below /
+        // above pair; the compiler refuses fewer). A `tracerInputs` param that
+        // disagrees with the edges is an authoring error, not a hint to follow.
+        const declared = node.params.tracerInputs;
+        if (typeof declared === 'number' && declared !== tracerInputs.length) {
           throw new PassGraphError(
             'input-arity',
-            `Node '${pass.nodeId}' (blend) has ${tracerInputs.length} tracer input(s); `
-            + 'the compositor template binds exactly two (below, above).',
+            `Node '${pass.nodeId}' (blend) declares tracerInputs ${declared} but reads `
+            + `${tracerInputs.length} tracer input(s).`,
             pass.nodeId,
           );
         }
         steps.push({
           kind: 'blend',
           nodeId: pass.nodeId,
-          layerInputs: pass.inputs.slice(0, layerInputs),
+          layerInputs: nodeInputs.slice(0, layerInputs),
           tracerInputs,
         });
         break;
@@ -214,34 +267,58 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
         steps.push({
           kind: 'history',
           nodeId: pass.nodeId,
-          input: pass.inputs[0],
+          input: nodeInputs[0]!,
           frames: intParam(node, 'frames', 2),
         });
         break;
 
       default:
-        steps.push({ kind: pass.kind, nodeId: pass.nodeId, inputs: [...pass.inputs] });
+        steps.push({ kind: pass.kind, nodeId: pass.nodeId, inputs: [...nodeInputs] });
         break;
     }
   }
 
-  const tracerRole = (index: 0 | 1): string | null =>
-    tracerOrder[index] ?? decayNodes[index]?.nodeId ?? null;
 
   return {
     steps,
     fused,
-    roles: {
-      layers: layerNodes.map((node) => node.id),
-      tracerBelow: tracerRole(0),
-      tracerAbove: tracerRole(1),
-    },
     layerCount: compiled.layerCount,
-    wantsMotionField: compiled.passes.some(
-      (pass) => pass.kind === 'source' && byId.get(pass.nodeId)!.params.role === 'motion-field',
+    ...fieldUseFlags(motionFieldUse(compiled)),
+  };
+}
+
+/** How a compiled graph uses the motion field. */
+export interface MotionFieldUse {
+  /** A scheduled `source` binds the field, so the renderer runs the chore. */
+  reads: boolean;
+  /** A `displace` reads its velocity, so the chore solves flow whatever the motion mode. */
+  needsFlow: boolean;
+}
+
+/**
+ * What the renderer has to produce for a graph before it encodes it. Pure, and
+ * cheap enough to ask of a graph the executor has not adopted yet — which is
+ * how the renderer decides, before it picks a variant, whether to run the chore.
+ */
+export function motionFieldUse(compiled: CompiledGraph): MotionFieldUse {
+  const byId = new Map(compiled.graph.nodes.map((node) => [node.id, node]));
+  const sources = new Set(
+    compiled.passes
+      .filter((pass) => pass.kind === 'source' && byId.get(pass.nodeId)!.params.role === 'motion-field')
+      .map((pass) => pass.nodeId),
+  );
+  return {
+    reads: sources.size > 0,
+    needsFlow: compiled.passes.some(
+      (pass) => pass.kind === 'displace' && pass.inputs.some((id) => sources.has(id)),
     ),
   };
 }
+
+const fieldUseFlags = (use: MotionFieldUse) => ({
+  wantsMotionField: use.reads,
+  motionFieldNeedsFlow: use.needsFlow,
+});
 
 /** Which tap a `history` node reads. Value params: they change weights, not code. */
 export interface HistoryTapParams {

@@ -68,7 +68,7 @@ describe('buildRendererState per-slot object reuse', () => {
     const second = buildRendererState(state, [10, 20, 30], {}, 'test-slot-a');
     expect(second).toBe(first);
     expect(second.layers).toBe(first.layers);
-    expect(second.layers[0].angleDeg).toBe(10);
+    expect(second.layers[0]!.angleDeg).toBe(10);
   });
 
   it('does not share state between different slots', () => {
@@ -76,8 +76,8 @@ describe('buildRendererState per-slot object reuse', () => {
     const a = buildRendererState(state, [1, 2, 3], {}, 'test-slot-b');
     const b = buildRendererState(state, [4, 5, 6], {}, 'test-slot-c');
     expect(a).not.toBe(b);
-    expect(a.layers[0].angleDeg).toBe(1);
-    expect(b.layers[0].angleDeg).toBe(4);
+    expect(a.layers[0]!.angleDeg).toBe(1);
+    expect(b.layers[0]!.angleDeg).toBe(4);
   });
 
   it('allocates a fresh object every call when no slot is given', () => {

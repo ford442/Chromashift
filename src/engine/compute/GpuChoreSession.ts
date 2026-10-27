@@ -1,15 +1,14 @@
 /**
  * One `WebGpuChoreBackend` per `GPUDevice`, borrowed by every compute lane.
  *
- * Before this existed, three independent backends were constructed on the one
- * renderer device — `GpuImageAnalysis` (histogram + mask), `PersistencePass`
- * (op `coincidence`), and `MotionFieldPass` (op `motion-field`) — which meant
- * three copies of the compute pipelines, staging buffers, and bind-group
- * caches. Tolerable at 3-layer 1080p, wasteful once coincidence goes N-layer
- * and motion grows a second pass.
+ * Before this existed, an independent backend was constructed on the one
+ * renderer device per lane — `GpuImageAnalysis` (histogram + mask), the hand
+ * encoder's `PersistencePass` (op `coincidence`, gone with it), and
+ * `MotionFieldPass` (op `motion-field`) — which meant a copy of the compute
+ * pipelines, staging buffers, and bind-group caches each.
  *
  * Ownership is a **ref-counted lease** rather than a single owner, so lifecycle
- * stays decoupled: `PersistencePass.destroy()` releases its lease and the
+ * stays decoupled: `MotionFieldPass.destroy()` releases its lease and the
  * backend survives for analysis, and the backend is destroyed only when the
  * last holder — normally `RendererOrchestrator`, which takes a lease for the
  * whole session — lets go.

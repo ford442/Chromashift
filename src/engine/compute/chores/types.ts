@@ -11,7 +11,7 @@
  */
 
 import type { MotionFieldStats } from './motionKernel';
-import type { LayerTextures } from '../../BindGroupCache';
+import type { LayerTextures } from '../../webgpu/bindGroups';
 
 export type { MotionFieldStats } from './motionKernel';
 

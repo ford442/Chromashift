@@ -13,17 +13,31 @@ export interface StoredPreset {
   document: ChromashiftSettingsDocument;
 }
 
+/**
+ * Decode one stored entry, or null. The document is replaced by its decoded,
+ * migrated form — what gets applied is what the schema accepted, never the raw
+ * localStorage object.
+ */
+function readEntry(entry: unknown): StoredPreset | null {
+  if (typeof entry !== 'object' || entry === null) return null;
+  const { name, savedAt, document } = entry as Record<string, unknown>;
+  if (typeof name !== 'string' || !name) return null;
+  const decoded = deserializeSettings(JSON.stringify(document ?? null));
+  if (!decoded) return null;
+  return {
+    name,
+    savedAt: typeof savedAt === 'number' && Number.isFinite(savedAt) ? savedAt : 0,
+    document: decoded,
+  };
+}
+
 function readAll(): StoredPreset[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as StoredPreset[];
+    const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    // Re-validate each document so a stale schema version can't be applied.
-    return parsed.filter(
-      (entry) => typeof entry?.name === 'string'
-        && deserializeSettings(JSON.stringify(entry.document)) !== null,
-    );
+    return parsed.map(readEntry).filter((entry): entry is StoredPreset => entry !== null);
   } catch {
     return [];
   }

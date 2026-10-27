@@ -22,19 +22,21 @@ or clicking Stop, releases the stream/file and returns to the normal image pipel
 
 ## How it works
 
-- **`LiveSourceManager`** (`src/engine/LiveSource.ts`) owns one `HTMLVideoElement` fed by
+- **`LiveSourceManager`** (`src/engine/live/LiveSource.ts`) owns one `HTMLVideoElement` fed by
   either a `MediaStream` (camera/screen) or a looping local file. Only one source is active at
   a time — starting a new one tears down whatever was running.
 - **`TextureManager.updateVideoTexture()`** / **`WebGLTextureManager.updateVideoTexture()`**
   upload the current frame (`copyExternalImageToTexture` on WebGPU, `texImage2D` on WebGL) into
   a texture reused under a single cache key (`LIVE_SOURCE_CACHE_KEY` in
-  `src/engine/liveSourceTexture.ts`), recreated only when the frame resolution changes — not
+  `src/engine/live/liveSourceTexture.ts`), recreated only when the frame resolution changes — not
   every frame. No mip chain is generated (the frame is replaced every call, so trilinear
   filtering would be wasted GPU time). This keeps texture memory stable over long sessions
   instead of growing per frame.
 - **`useLiveSource`** (`src/hooks/useLiveSource.ts`) owns the manager instance, the
-  start/stop handlers, and a dedicated `requestAnimationFrame` loop (mirroring
-  `useReactiveInput`'s own loop rather than piggybacking on the main render loop) that:
+  start/stop handlers, and a `sources`-phase task on the app's frame clock
+  (`engine/frame/FrameClock.ts`) — registered only while a source is active, and run
+  before the render phase every tick, so a frame always draws the video frame just
+  uploaded. The task:
   1. Uploads the current frame every tick and routes the resulting texture handle through
      `applySourceTexture` — the same path used for still images, so it reaches the primary
      renderer and any active compare/quad slots.
@@ -43,7 +45,7 @@ or clicking Stop, releases the stream/file and returns to the normal image pipel
      frame — recomputing CR0P band thresholds at 30–60fps would be wasted work for a value
      that only needs to track slow lighting changes.
   3. Publishes `window.liveSourceActive` / `window.liveSourceKind` / `window.liveSourceFps`
-     breadcrumbs for automation and diagnostics (`src/engine/liveSourceBreadcrumbs.ts`).
+     breadcrumbs for automation and diagnostics (`src/engine/live/liveSourceBreadcrumbs.ts`).
 - **`media.liveSource`** (`src/state/types.ts`) is runtime-only reducer state — `active`,
   `kind`, `label`, `width`, `height`, `error`. It is **not** part of the serialized preset
   schema (`ChromashiftSettingsInput` already excludes the rest of `media` for the same
@@ -114,7 +116,7 @@ on the render loop's cadence and must not stamp over the load-time analysis crum
 
 - **WebGPU** — `MotionFieldPass` records the compute dispatch into its own
   `GPUCommandEncoder` and submits it immediately, before the frame's encoder (which holds the
-  layer, persistence and compositor passes), then hands `PersistencePass` the field texture.
+  layer, persistence and compositor passes), then hands the graph's accumulators the field texture.
   Keeping it out of the frame's command buffer means a validation error in the motion lane cannot
   blank the frame. It shows in the Perf HUD as its own **Motion** row.
 - **WebGL** — there is no compute lane, so `useLiveSource`'s tick loop samples the video element
@@ -130,7 +132,7 @@ on the render loop's cadence and must not stamp over the load-time analysis crum
   WebGPU device never calls `getImageData`. `WebGPURenderer.setMotionField()` hands the result to
   `MotionFieldPass`, which packs it to half floats and uploads it into an `rgba16float` texture in
   the GPU lane's own layout (`r` magnitude, `gb` flow or zero, `a` 1), and serves that texture
-  whenever its GPU lane declines — so `PersistencePass` binds it unchanged.
+  whenever its GPU lane declines — so the accumulators bind it unchanged.
   `window.motionFieldBackend` reports the CPU lane (`wasm-worker` / `ts-worker`).
 
 With `motionMode: 'off'` neither path runs at all — nothing is sampled, nothing is uploaded, and
@@ -186,7 +188,7 @@ Where the extra work lands:
 
 - **WebGPU** — two more compute dispatches in the same motion encoder, writing a second
   `rgba16float` texture whose `r` is the Stage 1 magnitude copied through unchanged and whose `gb`
-  is the velocity. `PersistencePass` binds that texture instead; the binding layout does not move.
+  is the velocity. The accumulators bind that texture instead; the binding layout does not move.
   Both are `rgba16float` rather than the narrower `rg16float`, which is not a core storage format.
   The Perf HUD splits them out as their own **Motion flow** row so a `direction`-mode jump is attributable.
 - **CPU** — in `motion.worker.ts`. At 4K the field is 960×540 cells and the solve is millions of
@@ -195,17 +197,24 @@ Where the extra work lands:
   worker the kernel is `computeMotionFlow` from the C++ engine when the WASM module loaded, and the
   portable TypeScript otherwise. Lane selection stays on the main thread, so the breadcrumbs above
   still say which lane served the frame and why the other declined.
+- **Auto-degrade** — `direction` is the most expensive motion mode, so `ui/applyPerformanceDegrade`
+  (the over-budget auto-degrade and the "Apply fixes" button) steps `direction` down to `boost`:
+  same field, magnitude only, no flow solve and no second texture, trail still visible. It never
+  steps to `off` or `gate`, which would read as a missing trail rather than a cheaper one, and it
+  leaves `boost` / `gate` / `off` alone. Like the MSAA step it is unconditional and applies once per
+  enable of auto-degrade; the user can switch back to `direction` afterwards.
 - **WebGL** — the field texture becomes `RGB16F` (magnitude, vx, vy) instead of `R16F` while
   `direction` is selected, and goes back to `R16F` for every other mode. Both are
   texture-filterable in WebGL2 core.
 
 One fixture, four lanes: a translating triangular-ridge "bar" whose every constant is exactly
 representable in binary floating point. `motionKernel.test.ts` pins the golden vectors,
-`cpp/tests/test_engine.cpp` checks the C++ scalar bodies against the same numbers,
-`npm run bench:wasm` runs them through the shipped SIMD128 build — the only place the vector
-coarse level is executed at all, since the host `g++` build compiles the scalar bodies — and
-`e2e/motion-flow-parity.spec.ts` runs the WGSL passes on a real device against their own textures,
-which is also the only thing in CI that *compiles* them.
+`cpp/tests/test_engine.cpp` checks the C++ engine against the same numbers — built both with
+`g++` (scalar bodies) and with `em++ -msimd128` (`make -C cpp test-simd`), whose parity harness
+also holds the SIMD128 `halvePlane` and coarse level bit-identical to the scalar ones on every
+size and on NaN input — `npm run bench:wasm` runs the fixture through the shipped release
+artifact, and `e2e/motion-flow-parity.spec.ts` runs the WGSL passes on a real device against
+their own textures, which is also the only thing in CI that *compiles* them.
 
 The tolerance is `2e-3` between the CPU lanes, and it is not zero because the TypeScript reference
 accumulates in JavaScript doubles while the shader and the C++ kernel accumulate in float32. The
@@ -222,8 +231,10 @@ past the camera drags their colour behind them.
 
 That graph binds the field through a `source` node with `role: 'motion-field'`. The renderer runs
 the chore with flow on whenever the graph wants it, whatever `motionMode` says. `motionMode`
-still selects only the *persistence* term, and any mode other than `off` keeps the hand encoder,
-so `boost`/`gate`/`direction` behave exactly as above. If the lane declines (no WebGPU compute),
+still selects only the *persistence* term: a `motion` node fused into the
+accumulators, the same program and uniforms as the shipped motion pass, so
+`boost`/`gate`/`direction` behave exactly as above (see
+[PASS_GRAPH.md](PASS_GRAPH.md#the-temporal-term-motion)). If the lane declines (no WebGPU compute),
 the graph binds a zero field: the trail still smears but nothing steers it. WebGPU only: the
 WebGL backend refuses the starter by name (`unsupported-node`). See
 [PASS_GRAPH.md](PASS_GRAPH.md#history-and-displace).
@@ -261,8 +272,8 @@ Presets are versioned: schema **v5** added these four fields, and a v1–v4 docu
 
 ## Testing
 
-- **Unit**: `src/engine/liveSourceTexture.test.ts` (recreate-on-resize decision, pure),
-  `src/engine/LiveSource.test.ts` (`LiveSourceManager` source-kind routing — camera,
+- **Unit**: `src/engine/live/liveSourceTexture.test.ts` (recreate-on-resize decision, pure),
+  `src/engine/live/LiveSource.test.ts` (`LiveSourceManager` source-kind routing — camera,
   screen-share, video-file, teardown-on-switch, `onEnded` — against a minimal stubbed
   `document`/`navigator`/`URL`, since this repo's Vitest config runs in the `node`
   environment without jsdom), `src/state/liveSourceActions.test.ts` (reducer + action).

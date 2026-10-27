@@ -30,14 +30,13 @@ import {
   motionMagnitudeField,
   type LuminancePlane,
 } from './chores/motionKernel';
-import { loadWasmEngine, isWasmReady } from '../wasm/loadEngine';
+import { getWasmEngineStatus, loadWasmEngine, isWasmReady, type WasmEngineStatus } from '../wasm/loadEngine';
 import { computeMotionFlowWith } from '../wasm/dispatch/motion';
+import { exposeWorkerRpc } from '../workers/rpc';
 
 declare const self: DedicatedWorkerGlobalScope;
 
-export interface MotionWorkerRequest {
-  id: number;
-  op: 'motion-field';
+export interface MotionFieldRequest {
   /** Tightly packed RGBA8, transferred rather than copied. */
   pixels: ArrayBuffer;
   width: number;
@@ -52,16 +51,18 @@ export interface MotionWorkerRequest {
   useWasm: boolean;
 }
 
-export type MotionWorkerResponse =
-  | {
-      id: number;
-      kind: 'motion-field';
-      field: Float32Array;
-      flow: Float32Array | null;
-      width: number;
-      height: number;
-    }
-  | { id: number; kind: 'error'; message: string };
+export interface MotionFieldResponse {
+  field: Float32Array;
+  flow: Float32Array | null;
+  width: number;
+  height: number;
+  /** This worker's own engine instance — the main thread publishes it. */
+  wasmEngine: WasmEngineStatus;
+}
+
+export type MotionProtocol = {
+  'motion-field': (req: MotionFieldRequest) => MotionFieldResponse;
+};
 
 /**
  * Previous frame's luminance plane. Owned here rather than by the lane on the
@@ -83,12 +84,8 @@ async function ensureWasmReady(useWasm: boolean): Promise<boolean> {
   return isWasmReady();
 }
 
-self.addEventListener('message', async (e: MessageEvent<MotionWorkerRequest>) => {
-  const req = e.data;
-  try {
-    if (req.op !== 'motion-field') {
-      throw new Error(`motion.worker: unknown op "${(req as { op: string }).op}"`);
-    }
+exposeWorkerRpc<MotionProtocol>(self, {
+  async 'motion-field'(req, ctx) {
     const wasmReady = await ensureWasmReady(req.useWasm);
 
     const frame = { data: new Uint8ClampedArray(req.pixels), width: req.width, height: req.height };
@@ -100,23 +97,8 @@ self.addEventListener('message', async (e: MessageEvent<MotionWorkerRequest>) =>
       : null;
     previousLuminance = current;
 
-    const response: MotionWorkerResponse = {
-      id: req.id,
-      kind: 'motion-field',
-      field,
-      flow,
-      width: current.width,
-      height: current.height,
-    };
-    const transfer: Transferable[] = [field.buffer];
-    if (flow) transfer.push(flow.buffer);
-    self.postMessage(response, transfer);
-  } catch (error) {
-    const response: MotionWorkerResponse = {
-      id: req.id,
-      kind: 'error',
-      message: error instanceof Error ? error.message : String(error),
-    };
-    self.postMessage(response);
-  }
+    ctx.transfer(field.buffer);
+    if (flow) ctx.transfer(flow.buffer);
+    return { field, flow, width: current.width, height: current.height, wasmEngine: getWasmEngineStatus() };
+  },
 });

@@ -1,4 +1,5 @@
 import { memo, useRef } from 'react';
+import { sliderProps } from '../../state/params';
 import { RotaryKnob } from '../RotaryKnob';
 import { CLASSIC_PROFILE_ID } from '../../engine/color/colorProfile';
 import { useLiveLayerAngle } from '../../engine/telemetryStore';
@@ -24,9 +25,7 @@ const LiveAngleKnob = memo(function LiveAngleKnob({
   return (
     <RotaryKnob
       value={angle}
-      min={0}
-      max={359}
-      step={1}
+      {...sliderProps('layers.angles.0')}
       onChange={(next) => onAngleChange(layer, next)}
       label="Angle"
       unit="°"
@@ -76,9 +75,7 @@ export const LayerPanel = memo(function LayerPanel({
           </span>
           <input
             type="range"
-            min={1}
-            max={MAX_LAYER_COUNT}
-            step={1}
+            {...sliderProps('layers.count')}
             value={layerCount}
             onChange={(e) => onLayerCountChange(Number(e.target.value))}
             className="flex-1 h-1 accent-amber-400"
@@ -104,10 +101,8 @@ export const LayerPanel = memo(function LayerPanel({
             <div className="knob-pair">
               <LiveAngleKnob layer={i} onAngleChange={onAngleChange} />
               <RotaryKnob
-                value={layerExtensions[i]}
-                min={0}
-                max={360}
-                step={1}
+                value={layerExtensions[i]!}
+                {...sliderProps('layers.extensions.0')}
                 onChange={(step) => onExtensionChange(i, step)}
                 label="Rate"
                 unit="°"
@@ -125,8 +120,7 @@ export const LayerPanel = memo(function LayerPanel({
           </span>
           <input
             type="range"
-            min={1}
-            max={60}
+            {...sliderProps('engine.fps')}
             value={frameRate}
             onChange={(e) => onFrameRateChange(Number(e.target.value))}
             className="w-20 h-1 accent-amber-400"
@@ -142,9 +136,7 @@ export const LayerPanel = memo(function LayerPanel({
           </span>
           <input
             type="range"
-            min={0}
-            max={1}
-            step={0.01}
+            {...sliderProps('layers.opacity')}
             value={layerOpacity}
             onChange={(e) => onLayerOpacityChange(Number(e.target.value))}
             className="w-20 h-1 accent-amber-400"
@@ -156,13 +148,11 @@ export const LayerPanel = memo(function LayerPanel({
             <div key={layer} className="flex items-center gap-2">
               <span className={`text-xs font-mono whitespace-nowrap ${layerColor(layer, layerCount)}`}>
                 L{layer}:{' '}
-                <span className="tabular-nums text-amber-200">{Math.round(layerOpacities[layer] * 100)}%</span>
+                <span className="tabular-nums text-amber-200">{Math.round(layerOpacities[layer]! * 100)}%</span>
               </span>
               <input
                 type="range"
-                min={0}
-                max={1}
-                step={0.01}
+                {...sliderProps('layers.opacities.0')}
                 value={layerOpacities[layer]}
                 onChange={(e) => onLayerOpacityPerLayerChange(layer, Number(e.target.value))}
                 className="flex-1 h-1 accent-amber-400"
@@ -306,9 +296,7 @@ export const LayerPanel = memo(function LayerPanel({
           </span>
           <input
             type="range"
-            min={0.1}
-            max={2.0}
-            step={0.1}
+            {...sliderProps('layers.scale')}
             value={layerScale}
             onChange={(e) => onLayerScaleChange(Number(e.target.value))}
             className="w-20 h-1 accent-amber-400"
@@ -321,9 +309,7 @@ export const LayerPanel = memo(function LayerPanel({
           </span>
           <input
             type="range"
-            min={0.1}
-            max={2.0}
-            step={0.1}
+            {...sliderProps('tracers.scale')}
             value={tracerScale}
             onChange={(e) => onTracerScaleChange(Number(e.target.value))}
             className="w-20 h-1 accent-amber-400"

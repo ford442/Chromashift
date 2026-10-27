@@ -10,7 +10,7 @@ export function yieldToMain(): Promise<void> {
   });
 }
 
-export function resolvePassMode(includeTracers: boolean, passMode: ExportPassMode): ExportPassMode {
+function resolvePassMode(includeTracers: boolean, passMode: ExportPassMode): ExportPassMode {
   if (!includeTracers && passMode === 'composite') return 'layers';
   return passMode;
 }
@@ -35,7 +35,6 @@ export interface ExportDimensions {
   canvasHeight: number;
   passMode: ExportPassMode;
   frameSteps: number[];
-  useWasm: boolean;
 }
 
 export function computeExportDimensions(
@@ -52,7 +51,6 @@ export function computeExportDimensions(
   const height = evenDimension(baseHeight * scale);
   const passMode = resolvePassMode(request.includeTracers, request.passMode);
   const frameSteps = extensionStepsForFps(state.layers.extensions, fps);
-  const useWasm = state.engine.engineMode === 'wasm';
   const canvasWidth = Math.max(1, Math.round(baseWidth));
   const canvasHeight = Math.max(1, Math.round(baseHeight));
 
@@ -65,7 +63,6 @@ export function computeExportDimensions(
     canvasHeight,
     passMode,
     frameSteps,
-    useWasm,
   };
 }
 

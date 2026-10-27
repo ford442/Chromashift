@@ -1,7 +1,7 @@
 import { DECAY_GLSL } from '../../shaders/decayLiterals';
 import { MOTION_FLOW_MIN_SPEED } from '../../compute/chores/motionKernel';
 import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
-import type { CoincidenceDecayOptions } from './wgsl';
+import { HISTORY_MAX_FRAMES, SHIPPED_TRACER_COUNT, blurWeights, type CoincidenceDecayOptions } from './wgsl';
 
 export type { CoincidenceDecayOptions } from './wgsl';
 
@@ -20,7 +20,7 @@ const MOTION_FLOW_MIN_SPEED_GLSL = MOTION_FLOW_MIN_SPEED.toFixed(3);
  * GLSL twin of `WGSL_MOTION_HELPERS` — same maths, same names, so the two
  * backends stay comparable by eye when a motion preset diverges.
  */
-export const GLSL_MOTION_HELPERS = `
+const GLSL_MOTION_HELPERS = `
 vec3 motionDirectionRgb(vec2 flow, float magnitude, float gain) {
   // See the WGSL twin: below the minimum speed there is no direction to show,
   // so the hue pins to zero — which is what a Stage 1 zero vector already did.
@@ -39,7 +39,7 @@ float motionDecayScale(float magnitude, float bias, bool enabled) {
 `;
 
 /** `cropColor` — every layer's CROP ramp behind one `int layer` switch. */
-export function emitCropColorGlsl(specs: readonly LayerSpec[]): string {
+function emitCropColorGlsl(specs: readonly LayerSpec[]): string {
   const bodies = specs.map((spec, index) => {
     const last = index === specs.length - 1;
     const localName = (i: number) => spec.crop[i]?.glslName ?? spec.crop[i]?.name ?? 'dark';
@@ -50,7 +50,7 @@ export function emitCropColorGlsl(specs: readonly LayerSpec[]): string {
       .map((band, i) => {
         const upper = spec.cropUpper === null
           ? ''
-          : ` && bandLum < ${i === 0 ? spec.cropUpper : spec.crop[i - 1].lower}`;
+          : ` && bandLum < ${i === 0 ? spec.cropUpper : spec.crop[i - 1]!.lower}`;
         return `    if (bandLum >= ${band.lower}${upper}) return ${localName(i)};`;
       })
       .join('\n');
@@ -91,7 +91,7 @@ ${bodies.join('\n')}
 }
 
 /** `fixedLayerColor` — every layer's CR0P-fixed ramp behind one `int layer` switch. */
-export function emitFixedLayerColorGlsl(specs: readonly LayerSpec[]): string {
+function emitFixedLayerColorGlsl(specs: readonly LayerSpec[]): string {
   const bodies = specs.map((spec, index) => {
     const last = index === specs.length - 1;
     const arms = spec.fixed.map((band) => {
@@ -156,7 +156,8 @@ export function emitGradientBranchGlsl(specs: readonly LayerSpec[]): string {
  * rest share" case stays a two-arm ternary.
  */
 export function emitNunifAlphaGlsl(specs: readonly LayerSpec[]): string {
-  const tail = specs[specs.length - 1].nunif2Alpha;
+  // A layer table is never empty (`assertLayerCount`).
+  const tail = specs[specs.length - 1]!.nunif2Alpha;
   const head = specs
     .slice(0, -1)
     .filter((spec) => spec.nunif2Alpha !== tail)
@@ -252,9 +253,30 @@ ${motionTerm}
 `;
 }
 
-/** `blend` → the WebGL compositor pass. */
-export function emitCompositorGlsl(layerCount: number): string {
+/**
+ * `blend` → the WebGL compositor pass.
+ *
+ * `tracerCount` mirrors the WGSL emitter: the first two are the shipped
+ * below / above pair, and every one after them (`u_tracer2`, …) is an extra
+ * timescale blended deepest first, in input order, beneath `below`. Two emits
+ * exactly the shipped compositor — `__golden__/compositor.glsl` pins it.
+ */
+export function emitCompositorGlsl(layerCount: number, tracerCount: number = SHIPPED_TRACER_COUNT): string {
+  if (!Number.isInteger(tracerCount) || tracerCount < SHIPPED_TRACER_COUNT) {
+    throw new RangeError(`A compositor blends at least ${SHIPPED_TRACER_COUNT} tracers, got ${tracerCount}.`);
+  }
   const layers = layerList(layerCount);
+  const extras = Array.from({ length: tracerCount - SHIPPED_TRACER_COUNT }, (_, k) => k + SHIPPED_TRACER_COUNT);
+  // Emitted only when there are extras, so the two-tracer source is unchanged.
+  const extraSamplers = extras.map((j) => `\nuniform sampler2D u_tracer${j};`).join('');
+  const extraOpacities = extras.map((j) => `\nuniform float u_tracerOpacity${j};`).join('');
+  const deepen = (uv: string) => {
+    if (extras.length === 0) return '';
+    const deep = extras
+      .map((j) => `scaleAlpha(texture(u_tracer${j}, ${uv}), u_tracerOpacity${j})`)
+      .reduce((acc, next) => `blendOver(${acc}, ${next}, u_tracerBlendMode)`);
+    return `\n    below = blendOver(${deep}, below, u_tracerBlendMode);`;
+  };
   const samplers = layers.map((i) => `uniform sampler2D u_layer${i};`).join('\n');
   const opacities = layers.map((i) => `uniform float u_layerOpacity${i};`).join('\n');
   const collisionParams = layers.map((i) => `vec4 c${i}`).join(', ');
@@ -278,10 +300,10 @@ precision highp float;
 
 ${samplers}
 uniform sampler2D u_tracerBelow;
-uniform sampler2D u_tracerAbove;
+uniform sampler2D u_tracerAbove;${extraSamplers}
 ${opacities}
 uniform float u_tracerBelowOpacity;
-uniform float u_tracerAboveOpacity;
+uniform float u_tracerAboveOpacity;${extraOpacities}
 uniform int u_layerBlendMode;
 uniform int u_tracerBlendMode;
 uniform int u_outputMode;
@@ -339,7 +361,7 @@ vec4 collisionColor(${collisionParams}) {
 
 vec4 compositeProcessed(vec2 sampleUV) {
 ${scaled('sampleUV')}
-  vec4 below = scaleAlpha(texture(u_tracerBelow, sampleUV), u_tracerBelowOpacity);
+  vec4 below = scaleAlpha(texture(u_tracerBelow, sampleUV), u_tracerBelowOpacity);${deepen('sampleUV').replace('\n    ', '\n  ')}
   vec4 above = scaleAlpha(texture(u_tracerAbove, sampleUV), u_tracerAboveOpacity);
   vec4 live = ${live};
   vec4 tracer = blendOver(below, above, u_tracerBlendMode);
@@ -352,7 +374,7 @@ ${scaled('sampleUV')}
 
 void main() {
   if (u_mainViewMode == 1) {
-    vec4 below = scaleAlpha(texture(u_tracerBelow, v_uv), u_tracerBelowOpacity);
+    vec4 below = scaleAlpha(texture(u_tracerBelow, v_uv), u_tracerBelowOpacity);${deepen('v_uv')}
     vec4 above = scaleAlpha(texture(u_tracerAbove, v_uv), u_tracerAboveOpacity);
     outColor = vec4(blendOver(below, above, u_tracerBlendMode).rgb, 1.0);
     return;
@@ -524,6 +546,128 @@ void main() {
   int row = int(clamp(u_row, 0.0, ${(rows - 1).toFixed(1)}));
   vec4 graded = texelFetch(u_lut, ivec2(col, row), 0);
   outColor = mix(src, graded, clamp(u_mixAmount, 0.0, 1.0));
+}
+`;
+}
+
+/**
+ * `warp` → a UV transform: rotate, scale, then optional feedback displacement.
+ * The GLSL twin of `emitWarpWgsl`, uniform for uniform (`WARP_UNIFORMS`).
+ */
+export function emitWarpGlsl(mode: 'affine' | 'feedback'): string {
+  const displace = mode === 'feedback'
+    ? '  uv = uv + (texture(u_source, uv).rg - vec2(0.5)) * u_displace;'
+    : '';
+  return `#version 300 es
+precision highp float;
+
+uniform sampler2D u_source;
+uniform float u_angleRad;
+uniform float u_scale;
+uniform float u_aspect;
+uniform float u_displace;
+
+in vec2 v_uv;
+out vec4 outColor;
+
+void main() {
+  vec2 uv = v_uv;
+${displace}
+  float c = cos(u_angleRad);
+  float s = sin(u_angleRad);
+  vec2 aspectCorrection = vec2(1.0, u_aspect);
+  vec2 p = (uv - vec2(0.5)) * aspectCorrection / max(u_scale, 0.0001);
+  vec2 rotated = vec2(p.x * c - p.y * s, p.x * s + p.y * c);
+  vec2 warped = rotated / aspectCorrection + vec2(0.5);
+  // Sampled before the bounds test, as the WGSL twin must be.
+  vec4 sampled = texture(u_source, warped);
+  bool outside = warped.x < 0.0 || warped.x > 1.0 || warped.y < 0.0 || warped.y > 1.0;
+  outColor = outside ? vec4(0.0) : sampled;
+}
+`;
+}
+
+/** `blur` → one axis of a separable gaussian, with the WGSL twin's taps and weights. */
+export function emitBlurGlsl(radius: number): string {
+  const samples = blurWeights(radius)
+    .map(({ offset, weight }) =>
+      `  acc += texture(u_source, v_uv + axis * texel * ${offset.toFixed(1)}) * ${weight.toFixed(6)};`)
+    .join('\n');
+  return `#version 300 es
+precision highp float;
+
+uniform sampler2D u_source;
+uniform float u_axisX;
+uniform float u_axisY;
+
+in vec2 v_uv;
+out vec4 outColor;
+
+void main() {
+  vec2 texel = 1.0 / vec2(textureSize(u_source, 0));
+  vec2 axis = vec2(u_axisX, u_axisY);
+  vec4 acc = vec4(0.0);
+${samples}
+  outColor = acc;
+}
+`;
+}
+
+/**
+ * `history`, read half → a weighted mix of every ring slot, as
+ * `emitHistoryTapsWgsl`. The write half is a plain blit the executor owns.
+ */
+export function emitHistoryTapsGlsl(frames: number): string {
+  if (!Number.isInteger(frames) || frames < 1 || frames > HISTORY_MAX_FRAMES) {
+    throw new RangeError(`A history ring holds 1–${HISTORY_MAX_FRAMES} frames, got ${frames}.`);
+  }
+  const slots = layerList(frames);
+  const samplers = slots.map((i) => `uniform sampler2D u_ring${i};`).join('\n');
+  const weights = slots.map((i) => `uniform float u_weight${i};`).join('\n');
+  const taps = slots.map((i) => `  acc += texture(u_ring${i}, v_uv) * u_weight${i};`).join('\n');
+  return `#version 300 es
+precision highp float;
+
+${samplers}
+${weights}
+
+in vec2 v_uv;
+out vec4 outColor;
+
+void main() {
+  vec4 acc = vec4(0.0);
+${taps}
+  outColor = acc;
+}
+`;
+}
+
+/**
+ * `displace` → sample `u_source` at UVs pushed by a field texture, as
+ * `emitDisplaceWgsl`. The WebGL motion field is the CPU lanes' upload: `.r`
+ * magnitude and, when flow was solved, `.gb` velocity in field cells per
+ * frame — the WebGPU lane's channel order — and `.gb` is zero without flow,
+ * so `displace` is then the identity.
+ */
+export function emitDisplaceGlsl(field: 'motion' | 'color'): string {
+  const offset = field === 'motion'
+    ? '  vec2 offset = f.gb / vec2(textureSize(u_field, 0));'
+    : '  vec2 offset = f.rg - vec2(0.5);';
+  return `#version 300 es
+precision highp float;
+
+uniform sampler2D u_source;
+uniform sampler2D u_field;
+uniform float u_gain;
+uniform float u_sign;
+
+in vec2 v_uv;
+out vec4 outColor;
+
+void main() {
+  vec4 f = texture(u_field, v_uv);
+${offset}
+  outColor = texture(u_source, v_uv + u_sign * u_gain * offset);
 }
 `;
 }

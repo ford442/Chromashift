@@ -5,10 +5,13 @@ import {
   type RendererOrchestratorDeps,
   type RendererSlot,
 } from './RendererOrchestrator';
-import type { ChromashiftRenderer } from './RendererTypes';
-import type { GpuRuntimeError, WebGpuSession } from './gpuBootstrap';
-import type { TextureManager } from './TextureManager';
-import type { WebGLTextureManager } from './WebGLTextureManager';
+import type { ChromashiftRenderer } from './types/RendererContracts';
+import { presetGraphSource } from './graph/variants';
+import { type GpuRuntimeError } from './gpu/gpuErrors';
+import { type WebGpuSession } from './webgpu/webgpuSession';
+import { WebGL2ContextLostError, createWebGL2Context, watchWebGL2Context } from './webgl/webgl2Context';
+import type { TextureManager } from './webgpu/TextureManager';
+import type { WebGLTextureManager } from './webgl/WebGLTextureManager';
 import type { GpuImageAnalysis } from './compute/GpuImageAnalysis';
 
 function mockRenderer(): ChromashiftRenderer {
@@ -22,7 +25,6 @@ function mockRenderer(): ChromashiftRenderer {
     setAntialiasing: vi.fn(),
     getRenderTiming: vi.fn(),
     renderStationaryPreviews: vi.fn(async () => ({ separated: null, tracer: null })),
-    requestPreviewReadback: vi.fn(),
     requestCollisionStats: vi.fn(),
     exportTracerView: vi.fn(async () => null),
     exportFrame: vi.fn(async () => null),
@@ -52,6 +54,8 @@ function mockWebGpuContext(canvas?: HTMLCanvasElement): GPUCanvasContext {
 function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
   const device = {
     destroy: vi.fn(),
+    pushErrorScope: vi.fn(),
+    popErrorScope: vi.fn(async () => null),
   } as unknown as GPUDevice;
 
   return {
@@ -90,7 +94,6 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
 function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): RendererOrchestratorDeps {
   const textureManager = {
     destroy: vi.fn(),
-    fetchImageList: vi.fn(),
     loadTexture: vi.fn(),
     uploadPixels: vi.fn(),
     evictExcept: vi.fn(),
@@ -105,13 +108,13 @@ function createMockDeps(overrides: Partial<RendererOrchestratorDeps> = {}): Rend
     bootstrapWebGpu: vi.fn(async ({ canvas }) => mockSession(mockWebGpuContext(canvas))),
     configureWebGpuCanvas: vi.fn(),
     createWebGL2Context: vi.fn(() => ({} as WebGL2RenderingContext)),
+    watchWebGL2Context: vi.fn(() => () => undefined),
     createWebGPURenderer: vi.fn(async () => mockRenderer()),
     createSecondaryWebGPURenderer: vi.fn(() => mockRenderer()),
     createWebGLRenderer: vi.fn(() => mockRenderer()),
     createTextureManager: vi.fn(() => textureManager),
     createWebGLTextureManager: vi.fn(() => ({
       destroy: vi.fn(),
-      fetchImageList: vi.fn(),
       loadTexture: vi.fn(),
       uploadPixels: vi.fn(),
       evictExcept: vi.fn(),
@@ -172,6 +175,35 @@ describe('RendererOrchestrator', () => {
     expect(orchestrator.slotIds()).toEqual(['main']);
     expect(slotB.renderer.destroy).toHaveBeenCalledOnce();
     expect(secondaryContext.unconfigure).toHaveBeenCalledOnce();
+  });
+
+  it('hands the pass-graph source to every slot, existing and future, naming the primary', async () => {
+    const renderers: ChromashiftRenderer[] = [];
+    const withGraph = () => {
+      const renderer = { ...mockRenderer(), setPassGraph: vi.fn() } as unknown as ChromashiftRenderer;
+      renderers.push(renderer);
+      return renderer;
+    };
+    const deps = createMockDeps({
+      createWebGPURenderer: vi.fn(async () => withGraph()),
+      createSecondaryWebGPURenderer: vi.fn(() => withGraph()),
+    });
+    const { orchestrator } = await RendererOrchestrator.bootstrap({
+      primaryCanvas: mockCanvas('main'),
+      antialias: false,
+      backend: 'webgpu',
+    }, deps);
+    const source = presetGraphSource('default');
+
+    orchestrator.setPassGraph(source);
+    expect(renderers[0]!.setPassGraph).toHaveBeenCalledWith(source, { slot: PRIMARY_SLOT_ID, primary: true });
+
+    // A compare slot opened later draws the same graph, with its own executor.
+    orchestrator.createSlot('compare-b', mockCanvas('compare-b'));
+    expect(renderers[1]!.setPassGraph).toHaveBeenCalledWith(source, { slot: 'compare-b', primary: false });
+
+    orchestrator.setPassGraph(null);
+    for (const renderer of renderers) expect(renderer.setPassGraph).toHaveBeenLastCalledWith(null, expect.anything());
   });
 
   it('hard-fails instead of falling back to WebGL when WebGPU bootstrap fails', async () => {
@@ -244,6 +276,74 @@ describe('RendererOrchestrator', () => {
     expect(backend).toBe('webgl');
     expect(orchestrator.getBackend()).toBe('webgl');
     expect(deps.createWebGLRenderer).toHaveBeenCalledOnce();
+  });
+
+  it('hands the WebGL renderer the antialias toggle (layer MSAA, not a context flag)', async () => {
+    const deps = createMockDeps();
+    await RendererOrchestrator.bootstrap({ primaryCanvas: mockCanvas('main'), antialias: true, backend: 'webgl' }, deps);
+    expect(deps.createWebGLRenderer).toHaveBeenCalledWith(expect.anything(), expect.anything(), true);
+  });
+
+  describe('WebGL context loss', () => {
+    // The real context helpers over a canvas that dispatches DOM events.
+    function lossyCanvas() {
+      const state = { lost: false };
+      const gl = { isContextLost: () => state.lost } as unknown as WebGL2RenderingContext;
+      const canvas = Object.assign(new EventTarget(), {
+        width: 640,
+        height: 480,
+        getContext: vi.fn(() => gl),
+      }) as unknown as HTMLCanvasElement;
+      return { canvas, gl, state };
+    }
+
+    it('surfaces loss as the recoverable overlay and boots again on restore without a second getContext', async () => {
+      vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { canvas, gl, state } = lossyCanvas();
+      const deps = createMockDeps({ createWebGL2Context, watchWebGL2Context });
+      const onRuntimeError = vi.fn();
+      const onContextRestored = vi.fn();
+      const options = { primaryCanvas: canvas, backend: 'webgl' as const, onRuntimeError, onContextRestored };
+
+      const first = await RendererOrchestrator.bootstrap(options, deps);
+      state.lost = true;
+      const lost = new Event('webglcontextlost', { cancelable: true });
+      canvas.dispatchEvent(lost);
+
+      // preventDefault is what lets the browser restore the context at all.
+      expect(lost.defaultPrevented).toBe(true);
+      expect(onRuntimeError).toHaveBeenCalledWith(expect.objectContaining({ kind: 'device-lost', recoverable: true }));
+      expect(first.primarySlot.renderer.destroy).toHaveBeenCalledOnce();
+      expect(first.orchestrator.slotIds()).toEqual([]);
+
+      // Retry GPU while still lost refuses; it does not ask the canvas again.
+      await expect(RendererOrchestrator.bootstrap(options, deps)).rejects.toBeInstanceOf(WebGL2ContextLostError);
+      expect(onContextRestored).not.toHaveBeenCalled();
+
+      state.lost = false;
+      canvas.dispatchEvent(new Event('webglcontextrestored'));
+      expect(onContextRestored).toHaveBeenCalledOnce();
+
+      const second = await RendererOrchestrator.bootstrap(options, deps);
+      expect(second.orchestrator.slotIds()).toEqual([PRIMARY_SLOT_ID]);
+      expect(deps.createWebGLRenderer).toHaveBeenCalledTimes(2);
+      expect(deps.createWebGLRenderer).toHaveBeenLastCalledWith(canvas, gl, false);
+      expect(canvas.getContext).toHaveBeenCalledTimes(1);
+      expect(deps.bootstrapWebGpu).not.toHaveBeenCalled();
+      vi.restoreAllMocks();
+    });
+
+    it('detaches its listeners on an ordinary destroy', async () => {
+      const unwatch = vi.fn();
+      const deps = createMockDeps({ watchWebGL2Context: vi.fn(() => unwatch) });
+      const { orchestrator } = await RendererOrchestrator.bootstrap(
+        { primaryCanvas: mockCanvas('main'), backend: 'webgl' },
+        deps,
+      );
+      orchestrator.destroy();
+      expect(unwatch).toHaveBeenCalledOnce();
+    });
   });
 
   it('reconfigures all active WebGPU contexts on resizeAll', async () => {
@@ -330,6 +430,50 @@ describe('RendererOrchestrator', () => {
       message: 'lost',
       recoverable: true,
     });
+  });
+
+  it('reports a secondary slot renderer that failed validation as a pipeline error', async () => {
+    const session = mockSession(mockWebGpuContext());
+    vi.mocked(session.device.popErrorScope).mockResolvedValueOnce({ message: 'invalid bind group layout' } as GPUError);
+    const deps = createMockDeps({ bootstrapWebGpu: vi.fn(async () => session) });
+    const onRuntimeError = vi.fn();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { orchestrator } = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: mockCanvas('main'), antialias: false, backend: 'webgpu', onRuntimeError },
+      deps,
+    );
+
+    orchestrator.createSlot('compare-b', mockCanvas('compare-b', mockWebGpuContext()));
+    await vi.waitFor(() => expect(onRuntimeError).toHaveBeenCalledOnce());
+
+    expect(onRuntimeError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'pipeline',
+      detail: 'invalid bind group layout',
+      recoverable: false,
+    }));
+    // Shown, not torn down: the slot keeps drawing.
+    expect(orchestrator.slotIds()).toContain('compare-b');
+  });
+
+  it('a destroyed orchestrator forwards nothing', async () => {
+    let capturedOnRuntimeError: ((error: GpuRuntimeError) => void) | undefined;
+    const deps = createMockDeps({
+      bootstrapWebGpu: vi.fn(async (options) => {
+        capturedOnRuntimeError = options.onRuntimeError;
+        return mockSession(mockWebGpuContext());
+      }),
+    });
+    const onRuntimeError = vi.fn();
+    const { orchestrator } = await RendererOrchestrator.bootstrap(
+      { primaryCanvas: mockCanvas('main'), antialias: false, backend: 'webgpu', onRuntimeError },
+      deps,
+    );
+
+    // Replaced (Retry GPU, a React re-run): its successor reports for the device.
+    orchestrator.destroy();
+    capturedOnRuntimeError?.({ kind: 'device-lost', message: 'lost', recoverable: true });
+
+    expect(onRuntimeError).not.toHaveBeenCalled();
   });
 
   it('rejects a second WebGL slot', async () => {

@@ -13,6 +13,7 @@ import {
   uniform1i,
   activateProgram,
 } from './programUtils';
+import { bandLayerUniforms } from '../graph/exec/uniforms';
 import type { RendererState } from '../types/RendererState';
 import { layerRotationUniforms } from '../math/rotation';
 
@@ -38,7 +39,8 @@ export class WebGLDebugPasses {
   ): void {
     const gl = this.gl;
     const program = this.programForMode(debugMode);
-    const layer = state.layers[layerIndex];
+    // The executor calls this per layer step of a graph built for `state.layers`.
+    const layer = state.layers[layerIndex]!;
     activateProgram(gl, program);
     bindTexture(gl, program, 'u_source', 0, sourceTexture);
     uniform1i(gl, program, 'u_layerIndex', layerIndex);
@@ -48,10 +50,11 @@ export class WebGLDebugPasses {
     uniform1f(gl, program, 'u_flipY', flipY);
     uniform1f(gl, program, 'u_aspect', layerAspect);
     if (debugMode === 1 || debugMode === 3) {
-      uniform1f(gl, program, 'u_avgLuminance', state.avgLuminance);
-      uniform1f(gl, program, 'u_colorMode', state.colorMode ?? 1);
-      uniform1f(gl, program, 'u_sobelEnabled', state.sobelEnabled ? 1 : 0);
-      uniform1f(gl, program, 'u_softCropEnabled', state.softCropEnabled ? 1 : 0);
+      const values = bandLayerUniforms(state, { layerIndex, hasClassificationMask: false });
+      uniform1f(gl, program, 'u_avgLuminance', values.avgLuminance);
+      uniform1f(gl, program, 'u_colorMode', values.colorMode);
+      uniform1f(gl, program, 'u_sobelEnabled', values.sobelEnabled);
+      uniform1f(gl, program, 'u_softCropEnabled', values.softCropEnabled);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 6);
   }

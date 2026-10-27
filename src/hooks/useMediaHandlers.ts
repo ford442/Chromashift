@@ -1,12 +1,12 @@
 import { useCallback, useEffect } from 'react';
-import { Upscaler, type UpscaleModel } from '../engine/Upscaler';
+import { Upscaler, type UpscaleModel } from '../engine/upscale/Upscaler';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import {
   computeAverageLuminanceStridedWith,
   computeImageAverageLuminanceWith,
 } from '../engine/WasmEngine';
-import { addLocalImage, clearLocalLibrary } from '../engine/LocalLibrary';
-import type { ImageEntry } from '../engine/TextureManager';
+import { addLocalImage, clearLocalLibrary } from '../engine/library/LocalLibrary';
+import type { ImageEntry } from '../engine/library/imageEntry';
 import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
 interface MediaHandlersOptions {
@@ -436,6 +436,10 @@ export function useTracerExport(
         link.click();
         URL.revokeObjectURL(href);
       }, 'image/png');
+    } catch (error) {
+      // The button's click handler drops this promise: report here or nowhere.
+      console.error('Tracer export failed:', error);
+      alert(error instanceof Error ? error.message : 'Tracer export failed.');
     } finally {
       actions.setExportingTracer(false);
     }

@@ -98,7 +98,8 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
         id: `ring:${pass.nodeId}`,
         nodeId: pass.nodeId,
         resolution: lifetime.resolution,
-        frames: schedule.historyFrames[pass.nodeId],
+        // Every scheduled history node has one: validation refuses it without `frames`.
+        frames: schedule.historyFrames[pass.nodeId]!,
       });
     }
 

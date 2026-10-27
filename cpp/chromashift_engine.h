@@ -160,7 +160,8 @@ void computeLuminanceHistogram(const uint8_t* pixels, uint32_t byteLen,
  * @param pixels     Tightly-packed RGBA bytes.
  * @param byteLen    Total byte length.
  * @param avgLum     Per-image average luminance [0–255].
- * @param outCounts  Caller-allocated array of 11 uint32 values.
+ * @param outCounts  Caller-allocated array of BAND_COUNT + 1 (11) uint32 values:
+ *                   one per band index, dark/grey last.
  */
 void computeColorBandCounts(const uint8_t* pixels, uint32_t byteLen,
                             int avgLum, uint32_t* outCounts);
@@ -200,8 +201,12 @@ float durationToDecay(float durationMs, float fps);
  * keeping all results in [0, 360).
  *
  * Takes pointers rather than a fixed argument list so a session with any layer
- * count (1–10, one per canonical band) calls the same symbol; the TypeScript
- * side already owns the angles as a heap array.
+ * count (1–10, one per canonical band) calls the same symbol.
+ *
+ * The app's `advanceAnglesBy()` deliberately runs this in TypeScript: for at
+ * most ten floats the heap round trip costs more than the loop. This export is
+ * the reference that loop (src/engine/wasm/fallbacks/decay.ts) mirrors, and the
+ * host tests pin its wrap and aliasing rules.
  *
  * @param angles  Pointer to `count` floats: current angles in degrees.
  * @param steps   Pointer to `count` floats: per-frame step sizes in degrees.
@@ -211,21 +216,6 @@ float durationToDecay(float durationMs, float fps);
  */
 void advanceLayerAngles(const float* angles, const float* steps,
                         float* out, uint32_t count);
-
-/**
- * Three-wide form of {@link advanceLayerAngles}.
- *
- * @deprecated Kept for one release so the committed public/chromashift_engine.wasm
- * stays loadable while it is rebuilt. Its presence is also what tells the
- * TypeScript bridge that a module was built against the count-taking ABI: an
- * older `.wasm` exports `_advanceLayerAngles` with the previous six-float
- * signature and no `_advanceLayerAngles3`, so `advanceAnglesBy()` gates on this
- * symbol and falls back to TypeScript rather than calling the old one with
- * pointers. Remove both this and that gate once the artifact is rebuilt.
- */
-void advanceLayerAngles3(float a0, float a1, float a2,
-                         float s0, float s1, float s2,
-                         float* out);
 
 /**
  * Apply per-frame decay to a flat RGBA float buffer in-place.
@@ -251,7 +241,8 @@ void simulateTracerDecay(float* tracerBuffer, uint32_t pixelCount,
  * other question - not how much a cell changed, but which way it moved - which
  * is what `motionMode: 'direction'` turns into hue.
  *
- * Mirrors `lucasKanadeFlow` in src/engine/compute/chores/motionKernel.ts and
+ * Implemented in cpp/motion_flow.cpp. Mirrors `lucasKanadeFlow` in
+ * src/engine/compute/chores/motionKernel.ts and
  * the WGSL `MOTION_FLOW_*_COMPUTE_SHADER` pair operation for operation: two
  * pyramid levels, a 3x3 window, central-difference spatial gradients, a
  * Tikhonov ridge in place of a singular-system branch, and the same clamps.

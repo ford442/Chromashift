@@ -28,12 +28,12 @@ describe('ProfileLutTexture', () => {
     const lut = new ProfileLutTexture(device);
     const initial = lut.texture;
     expect(created).toHaveLength(1);
-    expect(created[0].size).toEqual([256, 3, 1]);
+    expect(created[0]!.size).toEqual([256, 3, 1]);
 
     lut.update(new Uint8Array(profileLutBytes(3)));
     expect(lut.texture).toBe(initial);
     expect(writeTexture).toHaveBeenCalledTimes(1);
-    expect(writeTexture.mock.calls[0][3]).toEqual([256, 3, 1]);
+    expect(writeTexture.mock.calls[0]![3]).toEqual([256, 3, 1]);
   });
 
   it('skips the upload when the LUT array identity is unchanged', () => {
@@ -51,9 +51,9 @@ describe('ProfileLutTexture', () => {
 
     lut.update(new Uint8Array(profileLutBytes(5)));
     expect(lut.texture).not.toBe(three);
-    expect(created[0].destroy).toHaveBeenCalledTimes(1);
-    expect(created[1].size).toEqual([256, 5, 1]);
-    expect(writeTexture.mock.calls[0][2]).toEqual({ bytesPerRow: 1024, rowsPerImage: 5 });
+    expect(created[0]!.destroy).toHaveBeenCalledTimes(1);
+    expect(created[1]!.size).toEqual([256, 5, 1]);
+    expect(writeTexture.mock.calls[0]![2]).toEqual({ bytesPerRow: 1024, rowsPerImage: 5 });
 
     const five = lut.texture;
     lut.update(new Uint8Array(profileLutBytes(5)));

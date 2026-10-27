@@ -9,8 +9,9 @@ import { lucasKanadeFlow, type LuminancePlane } from '../src/engine/compute/chor
  * WGSL side of the three-lane motion-flow parity check.
  *
  * `motionKernel.test.ts` pins the TypeScript reference, `cpp/tests/test_engine.cpp`
- * pins the C++ scalar bodies, and `npm run bench:wasm` runs the shipped SIMD128
- * build. None of them can execute WGSL — that needs a device, which is what this
+ * pins the C++ engine (scalar and SIMD128 builds, held bit-identical by
+ * `make -C cpp test-simd`), and `npm run bench:wasm` runs the shipped release
+ * artifact. None of them can execute WGSL — that needs a device, which is what this
  * `chromium-webgpu` spec brings. It is also the only place the two flow shaders
  * are *compiled* in CI: a WGSL syntax or binding-layout mistake fails here rather
  * than in a browser.
@@ -65,7 +66,7 @@ test.describe('Motion flow WGSL parity', () => {
       const coarseWidth = Math.ceil(size / 2);
       const coarseHeight = Math.ceil(size / 2);
 
-      const lumTexture = (data: Float32Array) => {
+      const lumTexture = (data: Float32Array<ArrayBuffer>) => {
         const texture = device.createTexture({
           size: [size, size, 1],
           format: 'r32float',

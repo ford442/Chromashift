@@ -31,7 +31,7 @@ export const UpscalePanel = memo(function UpscalePanel({
         onChange={(e) => {
           const v = e.target.value;
           onUpscaleModelChange(
-            v.startsWith('swin_unet') ? composeSwinModel(v.split(':')[1], swinScale, swinNoise) : v,
+            v.startsWith('swin_unet') ? composeSwinModel(v.split(':')[1] ?? swinStyle, swinScale, swinNoise) : v,
           );
         }}
         disabled={upscaleBusy}
@@ -84,7 +84,7 @@ export const UpscalePanel = memo(function UpscalePanel({
       <div className="flex gap-2">
         <button
           type="button"
-          onClick={onUpscaleSource}
+          onClick={() => void onUpscaleSource()}
           disabled={upscaleBusy}
           className="flex-1 text-xs px-2 py-1 rounded bg-emerald-700/80 hover:bg-emerald-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           title="Upscale the loaded image and replace the source texture. Also recomputes Avg Lum."
@@ -93,7 +93,7 @@ export const UpscalePanel = memo(function UpscalePanel({
         </button>
         <button
           type="button"
-          onClick={onUpscaleOutput}
+          onClick={() => void onUpscaleOutput()}
           disabled={upscaleBusy}
           className="flex-1 text-xs px-2 py-1 rounded bg-sky-700/80 hover:bg-sky-600 text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           title="Upscale the current composited output and download as PNG."

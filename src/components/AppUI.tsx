@@ -5,7 +5,7 @@ import { PreviewStrip } from './PreviewStrip';
 import { ChromeShell } from './ChromeShell';
 import { useOverlayProps } from './useOverlayProps';
 import { useRenderCount } from '../debug/renderCounts';
-import { collectImageFilesFromDataTransfer } from '../engine/fileDrop';
+import { collectImageFilesFromDataTransfer } from '../engine/library/fileDrop';
 import type { AppUIProps } from './AppUI.types';
 
 export function AppUI(props: AppUIProps) {
@@ -45,6 +45,7 @@ export function AppUI(props: AppUIProps) {
     setLivePreviewEnabled,
     gpuError,
     onRetryGpu,
+    onDismissGpuError,
     isGpuRetrying,
     avgLuminance,
     engineMode,
@@ -75,6 +76,7 @@ export function AppUI(props: AppUIProps) {
     toggleKioskFullscreen,
     setSpecificImageError,
     handleDropFiles,
+    rendererBackend,
   } = props;
 
   const showChrome = !kioskEnabled || !kioskUiHidden;
@@ -139,6 +141,20 @@ export function AppUI(props: AppUIProps) {
         </div>
       )}
 
+      {rendererBackend === 'webgl' && (
+        <div
+          data-testid="webgl2-banner"
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none absolute top-14 left-1/2 z-[60] -translate-x-1/2 rounded-md border-2 border-cyan-300 bg-cyan-950/95 px-4 py-2 text-center shadow-lg shadow-cyan-900/50"
+        >
+          <div className="font-mono text-sm font-bold tracking-wide text-cyan-50">WEBGL2 active</div>
+          <div className="font-mono text-[10px] leading-tight text-cyan-100/90">
+            Opt-in diagnostic renderer. WebGPU is not running this session.
+          </div>
+        </div>
+      )}
+
       <MainViewport
         mainViewportRef={mainViewportRef}
         mainCanvasRef={mainCanvasRef}
@@ -182,6 +198,7 @@ export function AppUI(props: AppUIProps) {
         showKioskRemote={showKioskRemote}
         gpuError={gpuError}
         onRetryGpu={onRetryGpu}
+        onDismissGpuError={onDismissGpuError}
         isGpuRetrying={isGpuRetrying}
         avgLuminance={avgLuminance}
         engineMode={engineMode}

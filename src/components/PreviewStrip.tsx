@@ -27,6 +27,7 @@ export const PreviewStrip = memo(function PreviewStrip({
       <div className="absolute right-3 top-1/2 -translate-y-1/2 z-30 border border-amber-500/30 rounded overflow-hidden bg-black/40 backdrop-blur-md">
         <canvas
           ref={previewSeparatedRef}
+          data-testid="preview-separated"
           width={300}
           height={300}
           style={{ display: 'block', imageRendering: 'pixelated' }}

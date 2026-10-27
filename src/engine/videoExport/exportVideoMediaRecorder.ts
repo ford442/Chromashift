@@ -50,6 +50,9 @@ export async function exportVideoMediaRecorder(
 
   const stream = exportCanvas.captureStream(0);
   const videoTrack = stream.getVideoTracks()[0];
+  if (!videoTrack) {
+    throw new Error('Canvas capture stream has no video track.');
+  }
   const recorder = new MediaRecorder(stream, {
     mimeType,
     videoBitsPerSecond: Math.max(4_000_000, dims.width * dims.height * dims.fps * 0.12),

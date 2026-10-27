@@ -1,45 +1,43 @@
 import { MAIN_VIEW_MODES } from '../viewModes';
-import { durationToDecay } from '../math/decay';
+import { buildDefaultGraph, compileGraph } from '../graph';
+import {
+  WebGLGraphExecutor,
+  type WebGLGraphEncodeParams,
+  type WebGLGraphInputs,
+} from '../graph/exec/WebGLGraphExecutor';
 import type { RendererState } from '../types/RendererState';
 import type { WebGlTextureHandle } from '../types/TextureHandle';
 import {
-  STATIONARY_PREVIEW_SIZE,
-  STATIONARY_TRACER_WARMUP_FRAMES,
+  planStationaryPreview,
+  separatedPreviewState,
+  tracerWarmupState,
   type StationaryPreviewOptions,
   type StationaryPreviewResult,
 } from '../stationaryPreview';
-import { WebGLCompositorPass } from './WebGLCompositorPass';
-import { WebGLDebugPasses } from './WebGLDebugPasses';
-import { WebGLLayerPass } from './WebGLLayerPass';
-import { WebGLPersistencePass } from './WebGLPersistencePass';
-import { createTarget, destroyTarget, readTargetPixels, type RenderTarget } from './resources';
+import type { WebGLProfileLut } from './WebGLProfileLut';
+import { readTargetPixelsAsync } from './asyncReadback';
+import { createTarget, destroyTarget, type RenderTarget } from './resources';
+
+const EMPTY: StationaryPreviewResult = { separated: null, tracer: null };
 
 /**
- * Per-layer opacity, global multiplier folded in — one entry per layer the
- * state actually carries, not a fixed three.
+ * Stationary side previews on WebGL: frames of the default pass graph, drawn
+ * by an executor of their own at 128×128 — its own pool, so the main canvas's
+ * tracers are untouched — over the context's shared program cache, as
+ * `StationaryPreviewRenderer` does on WebGPU.
  */
-function computeLayerOpacities(state: RendererState): number[] {
-  const globalLayerOpacity = state.layerOpacity ?? 1.0;
-  const perLayer = state.layerOpacities;
-  return state.layers.map((_, i) => globalLayerOpacity * (perLayer?.[i] ?? 1));
-}
-
-/** Isolated WebGL2 path for stationary side previews (does not touch main FBOs). */
 export class WebGLStationaryPreviewRenderer {
   private readonly gl: WebGL2RenderingContext;
-  private readonly debugPasses: WebGLDebugPasses;
-  private readonly layerPass: WebGLLayerPass;
-  private readonly persistencePass: WebGLPersistencePass;
-  private readonly compositorPass: WebGLCompositorPass;
+  private readonly executor: WebGLGraphExecutor;
+  /** The main renderer's colour-profile LUT, already uploaded for the session. */
+  private readonly profileLut: WebGLProfileLut;
   private sourceTexture: WebGlTextureHandle | null = null;
   private outputTarget: RenderTarget | null = null;
 
-  constructor(gl: WebGL2RenderingContext) {
+  constructor(gl: WebGL2RenderingContext, profileLut: WebGLProfileLut) {
     this.gl = gl;
-    this.debugPasses = new WebGLDebugPasses(gl);
-    this.layerPass = new WebGLLayerPass(gl, this.debugPasses);
-    this.persistencePass = new WebGLPersistencePass(gl);
-    this.compositorPass = new WebGLCompositorPass(gl);
+    this.profileLut = profileLut;
+    this.executor = new WebGLGraphExecutor(gl);
   }
 
   setSourceTexture(texture: WebGlTextureHandle | null): void {
@@ -51,40 +49,62 @@ export class WebGLStationaryPreviewRenderer {
       destroyTarget(this.gl, this.outputTarget);
       this.outputTarget = null;
     }
-    this.layerPass.destroy();
-    this.persistencePass.destroy();
-    this.compositorPass.destroy();
-    this.debugPasses.destroy();
+    this.executor.destroy();
   }
 
-  render(
+  async render(
     state: RendererState,
     options: StationaryPreviewOptions = {},
-  ): StationaryPreviewResult {
-    if (!this.sourceTexture) return { separated: null, tracer: null };
+  ): Promise<StationaryPreviewResult> {
+    if (!this.sourceTexture) return EMPTY;
 
-    const size = STATIONARY_PREVIEW_SIZE;
-    const fps = options.fps ?? 30;
-    const warmupFrames = options.tracerWarmupFrames ?? STATIONARY_TRACER_WARMUP_FRAMES;
-    const wantSeparated = options.separated !== false;
-    const wantTracer = options.tracer !== false;
+    const plan = planStationaryPreview(state, options);
+    const { size, fps } = plan;
+
+    this.executor.setGraph(compileGraph(buildDefaultGraph(plan.layerCount), 'webgl'));
+    if (this.executor.prepare() !== null) return EMPTY;
+
     this.ensureOutputTarget(size);
-    this.layerPass.ensureTextures(size, size);
-    this.persistencePass.ensureTextures(size, size);
-    this.persistencePass.clear();
+    const preview = plan.state;
+    this.profileLut.update(preview.colorProfileLut);
+    const inputs: WebGLGraphInputs = {
+      source: this.sourceTexture,
+      profileLut: this.profileLut.texture,
+      motionField: null,
+    };
+    const frame: Omit<WebGLGraphEncodeParams, 'state'> = {
+      fps,
+      layer: { width: size, height: size },
+      tracer: { width: size, height: size },
+      aspect: 1,
+      output: { target: this.outputTarget, viewport: { x: 0, y: 0, width: size, height: size } },
+    };
 
-    const layerOpacities = computeLayerOpacities(state);
-    const separated = wantSeparated
-      ? this.renderSeparated(state, size, layerOpacities)
-      : null;
+    this.executor.clearAccumulators();
+    let separated: Uint8ClampedArray<ArrayBuffer> | null = null;
+    if (plan.separated) {
+      this.executor.encode(inputs, { ...frame, state: separatedPreviewState(preview) });
+      separated = await this.readOutput(size);
+    }
 
     let tracer: Uint8ClampedArray<ArrayBuffer> | null = null;
-    if (wantTracer) {
-      this.persistencePass.clear();
-      for (let frame = 0; frame < warmupFrames; frame += 1) {
-        this.encodeLayersAndPersistence(state, fps);
+    if (plan.tracer) {
+      this.executor.clearAccumulators();
+      const warmup = tracerWarmupState(preview);
+      for (let i = 0; i < plan.warmupFrames; i += 1) {
+        this.executor.encode(inputs, { ...frame, state: warmup, composite: false });
       }
-      tracer = this.renderTracer(state, size, layerOpacities);
+      // The warmed-up tracers, read out of the graph through the tracer view.
+      this.executor.composite(inputs, {
+        ...preview,
+        mainViewMode: MAIN_VIEW_MODES.FULL_RES_TRACER,
+        viewportQuarterZoom: false,
+        viewportHalfOverlay: false,
+        diagnosticsMode: false,
+        tracerInspectShowLayers: false,
+        tracerInspectHeatmap: false,
+      }, frame.output);
+      tracer = await this.readOutput(size);
     }
 
     return { separated, tracer };
@@ -96,79 +116,8 @@ export class WebGLStationaryPreviewRenderer {
     this.outputTarget = createTarget(this.gl, size, size);
   }
 
-  private encodeLayersAndPersistence(state: RendererState, fps: number): void {
-    this.layerPass.render(this.sourceTexture!.texture, state, 0, 1);
-    const readIndex = this.persistencePass.pingPong;
-    const writeIndex = (1 - this.persistencePass.pingPong) as 0 | 1;
-    const aboveDecay = durationToDecay(state.tracerAboveDuration ?? 500, fps);
-    const belowDecay = durationToDecay(state.tracerBelowDuration ?? 2000, fps);
-    this.persistencePass.render(
-      this.persistencePass.tracerAbove[writeIndex]!,
-      this.persistencePass.tracerAbove[readIndex]!,
-      this.layerPass.targets,
-      aboveDecay,
-      state,
-    );
-    this.persistencePass.render(
-      this.persistencePass.tracerBelow[writeIndex]!,
-      this.persistencePass.tracerBelow[readIndex]!,
-      this.layerPass.targets,
-      belowDecay,
-      state,
-    );
-    this.persistencePass.advancePingPong(false);
-  }
-
-  private renderSeparated(
-    state: RendererState,
-    size: number,
-    layerOpacities: number[],
-  ): Uint8ClampedArray<ArrayBuffer> | null {
-    this.layerPass.render(this.sourceTexture!.texture, state, 0, 1);
-    const separatedState: RendererState = {
-      ...state,
-      tracerAboveIntensity: 0,
-      tracerBelowIntensity: 0,
-      mainViewMode: MAIN_VIEW_MODES.PROCESSED_COMPOSITE,
-      viewportQuarterZoom: false,
-      viewportHalfOverlay: false,
-      diagnosticsMode: false,
-    };
-    this.compositorPass.render(
-      this.outputTarget,
-      size,
-      size,
-      this.layerPass.targets,
-      this.persistencePass,
-      separatedState,
-      layerOpacities,
-    );
-    return readTargetPixels(this.gl, this.outputTarget!, size, size);
-  }
-
-  private renderTracer(
-    state: RendererState,
-    size: number,
-    layerOpacities: number[],
-  ): Uint8ClampedArray<ArrayBuffer> | null {
-    const tracerState: RendererState = {
-      ...state,
-      mainViewMode: MAIN_VIEW_MODES.FULL_RES_TRACER,
-      viewportQuarterZoom: false,
-      viewportHalfOverlay: false,
-      diagnosticsMode: false,
-      tracerInspectShowLayers: false,
-      tracerInspectHeatmap: false,
-    };
-    this.compositorPass.render(
-      this.outputTarget,
-      size,
-      size,
-      this.layerPass.targets,
-      this.persistencePass,
-      tracerState,
-      layerOpacities,
-    );
-    return readTargetPixels(this.gl, this.outputTarget!, size, size);
+  private async readOutput(size: number): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
+    // A missed thumbnail is retried by the live-preview interval.
+    return this.outputTarget ? readTargetPixelsAsync(this.gl, this.outputTarget, size, size) : null;
   }
 }

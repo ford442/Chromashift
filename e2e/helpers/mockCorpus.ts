@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 
 /** Wide enough that the centered main canvas clears the 384px NUNIF panel. */
-export const E2E_VIEWPORT = { width: 1600, height: 900 } as const;
+const E2E_VIEWPORT = { width: 1600, height: 900 } as const;
 
 const MINIMAL_CORPUS_BODY = JSON.stringify([
   { url: '/e2e-fixture.png', label: 'E2E Fixture' },
@@ -22,7 +22,7 @@ export async function stubMinimalCorpus(page: Page): Promise<void> {
 }
 
 /** A corpus the size of the real one, without 3137 round trips to cr0p.1ink.us. */
-export function largeCorpusBody(count: number): string {
+function largeCorpusBody(count: number): string {
   return JSON.stringify(
     Array.from({ length: count }, (_, i) => ({
       url: `/corpus/${String(i).padStart(5, '0')}.png`,

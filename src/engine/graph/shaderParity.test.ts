@@ -19,6 +19,8 @@ import {
 } from '../webgl/shaders/bandGlsl';
 import { COINCIDENCE_COMPUTE_SHADER } from '../compute/chores/kernels';
 import { normaliseShaderSource } from './shaderText';
+import { compileGraph } from './compile';
+import { buildDefaultGraph } from './defaultGraph';
 
 /**
  * Pixel-identity guard for the pass-graph migration.
@@ -58,6 +60,24 @@ describe('default-graph WGSL matches the hand-written pipeline', () => {
 
   it('emits the coincidence compute kernel unchanged', () => {
     expectMatchesGolden(COINCIDENCE_COMPUTE_SHADER, 'coincidence-compute.wgsl');
+  });
+});
+
+describe('the default graph the executor draws emits the goldens', () => {
+  // The named sources above are re-exports for tests and tools; this is the
+  // text the WebGPU renderer actually binds, straight out of the compiler.
+  const emitted = new Map(
+    compileGraph(buildDefaultGraph(3), 'webgpu').emitted.map((pass) => [pass.nodeId, pass.fragment]),
+  );
+  it.each([
+    ['layer0', 'band-layer-0.wgsl'],
+    ['layer1', 'band-layer-1.wgsl'],
+    ['layer2', 'band-layer-2.wgsl'],
+    ['tracer-below', 'coincidence-decay.wgsl'],
+    ['tracer-above', 'coincidence-decay.wgsl'],
+    ['composite', 'compositor.wgsl'],
+  ])('%s', (nodeId, goldenFile) => {
+    expectMatchesGolden(emitted.get(nodeId)!, goldenFile);
   });
 });
 

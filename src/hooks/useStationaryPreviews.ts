@@ -37,6 +37,13 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
   const lastFingerprintRef = useRef('');
   const refreshGenRef = useRef(0);
   const inFlightRef = useRef(false);
+  /**
+   * What was asked for while a refresh was in flight, run when it settles.
+   * Dropping it lost the post-load Separated refresh whenever the 2 s tracer
+   * refresh happened to be running: the fingerprint then matched, so nothing
+   * asked again and the thumbnail stayed blank.
+   */
+  const queuedRef = useRef<{ separated: boolean; tracer: boolean } | null>(null);
 
   const applyPreviewResult = useCallback((
     separated: Uint8ClampedArray<ArrayBuffer> | null,
@@ -77,13 +84,21 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
 
   const refreshPreviews = useCallback(async (
     options: { separated?: boolean; tracer?: boolean } = {},
-  ) => {
+  ): Promise<void> => {
     const renderer = rendererRef.current;
-    if (!renderer || inFlightRef.current) return;
+    if (!renderer) return;
 
     const wantSeparated = options.separated !== false;
     const wantTracer = options.tracer !== false;
     if (!wantSeparated && !wantTracer) return;
+    if (inFlightRef.current) {
+      const queued = queuedRef.current;
+      queuedRef.current = {
+        separated: wantSeparated || (queued?.separated ?? false),
+        tracer: wantTracer || (queued?.tracer ?? false),
+      };
+      return;
+    }
 
     const current = renderStateRef.current;
     if (!current.engine.gpuReady || current.ui.exportingVideo) return;
@@ -97,16 +112,19 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
         separated: wantSeparated,
         tracer: wantTracer,
       });
-      if (gen !== refreshGenRef.current) return;
-      applyPreviewResult(result.separated, result.tracer);
+      if (gen === refreshGenRef.current) applyPreviewResult(result.separated, result.tracer);
     } catch (error) {
       console.warn('Stationary preview refresh failed:', error);
     } finally {
       inFlightRef.current = false;
     }
+    const queued = queuedRef.current;
+    queuedRef.current = null;
+    if (queued) await refreshPreviews(queued);
   }, [rendererRef, renderStateRef, applyPreviewResult]);
 
   const gpuReady = state.engine.gpuReady;
+  const paused = state.engine.paused;
   const exportingVideo = state.ui.exportingVideo;
   const quadActive = isQuadCompareLayout(state.ui.compareView.layout);
   const livePreviewEnabled = state.output.livePreviewEnabled;
@@ -115,6 +133,9 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
 
   useEffect(() => {
     if (!gpuReady || exportingVideo || quadActive) return;
+    // Same reason as the interval below: a WebGL thumbnail read while the live
+    // loop is submitting frames drains the whole context. Refresh when paused.
+    if (rendererRef.current?.backend === 'webgl' && !paused) return;
 
     const forced = capturePreviewAfterRender.current;
     if (forced) capturePreviewAfterRender.current = false;
@@ -125,15 +146,22 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     void refreshPreviews({ separated: true, tracer: true });
   }, [
     gpuReady,
+    paused,
     exportingVideo,
     quadActive,
     settingsFingerprint,
     refreshPreviews,
     capturePreviewAfterRender,
+    rendererRef,
   ]);
 
   useEffect(() => {
     if (!gpuReady || exportingVideo || quadActive || !livePreviewEnabled || tracerPreviewFrozen) return;
+    // The tracer thumbnail re-renders on this same WebGL context. A pixel-pack
+    // map there drains every live frame still queued, which on a deferred
+    // driver freezes input. WebGPU readback does not, so only that backend
+    // keeps the repeating refresh; WebGL still updates on a settings change.
+    if (rendererRef.current?.backend === 'webgl') return;
 
     const interval = window.setInterval(() => {
       void refreshPreviews({ separated: false, tracer: true });
@@ -147,5 +175,6 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     livePreviewEnabled,
     tracerPreviewFrozen,
     refreshPreviews,
+    rendererRef,
   ]);
 }

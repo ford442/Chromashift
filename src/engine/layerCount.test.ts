@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { WebGPUPipelines, drawnLayerCount, encodeLayerClear } from './WebGPUPipelines';
+import { emitCoincidenceHeatmapWgsl, emitCompareWgsl, emitTracerViewWgsl } from './shaders/diagnostics';
+import { WebGPUPipelines } from './webgpu/WebGPUPipelines';
+import { compileGraph } from './graph/compile';
+import { buildDefaultGraph } from './graph/defaultGraph';
+import { nodeLayoutEntries } from './graph/exec/nodePipelines';
 import { buildRendererState } from './buildRendererState';
 import { MAX_LAYER_COUNT, assertLayerCount, clampLayerCount } from './graph/layerSpecs';
-import {
-  emitCoincidenceDecayWgsl,
-  emitCompositorWgsl,
-} from './graph/templates/wgsl';
-import { sameLayerTextures } from './BindGroupCache';
+import { sameLayerTextures } from './webgpu/bindGroups';
 import { chromashiftReducer } from '../state/chromashiftReducer';
 import { createInitialState } from '../state/defaults';
 import type { LayerState, RendererState } from './types/RendererState';
@@ -191,10 +191,11 @@ describe('WebGPU bind-group layouts are generated from the layer count', () => {
   }
 
   it.each([1, 2, 3, 5, 8, MAX_LAYER_COUNT])('builds every layout at %i layers', (layerCount) => {
-    const pipelines = new WebGPUPipelines(device, 'bgra8unorm', 'rgba16float', layerCount);
+    const pipelines = new WebGPUPipelines(device, 'bgra8unorm', layerCount);
     expect(pipelines.layerCount).toBe(layerCount);
-    // Eleven layouts, every one created without throwing.
-    expect(layouts).toHaveLength(11);
+    // Six layouts — the inspect views and the readback blit — every one
+    // created without throwing.
+    expect(layouts).toHaveLength(6);
     for (const descriptor of layouts) {
       const list = bindings(descriptor);
       // Dense, zero-based, no duplicates — a gap means an entry was dropped.
@@ -203,66 +204,53 @@ describe('WebGPU bind-group layouts are generated from the layer count', () => {
   });
 
   it.each([1, 2, 3, 5, 8, MAX_LAYER_COUNT])(
-    'puts the persist and compositor uniforms where the shader reads them (%i layers)',
+    'lays the graph\'s accumulators and compositor out where their shaders read (%i layers)',
     (layerCount) => {
-      const pipelines = new WebGPUPipelines(device, 'bgra8unorm', 'rgba16float', layerCount);
-      layouts.length = 0;
+      const compiled = compileGraph(buildDefaultGraph(layerCount), 'webgpu');
+      const passes = compiled.emitted.filter((pass) => pass.kind === 'decay' || pass.kind === 'blend');
+      expect(passes).toHaveLength(3);
+      for (const pass of passes) {
+        expect(nodeLayoutEntries(pass)).toHaveLength(maxShaderBinding(pass.fragment) + 1);
+      }
+    },
+  );
 
-      const persist = pipelines.createPersistBGL() as unknown as { descriptor: GPUBindGroupLayoutDescriptor };
-      expect(bindings(persist.descriptor)).toHaveLength(
-        maxShaderBinding(emitCoincidenceDecayWgsl(layerCount)) + 1,
-      );
-
-      const compositor = pipelines.createCompositorBGL() as unknown as { descriptor: GPUBindGroupLayoutDescriptor };
-      expect(bindings(compositor.descriptor)).toHaveLength(
-        maxShaderBinding(emitCompositorWgsl(layerCount, '')) + 1,
-      );
+  it.each([1, 2, 3, 5, 8, MAX_LAYER_COUNT])(
+    'binds every layer the inspect shaders read (%i layers)',
+    (layerCount) => {
+      const pipelines = new WebGPUPipelines(device, 'bgra8unorm', layerCount);
+      const layout = (create: () => GPUBindGroupLayout) =>
+        bindings((create() as unknown as { descriptor: GPUBindGroupLayoutDescriptor }).descriptor);
+      // The tracer view, the heatmap and the compare split read every band
+      // layer, so a frame of any count is inspectable — not only the first three.
+      expect(layout(() => pipelines.createTracerViewBGL()))
+        .toHaveLength(maxShaderBinding(emitTracerViewWgsl(layerCount)) + 1);
+      expect(layout(() => pipelines.createHeatmapBGL()))
+        .toHaveLength(maxShaderBinding(emitCoincidenceHeatmapWgsl(layerCount)) + 1);
+      expect(layout(() => pipelines.createCompareBGL()))
+        .toHaveLength(maxShaderBinding(emitCompareWgsl(layerCount)) + 1);
+      expect(emitTracerViewWgsl(layerCount)).toContain(`layerOpacity${layerCount - 1}`);
+      expect(emitCompareWgsl(layerCount)).toContain(`cu.layerOpacity${layerCount - 1}`);
     },
   );
 
   it('rejects a layer count the band table cannot describe', () => {
-    expect(() => new WebGPUPipelines(device, 'bgra8unorm', 'rgba16float', 11)).toThrow(RangeError);
+    expect(() => new WebGPUPipelines(device, 'bgra8unorm', 11)).toThrow(RangeError);
   });
 });
 
 /**
- * The hand-written encode path still compiles the three canonical band passes.
- * A session with fewer layers must not hand `undefined` to the per-layer
- * uniforms (it used to throw in `layerRotationUniforms`), so it draws the
- * first `count` and clears the rest; a session with more draws three.
+ * The executor draws one band pass per `state.layers` entry, so the renderer
+ * state has to carry exactly `layers.count` of them — it used to hand the
+ * three-pass hand encoder `undefined` past the first `count`.
  */
-describe('band passes drawn by the hand-written encode path', () => {
-  it.each([
-    [1, 1],
-    [2, 2],
-    [3, 3],
-    [5, 3],
-    [MAX_LAYER_COUNT, 3],
-  ])('draws %i layers as %i of three passes', (layerCount, drawn) => {
-    expect(drawnLayerCount(3, layerCount)).toBe(drawn);
+describe('renderer state carries one layer per band pass', () => {
+  it.each([1, 2, 3, 5, MAX_LAYER_COUNT])('at %i layers', (layerCount) => {
     const state = buildRendererState(
       chromashiftReducer(createInitialState(), { type: 'layers/setCount', count: layerCount }),
       Array.from({ length: layerCount }, () => 0),
     );
-    for (let i = 0; i < drawnLayerCount(3, state.layers.length); i += 1) {
-      expect(state.layers[i]).toBeDefined();
-    }
-  });
-
-  it('clears a skipped layer target to transparent and stores it', () => {
-    const end = vi.fn();
-    const beginRenderPass = vi.fn(() => ({ end }));
-    const view = {};
-    const texture = { createView: () => view } as unknown as GPUTexture;
-    encodeLayerClear({ beginRenderPass } as unknown as GPUCommandEncoder, texture);
-    expect(beginRenderPass).toHaveBeenCalledWith({
-      colorAttachments: [{
-        view,
-        loadOp: 'clear',
-        storeOp: 'store',
-        clearValue: { r: 0, g: 0, b: 0, a: 0 },
-      }],
-    });
-    expect(end).toHaveBeenCalledTimes(1);
+    expect(state.layers).toHaveLength(layerCount);
+    for (const layer of state.layers) expect(layer).toBeDefined();
   });
 });

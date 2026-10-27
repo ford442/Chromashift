@@ -48,17 +48,33 @@ Recent closures (**#126–#133**) added the architecture below. All are **shippe
 | WebGPU hard-fail (no silent WebGL) | [#133](https://github.com/ford442/Chromashift/issues/133) | ✅ Shipped | `WEBGL_BACKEND_ENABLED = false`; probe overlay, `usingWebGL` false on failure; [webgl-fallback.md](webgl-fallback.md) |
 | Explicit WebGL diagnostic backend | [#141](https://github.com/ford442/Chromashift/issues/141) | ✅ Shipped | `?renderer=webgl` / panel; never automatic fallback; [webgl-fallback.md](webgl-fallback.md) |
 
-## Next up — prioritized backlog (#143–#145)
+## Next up — open backlog (2026-10 audit)
 
-Strategic audit (2026-08). **Build these before another still-image effect.** Compare, presets v3, live source, gpu-chores, optional GPU features, and explicit WebGL already shipped; the gaps are artist workflow, installation capture, and hot-path WASM.
+The open issues, in the order they unblock each other. **#225** (this audit's
+correctness sweep) and the WebGL-graph foundation (**#221**, **#222**) come
+first because #226 and #228 move or reuse exactly the paths they fix.
 
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
-| P1 | Colour profile designer + live LUT | [#143](https://github.com/ford442/Chromashift/issues/143) | Feature | L | JSON import is the current ceiling of the profile system |
-| P1 | Kiosk camera attract + live export | [#144](https://github.com/ford442/Chromashift/issues/144) | Feature | L | Consent splash; never `getUserMedia` from `?preset=` |
-| P1 | Compute persistence | [#145](https://github.com/ford442/Chromashift/issues/145) | Architecture | L–XL | ✅ Shipped — WASM hot-path cut, plus a `gpu-chores` `op: 'coincidence'` compute pass replacing the fragment shader's duplicated 3-layer overlap math; fragment path remains the fallback (see [gpu-bootstrap.md](gpu-bootstrap.md#gpu-chores-compute-device-adoption)). Decay constants are now codegen'd from `shared/decay.json` into TS/WGSL/GLSL/C++ with a `bandTable`-style divergence guard (see [wasm-engine.md](wasm-engine.md#shared-decay-table-shareddecayjson)) |
+| P0 | Correctness sweep | [#225](https://github.com/ford442/Chromashift/issues/225) | Foundation | M | ✅ Shipped — the WASM engine loads (fixed SIMD probe, `window.wasmEngineState` on the page and both workers); exports read back RGBA from a `bgra8unorm` canvas; Retry GPU after device loss requests a fresh adapter; inspect-view pipelines compile async and their errors reach the overlay; XR advances the tracers once per frame at `framebufferScaleFactor` |
+| P0 | WebGL draws the pass graph | [#221](https://github.com/ford442/Chromashift/issues/221) | Foundation | L | ✅ Shipped — `WebGLGraphExecutor` replaces the hand-written WebGL passes (diagnostic, XR, Playwright) |
+| P0 | WebGL context policy | [#222](https://github.com/ford442/Chromashift/issues/222) | Foundation | M | ✅ Shipped — power-preference attempts, context loss/restore, MSAA matching the passes, half-float targets |
+| P1 | Checked inputs, one parameter registry, one frame clock | [#226](https://github.com/ford442/Chromashift/issues/226) | Foundation | L | Validated settings schema, `ParamPath`, `FrameClock`. Depends on #225; unblocks #177, #178, #227 |
+| P1 | One graph everywhere | [#228](https://github.com/ford442/Chromashift/issues/228) | Platform | XL | Safari/Firefox WebGPU, the WebGL executor, a headless Dawn renderer + CLI. Depends on #225 |
+| P1 | Multi-output slots | [#178](https://github.com/ford442/Chromashift/issues/178) | Architecture | L | XR as an orchestrator peer, kiosk walls, one chore session |
+| P2 | Performance timeline (schema v9) | [#224](https://github.com/ford442/Chromashift/issues/224) | Feature | L | Keyframe value params; drives export and kiosk. Re-files the closed #153 |
+| P2 | Modulation matrix | [#227](https://github.com/ford442/Chromashift/issues/227) | Feature | L | Any source → any `ParamPath`, recorded takes. Depends on #226 |
+| P2 | Previous-frame feedback | [#223](https://github.com/ford442/Chromashift/issues/223) | Architecture | M | A `history` edge the validator accepts; starter `?graph=recurse` |
+| P2 | One ONNX Runtime WebGPU ML stack | [#206](https://github.com/ford442/Chromashift/issues/206) | Feature | L | Drop TF.js; depth + subject-matte sources for the pass graph |
+| P2 | Pass-graph node editor | [#177](https://github.com/ford442/Chromashift/issues/177) | Feature | L | `@xyflow/react` + versioned graph JSON |
 
-**Foundation vs features:** **#143** is the right next *content* tool (palettes), not a fourth layer shader. **#144** is the installation product on top of live source. **#145** has landed in full.
+**Closed, not planned:** the colour profile designer ([#143](https://github.com/ford442/Chromashift/issues/143)),
+kiosk camera attract ([#144](https://github.com/ford442/Chromashift/issues/144)) and the automation
+timeline ([#153](https://github.com/ford442/Chromashift/issues/153); #224 re-files it).
+[#145](https://github.com/ford442/Chromashift/issues/145) (compute persistence) shipped: a
+`gpu-chores` `op: 'coincidence'` compute pass with the fragment path as fallback (see
+[gpu-bootstrap.md](gpu-bootstrap.md#gpu-chores-compute-device-adoption)), and decay constants
+codegen'd from `shared/decay.json` (see [wasm-engine.md](wasm-engine.md#shared-decay-table-shareddecayjson)).
 
 ## Strategic audit (2026-08, #149–#155)
 
@@ -74,25 +90,23 @@ layers that do not currently scale.
 
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
-| P0 | Stop whole-tree re-renders | [#149](https://github.com/ford442/Chromashift/issues/149) | Foundation | M–L | Zero `React.memo` in the tree; the render loop dispatches at 5 Hz, re-reconciling 3137 thumbnails |
-| P0 | Analysis off the main thread | [#150](https://github.com/ford442/Chromashift/issues/150) | Foundation | M | `getImageDataAtNaturalSize` is a 268 MB synchronous alloc at 8K, on the CPU lanes that exist *because* the GPU lane is unavailable |
-| P1 | Virtualize + index the image browser | [#151](https://github.com/ford442/Chromashift/issues/151) | Foundation | M | 3137 unvirtualized entries, 360 kB manifest parsed at boot, no search |
-| P1 | Real WASM SIMD, one ABI, perf gate | [#152](https://github.com/ford442/Chromashift/issues/152) | Foundation | L | `-msimd128` with zero intrinsics; C exports *and* embind for the same 15 functions |
+| P0 | Stop whole-tree re-renders | [#149](https://github.com/ford442/Chromashift/issues/149) | Foundation | M–L | ✅ Shipped — Zero `React.memo` in the tree; the render loop dispatches at 5 Hz, re-reconciling 3137 thumbnails |
+| P0 | Analysis off the main thread | [#150](https://github.com/ford442/Chromashift/issues/150) | Foundation | M | ✅ Shipped — `getImageDataAtNaturalSize` is a 268 MB synchronous alloc at 8K, on the CPU lanes that exist *because* the GPU lane is unavailable |
+| P1 | Virtualize + index the image browser | [#151](https://github.com/ford442/Chromashift/issues/151) | Foundation | M | ✅ Shipped — 3137 unvirtualized entries, 360 kB manifest parsed at boot, no search |
+| P1 | Real WASM SIMD, one ABI, perf gate | [#152](https://github.com/ford442/Chromashift/issues/152) | Foundation | L | ✅ Shipped — `-msimd128` with zero intrinsics; C exports *and* embind for the same 15 functions |
 
 ### Features
 
 | Pri | Target | Issue | Type | Complexity | Notes |
 |-----|--------|-------|------|------------|-------|
-| P1 | Automation timeline (schema v6) | [#153](https://github.com/ford442/Chromashift/issues/153) | Feature | L | Presets are poses, not performances; unblocks authored exports and kiosk attract. Depends on #149. (Was planned as v5; #155's tracer motion took that version first.) |
-| P2 | Pass-graph IR + compiler + executor | [#154](https://github.com/ford442/Chromashift/issues/154) | Architecture | XL | 🚧 Phases 1–2 shipped behind `?graph=1` — the compiler (IR, validator, scheduler, transient pool, structural-hash cache, WGSL/GLSL templates pinned to the pre-refactor goldens) and a WebGPU `GraphExecutor` that draws it. The default graph is byte-identical to the hand encoder on a GPU (±1 on a few pixels against its compute-fed stamp); `?graph=blur` / `?graph=warp` draw new shapes with no renderer edit; pipelines the device rejects are refused by name, never drawn black. Two temporal node kinds now execute on WebGPU: `history` (an N-frame ring, 2–8 frames, bounded VRAM) and `displace` (UVs pushed by the motion field or colour-as-flow). They ship with two JSON starter graphs, `?graph=smear` (body smear, the kiosk-camera look) and `?graph=feedback` (layer-0 self-displacing warp). Left: the executor as the default path, the WebGL executor (and with it GLSL `history`/`displace`), N-layer execution, a third tracer. See [PASS_GRAPH.md](PASS_GRAPH.md) |
+| P1 | Automation timeline (schema v6) | [#153](https://github.com/ford442/Chromashift/issues/153) | Feature | L | Closed, not planned (re-filed as #224). Presets are poses, not performances; unblocks authored exports and kiosk attract. Depends on #149. (Was planned as v5; #155's tracer motion took that version first.) |
+| P2 | Pass-graph IR + compiler + executor | [#154](https://github.com/ford442/Chromashift/issues/154) | Architecture | XL | ✅ Shipped — Phases 1–3: the compiler (IR, validator, scheduler, transient pool, structural-hash cache, WGSL/GLSL templates pinned to the pre-refactor goldens) and a WebGPU `GraphExecutor` that is now the **only** WebGPU encode path (#203): every frame, view, export pass, stationary preview and compare slot, at any layer count (1–10), with motion modes, the `hdr-extended` present and N tracer timescales (`?graph=trails3`) as graph variants and nodes. The hand encoder is deleted; its frames are pinned in `e2e/__golden__/` and the default graph still draws them (the compute-fed stamp's ±1 was accepted rather than made a node). `?graph=blur` / `?graph=warp` draw new shapes with no renderer edit; pipelines the device rejects are refused by name and the default graph stands in, never a black canvas. Two temporal node kinds execute on WebGPU: `history` (an N-frame ring, 2–8 frames, bounded VRAM) and `displace` (UVs pushed by the motion field or colour-as-flow), with the JSON starters `?graph=smear` (body smear, the kiosk-camera look) and `?graph=feedback` (layer-0 self-displacing warp). The WebGL diagnostic / XR backend executes the same graphs (`WebGLGraphExecutor`, GLSL for every kind, default-graph frame pinned in `e2e/__golden__/webgl-default-composite.png`). Left: `history` feedback cycles. See [PASS_GRAPH.md](PASS_GRAPH.md) |
 | P2 | Motion-aware tracers | [#155](https://github.com/ford442/Chromashift/issues/155) | Feature | L | ✅ Shipped — a `gpu-chores` `op: 'motion-field'` (quarter-res frame difference, GPU + WASM/TS lanes) feeding a `motionMode` / `motionGain` / `motionDecayBias` / `motionThreshold` term on both persistence backends, preset schema v5, and its own Perf HUD row. `off` is the default and binds the pre-motion shader variant unchanged. **Stage 2** adds coarse-to-fine Lucas–Kanade optical flow behind `direction`: two WGSL compute passes, a C++/SIMD128 `computeMotionFlow`, and the portable TS reference, all pinned to one fixture; the CPU solve runs in `motion.worker.ts`. Lifts naturally into #154 as a `motion` node. See [LIVE_SOURCE.md](LIVE_SOURCE.md#optical-flow-stage-2) |
 
-**Reading the split:** #149 and #150 are the two that make everything else cheaper,
-and neither changes a pixel. #153 is the highest-value *product* addition — it is
-what makes video export and kiosk mode worth using. #154 is the one that removes
-the ceiling, and it is deliberately gated (`?graph=1`) so it can ship dark — the
-compiler and the WebGPU executor are in tree, and the gate is still off by default,
-so outside `?graph=1` the renderers encode the fixed topology themselves.
+**Reading the split:** #149 and #150 made everything else cheaper without changing
+a pixel. #154 removed the ceiling: since Phase 3 the WebGPU executor draws every
+frame and the hand encoder is gone, and since #221 the WebGL backend draws the
+same compiled graph. #153 closed unbuilt; #224 carries the timeline forward.
 
 ## Research
 

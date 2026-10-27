@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { ImageEntry } from '../engine/TextureManager';
-import { buildCorpusIndex, filterCorpusIndex, type CorpusIndex } from '../engine/corpusIndex';
+import type { ImageEntry } from '../engine/library/imageEntry';
+import { buildCorpusIndex, filterCorpusIndex, type CorpusIndex } from '../engine/library/corpusIndex';
 
 /** Card width (`w-36`) plus the `gap-3` between cards, in px. */
 const TILE_WIDTH = 144;
@@ -184,10 +184,13 @@ interface VirtualCardRowProps {
 /**
  * Owns the virtualizer, and nothing else.
  *
- * `useVirtualizer` returns fresh closures each render, so the React Compiler
- * declines to memoize any component that calls it. Keeping it in this leaf means
- * only the card row pays that price — the header, the search box and the corpus
- * index above stay compiler-optimized.
+ * `useVirtualizer` returns fresh closures each render, which the React Compiler
+ * cannot memoize around (`react-hooks/incompatible-library` flags it). The
+ * compiler is not enabled in this build — `babel-plugin-react-compiler` is not
+ * configured, so memoization is the manual `memo` / stable-handler discipline in
+ * AGENTS.md "Subscription model" — but keeping the virtualizer in this leaf
+ * means that if it is ever turned on, only the card row is skipped and the
+ * header, the search box and the corpus index above stay compilable.
  */
 const VirtualCardRow = memo(function VirtualCardRow({
   index,
@@ -210,14 +213,14 @@ const VirtualCardRow = memo(function VirtualCardRow({
   return (
     <div className="relative h-[11.5rem]" style={{ width: virtualizer.getTotalSize() }}>
       {virtualizer.getVirtualItems().map((item) => {
-        const corpusIndex = matches[item.index];
+        const corpusIndex = matches[item.index]!;
         const entry = index.entries[corpusIndex];
         if (!entry) return null;
         return (
           <Card
             key={corpusIndex}
             entry={entry}
-            label={index.labels[corpusIndex]}
+            label={index.labels[corpusIndex]!}
             corpusIndex={corpusIndex}
             isCurrent={corpusIndex === currentIndex}
             isReference={entry.url === referenceUrl}
@@ -239,7 +242,7 @@ export interface CorpusBrowserProps {
   referenceUrl: string | null;
   onSelectSource: (index: number) => void;
   onSelectReference: (index: number) => void;
-  onClearLibrary: () => void;
+  onClearLibrary: () => Promise<void>;
 }
 
 /**
@@ -282,7 +285,7 @@ export const CorpusBrowser = memo(function CorpusBrowser({
 
   const handleClear = useCallback(() => {
     if (window.confirm(`Remove all ${localCount} locally-stored image(s)? This cannot be undone.`)) {
-      onClearLibrary();
+      void onClearLibrary();
     }
   }, [localCount, onClearLibrary]);
 

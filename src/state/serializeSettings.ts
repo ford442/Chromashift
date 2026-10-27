@@ -1,20 +1,20 @@
-import { parseDisplayColorSpace } from '../engine/gpuOptions';
 import { CANONICAL_LAYER_COUNT, clampLayerCount } from '../engine/graph/layerSpecs';
-import { createInitialState } from './defaults';
-import type { ChromashiftSettingsInput } from './chromashiftReducer';
+import { createDefaultCompareView } from './defaults';
 import type { ChromashiftState } from './types';
-import type { CompareViewState } from '../engine/compareViews';
-import {
-  CLASSIC_PROFILE_ID,
-  isClassicProfile,
-  parseColorProfile,
-} from '../engine/color/colorProfile';
+import type { CompareSlotConfig, CompareViewState } from '../engine/compareViews';
+import { CLASSIC_PROFILE_ID, isClassicProfile } from '../engine/color/colorProfile';
 import {
   DEFAULT_MOTION_DECAY_BIAS,
   DEFAULT_MOTION_GAIN,
+  DEFAULT_MOTION_MODE,
   DEFAULT_MOTION_THRESHOLD,
-  parseMotionMode,
 } from '../engine/motionModes';
+import { decode, formatIssues, type SchemaIssue } from './schemaFields';
+import {
+  rawSettingsSchema,
+  type ChromashiftSettingsInput,
+  type RawSettings,
+} from './settingsSchema';
 
 /**
  * Current preset schema.
@@ -29,19 +29,20 @@ export const SETTINGS_SCHEMA_VERSION = 8 as const;
 export const SUPPORTED_SETTINGS_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 /** First schema version that carries `layers.count` and variable-length arrays. */
-export const LAYER_COUNT_SCHEMA_VERSION = 7;
+const LAYER_COUNT_SCHEMA_VERSION = 7;
 
 /** First schema version that carries `viewport.canvasHdr`. */
-export const CANVAS_HDR_SCHEMA_VERSION = 8;
+const CANVAS_HDR_SCHEMA_VERSION = 8;
 
 export interface ChromashiftSettingsDocument {
   version: typeof SETTINGS_SCHEMA_VERSION;
   settings: ChromashiftSettingsInput;
 }
 
-interface RawSettingsDocument {
+/** A decoded document of any supported version, before migration. */
+export interface RawSettingsDocument {
   version: number;
-  settings: ChromashiftSettingsInput;
+  settings: RawSettings;
 }
 
 function cloneCompareView(compareView: CompareViewState): CompareViewState {
@@ -61,24 +62,42 @@ function cloneCompareView(compareView: CompareViewState): CompareViewState {
   };
 }
 
-function defaultCompareView(): CompareViewState {
-  return cloneCompareView(createInitialState().ui.compareView);
+/**
+ * A document's compare view over the session default: any subset of the
+ * fields loads, and the rest is the default single view.
+ */
+function migrateCompareView(compare: RawSettings['compare']): CompareViewState {
+  const fallback = createDefaultCompareView();
+  if (!compare) return fallback;
+  const slot = (
+    base: CompareSlotConfig,
+    patch: NonNullable<RawSettings['compare']>['slotA'],
+  ): CompareSlotConfig => ({
+    ...base,
+    ...patch,
+    settings: { ...(patch?.settings ?? base.settings) },
+  });
+  return {
+    layout: compare.layout ?? fallback.layout,
+    syncPlay: compare.syncPlay ?? fallback.syncPlay,
+    swipePosition: compare.swipePosition ?? fallback.swipePosition,
+    quadLayerIndex: compare.quadLayerIndex ?? fallback.quadLayerIndex,
+    slotA: slot(fallback.slotA, compare.slotA),
+    slotB: slot(fallback.slotB, compare.slotB),
+  };
 }
 
 /**
  * v3 added named colour profiles. Older documents predate them, so they migrate
  * to the classic profile — the look they were saved with. An embedded profile
- * table is re-validated here so a corrupt document can never reach the renderer.
+ * table has already been through `parseColorProfile` in the schema, so a corrupt
+ * one never gets this far.
  */
 function migrateColorProfile(
-  layers: ChromashiftSettingsInput['layers'],
-): ChromashiftSettingsInput['layers'] {
-  const colorProfileId = typeof layers?.colorProfileId === 'string' && layers.colorProfileId
-    ? layers.colorProfileId
-    : CLASSIC_PROFILE_ID;
-  const embedded = layers?.colorProfile
-    ? parseColorProfile(layers.colorProfile).profile
-    : null;
+  layers: RawSettings['layers'],
+): RawSettings['layers'] {
+  const colorProfileId = layers?.colorProfileId || CLASSIC_PROFILE_ID;
+  const embedded = layers?.colorProfile ?? null;
 
   return {
     ...layers,
@@ -95,18 +114,14 @@ function migrateColorProfile(
  * inert while the mode is off but keep a later toggle from landing on zeroes.
  */
 function migrateMotion(
-  tracers: ChromashiftSettingsInput['tracers'],
-): ChromashiftSettingsInput['tracers'] {
+  tracers: RawSettings['tracers'],
+): RawSettings['tracers'] {
   return {
     ...tracers,
-    motionMode: parseMotionMode(tracers?.motionMode),
-    motionGain: typeof tracers?.motionGain === 'number' ? tracers.motionGain : DEFAULT_MOTION_GAIN,
-    motionDecayBias: typeof tracers?.motionDecayBias === 'number'
-      ? tracers.motionDecayBias
-      : DEFAULT_MOTION_DECAY_BIAS,
-    motionThreshold: typeof tracers?.motionThreshold === 'number'
-      ? tracers.motionThreshold
-      : DEFAULT_MOTION_THRESHOLD,
+    motionMode: tracers?.motionMode ?? DEFAULT_MOTION_MODE,
+    motionGain: tracers?.motionGain ?? DEFAULT_MOTION_GAIN,
+    motionDecayBias: tracers?.motionDecayBias ?? DEFAULT_MOTION_DECAY_BIAS,
+    motionThreshold: tracers?.motionThreshold ?? DEFAULT_MOTION_THRESHOLD,
   };
 }
 
@@ -122,9 +137,9 @@ function migrateMotion(
  * load, so a hand-edited preset degrades to the default look instead of nothing.
  */
 function migrateLayerCount(
-  layers: ChromashiftSettingsInput['layers'],
+  layers: RawSettings['layers'],
   version: number,
-): ChromashiftSettingsInput['layers'] {
+): RawSettings['layers'] {
   const count = version >= LAYER_COUNT_SCHEMA_VERSION
     ? clampLayerCount(layers?.count ?? layers?.angles?.length)
     : CANONICAL_LAYER_COUNT;
@@ -138,34 +153,25 @@ function migrateLayerCount(
  * the flag never switches a viewer's canvas to HDR.
  */
 function migrateCanvasHdr(
-  viewport: ChromashiftSettingsInput['viewport'],
+  viewport: RawSettings['viewport'],
   version: number,
 ): boolean {
   return version >= CANVAS_HDR_SCHEMA_VERSION && viewport?.canvasHdr === true;
 }
 
-/** Normalize a v1–v8 raw document to the current schema. */
+/**
+ * Normalize a decoded v1–v8 document to the current schema. The input has
+ * already been through {@link rawSettingsSchema}, so every field here is
+ * present-and-valid or absent; the migrations only move and default.
+ */
 export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDocument {
+  const {
+    viewportQuarterZoom: legacyQuarterZoom,
+    viewportHalfOverlay: legacyHalfOverlay,
+    displayColorSpace: legacyColorSpace,
+    ...output
+  } = doc.settings.output ?? {};
   const { settings } = doc;
-  const output = settings.output ? { ...settings.output } : undefined;
-
-  const viewportQuarterZoom = settings.viewport?.quarterZoom
-    ?? output?.viewportQuarterZoom
-    ?? false;
-  const viewportHalfOverlay = settings.viewport?.halfOverlay
-    ?? output?.viewportHalfOverlay
-    ?? false;
-
-  const viewportColorSpace = parseDisplayColorSpace(
-    settings.viewport?.colorSpace
-      ?? (output as { displayColorSpace?: unknown } | undefined)?.displayColorSpace,
-  );
-
-  if (output) {
-    delete output.viewportQuarterZoom;
-    delete output.viewportHalfOverlay;
-    delete (output as { displayColorSpace?: unknown }).displayColorSpace;
-  }
 
   const reactive = settings.reactive
     ? {
@@ -183,17 +189,15 @@ export function migrateToLatest(doc: RawSettingsDocument): ChromashiftSettingsDo
       ...settings,
       layers: migrateLayerCount(migrateColorProfile(settings.layers), doc.version),
       tracers: migrateMotion(settings.tracers),
-      output,
+      output: settings.output ? output : undefined,
       reactive,
       viewport: {
-        quarterZoom: viewportQuarterZoom,
-        halfOverlay: viewportHalfOverlay,
-        colorSpace: viewportColorSpace,
+        quarterZoom: settings.viewport?.quarterZoom ?? legacyQuarterZoom ?? false,
+        halfOverlay: settings.viewport?.halfOverlay ?? legacyHalfOverlay ?? false,
+        colorSpace: settings.viewport?.colorSpace ?? legacyColorSpace ?? 'srgb',
         canvasHdr: migrateCanvasHdr(settings.viewport, doc.version),
       },
-      compare: settings.compare
-        ? cloneCompareView(settings.compare)
-        : defaultCompareView(),
+      compare: migrateCompareView(settings.compare),
       kiosk: {
         kioskEnabled: settings.kiosk?.kioskEnabled ?? false,
         kioskUiHidden: settings.kiosk?.kioskUiHidden ?? false,
@@ -293,26 +297,54 @@ export function serializeSettings(
   };
 }
 
+export interface DecodedSettings {
+  /** The migrated document, or null when the envelope itself is unusable. */
+  document: ChromashiftSettingsDocument | null;
+  /** Every field the decoder clamped, rounded or dropped, by path. */
+  issues: SchemaIssue[];
+}
+
+/**
+ * Decode an untrusted settings document (file, `?preset=` URL, localStorage).
+ *
+ * Only the envelope is all-or-nothing: unparseable JSON, a missing `settings`
+ * object or an unsupported `version` reject the document. Inside it, each bad
+ * field is clamped or dropped on its own and reported in `issues`.
+ */
+export function decodeSettingsDocument(json: string): DecodedSettings {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return { document: null, issues: [{ path: '(root)', message: 'not valid JSON' }] };
+  }
+  const { version, settings } = (parsed ?? {}) as { version?: unknown; settings?: unknown };
+  if (!SUPPORTED_SETTINGS_VERSIONS.some((supported) => supported === version)) {
+    return { document: null, issues: [{ path: 'version', message: 'missing or unsupported version' }] };
+  }
+  // Paths are relative to `settings` (`engine.fps`), the same as a ParamPath.
+  const { value, issues } = decode(rawSettingsSchema, settings);
+  if (!value) return { document: null, issues };
+  return {
+    document: migrateToLatest({ version: version as number, settings: value }),
+    issues,
+  };
+}
+
+/**
+ * {@link decodeSettingsDocument}, logging one warning that lists every
+ * corrected path. Returns null only for an unusable envelope.
+ */
 export function deserializeSettings(
   json: string,
 ): ChromashiftSettingsDocument | null {
-  try {
-    const parsed = JSON.parse(json) as RawSettingsDocument;
-    if (
-      !parsed?.settings
-      || !SUPPORTED_SETTINGS_VERSIONS.includes(parsed.version as (typeof SUPPORTED_SETTINGS_VERSIONS)[number])
-    ) {
-      return null;
-    }
-    return migrateToLatest(parsed);
-  } catch {
-    return null;
+  const { document, issues } = decodeSettingsDocument(json);
+  if (document && issues.length > 0) {
+    console.warn(`[chromashift] preset loaded with ${issues.length} correction(s): ${formatIssues(issues)}`);
   }
+  return document;
 }
 
 export function settingsToJson(state: ChromashiftState, pretty = true): string {
   return JSON.stringify(serializeSettings(state), null, pretty ? 2 : undefined);
 }
-
-/** @deprecated Renamed to {@link migrateToLatest} when schema v3 landed. */
-export const migrateV1ToV2 = migrateToLatest;

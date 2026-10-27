@@ -28,7 +28,7 @@ import type {
   MotionFieldJob,
 } from './types';
 
-export type { CpuChoreHost, CpuImageAnalysisResult } from './types';
+export type { CpuChoreHost } from './types';
 
 export class CpuChoreBackend implements ChoreBackendImpl {
   readonly backend: ChoreBackend;

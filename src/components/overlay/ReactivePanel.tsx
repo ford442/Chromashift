@@ -1,5 +1,12 @@
-import { memo } from 'react';
-import { MIDI_PARAM_LABELS, type MidiParamId } from '../../engine/reactive/types';
+import { memo, useMemo, useState } from 'react';
+import {
+  isParamPath,
+  listParams,
+  paramDisplayLabel,
+  paramSpec,
+  sliderProps,
+  type ParamPath,
+} from '../../state/params';
 import type { ReactivePanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
 
@@ -31,7 +38,7 @@ export const ReactivePanel = memo(function ReactivePanel({
   midiBindings,
   audioLevels,
   audioSensitivity,
-  layerExtension0,
+  layerCount,
   onReactiveEnabledChange,
   onAudioEnabledChange,
   onMidiEnabledChange,
@@ -41,7 +48,12 @@ export const ReactivePanel = memo(function ReactivePanel({
   onRemoveMidiBinding,
 }: ReactivePanelProps) {
   useRenderCount('ReactivePanel');
-  const layer0Binding = midiBindings.find((b) => b.param === 'layers.extensions.0');
+  const learnable = useMemo(() => listParams(layerCount), [layerCount]);
+  const [learnPick, setLearnPick] = useState<ParamPath>('layers.extensions.0');
+  // A pick for a layer the session no longer has falls back to the first
+  // parameter (the session-wide ones are always learnable, so there is one).
+  const learnParam = learnable.some((spec) => spec.path === learnPick) ? learnPick : learnable[0]!.path;
+  const learning = midiLearnTarget !== null;
 
   return (
     <div className="space-y-3">
@@ -100,9 +112,7 @@ export const ReactivePanel = memo(function ReactivePanel({
                   </span>
                   <input
                     type="range"
-                    min={0.2}
-                    max={2}
-                    step={0.05}
+                    {...sliderProps('reactive.audioSensitivity')}
                     value={audioSensitivity}
                     onChange={(e) => onAudioSensitivityChange(Number(e.target.value))}
                     className="flex-1 h-1 accent-amber-400"
@@ -136,56 +146,49 @@ export const ReactivePanel = memo(function ReactivePanel({
             {midiEnabled && midiAvailable && (
               <>
                 <div className="flex items-center gap-2">
+                  <select
+                    aria-label="MIDI learn target"
+                    value={learnParam}
+                    disabled={learning}
+                    onChange={(e) => {
+                      if (isParamPath(e.target.value)) setLearnPick(e.target.value);
+                    }}
+                    className="flex-1 min-w-0 text-[10px] px-1 py-1 rounded bg-zinc-800 border border-amber-500/30 text-amber-100 disabled:opacity-60"
+                  >
+                    {learnable.map((spec) => (
+                      <option key={spec.path} value={spec.path}>{paramDisplayLabel(spec)}</option>
+                    ))}
+                  </select>
                   <button
                     type="button"
-                    onClick={() => onMidiLearnTargetChange(
-                      midiLearnTarget === 'layers.extensions.0' ? null : 'layers.extensions.0',
-                    )}
-                    className={`flex-1 text-xs py-1.5 rounded border transition-all ${
-                      midiLearnTarget === 'layers.extensions.0'
+                    onClick={() => onMidiLearnTargetChange(learning ? null : learnParam)}
+                    className={`text-xs px-2 py-1 rounded border transition-all ${
+                      learning
                         ? 'bg-amber-500/40 border-amber-400 animate-pulse'
                         : 'bg-zinc-800 border-amber-500/30 hover:bg-zinc-700'
                     }`}
                   >
-                    {midiLearnTarget === 'layers.extensions.0'
-                      ? 'Twist a CC…'
-                      : 'Learn CC → Layer 0 step'}
+                    {learning ? 'Twist a CC…' : 'Learn CC'}
                   </button>
-                  <span className="text-[10px] tabular-nums text-amber-200 w-10 text-right">
-                    {Math.round(layerExtension0)}°
-                  </span>
                 </div>
-                {layer0Binding && (
-                  <p className="text-[10px] text-emerald-400/90 font-mono">
-                    CC {layer0Binding.controller}
-                    {layer0Binding.channel >= 0 ? ` ch${layer0Binding.channel + 1}` : ''}
-                    {' → '}
-                    {MIDI_PARAM_LABELS['layers.extensions.0']}
-                    <button
-                      type="button"
-                      onClick={() => onRemoveMidiBinding('layers.extensions.0')}
-                      className="ml-2 text-zinc-500 hover:text-red-400"
-                    >
-                      ✕
-                    </button>
-                  </p>
-                )}
                 {midiBindings.length > 0 && (
-                  <ul className="text-[10px] text-zinc-500 space-y-0.5">
-                    {midiBindings
-                      .filter((b) => b.param !== 'layers.extensions.0')
-                      .map((b) => (
-                        <li key={`${b.channel}:${b.controller}:${b.param}`} className="font-mono">
-                          CC {b.controller} → {MIDI_PARAM_LABELS[b.param as MidiParamId]}
-                          <button
-                            type="button"
-                            onClick={() => onRemoveMidiBinding(b.param)}
-                            className="ml-1 text-zinc-600 hover:text-red-400"
-                          >
-                            ✕
-                          </button>
-                        </li>
-                      ))}
+                  <ul className="text-[10px] space-y-0.5">
+                    {midiBindings.map((b) => (
+                      <li key={`${b.channel}:${b.controller}:${b.param}`} className="font-mono text-emerald-400/90">
+                        CC {b.controller}
+                        {b.channel >= 0 ? ` ch${b.channel + 1}` : ''}
+                        {' → '}
+                        {paramDisplayLabel(paramSpec(b.param))}
+                        <button
+                          type="button"
+                          aria-label={`Remove MIDI binding for ${paramSpec(b.param).label}`}
+                          onClick={() => onRemoveMidiBinding(b.param)}
+                          className="ml-2 text-zinc-500 hover:text-red-400"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
                   </ul>
                 )}
               </>

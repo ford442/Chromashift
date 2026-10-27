@@ -1,8 +1,25 @@
-import { durationToDecay } from '../../math/decay';
 import { layerRotationUniforms } from '../../math/rotation';
-import type { WebGPUPipelines } from '../../WebGPUPipelines';
 import type { RendererState } from '../../types/RendererState';
-import { compositorUniformLayout } from '../templates/wgsl';
+import {
+  BAND_LAYER_UNIFORMS,
+  BLUR_UNIFORMS,
+  DISPLACE_UNIFORMS,
+  HISTORY_UNIFORMS,
+  LUT_UNIFORMS,
+  WARP_UNIFORMS,
+  compositorUniformLayout,
+  persistUniformLayout,
+} from '../templates/wgsl';
+import { packUniforms, type UniformLayout, type UniformValues } from '../templates/uniformLayout';
+import {
+  EXTRA_TRACER_DURATION_MS,
+  EXTRA_TRACER_INTENSITY,
+  bandLayerUniforms,
+  compositorUniforms,
+  graphTracerDuration,
+  persistUniforms,
+  rendererStateValue,
+} from './uniforms';
 import {
   buildEncodePlan,
   encodedPassOrder,
@@ -11,13 +28,18 @@ import {
   type EncodeStep,
 } from './plan';
 import {
-  createNodePipeline,
+  createNodeProgram,
+  instantiateNodePipeline,
   destroyNodePipeline,
   type NodePipeline,
-  type NodePipelineContext,
+  type NodeProgram,
+  type NodeProgramContext,
 } from './nodePipelines';
+import { resourceKey } from '../../webgpu/bindGroups';
 import { GraphTexturePool, type PoolSizes } from './pool';
+import { GraphProgramCache, type ProgramSet } from './programCache';
 import type { CompiledGraph, EmittedPass } from '../types';
+import type { CanvasPresentation } from '../../gpu/gpuOptions';
 
 /** Externally supplied textures a `source` node and the band layers bind. */
 export interface GraphExternalInputs {
@@ -40,11 +62,19 @@ export interface GraphExternalInputs {
   motionField?: GPUTexture | null;
 }
 
-/** Texture roles the renderer's preview, readback and inspect passes still need. */
-export interface GraphRoleTextures {
+/**
+ * `CompiledGraph.outputs`, resolved to this frame's textures — what the
+ * inspect views, readbacks and exports read instead of a pass of their own.
+ */
+export interface GraphOutputTextures {
+  /** Every band layer, in order. */
   layers: GPUTexture[];
+  /** Every accumulator's read side (the last frame's result), in the compositor's order. */
+  tracers: GPUTexture[];
+  /** The shipped pair: `tracers[0]` and `tracers[1]`. */
   tracerBelow: GPUTexture;
   tracerAbove: GPUTexture;
+  /** The `above` accumulator's stamp diagnostic, read side. */
   diagnostic: GPUTexture;
   pingPong: 0 | 1;
 }
@@ -67,9 +97,31 @@ export interface GraphEncodeParams {
   height: number;
   fps: number;
   marks?: GraphEncodeMarks;
+  /**
+   * `false` encodes every pass but the compositor — the layers and the
+   * accumulators advance as usual and nothing is written to `outputView`. For
+   * a frame whose canvas shows one of the graph's outputs (the full-res
+   * tracer, a band layer, the heatmap) rather than its composite.
+   */
+  composite?: boolean;
 }
 
 const MARK_ORDER = ['layersEnd', 'stampEnd', 'compositorEnd'] as const;
+
+/**
+ * One drawable configuration: a compiled graph at a sample count, with this
+ * executor's pipelines for it. What `readyFrame()` hands back and `encode()`
+ * draws.
+ */
+export interface GraphFrame {
+  readonly compiled: CompiledGraph;
+  readonly sampleCount: number;
+}
+
+interface Frame extends GraphFrame {
+  readonly plan: EncodePlan;
+  readonly set: PipelineSet;
+}
 
 /**
  * Executes a `CompiledGraph` on WebGPU.
@@ -77,7 +129,7 @@ const MARK_ORDER = ['layersEnd', 'stampEnd', 'compositorEnd'] as const;
  * Phase 1 compiled a graph and drew nothing with it. This walks
  * `compiled.passes` in schedule order, binds each pass's inputs out of the
  * allocator's pool, writes its uniforms and encodes it — so a graph with a
- * different *shape* draws without anyone editing `WebGPUPipelines.ts`.
+ * different *shape* draws without anyone editing a renderer.
  *
  * Two invariants are load-bearing:
  *
@@ -86,50 +138,59 @@ const MARK_ORDER = ['layersEnd', 'stampEnd', 'compositorEnd'] as const;
  *   and `graphCompileCount()` does not move. `pipelineBuildCount` below makes
  *   that observable from a unit test.
  * - **No compute op is assumed.** Every `decay` pass runs the *fragment* fused
- *   coincidence+decay shader the compiler emits, which is exactly the fallback
- *   `PersistencePass` uses when compute storage textures are unavailable. The
- *   compute lane is an optimisation of the hand encoder, not a requirement of
- *   the graph.
+ *   coincidence+decay shader the compiler emits — what the hand encoder ran
+ *   when compute storage textures were unavailable. Its compute-fed stamp was
+ *   an optimisation, not a requirement of the graph (docs/PASS_GRAPH.md).
+ *
+ * The graph `setGraph()` adopts is the *target*; what a frame draws is a
+ * {@link GraphFrame}. They differ only while the device is still validating
+ * the target's pipelines, when `readyFrame()` keeps drawing the last frame.
  */
 export class WebGpuGraphExecutor {
   private readonly device: GPUDevice;
-  private readonly pipelines: WebGPUPipelines;
   private readonly internalFormat: GPUTextureFormat;
   private readonly outputFormat: GPUTextureFormat;
   private readonly layerSampler: GPUSampler;
   private readonly passSampler: GPUSampler;
   private readonly pool: GraphTexturePool;
+  private readonly programs: GraphProgramCache;
   private zeroField: GPUTexture | null = null;
 
+  /** The target graph: what `setGraph()` adopted. */
   private compiled: CompiledGraph | null = null;
   private plan: EncodePlan | null = null;
-  private nodePipelines = new Map<string, NodePipeline>();
-  private builtForHash: string | null = null;
-  private builtForSampleCount = 1;
+  /** What the frame being encoded draws — and, between frames, what the last one drew. */
+  private frame: Frame | null = null;
+  /** Encode plans by structural hash: a graph switched back to is not re-planned. */
+  private readonly plans = new Map<string, EncodePlan>();
   private sampleCount = 1;
-  /** Bumped per pipeline build, so a superseded build's verdict is not taken as the current one's. */
-  private buildGeneration = 0;
-  private pipelinesValid = false;
-  private verdict: Promise<string | null> = Promise.resolve(null);
+  /**
+   * Built pipelines by structural hash and sample count, least recently used
+   * first. A renderer moves between a handful of variants of one graph — the
+   * temporal term on and off, MSAA on and off, a few layer counts — and
+   * switching back to one it has drawn must not rebuild or revalidate it.
+   */
+  private readonly pipelineSets = new Map<string, PipelineSet>();
+  /** The set for the target graph and sample count, once built. */
+  private current: PipelineSet | null = null;
 
   /** Pipelines created since construction — the "no churn" probe for tests. */
   pipelineBuildCount = 0;
 
   constructor(
     device: GPUDevice,
-    pipelines: WebGPUPipelines,
     internalFormat: GPUTextureFormat,
     outputFormat: GPUTextureFormat,
     layerSampler: GPUSampler,
     passSampler: GPUSampler,
   ) {
     this.device = device;
-    this.pipelines = pipelines;
     this.internalFormat = internalFormat;
     this.outputFormat = outputFormat;
     this.layerSampler = layerSampler;
     this.passSampler = passSampler;
     this.pool = new GraphTexturePool(device, internalFormat);
+    this.programs = GraphProgramCache.for(device);
   }
 
   /**
@@ -141,8 +202,15 @@ export class WebGpuGraphExecutor {
    */
   setGraph(compiled: CompiledGraph | null): void {
     if (compiled === this.compiled) return;
+    this.plan = compiled ? this.planFor(compiled) : null;
     this.compiled = compiled;
-    this.plan = compiled ? buildEncodePlan(compiled) : null;
+    this.current = null;
+  }
+
+  private planFor(compiled: CompiledGraph): EncodePlan {
+    const plan = this.plans.get(compiled.hash) ?? buildEncodePlan(compiled);
+    this.plans.set(compiled.hash, plan);
+    return plan;
   }
 
   get active(): boolean {
@@ -157,13 +225,12 @@ export class WebGpuGraphExecutor {
    * throw: it yields an invalid shader module, an invalid pipeline, and a
    * command buffer the queue drops whole — every pass in the frame, not just
    * the broken one, so the canvas goes black. Until `prepare()` has heard
-   * back, the renderer keeps drawing with the hand encoder.
+   * back, `readyFrame()` keeps drawing the last frame instead.
    */
   get ready(): boolean {
-    return this.active
-      && this.pipelinesValid
-      && this.builtForHash === this.compiled!.hash
-      && this.builtForSampleCount === this.sampleCount;
+    if (!this.active) return false;
+    const set = this.pipelineSets.get(pipelineSetKey(this.compiled!, this.sampleCount));
+    return set?.programs.valid === true;
   }
 
   /**
@@ -176,8 +243,41 @@ export class WebGpuGraphExecutor {
    */
   prepare(): Promise<string | null> {
     if (!this.compiled || !this.plan) return Promise.resolve(null);
-    this.ensurePipelines(this.compiled);
-    return this.verdict;
+    return this.ensurePipelines(this.compiled).programs.verdict;
+  }
+
+  /**
+   * What a frame presenting to `presentation` can draw right now without
+   * binding a pipeline the device has not accepted: the target, once
+   * validated; otherwise the last frame drawn, if its pipelines are still
+   * cached and it presents to the same canvas format (an SDR graph cannot draw
+   * into an `rgba16float` canvas, nor the reverse). `null` when neither — the
+   * caller clears.
+   *
+   * So a structural switch — the temporal term on, a layer count, MSAA —
+   * keeps the previous variant on screen for the moment the device takes to
+   * validate the new one, instead of a black frame.
+   */
+  readyFrame(presentation: CanvasPresentation = 'sdr'): GraphFrame | null {
+    const target = this.compiled && this.plan ? this.targetFrame() : null;
+    if (target?.set.programs.valid === true && presentationOf(target.compiled) === presentation) {
+      return target;
+    }
+    const last = this.frame;
+    if (
+      last
+      && last.set.programs.valid === true
+      && this.pipelineSets.get(pipelineSetKey(last.compiled, last.sampleCount)) === last.set
+      && presentationOf(last.compiled) === presentation
+    ) {
+      return last;
+    }
+    return null;
+  }
+
+  /** The graph the last encoded frame drew, or `null` before the first. */
+  get drawnGraph(): CompiledGraph | null {
+    return this.frame?.compiled ?? null;
   }
 
   /** True when the adopted graph binds the motion field — the renderer runs the chore for it. */
@@ -185,34 +285,49 @@ export class WebGpuGraphExecutor {
     return this.plan?.wantsMotionField ?? false;
   }
 
+  /** True when the adopted graph reads the field's velocity, so the chore must solve flow. */
+  get motionFieldNeedsFlow(): boolean {
+    return this.plan?.motionFieldNeedsFlow ?? false;
+  }
+
   get graphHash(): string | null {
     return this.compiled?.hash ?? null;
   }
 
-  /** Node ids this executor actually encodes, in order. */
-  encodedPasses(): string[] {
-    return this.plan ? encodedPassOrder(this.plan) : [];
+  /** Node ids this executor encodes for `compiled` (the target by default), in order. */
+  encodedPasses(compiled: CompiledGraph | null = this.compiled): string[] {
+    if (!compiled) return [];
+    const plan = compiled === this.compiled ? this.plan : this.planFor(compiled);
+    return plan ? encodedPassOrder(plan) : [];
   }
 
   setSampleCount(sampleCount: number): void {
+    if (sampleCount === this.sampleCount) return;
     this.sampleCount = sampleCount;
+    this.current = null;
   }
 
   /**
-   * Textures for the roles the renderer's preview / readback / inspect passes
-   * read. `null` when the graph does not have them — a graph with two band
-   * layers and no tracers is legal, and those extras simply do not run.
+   * The graph's named outputs as this frame's textures. `null` when the graph
+   * does not have them — a graph with no band layer or fewer than two
+   * accumulators is legal, and the views that need them simply do not run —
+   * or before the first frame has sized the pool.
    */
-  roleTextures(): GraphRoleTextures | null {
-    if (!this.plan) return null;
-    const { layers, tracerBelow, tracerAbove } = this.plan.roles;
-    if (layers.length < 3 || !tracerBelow || !tracerAbove) return null;
+  outputTextures(): GraphOutputTextures | null {
+    // The last frame's graph: the pool holds *its* textures, and the target
+    // may not have drawn yet.
+    const outputs = (this.frame?.compiled ?? this.compiled)?.outputs;
+    if (!outputs || outputs.layers.length === 0 || outputs.tracers.length < 2 || !outputs.diagnostic) {
+      return null;
+    }
     try {
+      const tracers = outputs.tracers.map((id) => this.pool.pingPong(id).read);
       return {
-        layers: layers.map((id) => this.pool.transient(id)),
-        tracerBelow: this.pool.pingPong(tracerBelow).read,
-        tracerAbove: this.pool.pingPong(tracerAbove).read,
-        diagnostic: this.pool.diagnostic(tracerAbove).read,
+        layers: outputs.layers.map((id) => this.pool.transient(id)),
+        tracers,
+        tracerBelow: tracers[0]!,
+        tracerAbove: tracers[1]!,
+        diagnostic: this.pool.diagnostic(outputs.diagnostic).read,
         pingPong: this.pool.readPhase,
       };
     } catch {
@@ -221,15 +336,25 @@ export class WebGpuGraphExecutor {
     }
   }
 
-  /** Encode the whole graph into `outputView`. */
-  encode(enc: GPUCommandEncoder, inputs: GraphExternalInputs, params: GraphEncodeParams): void {
-    const compiled = this.compiled;
-    const plan = this.plan;
-    if (!compiled || !plan) return;
+  /**
+   * Encode the whole graph into `outputView`: `frame` (from `readyFrame()`),
+   * or the target graph — which the caller has then made sure the device
+   * accepted (`prepare()`).
+   */
+  encode(
+    enc: GPUCommandEncoder,
+    inputs: GraphExternalInputs,
+    params: GraphEncodeParams,
+    frame?: GraphFrame,
+  ): void {
+    const drawn = (frame as Frame | undefined) ?? (this.compiled && this.plan ? this.targetFrame() : null);
+    if (!drawn) return;
+    this.frame = drawn;
+    const { compiled, plan } = drawn;
 
     const { state, width, height } = params;
-    const layerScale = state.layerScale ?? 1.0;
-    const tracerScale = state.tracerScale ?? 1.0;
+    const layerScale = rendererStateValue(state, 'layerScale');
+    const tracerScale = rendererStateValue(state, 'tracerScale');
     const sizes: PoolSizes = {
       source: { width: inputs.source.width, height: inputs.source.height },
       layer: scaled(width, height, layerScale),
@@ -237,8 +362,7 @@ export class WebGpuGraphExecutor {
       output: { width, height },
     };
 
-    this.pool.configure(compiled.allocation, sizes, this.sampleCount);
-    this.ensurePipelines(compiled);
+    this.pool.configure(compiled.allocation, sizes, drawn.sampleCount);
 
     // Stage markers are fired by crossing a boundary, and flushed in order at
     // the end, so a graph that skips a stage (a paused frame encodes no
@@ -246,31 +370,30 @@ export class WebGpuGraphExecutor {
     let marksFired = 0;
     const fireThrough = (limit: number): void => {
       while (marksFired <= limit) {
-        params.marks?.[MARK_ORDER[marksFired]]?.();
+        params.marks?.[MARK_ORDER[marksFired]!]?.();
         marksFired += 1;
       }
     };
 
     const paused = state.paused === true;
+    const composite = params.composite !== false;
     for (const step of plan.steps) {
       if (step.kind === 'decay') fireThrough(0);
       if (step.kind === 'blend') fireThrough(1);
-      // A paused session freezes the tracers exactly as `PersistencePass` does:
+      // A paused session freezes the tracers exactly as the hand encoder did:
       // the accumulator passes are not encoded and the ping-pong never flips.
       if (paused && step.kind === 'decay') continue;
-      this.encodeStep(enc, step, inputs, params, plan);
+      if (!composite && step.kind === 'blend') continue;
+      this.encodeStep(enc, step, inputs, params);
     }
     fireThrough(MARK_ORDER.length - 1);
     if (!paused) this.pool.flip();
   }
 
   /**
-   * Clear the tracer accumulators the pool owns.
-   *
-   * The graph's ping-pong pairs are the tracer state while the executor draws,
-   * so `WebGPURenderer.clearPersistence()` has to reach them — clearing only
-   * the hand encoder's `PersistencePass` would leave the next graph frame
-   * accumulating from the trails the user just asked to drop.
+   * Clear the tracer accumulators the pool owns — the graph's ping-pong pairs
+   * are the tracer state, so this is what `WebGPURenderer.clearPersistence()`
+   * drops — and the `history` rings with them.
    */
   clearAccumulators(): void {
     const textures = this.pool.accumulatorTextures();
@@ -287,14 +410,11 @@ export class WebGpuGraphExecutor {
   }
 
   destroy(): void {
-    for (const node of this.nodePipelines.values()) destroyNodePipeline(node);
-    this.nodePipelines.clear();
-    this.builtForHash = null;
-    this.pipelinesValid = false;
-    // A build still awaiting its verdict now answers with this one, so it
-    // never resolves to itself.
-    this.buildGeneration += 1;
-    this.verdict = Promise.resolve(null);
+    for (const set of this.pipelineSets.values()) destroyPipelineSet(set);
+    this.pipelineSets.clear();
+    this.current = null;
+    this.frame = null;
+    this.plans.clear();
     this.pool.release();
     this.zeroField?.destroy();
     this.zeroField = null;
@@ -307,55 +427,78 @@ export class WebGpuGraphExecutor {
 
   // ─── pipelines ────────────────────────────────────────────────────────────
 
-  private ensurePipelines(compiled: CompiledGraph): void {
-    if (this.builtForHash === compiled.hash && this.builtForSampleCount === this.sampleCount) {
-      return;
-    }
-    for (const node of this.nodePipelines.values()) destroyNodePipeline(node);
-    this.nodePipelines = new Map();
-    this.pipelinesValid = false;
-    const generation = ++this.buildGeneration;
+  /** The target graph at the target sample count, its pipelines built. */
+  private targetFrame(): Frame {
+    const compiled = this.compiled!;
+    const set = this.current ?? this.ensurePipelines(compiled);
+    return { compiled, plan: this.plan!, set, sampleCount: this.sampleCount };
+  }
 
-    const ctx: NodePipelineContext = {
+  /**
+   * The pipeline set for `compiled` at the current sample count, built on
+   * first use. A set switched back to is reused, verdict and all.
+   */
+  private ensurePipelines(compiled: CompiledGraph): PipelineSet {
+    const key = pipelineSetKey(compiled, this.sampleCount);
+    const cached = this.pipelineSets.get(key);
+    if (cached) {
+      // Most recently used goes last; eviction takes from the front.
+      this.pipelineSets.delete(key);
+      this.pipelineSets.set(key, cached);
+      this.current = cached;
+      return cached;
+    }
+
+    const ctx: NodeProgramContext = {
       device: this.device,
-      pipelines: this.pipelines,
       internalFormat: this.internalFormat,
       outputFormat: this.outputFormat,
       sampleCount: this.sampleCount,
-      layerCount: compiled.layerCount,
     };
     const emittedById = new Map<string, EmittedPass>(
       compiled.emitted.map((pass) => [pass.nodeId, pass]),
     );
 
-    // Every object the build creates is created inside these scopes, and
-    // nothing else runs between the push and the pops, so an error they catch
-    // belongs to this graph's pipelines.
-    this.device.pushErrorScope('internal');
-    this.device.pushErrorScope('validation');
-    try {
-      for (const step of this.plan!.steps) {
-        const emitted = emittedById.get(step.nodeId);
-        if (!emitted || emitted.fragment === '') continue;
-        this.nodePipelines.set(step.nodeId, createNodePipeline(ctx, emitted));
-        this.pipelineBuildCount += 1;
-      }
-    } finally {
-      const validation = this.device.popErrorScope();
-      const internal = this.device.popErrorScope();
-      this.verdict = Promise.all([validation, internal]).then(([invalid, failed]) => {
-        if (generation !== this.buildGeneration) return this.verdict;
-        const error = invalid ?? failed;
-        this.pipelinesValid = error === null;
-        return error ? error.message : null;
-      });
+    // The programs are shared by every executor on the device (see
+    // `programCache.ts`); this executor's buffers and bind groups are its own.
+    const { set: programs, built } = this.programs.obtain(
+      `${key}@${this.internalFormat}@${this.outputFormat}`,
+      () => {
+        const compiledPrograms = new Map<string, NodeProgram>();
+        for (const step of this.plan!.steps) {
+          const emitted = emittedById.get(step.nodeId);
+          if (!emitted || emitted.fragment === '') continue;
+          compiledPrograms.set(step.nodeId, createNodeProgram(ctx, emitted));
+        }
+        return compiledPrograms;
+      },
+    );
+    this.pipelineBuildCount += built;
+    const set: PipelineSet = { programs, nodes: new Map() };
+    for (const [nodeId, program] of programs.programs) {
+      set.nodes.set(nodeId, instantiateNodePipeline(this.device, emittedById.get(nodeId)!, program));
     }
-    this.builtForHash = compiled.hash;
-    this.builtForSampleCount = this.sampleCount;
+
+    this.pipelineSets.set(key, set);
+    this.current = set;
+    this.evictPipelineSets();
+    return set;
+  }
+
+  /** Destroy the least recently used sets beyond {@link MAX_PIPELINE_SETS}. */
+  private evictPipelineSets(): void {
+    for (const [key, set] of this.pipelineSets) {
+      if (this.pipelineSets.size <= MAX_PIPELINE_SETS) return;
+      // Neither the target's nor the one on screen, which may be drawing
+      // while the target validates.
+      if (set === this.current || set === this.frame?.set) continue;
+      destroyPipelineSet(set);
+      this.pipelineSets.delete(key);
+    }
   }
 
   private nodePipeline(nodeId: string): NodePipeline {
-    const node = this.nodePipelines.get(nodeId);
+    const node = this.frame?.set.nodes.get(nodeId);
     if (!node) throw new Error(`Graph node '${nodeId}' has no pipeline.`);
     return node;
   }
@@ -367,7 +510,6 @@ export class WebGpuGraphExecutor {
     step: EncodeStep,
     inputs: GraphExternalInputs,
     params: GraphEncodeParams,
-    plan: EncodePlan,
   ): void {
     switch (step.kind) {
       case 'band-layer':
@@ -377,7 +519,7 @@ export class WebGpuGraphExecutor {
         this.encodeStamp(enc, step, inputs, params);
         break;
       case 'blend':
-        this.encodeBlend(enc, step, inputs, params, plan);
+        this.encodeBlend(enc, step, inputs, params);
         break;
       case 'history':
         this.encodeHistory(enc, step, inputs, params);
@@ -410,21 +552,11 @@ export class WebGpuGraphExecutor {
       lp.rotationData.buffer as ArrayBuffer, lp.rotationData.byteOffset, 16,
     );
 
-    const colorMode = state.colorMode ?? 1.0;
-    lp.fragData.set([
-      state.avgLuminance,
-      layerOpacity(state, step.layerIndex),
-      colorMode,
-      inputs.hasClassificationMask && colorMode === 0 ? 1 : 0,
-      state.sobelEnabled ? 1 : 0,
-      state.softCropEnabled ? 1 : 0,
-      state.colorProfileLut && state.colorProfileMode ? 1 : 0,
-      state.colorProfileLightDark ?? 1,
-    ]);
-    this.device.queue.writeBuffer(
-      lp.fragUniformBuffer, 0,
-      lp.fragData.buffer as ArrayBuffer, lp.fragData.byteOffset, 32,
-    );
+    packUniforms(BAND_LAYER_UNIFORMS, bandLayerUniforms(state, {
+      layerIndex: step.layerIndex,
+      hasClassificationMask: inputs.hasClassificationMask,
+    }), lp.fragUniforms);
+    this.device.queue.writeBuffer(lp.fragUniformBuffer, 0, lp.fragUniforms.buffer);
 
     const source = this.textureFor(step.source, inputs);
     const target = this.pool.transient(step.nodeId);
@@ -464,30 +596,32 @@ export class WebGpuGraphExecutor {
     const node = this.nodePipeline(step.nodeId);
     const { state, fps } = params;
     const stampTextures = step.stampInputs.map((id) => this.textureFor(id, inputs));
-
-    const duration = step.role === 'below'
-      ? state.tracerBelowDuration ?? 0
-      : state.tracerAboveDuration ?? 1000;
     const history = this.pool.pingPong(step.nodeId);
     const diagnostic = this.pool.diagnostic(step.nodeId);
+    // The temporal term's variant binds the field after the previous frame and
+    // fills the uniform block's motion fields; without it this is the pass, the
+    // layout and the block that shipped before the term existed.
+    const field = step.motionField ? this.textureFor(step.motionField, inputs) : null;
 
-    const f32 = new Float32Array(node.uniformData!);
-    const u32 = new Uint32Array(node.uniformData!);
-    f32[0] = durationToDecay(duration, fps);
-    f32[1] = state.tracerThreshold ?? 0.05;
-    f32[2] = state.stampBoost ?? 1.8;
-    u32[3] = state.tracerMode ?? 0;
-    u32[4] = state.peakCollisionsOnly ? 1 : 0;
-    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
+    // The shipped pair are timed by the session; an extra timescale by its own node.
+    const role = step.role;
+    this.writeUniforms(
+      node,
+      persistUniformLayout(field !== null),
+      persistUniforms(state, {
+        role: role === 'extra' ? 'above' : role,
+        fps,
+        durationMs: role === 'extra'
+          ? graphTracerDuration(numberParam(this.graphNode(step.nodeId).params.durationMs, EXTRA_TRACER_DURATION_MS), fps)
+          : undefined,
+      }),
+    );
 
-    this.bindIfChanged(node, [...stampTextures, history.read], () => [
+    const bound = [...stampTextures, history.read, ...(field ? [field] : [])];
+    this.bindIfChanged(node, bound, () => [
       { binding: 0, resource: this.passSampler },
-      ...stampTextures.map((texture, i) => ({
-        binding: i + 1,
-        resource: texture.createView(),
-      })),
-      { binding: stampTextures.length + 1, resource: history.read.createView() },
-      { binding: stampTextures.length + 2, resource: { buffer: node.uniformBuffer! } },
+      ...bound.map((texture, i) => ({ binding: i + 1, resource: texture.createView() })),
+      { binding: bound.length + 1, resource: { buffer: node.uniformBuffer! } },
     ]);
 
     const pass = enc.beginRenderPass({
@@ -507,32 +641,20 @@ export class WebGpuGraphExecutor {
     step: Extract<EncodeStep, { kind: 'blend' }>,
     inputs: GraphExternalInputs,
     params: GraphEncodeParams,
-    plan: EncodePlan,
   ): void {
     const node = this.nodePipeline(step.nodeId);
     const { state, outputView } = params;
     const layerTextures = step.layerInputs.map((id) => this.textureFor(id, inputs));
     const tracerTextures = step.tracerInputs.map((id) => this.textureFor(id, inputs));
 
-    const layout = compositorUniformLayout(plan.layerCount);
-    const f32 = new Float32Array(node.uniformData!);
-    const u32 = new Uint32Array(node.uniformData!);
-    f32[layout.tracerAboveOpacity] = state.tracerAboveIntensity ?? 0.85;
-    f32[layout.tracerBelowOpacity] = state.tracerBelowIntensity ?? 0.30;
-    u32[layout.layerBlendMode] = state.layerBlendMode ?? 0;
-    u32[layout.tracerBlendMode] = state.tracerBlendMode ?? 0;
-    for (let i = 0; i < plan.layerCount; i += 1) {
-      f32[layout[`layerOpacity${i}`]] = layerOpacity(state, i);
-    }
-    f32[layout.diagnosticsOpacity] = state.diagnosticsOpacity ?? 0.55;
-    f32[layout.stampBoost] = state.stampBoost ?? 1.8;
-    u32[layout.outputMode] = state.outputMode ?? 0;
-    u32[layout.tracerMode] = state.tracerMode ?? 0;
-    u32[layout.diagnosticsMode] = state.diagnosticsMode ? 1 : 0;
-    u32[layout.viewportQuarterZoom] = 0;
-    f32[layout.halfOverlayAlpha] = state.halfOverlayAlpha ?? 0.5;
-    u32[layout.viewportHalfOverlay] = 0;
-    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
+    // Opacities of the timescales past the shipped two come from their own nodes.
+    const extraTracerOpacities = step.tracerInputs.slice(2).map((id) =>
+      numberParam(this.graphNode(id).params.intensity, EXTRA_TRACER_INTENSITY));
+    this.writeUniforms(
+      node,
+      compositorUniformLayout(step.layerInputs.length, step.tracerInputs.length),
+      compositorUniforms(state, step.layerInputs.length, { extraTracerOpacities }),
+    );
 
     this.bindIfChanged(node, [...layerTextures, ...tracerTextures], () => [
       { binding: 0, resource: this.passSampler },
@@ -587,7 +709,7 @@ export class WebGpuGraphExecutor {
         { binding: 1, resource: source.createView() },
       ]);
       const pass = enc.beginRenderPass({
-        colorAttachments: [clearAttachment(ring.textures[ring.head].createView())],
+        colorAttachments: [clearAttachment(ring.textures[ring.head]!.createView())],
       });
       pass.setPipeline(write.pipeline);
       pass.setBindGroup(0, write.bindGroup!);
@@ -601,10 +723,10 @@ export class WebGpuGraphExecutor {
       delay: numberParam(graphNode.params.delay, 0),
       falloff: numberParam(graphNode.params.falloff, 0.6),
     });
-    const f32 = new Float32Array(node.uniformData!);
-    f32.fill(0);
-    f32.set(weights);
-    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
+    // Slots past `frames` keep weight 0; the block is always the full eight.
+    const weightValues: Record<string, number> = {};
+    HISTORY_UNIFORMS.fields.forEach((field, i) => { weightValues[field.name] = weights[i] ?? 0; });
+    this.writeUniforms(node, HISTORY_UNIFORMS, weightValues);
 
     this.bindIfChanged(node, ring.textures, () => [
       { binding: 0, resource: this.passSampler },
@@ -632,37 +754,38 @@ export class WebGpuGraphExecutor {
     params: GraphEncodeParams,
   ): void {
     const node = this.nodePipeline(step.nodeId);
-    const source = this.textureFor(step.inputs[0], inputs);
+    const source = this.textureFor(step.inputs[0]!, inputs);
     const target = this.pool.transient(step.nodeId);
     const graphNode = this.graphNode(step.nodeId);
-    const f32 = new Float32Array(node.uniformData!);
 
     if (step.kind === 'displace') {
-      f32[0] = numberParam(graphNode.params.gain, 1);
-      f32[1] = graphNode.params.mode === 'forward' ? 1 : -1;
-      f32[2] = 0;
-      f32[3] = 0;
+      this.writeUniforms(node, DISPLACE_UNIFORMS, {
+        gain: numberParam(graphNode.params.gain, 1),
+        sign: graphNode.params.mode === 'forward' ? 1 : -1,
+      });
     } else if (step.kind === 'warp') {
-      f32[0] = ((numberParam(graphNode.params.angleDeg, 0)) * Math.PI) / 180;
-      f32[1] = numberParam(graphNode.params.scale, 1);
-      f32[2] = params.width / params.height;
-      f32[3] = numberParam(graphNode.params.displace, 0);
+      this.writeUniforms(node, WARP_UNIFORMS, {
+        angleRad: (numberParam(graphNode.params.angleDeg, 0) * Math.PI) / 180,
+        scale: numberParam(graphNode.params.scale, 1),
+        aspect: params.width / params.height,
+        displace: numberParam(graphNode.params.displace, 0),
+      });
     } else if (step.kind === 'blur') {
-      const axis = graphNode.params.axis === 'y' ? [0, 1] : [1, 0];
-      f32[0] = axis[0];
-      f32[1] = axis[1];
+      const vertical = graphNode.params.axis === 'y';
+      this.writeUniforms(node, BLUR_UNIFORMS, { axisX: vertical ? 0 : 1, axisY: vertical ? 1 : 0 });
     } else {
-      f32[0] = numberParam(graphNode.params.row, 0);
-      f32[1] = params.state.colorProfileLightDark ?? 1;
-      f32[2] = params.state.avgLuminance;
-      f32[3] = numberParam(graphNode.params.mixAmount, 1);
+      this.writeUniforms(node, LUT_UNIFORMS, {
+        row: numberParam(graphNode.params.row, 0),
+        lightDark: rendererStateValue(params.state, 'colorProfileLightDark'),
+        avgLuminance: params.state.avgLuminance,
+        mixAmount: numberParam(graphNode.params.mixAmount, 1),
+      });
     }
-    this.device.queue.writeBuffer(node.uniformBuffer!, 0, node.uniformData!);
 
     const bound = step.kind === 'lut'
       ? [source, inputs.profileLut]
       : step.kind === 'displace'
-        ? [source, this.textureFor(step.inputs[1], inputs)]
+        ? [source, this.textureFor(step.inputs[1]!, inputs)]
         : [source];
     this.bindIfChanged(node, bound, () => [
       { binding: 0, resource: this.passSampler },
@@ -685,7 +808,7 @@ export class WebGpuGraphExecutor {
    * for everything else.
    */
   private textureFor(nodeId: string, inputs: GraphExternalInputs): GPUTexture {
-    const node = this.compiled!.graph.nodes.find((n) => n.id === nodeId);
+    const node = this.frame!.compiled.graph.nodes.find((n) => n.id === nodeId);
     if (!node) throw new Error(`Graph input '${nodeId}' is not a node.`);
     if (node.kind === 'source') {
       return node.params.role === 'motion-field'
@@ -693,17 +816,28 @@ export class WebGpuGraphExecutor {
         : inputs.source;
     }
     // Forward edges out of an accumulator read the *history* side, not the
-    // target this frame writes. That is not an oversight, it is parity:
-    // `encodeFrameCore` samples `getTracerTextures()` before
-    // `PersistencePass.encode()` flips the ping-pong, so the shipped compositor
-    // composites the previous frame's accumulation. Reading the write side here
-    // would drop that frame of latency and stop matching the hand encoder.
+    // target this frame writes. That is not an oversight, it is parity: the
+    // hand encoder sampled its tracers before its persistence pass flipped the
+    // ping-pong, so the shipped compositor composited the previous frame's
+    // accumulation. Reading the write side here would drop that frame of
+    // latency and stop matching the frames pinned in e2e/__golden__.
     if (node.kind === 'decay') return this.pool.pingPong(nodeId).read;
     return this.pool.transient(nodeId);
   }
 
   private graphNode(nodeId: string) {
-    return this.compiled!.graph.nodes.find((n) => n.id === nodeId)!;
+    return this.frame!.compiled.graph.nodes.find((n) => n.id === nodeId)!;
+  }
+
+  /** Pack one node's uniform block with the layout its shader was emitted from, and upload it. */
+  private writeUniforms<N extends string>(
+    node: NodePipeline,
+    layout: UniformLayout<N>,
+    values: NoInfer<UniformValues<N>>,
+  ): void {
+    const data = node.uniforms!;
+    packUniforms(layout, values, data);
+    this.device.queue.writeBuffer(node.uniformBuffer!, 0, data.buffer);
   }
 
   /** 1×1 zero velocity — what a `motion-field` source binds when the lane has no field. */
@@ -720,15 +854,14 @@ export class WebGpuGraphExecutor {
    * Rebuild a bind group only when one of its textures changed identity.
    *
    * Every other frame binds the same views, and creating a bind group per pass
-   * per frame is exactly the per-frame allocation `BindGroupCache` exists to
-   * avoid on the hand-encoded path.
+   * per frame is an allocation the frame does not need (see `bindGroups.ts`).
    */
   private bindIfChanged(
     node: Pick<NodePipeline, 'bindGroupLayout' | 'bindGroup' | 'bindGroupKey'>,
     textures: GPUTexture[],
     entries: () => GPUBindGroupEntry[],
   ): void {
-    const key = textures.map((texture) => textureKey(texture)).join('|');
+    const key = textures.map(resourceKey).join('|');
     if (node.bindGroup && node.bindGroupKey === key) return;
     node.bindGroup = this.device.createBindGroup({
       layout: node.bindGroupLayout,
@@ -736,6 +869,33 @@ export class WebGpuGraphExecutor {
     });
     node.bindGroupKey = key;
   }
+}
+
+/**
+ * Pipeline sets kept per executor. Enough for every variant a session moves
+ * between in practice (two motion states × two MSAA states × a couple of layer
+ * counts); a slider swept through all ten layer counts evicts the oldest.
+ */
+const MAX_PIPELINE_SETS = 8;
+
+/** One graph's programs at one sample count, and this executor's instances of them. */
+interface PipelineSet {
+  /** Shared with every other executor on the device, verdict included. */
+  readonly programs: ProgramSet;
+  readonly nodes: Map<string, NodePipeline>;
+}
+
+const pipelineSetKey = (compiled: CompiledGraph, sampleCount: number): string =>
+  `${compiled.hash}@${sampleCount}`;
+
+/** The canvas format family a graph's compositor writes. */
+function presentationOf(compiled: CompiledGraph): CanvasPresentation {
+  return compiled.emitted.find((pass) => pass.kind === 'blend')?.presentation ?? 'sdr';
+}
+
+function destroyPipelineSet(set: PipelineSet): void {
+  for (const node of set.nodes.values()) destroyNodePipeline(node);
+  set.nodes.clear();
 }
 
 const clearAttachment = (view: GPUTextureView): GPURenderPassColorAttachment => ({
@@ -752,22 +912,3 @@ const scaled = (width: number, height: number, scale: number) => ({
 
 const numberParam = (value: unknown, fallback: number): number =>
   typeof value === 'number' ? value : fallback;
-
-/** Global layer opacity times the per-layer one, as the hand encoder computes it. */
-function layerOpacity(state: RendererState, index: number): number {
-  const global = state.layerOpacity ?? 1.0;
-  const perLayer = state.layerOpacities?.[index] ?? 1.0;
-  return global * perLayer;
-}
-
-/**
- * Identity key for a texture. `GPUTexture` has no stable id, so a lazily
- * attached symbol gives one without a WeakMap lookup per binding.
- */
-const KEY = Symbol('chromashift.textureKey');
-let nextKey = 0;
-function textureKey(texture: GPUTexture): number {
-  const keyed = texture as GPUTexture & { [KEY]?: number };
-  keyed[KEY] ??= (nextKey += 1);
-  return keyed[KEY];
-}

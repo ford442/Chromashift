@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInitialState } from './defaults';
 import { applySettingsToState, chromashiftReducer } from './chromashiftReducer';
 import {
@@ -10,6 +10,15 @@ import {
 } from './serializeSettings';
 import { fromBase64Url, toBase64Url } from './presetUrl';
 import type { ColorProfile } from '../engine/color/colorProfile';
+
+// Several cases load deliberately bad documents; the decoder's warning is expected.
+beforeEach(() => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('serializeSettings', () => {
   it('round-trips render settings through JSON', () => {
@@ -49,7 +58,7 @@ describe('serializeSettings', () => {
     state = chromashiftReducer(state, {
       type: 'compare/setSlotB',
       label: 'Neon',
-      settings: { tracers: { mode: 2 } },
+      settings: { tracers: { mode: 1 } },
     });
     state = chromashiftReducer(state, {
       type: 'ui/patch',
@@ -73,17 +82,17 @@ describe('serializeSettings', () => {
     expect(doc?.settings.kiosk?.kioskEnabled).toBe(true);
     expect(doc?.settings.kiosk?.kioskAttractMode).toBe(true);
     expect(doc?.settings.compare?.layout).toBe('dual');
-    expect(doc?.settings.compare?.slotB.label).toBe('Neon');
-    expect(doc?.settings.compare?.slotB.settings.tracers?.mode).toBe(2);
-    expect(doc?.settings.output?.viewportQuarterZoom).toBeUndefined();
-    expect(doc?.settings.output?.viewportHalfOverlay).toBeUndefined();
+    expect(doc?.settings.compare?.slotB?.label).toBe('Neon');
+    expect(doc?.settings.compare?.slotB?.settings?.tracers?.mode).toBe(1);
+    expect(doc?.settings.output).not.toHaveProperty('viewportQuarterZoom');
+    expect(doc?.settings.output).not.toHaveProperty('viewportHalfOverlay');
 
     const restored = applySettingsToState(createInitialState(), doc!.settings);
     expect(restored.reactive.enabled).toBe(true);
     expect(restored.output.viewportQuarterZoom).toBe(true);
     expect(restored.output.performanceHudEnabled).toBe(true);
     expect(restored.ui.compareView.layout).toBe('dual');
-    expect(restored.ui.compareView.slotB.settings.tracers?.mode).toBe(2);
+    expect(restored.ui.compareView.slotB.settings.tracers?.mode).toBe(1);
   });
 
   it('round-trips swipe layout and swipePosition', () => {
@@ -127,7 +136,7 @@ describe('serializeSettings', () => {
     expect(migrated.version).toBe(SETTINGS_SCHEMA_VERSION);
     expect(migrated.settings.layers?.opacity).toBe(0.66);
     expect(migrated.settings.output?.stampBoost).toBe(2);
-    expect(migrated.settings.output?.viewportQuarterZoom).toBeUndefined();
+    expect(migrated.settings.output).not.toHaveProperty('viewportQuarterZoom');
     expect(migrated.settings.viewport?.quarterZoom).toBe(true);
     expect(migrated.settings.reactive?.enabled).toBe(false);
     expect(migrated.settings.reactive?.audioSensitivity).toBe(0.8);
@@ -184,11 +193,11 @@ describe('serializeSettings', () => {
     });
 
     it('falls back to off for an unknown mode string', () => {
-      const doc = migrateToLatest({
+      const doc = deserializeSettings(JSON.stringify({
         version: 5,
-        settings: { tracers: { motionMode: 'wormhole' as never } },
-      });
-      expect(doc.settings.tracers?.motionMode).toBe('off');
+        settings: { tracers: { motionMode: 'wormhole' } },
+      }));
+      expect(doc?.settings.tracers?.motionMode).toBe('off');
     });
   });
 
@@ -235,7 +244,7 @@ describe('serializeSettings', () => {
     it('embeds a custom profile in file exports and round-trips it', () => {
       const doc = deserializeSettings(settingsToJson(stateWithProfile()));
       expect(doc?.settings.layers?.colorProfileId).toBe('artist-neon');
-      expect(doc?.settings.layers?.colorProfile?.layers[0].bands[0].rgb).toEqual([255, 0, 128]);
+      expect(doc?.settings.layers?.colorProfile?.layers[0]?.bands[0]?.rgb).toEqual([255, 0, 128]);
 
       const restored = applySettingsToState(createInitialState(), doc!.settings);
       expect(restored.layers.colorProfile?.id).toBe('artist-neon');

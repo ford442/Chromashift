@@ -15,7 +15,8 @@ WebGL. Issue [#141](https://github.com/ford442/Chromashift/issues/141) restores
 | Path | Behaviour |
 |------|-----------|
 | Default / `?renderer=webgpu` | Probe + WebGPU bootstrap. Failure blocks with probe stage/adapter. `window.usingWebGL === false`. |
-| Explicit `?renderer=webgl` / `?webgl` / Renderer panel / stored preference | Start WebGL2 **without** requesting a WebGPU adapter or device. gpu-chores has no WebGPU lane. |
+| Explicit `?renderer=webgl` / `?webgl` / `?webgl2=1` / Renderer panel / stored preference | Start WebGL2 **without** requesting a WebGPU adapter or device. A banner reading **WEBGL2 active** stays on screen. gpu-chores has no WebGPU lane. |
+| `?webgl2=0` or no WebGL flag | WebGPU is required. A failed boot hard-fails. `window.usingWebGL === false`. |
 | Failed WebGPU overlay | **Open WebGL diagnostic session** navigates to `?renderer=webgl` (new load). Not an in-place switch. |
 
 `WEBGL_BACKEND_ENABLED` in `src/engine/rendererMode.ts` is the kill switch for
@@ -26,7 +27,7 @@ tears down the partial boot and rethrows.
 
 ## Boot probe
 
-`probeWebGPU()` (`src/engine/webgpuProbe.ts`) runs only on the WebGPU path,
+`probeWebGPU()` (`src/engine/webgpu/webgpuProbe.ts`) runs only on the WebGPU path,
 before the orchestrator. It stops **before** `requestDevice()`. Explicit WebGL
 sessions skip the probe so nothing is left for gpu-chores to adopt.
 
@@ -54,7 +55,10 @@ window.rendererFallbackReason  // hard-fail detail, or null
 ?renderer=webgl
 ?webgpu
 ?webgl
+?webgl2=1
 ```
+
+`?webgl2=1` (also `?webgl2=true` or a bare `?webgl2`) is an explicit opt-in, same as `?renderer=webgl`. `?webgl2=0` does not start WebGL. An explicit `renderer=` parameter wins over the bare flags. While WebGL2 is the active backend the page shows a **WEBGL2 active** banner (`data-testid="webgl2-banner"`) so the session cannot be mistaken for WebGPU.
 
 The NUNIF **Renderer** control persists `localStorage.chromashift.renderer` and
 reloads with `?renderer=`. Tooltip: diagnostic / XR, not fallback.
@@ -91,6 +95,26 @@ The WebGL-only debug selector in the Renderer panel supports:
 
 These modes are intended for fast browser-visible checks. The WebGPU renderer ignores `webglDebugMode`. Debug shaders live in `src/engine/webgl/shaders/debug.ts`; `WebGLDebugPasses` owns the three debug programs.
 
+## Live-view cost
+
+The diagnostic pipeline is the pass graph's fullscreen passes — six for the default graph (three band layers, two tracers, compositor). On a machine whose WebGPU probe stops at `No available adapters`, that work often runs on a software GL driver, and a synchronous `gl.readPixels` flushes every pass still queued on the context.
+
+Measured in headless Chromium on SwiftShader (the draws themselves return immediately; the flush is the stall):
+
+| Canvas | Sync `readPixels` of a 64×64 target | Same frame, pixel-pack buffer + fence |
+| --- | --- | --- |
+| 512² | ~346 ms | — |
+| 1280² | ~570 ms on the main thread | < 1 ms |
+| 1920² | ~3.9 s | — |
+
+The live view therefore:
+
+- Maps a pixel-pack buffer only after its fence reports signaled, and does not fall back to a synchronous `readPixels` for thumbnails. The live collision poll and the repeating tracer-thumbnail refresh stay on WebGPU: on WebGL that map drains every pass still queued on the shared context. WebGL thumbnails refresh when playback is paused.
+- Caps the internal long edge at 960 px and steps it down (floor 480 px) while main-thread frame time stays over the FPS budget. The canvas CSS size is unchanged; the composite is upscaled. `window.webglInternalScale` is the scale in use. Export and WebXR keep the resolution they asked for.
+- Asks for the WebGL2 context with `powerPreference: 'high-performance'`, then `'low-power'`, then no preference, and never requests a WebGPU adapter on the way. A lost context raises the recoverable overlay, and the session boots again on the same context once the browser restores it. See [gpu-bootstrap.md](gpu-bootstrap.md#options-matrix) for the attribute matrix, MSAA, half-float targets and `desynchronized`.
+
+Layer and tracer scale sliders apply on this backend the same way they do on WebGPU.
+
 ## GPU Performance HUD (WebGPU only)
 
 Per-pass GPU frame timing (`layers`, `persistence`, `compositor`, `readback`) is available on the WebGPU path when the adapter grants `timestamp-query` and the split resolve/readback buffers allocate successfully. Enable **Perf HUD** in the Diagnostics panel. A failed timestamp buffer (invalid usage mix, period 0, or `createBuffer` error) leaves the renderer running with CPU-only HUD timing (`performance.now()`). The WebGL2 diagnostic backend keeps CPU-only timing and shows **GPU timing N/A**.
@@ -108,9 +132,9 @@ When the HUD is disabled, Chromashift does not write or resolve timestamp querie
 
 Use this workflow for shader-based image effects:
 
-1. Prototype in `src/engine/webgl/` (GLSL in `webgl/shaders/`, pass logic in `WebGLLayerPass`, `WebGLCompositorPass`, etc.) when Playwright or manual screenshots need visible pixels.
+1. Prototype a node kind's GLSL in `src/engine/graph/templates/glsl.ts` and its draw in `graph/exec/WebGLGraphExecutor.ts` when Playwright or manual screenshots need visible pixels — the WebGL backend draws the pass graph, so a kind with a template and an encode step draws in every shape (docs/PASS_GRAPH.md § *The WebGL executor*).
 2. Keep uniform names and state fields close to the WebGPU equivalents.
-3. Port final logic to `src/engine/shaders/` and, when needed, `src/engine/WebGPUPipelines.ts`.
+3. Port final logic to the node templates in `src/engine/graph/templates/` (WGSL and GLSL), which the WebGPU executor and the WebGL passes both emit from.
 4. Verify `npm run build` and `npm run lint`.
 5. Smoke both `?renderer=webgl` and `?renderer=webgpu` when the environment supports WebGPU.
 

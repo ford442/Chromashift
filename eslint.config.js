@@ -16,8 +16,26 @@ export default defineConfig([
       reactRefresh.configs.vite,
     ],
     languageOptions: {
-      ecmaVersion: 2020,
+      ecmaVersion: 'latest',
       globals: globals.browser,
+      parserOptions: {
+        // Type-aware rules: each file is linted against the tsconfig that owns
+        // it (app, node, or e2e — see tsconfig.json's references).
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      // GPU lifecycle is promise-shaped (requestDevice, mapAsync,
+      // onSubmittedWorkDone, device.lost). A dropped promise is a dropped
+      // error; mark a deliberate fire-and-forget with `void`.
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-misused-promises': 'error',
+      '@typescript-eslint/await-thenable': 'error',
+      // NodeKind / MotionMode / CompareLayoutMode switches must handle every member.
+      '@typescript-eslint/switch-exhaustiveness-check': ['error', {
+        considerDefaultExhaustiveForUnions: true,
+      }],
     },
   },
 ])

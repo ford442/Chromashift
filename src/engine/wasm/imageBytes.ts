@@ -78,3 +78,31 @@ export function getImageDataAtNaturalSize(source: PixelSource): ImageData | null
   ctx.drawImage(source, 0, 0, width, height);
   return ctx.getImageData(0, 0, width, height);
 }
+
+/**
+ * Every `stride`-th row of the source at its natural resolution, packed into a
+ * `width × ceil(height / stride)` buffer.
+ *
+ * The strided luminance sample of an 8K frame reads one row in `stride`
+ * (≈30) and one pixel in `stride` of those: drawing the whole frame onto a
+ * natural-size canvas and copying all ~132 MB of it out, as
+ * `getImageDataAtNaturalSize` does, to read ~0.1% of it was the cost. Each
+ * row is drawn 1:1 with smoothing off, so the bytes are the source's own.
+ */
+export function getStridedRows(
+  source: PixelSource,
+  stride: number,
+): { data: Uint8ClampedArray; width: number; rows: number } | null {
+  const step = Math.max(1, Math.floor(stride));
+  const { width, height } = sourceSize(source);
+  const rows = Math.ceil(height / step);
+  const ctx = getReusableCtx(width, rows);
+  if (!ctx) return null;
+  const smoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  for (let row = 0; row < rows; row++) {
+    ctx.drawImage(source, 0, row * step, width, 1, 0, row, width, 1);
+  }
+  ctx.imageSmoothingEnabled = smoothing;
+  return { data: ctx.getImageData(0, 0, width, rows).data, width, rows };
+}

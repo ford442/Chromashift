@@ -11,10 +11,10 @@ import type { GraphNode, ParamValue, PassGraph } from './types';
  *
  * These exist to prove the executor is not a second hand-written encoder: each
  * one is a *different shape* — a different pass count, a different schedule, a
- * different pool — and every one of them draws without a line changing in
- * `WebGPUPipelines.ts` or `PersistencePass.ts`.
+ * different pool — and every one of them draws without a line changing in the
+ * renderer or the executor.
  */
-export const GRAPH_PRESETS = ['default', 'blur', 'warp', 'smear', 'feedback'] as const;
+export const GRAPH_PRESETS = ['default', 'blur', 'warp', 'smear', 'feedback', 'trails3'] as const;
 export type GraphPresetName = (typeof GRAPH_PRESETS)[number];
 
 export function isGraphPresetName(value: string): value is GraphPresetName {
@@ -112,12 +112,51 @@ export function buildWarpGraph(
   };
 }
 
+/** Node id of the third tracer timescale `buildTrails3Graph` adds. */
+export const TRAILS3_ECHO_ID = 'tracer-echo';
+
+/**
+ * A third tracer timescale.
+ *
+ * The default graph accumulates the stamp twice — the session's `below` and
+ * `above` tracers. This adds a third accumulator over the same stamp, timed by
+ * its own node rather than the panel: a slow, faint echo (`durationMs`,
+ * `intensity`) that the compositor blends deepest, under the shipped pair. The
+ * graph shape the hand encoder could never draw, because its compositor bound
+ * exactly two tracers.
+ */
+export function buildTrails3Graph(
+  layerCount: number = CANONICAL_LAYER_COUNT,
+  echo: { durationMs?: number; intensity?: number } = {},
+): PassGraph {
+  const base = buildDefaultGraph(layerCount);
+  const composite = requireNode(base, DEFAULT_GRAPH_IDS.composite);
+  const echoNode: GraphNode = {
+    id: TRAILS3_ECHO_ID,
+    kind: 'decay',
+    inputs: [DEFAULT_GRAPH_IDS.coincidence],
+    params: { durationMs: echo.durationMs ?? 6000, intensity: echo.intensity ?? 0.45 },
+  };
+  return {
+    nodes: [
+      ...withoutId(base.nodes, composite.id),
+      echoNode,
+      {
+        ...composite,
+        inputs: [...composite.inputs, echoNode.id],
+        params: { ...composite.params, tracerInputs: composite.inputs.length - layerCount + 1 },
+      },
+    ],
+    output: base.output,
+  };
+}
+
 /**
  * Starter graphs shipped as JSON (`starters/*.json`), the format a pasted graph
  * or the node editor will use. They are authored for the canonical three bands;
  * the builders above are what scale with the layer count.
  */
-export const STARTER_GRAPHS = {
+const STARTER_GRAPHS = {
   smear: bodySmearStarter,
   feedback: feedbackWarpStarter,
 } as const;
@@ -197,6 +236,8 @@ export function buildGraphPreset(
     case 'smear':
     case 'feedback':
       return buildStarterGraph(name, layerCount);
+    case 'trails3':
+      return buildTrails3Graph(layerCount);
     case 'default':
       return buildDefaultGraph(layerCount);
   }

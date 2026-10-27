@@ -2,7 +2,7 @@ import type { MotionMode } from '../../engine/motionModes';
 import type { ColorProfileControls } from '../../hooks/useColorProfiles';
 import type { ExportPanelProps } from './ExportPanel';
 import type { PresetsPanelProps } from './PresetsPanel';
-import type { RendererBackend } from '../../engine/RendererTypes';
+import type { RendererBackend } from '../../engine/types/RendererContracts';
 
 export type ReferenceBlendMode = 'hidden' | 'overlay' | 'split' | 'checker' | 'difference' | 'edge';
 /** Which image feeds the viewport blend overlay (when blend mode is not hidden). */
@@ -36,7 +36,7 @@ export interface PlayPanelProps {
   onImageChangeIntervalChange: (seconds: number) => void;
   isImageStripOpen: boolean;
   onToggleImageStrip: () => void;
-  onLoadSpecificImage: (url: string) => void;
+  onLoadSpecificImage: (url: string) => Promise<void>;
   onLoadFile: (file: File) => void;
   referenceImageLabel: string | null;
   onLoadReferenceImage: (url: string) => void;
@@ -157,7 +157,7 @@ export interface DiagnosticsPanelProps {
   onPerformanceAutoDegradeToggle: (value: boolean) => void;
   onApplyPerformanceDegrade: () => void;
   onFreezeInspect: () => void;
-  onExportTracer: () => void;
+  onExportTracer: () => Promise<void>;
   onTracerInspectHeatmapToggle: (value: boolean) => void;
   onTracerInspectZoomChange: (value: number) => void;
   onTracerInspectExposureChange: (value: number) => void;
@@ -172,14 +172,14 @@ export interface UpscalePanelProps {
   upscaleProgress: number;
   upscaleInfo: string;
   onUpscaleModelChange: (value: string) => void;
-  onUpscaleSource: () => void;
-  onUpscaleOutput: () => void;
+  onUpscaleSource: () => Promise<void>;
+  onUpscaleOutput: () => Promise<void>;
 }
 
 export interface ViewportPanelProps {
   squareCanvas: boolean;
   antialiasEnabled: boolean;
-  displayColorSpace: import('../../engine/gpuOptions').DisplayColorSpace;
+  displayColorSpace: import('../../engine/gpu/gpuOptions').DisplayColorSpace;
   canvasHdr: boolean;
   viewportQuarterZoom: boolean;
   viewportHalfOverlay: boolean;
@@ -187,7 +187,7 @@ export interface ViewportPanelProps {
   mainViewMode: number;
   onSquareCanvasToggle: (value: boolean) => void;
   onAntialiasToggle: (value: boolean) => void;
-  onDisplayColorSpaceChange: (space: import('../../engine/gpuOptions').DisplayColorSpace) => void;
+  onDisplayColorSpaceChange: (space: import('../../engine/gpu/gpuOptions').DisplayColorSpace) => void;
   onCanvasHdrToggle: (enabled: boolean) => void;
   onViewportQuarterZoomToggle: (value: boolean) => void;
   onViewportHalfOverlayToggle: (value: boolean) => void;
@@ -208,18 +208,19 @@ export interface ReactivePanelProps {
   micError: string | null;
   midiAvailable: boolean;
   midiError: string | null;
-  midiLearnTarget: import('../../engine/reactive/types').MidiParamId | null;
+  midiLearnTarget: import('../../state/params').ParamPath | null;
   midiBindings: import('../../engine/reactive/types').MidiBinding[];
   audioLevels: import('../../engine/reactive/types').AudioLevelSnapshot;
   audioSensitivity: number;
-  layerExtension0: number;
+  /** Lists the per-layer parameters once per layer of the session. */
+  layerCount: number;
   onReactiveEnabledChange: (enabled: boolean) => void;
   onAudioEnabledChange: (enabled: boolean) => void;
   onMidiEnabledChange: (enabled: boolean) => void;
   onAudioSensitivityChange: (value: number) => void;
   onStartMicDemo: () => void;
-  onMidiLearnTargetChange: (target: import('../../engine/reactive/types').MidiParamId | null) => void;
-  onRemoveMidiBinding: (param: import('../../engine/reactive/types').MidiParamId) => void;
+  onMidiLearnTargetChange: (target: import('../../state/params').ParamPath | null) => void;
+  onRemoveMidiBinding: (param: import('../../state/params').ParamPath) => void;
 }
 
 export type OverlayProps =

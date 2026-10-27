@@ -1,4 +1,5 @@
 import { memo, useRef } from 'react';
+import { sliderProps } from '../../state/params';
 import type { PlayPanelProps } from './types';
 import { useRenderCount } from '../../debug/renderCounts';
 
@@ -26,8 +27,7 @@ export const PlayPanel = memo(function PlayPanel({
           </label>
           <input
             type="range"
-            min={2}
-            max={30}
+            {...sliderProps('ui.imageChangeInterval')}
             value={imageChangeInterval}
             onChange={(e) => onImageChangeIntervalChange(Number(e.target.value))}
             className="flex-1 h-1 accent-amber-400"
@@ -42,7 +42,7 @@ export const PlayPanel = memo(function PlayPanel({
             type="button"
             onClick={() => {
               const url = prompt('Enter image URL:', '');
-              if (url && url.trim()) onLoadSpecificImage(url.trim());
+              if (url && url.trim()) void onLoadSpecificImage(url.trim());
             }}
             className="flex-1 text-xs px-2 py-1 rounded bg-purple-700/80 hover:bg-purple-600 text-white transition-all hover:shadow-[0_0_12px_rgba(168,85,247,0.4)]"
           >

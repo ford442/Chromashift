@@ -5,7 +5,6 @@ import {
   computeAudioModulation,
   extractEnergy,
   extractFrequencyBands,
-  midiValueToParam,
 } from './modulation';
 
 describe('extractFrequencyBands', () => {
@@ -42,7 +41,7 @@ describe('computeAudioModulation', () => {
       energy: 0.8,
     });
     expect(mod.extensions[0]).toBe(baseExt0);
-    expect(mod.extensions[1]).toBeGreaterThan(state.layers.extensions[1]);
+    expect(mod.extensions[1]).toBeGreaterThan(state.layers.extensions[1]!);
     expect(mod.tracerAboveIntensity).toBeGreaterThan(baseAbove);
   });
 });
@@ -63,19 +62,12 @@ describe('computeAudioModulation at any layer count', () => {
     const mod = computeAudioModulation(state, levels);
     const ext = state.layers.extensions;
     const expected = [
-      ext[0] * (1 + levels.mid * 0.6 * s),
-      ext[1] * (1 + levels.high * 0.6 * s),
-      ext[2] * (1 + levels.bass * 0.4 * s),
-      ext[3] * (1 + levels.mid * 0.6 * s),
-      ext[4] * (1 + levels.high * 0.6 * s),
+      ext[0]! * (1 + levels.mid * 0.6 * s),
+      ext[1]! * (1 + levels.high * 0.6 * s),
+      ext[2]! * (1 + levels.bass * 0.4 * s),
+      ext[3]! * (1 + levels.mid * 0.6 * s),
+      ext[4]! * (1 + levels.high * 0.6 * s),
     ].map((v) => Math.min(Math.max(v, 0), 360));
     expect(mod.extensions).toEqual(expected);
-  });
-});
-
-describe('midiValueToParam', () => {
-  it('maps CC 127 to layer step 360', () => {
-    expect(midiValueToParam('layers.extensions.0', 1)).toBe(360);
-    expect(midiValueToParam('layers.extensions.0', 0)).toBe(0);
   });
 });

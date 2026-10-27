@@ -27,6 +27,7 @@ test.describe('WebGPU hard-fail policy', () => {
     expect(crumbs.usingWebGPU).toBe(false);
     expect(crumbs.rendererType).toBeNull();
     expect(crumbs.probeStage).toBe('navigator-gpu');
+    await expect(page.getByTestId('webgl2-banner')).toHaveCount(0);
   });
 
   test('successful or in-flight WebGPU boot still never sets usingWebGL', async ({ page }) => {

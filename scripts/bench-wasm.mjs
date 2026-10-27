@@ -3,7 +3,7 @@
  * Headless perf gate for the C++/WASM engine.
  *
  * Loads public/chromashift_engine.{js,wasm}, runs every bulk kernel over a
- * deterministic 4K golden image and prints the throughput of each. With
+ * deterministic ~4K golden image and prints the throughput of each. With
  * `--assert` (how CI runs it) it exits non-zero when a kernel falls below its
  * floor in public/wasm-benchmark-core.mjs — so silently losing the SIMD128 path
  * fails the `wasm` job instead of quietly un-accelerating the CPU fallback lane.
@@ -66,12 +66,12 @@ for (const [name, { ms, mpxps, floor, pass }] of Object.entries(results)) {
   if (!pass) failed = true;
 }
 
-console.log(`  avgLum ${avgLum.toFixed(6)} · mask vs maskLut mismatches: ${maskMismatches}`);
+console.log(`  avgLum ${avgLum.toFixed(6)} · mask kernels vs scalar classifyPixel mismatches: ${maskMismatches}`);
 if (maskMismatches !== 0) failed = true;
 
 // The motion-flow fixture is pinned against the TypeScript reference; a
-// mismatch means the SIMD128 coarse level and the scalar bodies have diverged,
-// which the host C++ tests cannot see.
+// mismatch means the release build disagrees with it. (SIMD-vs-scalar parity
+// itself is `make -C cpp test-simd`.)
 console.log(`  motion-flow fixture mismatches: ${flowMismatches}`);
 if (flowMismatches !== 0) failed = true;
 

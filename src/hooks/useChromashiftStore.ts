@@ -15,7 +15,6 @@ import {
 } from './store/storeHelpers';
 
 export type { ChromashiftRefs } from './refs/types';
-export type { ChromashiftDispatch } from '../state/actions';
 export { useChromashiftRefs, applySourceTexture, applyClassificationMaskToRenderers };
 
 export function useChromashiftStore(refs: ChromashiftRefs) {

@@ -1,6 +1,13 @@
 import { DECAY_WGSL } from '../../shaders/decayLiterals';
 import { MOTION_FLOW_MIN_SPEED } from '../../compute/chores/motionKernel';
 import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
+import {
+  defineUniformLayout,
+  emitUniformStructWgsl,
+  type UniformFieldSpec,
+  type UniformLayout,
+  type UniformNames,
+} from './uniformLayout';
 
 /**
  * WGSL template library — one emitter per node kind.
@@ -23,7 +30,7 @@ const indent = (depth: number) => '  '.repeat(depth);
 const MOTION_FLOW_MIN_SPEED_WGSL = MOTION_FLOW_MIN_SPEED.toFixed(3);
 
 /** `cropLayer<N>Color` — the CROP / CROP-NUNIF2 colour ramp for one layer. */
-export function emitCropHelperWgsl(spec: LayerSpec): string {
+function emitCropHelperWgsl(spec: LayerSpec): string {
   const { crop, cropUpper } = spec;
   const decls = crop
     .map((band) => `  let ${band.name} = vec4<f32>(${band.rgb}, nonAlpha);`)
@@ -33,7 +40,7 @@ export function emitCropHelperWgsl(spec: LayerSpec): string {
     .map((band, i) => {
       const upper = cropUpper === null
         ? ''
-        : ` && bandLum < ${i === 0 ? cropUpper : crop[i - 1].lower}`;
+        : ` && bandLum < ${i === 0 ? cropUpper : crop[i - 1]!.lower}`;
       return `    if (bandLum >= ${band.lower}${upper}) { return ${band.name}; }`;
     })
     .join('\n');
@@ -76,17 +83,17 @@ ${softArms}
 `;
 }
 
-export function cropFnName(spec: LayerSpec): string {
+function cropFnName(spec: LayerSpec): string {
   return `cropLayer${spec.index}Color`;
 }
 
 /** Every layer's crop helper, concatenated in layer order. */
-export function emitCropHelpersWgsl(specs: readonly LayerSpec[]): string {
+function emitCropHelpersWgsl(specs: readonly LayerSpec[]): string {
   return specs.map(emitCropHelperWgsl).join('');
 }
 
 /** Backend-agnostic colour maths every `band-layer` shader links against. */
-export const WGSL_COLOR_HELPER_PRELUDE = /* wgsl */ `
+const WGSL_COLOR_HELPER_PRELUDE = /* wgsl */ `
 fn hsl2rgb(h: f32, s: f32, l: f32) -> vec3<f32> {
   let a = s * min(l, 1.0 - l);
   let k = vec3<f32>(0.0, 8.0, 4.0) + h * 12.0;
@@ -299,25 +306,32 @@ function emitSoftArmsWgsl(spec: LayerSpec, depth: number): string {
   return arms.join('\n');
 }
 
+/**
+ * The `band-layer` fragment uniforms. Every field is an `f32` — the flags too —
+ * because the shipped shader declared them that way and the GLSL twin reads
+ * them as `float`.
+ */
+export const BAND_LAYER_UNIFORMS = defineUniformLayout('FragUniforms', [
+  { name: 'avgLuminance', kind: 'f32' },
+  { name: 'layerOpacity', kind: 'f32' },
+  { name: 'colorMode', kind: 'f32' },
+  { name: 'useMask', kind: 'f32' },
+  { name: 'sobelEnabled', kind: 'f32' },
+  { name: 'softCropEnabled', kind: 'f32' },
+  { name: 'profileMode', kind: 'f32', doc: '1 = sample the colour-profile LUT instead of the classic band branches.' },
+  { name: 'profileLightDark', kind: 'f32', doc: '1 = lift luminance by the classic lightDark term before LUT lookup.' },
+], { column: 17 });
+
+export type BandLayerUniformName = UniformNames<typeof BAND_LAYER_UNIFORMS>;
+
 /** Bindings + uniforms shared by every `band-layer` fragment shader. */
-export const BAND_LAYER_HEADER_WGSL = /* wgsl */ `
+const BAND_LAYER_HEADER_WGSL = /* wgsl */ `
 @group(0) @binding(1) var texSampler : sampler;
 @group(0) @binding(2) var tex        : texture_2d<f32>;
 @group(0) @binding(4) var classMask  : texture_2d<u32>;
 @group(0) @binding(5) var profileLut : texture_2d<f32>;
 
-struct FragUniforms {
-  avgLuminance     : f32,
-  layerOpacity     : f32,
-  colorMode        : f32,
-  useMask          : f32,
-  sobelEnabled     : f32,
-  softCropEnabled  : f32,
-  /** 1 = sample the colour-profile LUT instead of the classic band branches. */
-  profileMode      : f32,
-  /** 1 = lift luminance by the classic lightDark term before LUT lookup. */
-  profileLightDark : f32,
-};
+${emitUniformStructWgsl(BAND_LAYER_UNIFORMS)}
 @group(0) @binding(3) var<uniform> fragUniforms : FragUniforms;
 
 /**
@@ -421,7 +435,7 @@ export interface CoincidenceDecayOptions {
  * pass. Kept as its own emitted block so the pass-graph work (#154) can lift it
  * into a `motion` node's template without untangling it from the decay maths.
  */
-export const WGSL_MOTION_HELPERS = /* wgsl */ `
+const WGSL_MOTION_HELPERS = /* wgsl */ `
 // Flow angle -> hue, magnitude -> intensity.
 //
 // Below \`MOTION_FLOW_MIN_SPEED\` the solve has no direction worth showing, and
@@ -512,6 +526,40 @@ function coincidenceParts(layerCount: number, indent: string, names: Coincidence
   };
 }
 
+const PERSIST_FIELDS = [
+  { name: 'decayFactor', kind: 'f32' },
+  { name: 'colorThresh', kind: 'f32' },
+  { name: 'stampBoost', kind: 'f32' },
+  { name: 'tracerMode', kind: 'u32' },
+  { name: 'peakMode', kind: 'u32' },
+] as const;
+
+/**
+ * The fused pass's uniforms. The motion variant spends the three tail pads of
+ * the original 32-byte block, so both pipelines share one buffer size and one
+ * writer, and the non-motion struct stays the one that shipped.
+ */
+export const PERSIST_UNIFORMS = defineUniformLayout('PersistUniforms', [
+  ...PERSIST_FIELDS,
+  { name: '_pad0', kind: 'u32' },
+  { name: '_pad1', kind: 'u32' },
+  { name: '_pad2', kind: 'u32' },
+], { column: 12 });
+
+export const PERSIST_MOTION_UNIFORMS = defineUniformLayout('PersistUniforms', [
+  ...PERSIST_FIELDS,
+  { name: 'motionMode', kind: 'u32' },
+  { name: 'motionGain', kind: 'f32' },
+  { name: 'motionDecayBias', kind: 'f32' },
+], { column: 12 });
+
+export type PersistUniformName = UniformNames<typeof PERSIST_MOTION_UNIFORMS>;
+
+/** The fused pass's uniform layout, with or without the temporal term. */
+export function persistUniformLayout(motion: boolean): UniformLayout<PersistUniformName | '_pad0' | '_pad1' | '_pad2'> {
+  return motion ? PERSIST_MOTION_UNIFORMS : PERSIST_UNIFORMS;
+}
+
 /**
  * `coincidence` + `decay` fused into one pass — today's persistence shader.
  *
@@ -533,18 +581,16 @@ export function emitCoincidenceDecayWgsl(
     .map((i) => `  let c${i} = textureSample(layer${i}, cSampler, uv);`)
     .join('\n');
   const { counts, sums, variances, dominant } = parts;
+  // `0 = sampler, 1..n = textures, then the uniform block` — the convention
+  // every graph pass follows, so the executor can derive its layout. The motion
+  // field is one more texture, after the previous frame.
   const prevBinding = layerCount + 1;
-  const uniformBinding = layerCount + 2;
-  const motionBinding = layerCount + 3;
+  const motionBinding = layerCount + 2;
+  const uniformBinding = motion ? layerCount + 3 : layerCount + 2;
   const motionHelpers = motion ? WGSL_MOTION_HELPERS : '';
   const motionTexBinding = motion
     ? `@group(0) @binding(${motionBinding}) var motionTex : texture_2d<f32>;\n`
     : '';
-  // The motion variant spends the three tail pads of the original 32-byte
-  // uniform block, so both pipelines share one buffer size and one writer.
-  const motionUniformFields = motion
-    ? '  motionMode  : u32,\n  motionGain  : f32,\n  motionDecayBias : f32,'
-    : '  _pad0       : u32,\n  _pad1       : u32,\n  _pad2       : u32,';
   const motionSample = motion
     ? '  let motionSample = textureSample(motionTex, cSampler, uv);\n'
       + '  let motion = clamp(motionSample.r, 0.0, 1.0);\n'
@@ -580,14 +626,7 @@ export function emitCoincidenceDecayWgsl(
 ${bindings}
 @group(0) @binding(${prevBinding}) var prevTex   : texture_2d<f32>;
 ${motionTexBinding}
-struct PersistUniforms {
-  decayFactor : f32,
-  colorThresh : f32,
-  stampBoost  : f32,
-  tracerMode  : u32,
-  peakMode    : u32,
-${motionUniformFields}
-};
+${emitUniformStructWgsl(persistUniformLayout(motion))}
 @group(0) @binding(${uniformBinding}) var<uniform> pu : PersistUniforms;
 ${motionHelpers}
 struct FragmentOutputs {
@@ -760,54 +799,114 @@ ${dominant}
 `;
 }
 
+/** One opacity per band layer — the part of `CompositorUniforms` that grows with the layers. */
+export type CompositorLayerOpacityName = `layerOpacity${number}`;
+
 /**
- * Field order of `CompositorUniforms`, as 4-byte slots. The compositor uniform
- * struct grows with the layer count, so the renderer asks for the layout rather
- * than hard-coding indices.
+ * One opacity per tracer timescale beyond the shipped two (`tracer2`, …) —
+ * appended at the *end* of the block, so a two-tracer compositor's struct and
+ * every offset in it stay the ones that shipped.
  */
-export function compositorUniformLayout(layerCount: number): Record<string, number> {
-  const layout: Record<string, number> = {
-    tracerAboveOpacity: 0,
-    tracerBelowOpacity: 1,
-    layerBlendMode: 2,
-    tracerBlendMode: 3,
-  };
-  let slot = 4;
-  for (let i = 0; i < layerCount; i += 1) layout[`layerOpacity${i}`] = slot++;
-  for (const name of [
-    'diagnosticsOpacity',
-    'stampBoost',
-    'outputMode',
-    'tracerMode',
-    'diagnosticsMode',
-    'viewportQuarterZoom',
-    'halfOverlayAlpha',
-    'viewportHalfOverlay',
-  ]) {
-    layout[name] = slot++;
-  }
+export type CompositorExtraTracerName = `tracerOpacity${number}`;
+
+export type CompositorUniformName =
+  | 'tracerAboveOpacity'
+  | 'tracerBelowOpacity'
+  | 'layerBlendMode'
+  | 'tracerBlendMode'
+  | CompositorLayerOpacityName
+  | 'diagnosticsOpacity'
+  | 'stampBoost'
+  | 'outputMode'
+  | 'tracerMode'
+  | 'diagnosticsMode'
+  | 'viewportQuarterZoom'
+  | 'halfOverlayAlpha'
+  | 'viewportHalfOverlay'
+  | CompositorExtraTracerName;
+
+const compositorLayouts = new Map<string, UniformLayout<CompositorUniformName>>();
+
+/** The tracer timescales the shipped compositor blends: one below the layers, one above. */
+export const SHIPPED_TRACER_COUNT = 2;
+
+/**
+ * `CompositorUniforms` for `layerCount` layers and `tracerCount` tracers. The
+ * struct grows by one opacity per layer, so every field after the opacities
+ * moves with the count — which is why nothing may write this block by index.
+ * Tracers beyond the shipped two add an opacity each at the end. Memoised: the
+ * executor asks for it every frame.
+ */
+export function compositorUniformLayout(
+  layerCount: number,
+  tracerCount: number = SHIPPED_TRACER_COUNT,
+): UniformLayout<CompositorUniformName> {
+  const key = `${layerCount}x${tracerCount}`;
+  const cached = compositorLayouts.get(key);
+  if (cached) return cached;
+  const fields: UniformFieldSpec<CompositorUniformName>[] = [
+    { name: 'tracerAboveOpacity', kind: 'f32' },
+    { name: 'tracerBelowOpacity', kind: 'f32' },
+    { name: 'layerBlendMode', kind: 'u32' },
+    { name: 'tracerBlendMode', kind: 'u32' },
+    ...layerList(layerCount).map((i) => ({ name: `layerOpacity${i}` as const, kind: 'f32' as const })),
+    { name: 'diagnosticsOpacity', kind: 'f32' },
+    { name: 'stampBoost', kind: 'f32' },
+    { name: 'outputMode', kind: 'u32' },
+    { name: 'tracerMode', kind: 'u32' },
+    { name: 'diagnosticsMode', kind: 'u32' },
+    { name: 'viewportQuarterZoom', kind: 'u32' },
+    { name: 'halfOverlayAlpha', kind: 'f32' },
+    { name: 'viewportHalfOverlay', kind: 'u32' },
+    ...extraTracers(tracerCount).map((j) => ({ name: `tracerOpacity${j}` as const, kind: 'f32' as const })),
+  ];
+  const layout = defineUniformLayout('CompositorUniforms', fields, { column: 19 });
+  compositorLayouts.set(key, layout);
   return layout;
 }
 
-/** Uniform buffer size in bytes for a compositor with `layerCount` layers. */
-export function compositorUniformBytes(layerCount: number): number {
-  const slots = Object.keys(compositorUniformLayout(layerCount)).length;
-  return Math.ceil((slots * 4) / 16) * 16;
-}
+/** Indices of the tracers past the shipped below / above pair. */
+const extraTracers = (tracerCount: number): number[] =>
+  Array.from({ length: Math.max(0, tracerCount - SHIPPED_TRACER_COUNT) }, (_, k) => k + SHIPPED_TRACER_COUNT);
 
 /**
  * `blend` → the final compositor pass: tracers below, live layers, tracers
  * above, tonemap, optional diagnostics overlay and viewport transforms.
+ *
+ * `tracerCount` is how many tracer timescales it blends. The first two are the
+ * shipped pair — `persistBelow` under the layers, `persistAbove` over them —
+ * and two emits exactly the shipped compositor. Every one after them (a third
+ * timescale, `tracer2`, …) is an extra accumulator, blended deepest first in
+ * input order, beneath the `below` tracer.
  */
-export function emitCompositorWgsl(layerCount: number, blendHelpers: string): string {
+export function emitCompositorWgsl(
+  layerCount: number,
+  blendHelpers: string,
+  tracerCount: number = SHIPPED_TRACER_COUNT,
+): string {
+  if (!Number.isInteger(tracerCount) || tracerCount < SHIPPED_TRACER_COUNT) {
+    throw new RangeError(`A compositor blends at least ${SHIPPED_TRACER_COUNT} tracers, got ${tracerCount}.`);
+  }
   const layers = layerList(layerCount);
+  const extras = extraTracers(tracerCount);
   const bindings = layers
     .map((i) => `@group(0) @binding(${i + 1}) var layer${i}         : texture_2d<f32>;`)
     .join('\n');
   const belowBinding = layerCount + 1;
   const aboveBinding = layerCount + 2;
-  const uniformBinding = layerCount + 3;
-  const opacityFields = layers.map((i) => `  layerOpacity${i}      : f32,`).join('\n');
+  const extraBindings = extras
+    .map((j, k) => `@group(0) @binding(${layerCount + 3 + k}) var tracer${j}        : texture_2d<f32>;`)
+    .join('\n');
+  const uniformBinding = layerCount + 1 + tracerCount;
+  const extraSamples = extras
+    .map((j) => `  let pTracer${j} = textureSample(tracer${j}, cSampler, sampleUV);`)
+    .join('\n');
+  const extraScaled = extras
+    .map((j) => `  let pTracer${j}Scaled = scale_premultiplied(pTracer${j}, cu.tracerOpacity${j});`)
+    .join('\n');
+  const extraBlend = extras
+    .map((j) => `    finalCol = blend(finalCol, pTracer${j}Scaled, cu.tracerBlendMode);`)
+    .join('\n');
   const samples = layers
     .map((i) => `  let c${i}      = textureSample(layer${i},       cSampler, sampleUV);`)
     .join('\n');
@@ -843,22 +942,9 @@ ${WGSL_OUTPUT_ENCODE}
 ${bindings}
 @group(0) @binding(${belowBinding}) var persistBelow   : texture_2d<f32>;
 @group(0) @binding(${aboveBinding}) var persistAbove   : texture_2d<f32>;
+${extraBindings}
 
-struct CompositorUniforms {
-  tracerAboveOpacity : f32,
-  tracerBelowOpacity : f32,
-  layerBlendMode     : u32,
-  tracerBlendMode    : u32,
-${opacityFields}
-  diagnosticsOpacity : f32,
-  stampBoost         : f32,
-  outputMode         : u32,
-  tracerMode         : u32,
-  diagnosticsMode    : u32,
-  viewportQuarterZoom: u32,
-  halfOverlayAlpha   : f32,
-  viewportHalfOverlay: u32,
-};
+${emitUniformStructWgsl(compositorUniformLayout(layerCount, tracerCount))}
 @group(0) @binding(${uniformBinding}) var<uniform> cu : CompositorUniforms;
 
 fn viewportSampleUV(uv: vec2<f32>) -> vec2<f32> {
@@ -876,6 +962,8 @@ ${samples}
 
   let pBelowScaled = scale_premultiplied(pBelow, cu.tracerBelowOpacity);
   let pAboveScaled = scale_premultiplied(pAbove, cu.tracerAboveOpacity);
+${extraSamples}
+${extraScaled}
 
 ${opaque}
 
@@ -914,16 +1002,19 @@ ${variances}
   if (cu.outputMode == 1u) {
     // Tracer Focus: layers first, then both tracers on top.
     finalCol = alpha_blend(finalCol, layerCol);
+${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 2u) {
     // Tracer Only: suppress live layers.
+${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 3u) {
     finalCol = stamp;
   } else {
-    // Mixed (default): Below -> Layers -> Above.
+    // Mixed (default): [extra timescales ->] Below -> Layers -> Above.
+${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = alpha_blend(finalCol, layerCol);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
@@ -978,20 +1069,20 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
  * when `profileMode` is set); this node exists for graphs that grade an
  * arbitrary texture, such as the colour-profile designer's live preview.
  */
+export const LUT_UNIFORMS = defineUniformLayout('LutUniforms', [
+  { name: 'row', kind: 'f32', doc: 'LUT row to sample.' },
+  { name: 'lightDark', kind: 'f32', doc: '0 = raw luminance, 1 = lift by the classic lightDark term first.' },
+  { name: 'avgLuminance', kind: 'f32' },
+  { name: 'mixAmount', kind: 'f32' },
+], { column: 12 });
+
 export function emitLutWgsl(rows: number): string {
   return /* wgsl */ `
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 @group(0) @binding(2) var lut        : texture_2d<f32>;
 
-struct LutUniforms {
-  /** LUT row to sample (0 .. ${rows - 1}). */
-  row      : f32,
-  /** 0 = raw luminance, 1 = lift by the classic lightDark term first. */
-  lightDark: f32,
-  avgLuminance : f32,
-  mixAmount    : f32,
-};
+${emitUniformStructWgsl(LUT_UNIFORMS)}
 @group(0) @binding(3) var<uniform> lu : LutUniforms;
 
 @fragment
@@ -1011,6 +1102,13 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 `;
 }
 
+export const WARP_UNIFORMS = defineUniformLayout('WarpUniforms', [
+  { name: 'angleRad', kind: 'f32' },
+  { name: 'scale', kind: 'f32' },
+  { name: 'aspect', kind: 'f32' },
+  { name: 'displace', kind: 'f32' },
+], { column: 9 });
+
 /** `warp` → a UV transform: rotate, scale, then optional feedback displacement. */
 export function emitWarpWgsl(mode: 'affine' | 'feedback'): string {
   const displace = mode === 'feedback'
@@ -1020,12 +1118,7 @@ export function emitWarpWgsl(mode: 'affine' | 'feedback'): string {
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 
-struct WarpUniforms {
-  angleRad : f32,
-  scale    : f32,
-  aspect   : f32,
-  displace : f32,
-};
+${emitUniformStructWgsl(WARP_UNIFORMS)}
 @group(0) @binding(2) var<uniform> wu : WarpUniforms;
 
 @fragment
@@ -1049,35 +1142,42 @@ ${displace}
 `;
 }
 
+export const BLUR_UNIFORMS = defineUniformLayout('BlurUniforms', [
+  { name: 'axisX', kind: 'f32', doc: '(1, 0) for the horizontal pass, (0, 1) for the vertical one.' },
+  { name: 'axisY', kind: 'f32' },
+  { name: '_pad0', kind: 'f32' },
+  { name: '_pad1', kind: 'f32' },
+], { column: 6 });
+
+/**
+ * The normalised gaussian taps of a `radius` blur — one source of truth for the
+ * WGSL and GLSL emitters, so the two backends blur by the same kernel.
+ */
+export function blurWeights(radius: number): { offset: number; weight: number }[] {
+  const taps = Math.max(1, Math.round(radius));
+  const sigma = Math.max(0.5, taps / 2);
+  const raw: number[] = [];
+  for (let i = -taps; i <= taps; i += 1) raw.push(Math.exp(-(i * i) / (2 * sigma * sigma)));
+  const total = raw.reduce((a, b) => a + b, 0);
+  return raw.map((w, i) => ({ offset: i - taps, weight: w / total }));
+}
+
 /**
  * `blur` → one axis of a separable gaussian. The scheduler runs the node twice
  * (horizontal, then vertical) through a transient target, which is exactly the
  * case the texture pool exists to make affordable.
  */
 export function emitBlurWgsl(radius: number): string {
-  const taps = Math.max(1, Math.round(radius));
-  const sigma = Math.max(0.5, taps / 2);
-  const weights: number[] = [];
-  for (let i = -taps; i <= taps; i += 1) weights.push(Math.exp(-(i * i) / (2 * sigma * sigma)));
-  const total = weights.reduce((a, b) => a + b, 0);
-  const samples = weights
-    .map((w, i) => {
-      const offset = (i - taps).toFixed(1);
-      return `  acc = acc + textureSample(tex, texSampler, uv + axis * texel * ${offset}) * ${(w / total).toFixed(6)};`;
-    })
+  const samples = blurWeights(radius)
+    .map(({ offset, weight }) =>
+      `  acc = acc + textureSample(tex, texSampler, uv + axis * texel * ${offset.toFixed(1)}) * ${weight.toFixed(6)};`)
     .join('\n');
 
   return /* wgsl */ `
 @group(0) @binding(0) var texSampler : sampler;
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 
-struct BlurUniforms {
-  /** (1, 0) for the horizontal pass, (0, 1) for the vertical one. */
-  axisX : f32,
-  axisY : f32,
-  _pad0 : f32,
-  _pad1 : f32,
-};
+${emitUniformStructWgsl(BLUR_UNIFORMS)}
 @group(0) @binding(2) var<uniform> bu : BlurUniforms;
 
 @fragment
@@ -1110,8 +1210,24 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 `;
 }
 
-/** Bytes in the `history` taps uniform block: one weight per ring slot, padded. */
-export const HISTORY_UNIFORM_BYTES = 32;
+/** The most ring slots a `history` node can have — `validate.ts` holds `frames` to 2–8. */
+export const HISTORY_MAX_FRAMES = 8;
+
+export type HistoryWeightName = `weight${number}`;
+
+/**
+ * The `history` taps uniforms: one weight per ring slot, always the full eight
+ * so every ring length shares one block size. Unused slots stay zero.
+ */
+export const HISTORY_UNIFORMS = defineUniformLayout(
+  'HistoryUniforms',
+  Array.from({ length: HISTORY_MAX_FRAMES }, (_, i): UniformFieldSpec<HistoryWeightName> => ({
+    name: `weight${i}`,
+    kind: 'f32',
+    ...(i === 0 ? { doc: 'Weight of ring slot i, written per frame from the head.' } : {}),
+  })),
+  { column: 8 },
+);
 
 /**
  * `history`, read half → a weighted mix of every ring slot.
@@ -1129,17 +1245,14 @@ export function emitHistoryTapsWgsl(frames: number): string {
   ).join('\n');
   const taps = Array.from(
     { length: frames },
-    (_, i) => `  acc = acc + textureSample(ring${i}, texSampler, uv) * hu.weights[${i >> 2}][${i & 3}];`,
+    (_, i) => `  acc = acc + textureSample(ring${i}, texSampler, uv) * hu.weight${i};`,
   ).join('\n');
 
   return /* wgsl */ `
 @group(0) @binding(0) var texSampler : sampler;
 ${bindings}
 
-struct HistoryUniforms {
-  /** Weight of ring slot i at [i / 4][i % 4]; written per frame from the head. */
-  weights : array<vec4<f32>, 2>,
-};
+${emitUniformStructWgsl(HISTORY_UNIFORMS)}
 @group(0) @binding(${frames + 1}) var<uniform> hu : HistoryUniforms;
 
 @fragment
@@ -1150,6 +1263,13 @@ ${taps}
 }
 `;
 }
+
+export const DISPLACE_UNIFORMS = defineUniformLayout('DisplaceUniforms', [
+  { name: 'gain', kind: 'f32' },
+  { name: 'sign', kind: 'f32', doc: '-1 for `inverse`, +1 for `forward`.' },
+  { name: '_pad0', kind: 'f32' },
+  { name: '_pad1', kind: 'f32' },
+], { column: 6 });
 
 /**
  * `displace` → sample `tex` at UVs pushed by a field texture.
@@ -1173,12 +1293,7 @@ export function emitDisplaceWgsl(field: 'motion' | 'color'): string {
 @group(0) @binding(1) var tex        : texture_2d<f32>;
 @group(0) @binding(2) var field      : texture_2d<f32>;
 
-struct DisplaceUniforms {
-  gain  : f32,
-  sign  : f32,
-  _pad0 : f32,
-  _pad1 : f32,
-};
+${emitUniformStructWgsl(DISPLACE_UNIFORMS)}
 @group(0) @binding(3) var<uniform> du : DisplaceUniforms;
 
 @fragment

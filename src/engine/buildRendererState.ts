@@ -79,8 +79,8 @@ export function buildRendererState(
   // produced from `layers.angles`, which the reducer keeps at `layers.count`.
   resizeLayers(target, angles.length);
   for (let i = 0; i < angles.length; i += 1) {
-    const layer = target.layers[i];
-    layer.angleDeg = angles[i];
+    const layer = target.layers[i]!;
+    layer.angleDeg = angles[i]!;
     layer.flipX = false;
     layer.flipY = flipYForLayer(i);
   }

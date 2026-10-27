@@ -7,6 +7,7 @@
  */
 
 import type { MotionFlowStats } from './motionKernel';
+import { publishDiagnostic, publishDiagnostics } from '../../diagnostics';
 
 export interface GpuComputeSupport {
   /** Compute shaders can run on this device. */
@@ -152,26 +153,13 @@ export function publishGpuComputeBreadcrumbs(
   support: GpuComputeSupport,
   diagnostics: GpuComputeDiagnostics | null = null,
 ): void {
-  if (typeof window === 'undefined') return;
-  const w = window as Window & {
-    gpuComputeAvailable?: boolean;
-    gpuComputeReason?: string | null;
-    gpuComputeDiagnostics?: GpuComputeDiagnostics | null;
-  };
-  w.gpuComputeAvailable = support.available;
-  w.gpuComputeReason = support.reason;
-  if (diagnostics !== null) w.gpuComputeDiagnostics = diagnostics;
+  publishDiagnostics({ gpuComputeAvailable: support.available, gpuComputeReason: support.reason });
+  if (diagnostics !== null) publishDiagnostic('gpuComputeDiagnostics', diagnostics);
 }
 
 /** Record which lane actually served the last job, and why others did not. */
 export function publishChoreBreadcrumbs(backend: string | null, reason: string | null): void {
-  if (typeof window === 'undefined') return;
-  const w = window as Window & {
-    gpuChoreBackend?: string | null;
-    gpuChoreReason?: string | null;
-  };
-  w.gpuChoreBackend = backend;
-  w.gpuChoreReason = reason;
+  publishDiagnostics({ gpuChoreBackend: backend, gpuChoreReason: reason });
 }
 
 /**
@@ -184,13 +172,7 @@ export function publishMotionFieldBreadcrumbs(
   backend: string | null,
   reason: string | null,
 ): void {
-  if (typeof window === 'undefined') return;
-  const w = window as Window & {
-    motionFieldBackend?: string | null;
-    motionFieldReason?: string | null;
-  };
-  w.motionFieldBackend = backend;
-  w.motionFieldReason = reason;
+  publishDiagnostics({ motionFieldBackend: backend, motionFieldReason: reason });
 }
 
 /**
@@ -202,8 +184,7 @@ export function publishMotionFieldBreadcrumbs(
  * one, and only this flag says which is on screen.
  */
 export function publishMotionFieldHasFlow(hasFlow: boolean): void {
-  if (typeof window === 'undefined') return;
-  (window as Window & { motionFieldHasFlow?: boolean }).motionFieldHasFlow = hasFlow;
+  publishDiagnostic('motionFieldHasFlow', hasFlow);
 }
 
 /**
@@ -216,8 +197,7 @@ export function publishMotionFieldHasFlow(hasFlow: boolean): void {
  * story automation gets.
  */
 export function publishMotionFieldFlow(stats: MotionFlowStats | null): void {
-  if (typeof window === 'undefined') return;
-  (window as Window & { motionFieldFlow?: MotionFlowStats | null }).motionFieldFlow = stats;
+  publishDiagnostic('motionFieldFlow', stats);
 }
 
 /**
@@ -226,6 +206,5 @@ export function publishMotionFieldFlow(stats: MotionFlowStats | null): void {
  * The field itself never crosses to the CPU on the WebGPU lane.
  */
 export function publishMotionFieldEnergy(energy: number): void {
-  if (typeof window === 'undefined') return;
-  (window as Window & { motionFieldEnergy?: number }).motionFieldEnergy = energy;
+  publishDiagnostic('motionFieldEnergy', energy);
 }

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildBlurGraph, buildGraphPreset, buildWarpGraph } from '../altGraphs';
+import { TRAILS3_ECHO_ID, buildBlurGraph, buildGraphPreset, buildTrails3Graph, buildWarpGraph } from '../altGraphs';
 import { compileGraph, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from '../defaultGraph';
 import { PassGraphError } from '../errors';
 import type { PassGraph } from '../types';
+import { MOTION_FIELD_SOURCE_ID, withMotionTerm } from '../variants';
 import { buildEncodePlan, encodedPassOrder, historyWeights } from './plan';
 
 const compile = (graph: PassGraph) => {
@@ -47,11 +48,12 @@ describe('encode plan — default graph', () => {
     expect(blend.tracerInputs).toEqual(['tracer-below', 'tracer-above']);
   });
 
-  it('names the role textures the renderer’s preview passes read', () => {
-    expect(plan.roles).toEqual({
+  it('names the outputs the inspect views and readbacks read', () => {
+    expect(compile(buildDefaultGraph()).outputs).toEqual({
+      composite: 'composite',
       layers: ['layer0', 'layer1', 'layer2'],
-      tracerBelow: 'tracer-below',
-      tracerAbove: 'tracer-above',
+      tracers: ['tracer-below', 'tracer-above'],
+      diagnostic: 'tracer-above',
     });
   });
 });
@@ -88,7 +90,7 @@ describe('encode plan — non-default shapes', () => {
     expect(compiled.allocation.slotsByResolution.layer).toBeLessThan(9);
     const shared = compiled.allocation.slots.filter((slot) => slot.nodes.length > 1);
     expect(shared).toHaveLength(1);
-    expect(shared[0].nodes).toEqual(['layer0-blur-x', 'layer1-blur-x', 'layer2-blur-x']);
+    expect(shared[0]?.nodes).toEqual(['layer0-blur-x', 'layer1-blur-x', 'layer2-blur-x']);
   });
 
   it('takes the tracer roles from the compositor\u2019s input order', () => {
@@ -111,7 +113,8 @@ describe('encode plan — non-default shapes', () => {
           : node
       )),
     };
-    const plan = buildEncodePlan(compile(swapped));
+    const compiled = compile(swapped);
+    const plan = buildEncodePlan(compiled);
     // Asserted as a mapping, not a list: reordering the compositor's inputs
     // also reorders the schedule, and it is the id → timescale pairing that
     // matters here.
@@ -124,7 +127,7 @@ describe('encode plan — non-default shapes', () => {
       [DEFAULT_GRAPH_IDS.tracerAbove]: 'below',
       [DEFAULT_GRAPH_IDS.tracerBelow]: 'above',
     });
-    expect(plan.roles.tracerBelow).toBe(DEFAULT_GRAPH_IDS.tracerAbove);
+    expect(compiled.outputs.tracers[0]).toBe(DEFAULT_GRAPH_IDS.tracerAbove);
   });
 
   it('routes the warped layer into coincidence only', () => {
@@ -194,7 +197,7 @@ describe('encode plan — refusals', () => {
     expect(() => buildEncodePlan(compile(graph))).toThrow(/no history texture/);
   });
 
-  it('refuses a blend with more than two tracer inputs', () => {
+  it('refuses a blend whose tracerInputs param disagrees with its edges', () => {
     const base = buildDefaultGraph();
     const graph: PassGraph = {
       ...base,
@@ -204,7 +207,65 @@ describe('encode plan — refusals', () => {
           : node
       )),
     };
-    expect(() => buildEncodePlan(compile(graph))).toThrow(/binds exactly two/);
+    expect(() => buildEncodePlan(compile(graph))).toThrow(/declares tracerInputs 2 but reads 3/);
+  });
+
+  it('refuses a blend with fewer than the shipped two tracers', () => {
+    const base = buildDefaultGraph();
+    const graph: PassGraph = {
+      ...base,
+      nodes: base.nodes.map((node) => (
+        node.id === DEFAULT_GRAPH_IDS.composite
+          ? { ...node, inputs: node.inputs.slice(0, -1), params: { ...node.params, tracerInputs: 1 } }
+          : node
+      )),
+    };
+    expect(() => compile(graph)).toThrow(/blends at least 2 \(below, above\)/);
+  });
+
+  it('refuses a motion term read by anything but an accumulator', () => {
+    // Its decay-rate bias acts on the accumulator, so a weighted stamp on its
+    // own would have lost half of the term.
+    const moving = withMotionTerm(buildDefaultGraph());
+    const term = moving.nodes.find((node) => node.kind === 'motion')!;
+    const graph: PassGraph = {
+      ...moving,
+      nodes: moving.nodes.map((node) => (
+        node.id === DEFAULT_GRAPH_IDS.composite
+          ? { ...node, inputs: [term.id, ...node.inputs.slice(1)] }
+          : node
+      )),
+    };
+    expect(() => buildEncodePlan(compile(graph))).toThrow(/temporal term is part of the accumulator pass/);
+  });
+});
+
+describe('encode plan — the temporal term', () => {
+  const plan = buildEncodePlan(compile(withMotionTerm(buildDefaultGraph())));
+
+  it('fuses the motion node and the coincidence it reads into both accumulators', () => {
+    expect(plan.fused.has(DEFAULT_GRAPH_IDS.coincidence)).toBe(true);
+    expect([...plan.fused].some((id) => id.endsWith('-motion'))).toBe(true);
+    expect(encodedPassOrder(plan)).toEqual([
+      'layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite',
+    ]);
+  });
+
+  it('hands each accumulator the stamp layers and the field to weight them by', () => {
+    for (const step of plan.steps) {
+      if (step.kind !== 'decay') continue;
+      expect(step.stampInputs).toEqual(['layer0', 'layer1', 'layer2']);
+      expect(step.motionField).toBe(MOTION_FIELD_SOURCE_ID);
+    }
+    expect(plan.wantsMotionField).toBe(true);
+    expect(plan.motionFieldNeedsFlow).toBe(false);
+  });
+
+  it('leaves the pre-motion accumulators reading no field', () => {
+    const still = buildEncodePlan(compile(buildDefaultGraph()));
+    for (const step of still.steps) {
+      if (step.kind === 'decay') expect(step.motionField).toBeNull();
+    }
   });
 });
 
@@ -230,9 +291,10 @@ describe('encode plan — body smear', () => {
     expect(buildEncodePlan(compile(buildGraphPreset('feedback'))).wantsMotionField).toBe(false);
   });
 
-  it('keeps the band-layer roles the preview passes read', () => {
-    expect(plan.roles.layers).toEqual(['layer0', 'layer1', 'layer2']);
-    expect(plan.roles.tracerAbove).toBe('tracer-above');
+  it('keeps the band-layer outputs the inspect views read', () => {
+    const outputs = compile(buildGraphPreset('smear')).outputs;
+    expect(outputs.layers).toEqual(['layer0', 'layer1', 'layer2']);
+    expect(outputs.tracers[1]).toBe('tracer-above');
   });
 });
 
@@ -255,10 +317,10 @@ describe('historyWeights', () => {
     const weights = historyWeights(4, 0, 4, { mode: 'trail', delay: 0, falloff: 0.5 });
     // Ages: slot 0 → 0, slot 3 → 1, slot 2 → 2, slot 1 → 3.
     expect(sum(weights)).toBeCloseTo(1, 6);
-    expect(weights[0]).toBeGreaterThan(weights[3]);
-    expect(weights[3]).toBeGreaterThan(weights[2]);
-    expect(weights[2]).toBeGreaterThan(weights[1]);
-    expect(weights[3] / weights[0]).toBeCloseTo(0.5, 6);
+    expect(weights[0]).toBeGreaterThan(weights[3]!);
+    expect(weights[3]).toBeGreaterThan(weights[2]!);
+    expect(weights[2]).toBeGreaterThan(weights[1]!);
+    expect(weights[3]! / weights[0]!).toBeCloseTo(0.5, 6);
   });
 
   it('weights only the filled slots while the ring warms up', () => {
@@ -269,5 +331,51 @@ describe('historyWeights', () => {
   it('wraps the head around the ring', () => {
     const weights = historyWeights(3, 0, 3, { mode: 'tap', delay: 1, falloff: 0 });
     expect(weights).toEqual([0, 0, 1]);
+  });
+});
+
+describe('encode plan — a third tracer timescale', () => {
+  const plan = buildEncodePlan(compile(buildTrails3Graph()));
+
+  it('accumulates the one stamp three times and blends all three', () => {
+    expect(encodedPassOrder(plan)).toEqual([
+      'layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', TRAILS3_ECHO_ID, 'composite',
+    ]);
+    const roles = plan.steps.flatMap((step) => (step.kind === 'decay' ? [[step.nodeId, step.role]] : []));
+    // The shipped pair keep their roles (the session times them); the third is
+    // an extra timescale, timed by its own node.
+    expect(roles).toEqual([['tracer-below', 'below'], ['tracer-above', 'above'], [TRAILS3_ECHO_ID, 'extra']]);
+    const blend = plan.steps.find((step) => step.kind === 'blend');
+    expect(blend?.kind === 'blend' && blend.tracerInputs).toEqual(['tracer-below', 'tracer-above', TRAILS3_ECHO_ID]);
+    // Every accumulator is an output; the readbacks' diagnostic is still the `above` one.
+    const outputs = compile(buildTrails3Graph()).outputs;
+    expect(outputs.tracers).toEqual(['tracer-below', 'tracer-above', TRAILS3_ECHO_ID]);
+    expect(outputs.diagnostic).toBe('tracer-above');
+  });
+
+  it('gives the temporal term to all three accumulators through one motion node', () => {
+    const moving = buildEncodePlan(compile(withMotionTerm(buildTrails3Graph())));
+    const fields = moving.steps.flatMap((step) => (step.kind === 'decay' ? [step.motionField] : []));
+    expect(fields).toEqual([MOTION_FIELD_SOURCE_ID, MOTION_FIELD_SOURCE_ID, MOTION_FIELD_SOURCE_ID]);
+  });
+});
+
+describe('encode plan — feedback edges', () => {
+  it('keeps a feedback input in the consumer’s slots (warp → decay → warp)', () => {
+    // The schedule lists a feedback edge apart from `pass.inputs`; the plan
+    // must still hand the warp its one input, read from the decay's previous frame.
+    const graph: PassGraph = {
+      output: 'out',
+      nodes: [
+        { id: 'src', kind: 'source', inputs: [], params: {} },
+        // One band layer, so the decay's shader is emitted for one stamp input.
+        { id: 'l0', kind: 'band-layer', inputs: ['src'], params: { layerIndex: 0, layerCount: 1 } },
+        { id: 'w', kind: 'warp', inputs: ['d'], params: { mode: 'feedback' } },
+        { id: 'd', kind: 'decay', inputs: ['w'], params: { durationMs: 500 } },
+        { id: 'out', kind: 'output', inputs: ['d'], params: {} },
+      ],
+    };
+    const plan = buildEncodePlan(compile(graph));
+    expect(plan.steps.find((step) => step.nodeId === 'w')).toMatchObject({ kind: 'warp', inputs: ['d'] });
   });
 });

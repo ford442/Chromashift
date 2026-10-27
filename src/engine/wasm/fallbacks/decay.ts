@@ -15,13 +15,8 @@ export function tsAdvanceAngles(
   angles: readonly number[],
   steps: readonly number[],
 ): number[] {
-  // ((a + s) % 360 + 360) % 360 handles negative steps.
-  return angles.map((angle, i) => ((angle + steps[i]) % 360 + 360) % 360);
-}
-
-export function tsSimulateTracerDecay(buffer: Float32Array, decayFactor: number): void {
-  const pixelCount = Math.floor(buffer.length / 4);
-  for (let i = 0; i < pixelCount * 4; i++) {
-    buffer[i] *= decayFactor;
-  }
+  // ((a + s) % 360 + 360) % 360 handles negative steps. The two arrays come
+  // from different sources (live angles vs. settings), so a layer without a
+  // step holds still rather than turning NaN for the rest of the export.
+  return angles.map((angle, i) => ((angle + (steps[i] ?? 0)) % 360 + 360) % 360);
 }

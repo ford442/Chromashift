@@ -1,34 +1,11 @@
 import type { ChromashiftDispatch } from '../../state/actions';
-import type { MidiParamId } from './types';
-import { midiValueToParam } from './modulation';
+import { paramFromUnit, paramSpec, type ParamPath } from '../../state/params';
 
-/** Apply a normalised MIDI CC value (0–1) to the matching store parameter. */
+/** Apply a normalised MIDI CC value (0–1) to the bound parameter, along its range and curve. */
 export function applyMidiParam(
   dispatch: ChromashiftDispatch,
-  param: MidiParamId,
+  param: ParamPath,
   ccNorm: number,
 ): void {
-  const value = midiValueToParam(param, ccNorm);
-  switch (param) {
-    case 'layers.extensions.0':
-      dispatch({ type: 'layers/setPerLayer', field: 'extensions', layer: 0, value });
-      break;
-    case 'layers.extensions.1':
-      dispatch({ type: 'layers/setPerLayer', field: 'extensions', layer: 1, value });
-      break;
-    case 'layers.extensions.2':
-      dispatch({ type: 'layers/setPerLayer', field: 'extensions', layer: 2, value });
-      break;
-    case 'tracers.aboveIntensity':
-      dispatch({ type: 'tracers/patch', patch: { aboveIntensity: value } });
-      break;
-    case 'tracers.belowIntensity':
-      dispatch({ type: 'tracers/patch', patch: { belowIntensity: value } });
-      break;
-    case 'engine.avgLuminance':
-      dispatch({ type: 'engine/patch', patch: { avgLuminance: value } });
-      break;
-    default:
-      break;
-  }
+  dispatch({ type: 'param/set', path: param, value: paramFromUnit(paramSpec(param), ccNorm) });
 }
