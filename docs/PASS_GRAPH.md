@@ -350,7 +350,7 @@ additionally holds every sampling emitter to "no branch around
 `compileGraph` memoises on the structural hash and the executor keys its
 pipelines on the same hash, so a parameter change re-enters `encode()` with the
 same `CompiledGraph` and creates nothing. Bind groups are rebuilt only when a
-bound texture changes identity (`engine/bindGroups.ts`, which the inspect views
+bound texture changes identity (`engine/webgpu/bindGroups.ts`, which the inspect views
 and the readback blit use too): creating one per pass per frame is an
 allocation no frame needs.
 
@@ -786,15 +786,22 @@ What differs is the backend's own:
   an `invalid-pipeline:` refusal like WebGPU's: the variant draws the default
   graph, and until a frame adopts the stand-in `readyFrame()` keeps the last
   frame that linked.
-- **Targets are `RGBA` / `UNSIGNED_BYTE`** (`webgl/resources.ts`), not the
-  WebGPU internal format. Half-float targets are a separate context-policy
-  change. So the WebGL frame is pinned against its own golden
-  (`e2e/__golden__/webgl-default-composite.png`), never against WebGPU's.
-  That golden was captured from the hand-written passes at the last commit
-  that had them, and the executor draws it byte-identically.
-- **No stamp diagnostic attachment and no MSAA.** The collision-stats readback
-  re-runs the graph's compositor in heatmap view (`composite()`), as the tracer
-  export and the stationary previews do.
+- **Targets are `RGBA16F` or `RGBA8`** (`selectWebGLInternalFormat` in
+  `webgl/resources.ts`), not the WebGPU internal format: half-float where the
+  context renders it, 8-bit otherwise. So the WebGL frame is pinned against
+  its own golden (`e2e/__golden__/webgl-default-composite.png`), never against
+  WebGPU's. That golden was captured from the hand-written passes at the last
+  commit that had them, over `RGBA8` targets; with the half-float extensions
+  hidden the executor draws it byte-identically, and over `RGBA16F` it is
+  within 2/255 (no 8-bit rounding between passes) — both asserted in
+  `e2e/pass-graph.spec.ts`.
+- **MSAA is a renderbuffer.** With MSAA on, the band layers draw into one
+  shared `samples: 4` renderbuffer, blitted into each layer's pooled target;
+  persistence and the compositor stay 1×, as on WebGPU. The executor owns that
+  renderbuffer rather than `TexturePool`, whose entries are sampled textures.
+- **No stamp diagnostic attachment.** The collision-stats readback re-runs the
+  graph's compositor in heatmap view (`composite()`), as the tracer export and
+  the stationary previews do.
 - **Textures are resolved before any is bound.** Creating a texture (a pool
   target on first use, the 1×1 zero field) binds it on the active unit, which
   would clobber an input the pass had already bound there.

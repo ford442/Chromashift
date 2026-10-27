@@ -100,9 +100,9 @@ export class WebGLMotionField {
     const packed = this.packed;
     const flow = motion.flow!;
     for (let i = 0; i < cells; i += 1) {
-      packed[i * 3] = motion.field[i];
-      packed[i * 3 + 1] = flow[i * 2];
-      packed[i * 3 + 2] = flow[i * 2 + 1];
+      packed[i * 3] = motion.field[i]!;
+      packed[i * 3 + 1] = flow[i * 2]!;
+      packed[i * 3 + 2] = flow[i * 2 + 1]!;
     }
     return packed;
   }

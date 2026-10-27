@@ -2,8 +2,8 @@ import type { MotionMode } from '../engine/motionModes';
 import type { ColorProfileControls } from '../hooks/useColorProfiles';
 import type { RefObject } from 'react';
 import type { ChromashiftRefs } from '../hooks/useChromashiftStore';
-import type { ImageEntry } from '../engine/TextureManager';
-import type { GpuRuntimeError } from '../engine/gpuBootstrap';
+import type { ImageEntry } from '../engine/library/imageEntry';
+import type { GpuRuntimeError } from '../engine/gpu/gpuErrors';
 import type { RendererBackend } from '../engine/types/RendererContracts';
 import type { CompareLayoutMode } from '../engine/compareViews';
 import type { MainViewMode } from '../engine/viewModes';
@@ -13,7 +13,8 @@ import type { BuiltinPreset } from '../state/presetGallery';
 import type { StoredPreset } from '../state/presetLibrary';
 import type { LiveSourceState, VideoExportSettings } from '../state/types';
 import type { VideoExportContainer, VideoExportQuality } from '../engine/videoExport/videoCodecs';
-import type { AudioLevelSnapshot, MidiBinding, MidiParamId } from '../engine/reactive/types';
+import type { AudioLevelSnapshot, MidiBinding } from '../engine/reactive/types';
+import type { ParamPath } from '../state/params';
 import type {
   EngineMode,
   LayerIndex,
@@ -125,6 +126,8 @@ export interface AppUIPreviewStripProps {
 export interface AppUIChromeProps {
   gpuError: GpuRuntimeError | null;
   onRetryGpu: () => void;
+  /** Close a non-fatal error (a refused pipeline); the session kept drawing. */
+  onDismissGpuError: () => void;
   isGpuRetrying: boolean;
   avgLuminance: number;
   engineMode: EngineMode;
@@ -291,8 +294,8 @@ export interface AppUIControlProps {
   setSquareCanvas: (enabled: boolean) => void;
   antialiasEnabled: boolean;
   setAntialiasEnabled: (enabled: boolean) => void;
-  displayColorSpace: import('../engine/gpuOptions').DisplayColorSpace;
-  setDisplayColorSpace: (space: import('../engine/gpuOptions').DisplayColorSpace) => void;
+  displayColorSpace: import('../engine/gpu/gpuOptions').DisplayColorSpace;
+  setDisplayColorSpace: (space: import('../engine/gpu/gpuOptions').DisplayColorSpace) => void;
   canvasHdr: boolean;
   setCanvasHdr: (enabled: boolean) => void;
   handleReset: () => void;
@@ -327,18 +330,17 @@ export interface AppUIControlProps {
   micError: string | null;
   midiAvailable: boolean;
   midiError: string | null;
-  midiLearnTarget: MidiParamId | null;
+  midiLearnTarget: ParamPath | null;
   midiBindings: MidiBinding[];
   audioLevels: AudioLevelSnapshot;
   audioSensitivity: number;
-  layerExtension0: number;
   onReactiveEnabledChange: (enabled: boolean) => void;
   onAudioEnabledChange: (enabled: boolean) => void;
   onMidiEnabledChange: (enabled: boolean) => void;
   onAudioSensitivityChange: (value: number) => void;
   onStartMicDemo: () => void;
-  onMidiLearnTargetChange: (target: MidiParamId | null) => void;
-  onRemoveMidiBinding: (param: MidiParamId) => void;
+  onMidiLearnTargetChange: (target: ParamPath | null) => void;
+  onRemoveMidiBinding: (param: ParamPath) => void;
 }
 
 export type AppUIProps =

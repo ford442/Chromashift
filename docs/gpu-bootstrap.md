@@ -1,6 +1,16 @@
 # GPU Bootstrap
 
-Chromashift centralizes renderer initialization in `src/engine/gpuBootstrap.ts` and documents shared canvas options in `src/engine/gpuOptions.ts`. Multi-canvas slot lifecycle (compare views, future quad layout) is owned by `src/engine/RendererOrchestrator.ts`.
+Chromashift centralizes renderer initialization in a few small modules, and documents shared canvas options in `src/engine/gpu/gpuOptions.ts`:
+
+| Module | Owns |
+|---|---|
+| `src/engine/webgpu/webgpuSession.ts` | `bootstrapWebGpu()` — one canvas's session on the page's leased device |
+| `src/engine/webgpu/adapter.ts` | Adapter request, the page device gate (`requestDevice` strategies), adapter / capability reports |
+| `src/engine/webgpu/canvasConfig.ts` | `configureWebGpuCanvas()` — SDR / `hdr-extended`, the tone-mapping and HDR probes |
+| `src/engine/gpu/gpuErrors.ts` | `GpuRuntimeError` and the mappings into it, `withErrorScope`, device diagnostics, the fatal breaker |
+| `src/engine/webgl/webgl2Context.ts` | `createWebGL2Context()` (one sticky context per canvas) and `watchWebGL2Context()` |
+
+ Multi-canvas slot lifecycle (compare views, future quad layout) is owned by `src/engine/RendererOrchestrator.ts`.
 
 ## Renderer orchestration
 
@@ -55,12 +65,29 @@ RendererOrchestrator.bootstrap(primaryCanvas)
 | Concern | WebGPU (`bootstrapWebGpu`) | WebGL2 (`createWebGL2Context`) |
 |---|---|---|
 | Alpha | `alphaMode: 'opaque'` on canvas configure | `alpha: false` |
-| Antialias | Layer-pass MSAA (`sampleCount` 1 or 4) | `antialias` from `RendererCanvasOptions` |
-| Preserve buffer | `usage` includes `COPY_SRC` on swapchain | `preserveDrawingBuffer: false` for a live session; `true` only for screenshot / readback callers (see below) |
+| Antialias | Layer-pass MSAA (`sampleCount` 1 or 4) | `antialias: false` on the context; layer-pass MSAA is a `samples: 4` renderbuffer (see below) |
+| Preserve buffer | Swap-chain `usage` is `RENDER_ATTACHMENT` only: nothing copies from the canvas texture (export and readback render offscreen) | `preserveDrawingBuffer: false` for a live session; `true` only for screenshot / readback callers (see below) |
+| Desynchronized | N/A | `desynchronized: false`; `?desynchronized=1` opts in, ignored while preserve-drawing-buffer is on (see below) |
+| Depth / stencil | No depth/stencil attachments | `depth: false`, `stencil: false` |
+| Premultiplied alpha | N/A (opaque canvas) | `premultipliedAlpha: false` |
 | Colour space | `colorSpace: 'srgb'` default; optional `display-p3` from Viewport control / `viewport.colorSpace` | Browser default sRGB framebuffer |
-| Tone mapping | `toneMapping.mode: 'standard'`, gated on a page-lifetime capability bit (see below) | N/A |
-| Power | `requestAdapter` walks `WEBGPU_POWER_PREFERENCE_ATTEMPTS` (`high-performance` → `low-power` → no preference) | N/A |
-| Texture headroom | At most three `requestDevice` strategies, then the live device is reused | `gl.MAX_TEXTURE_SIZE` |
+| Tone mapping | `toneMapping.mode: 'standard'`, gated on a page-lifetime capability bit (see below) | N/A — the Viewport HDR toggle is hidden on WebGL |
+| Power | `requestAdapter` walks `WEBGPU_POWER_PREFERENCE_ATTEMPTS` (`high-performance` → `low-power` → no preference) | `getContext` walks `WEBGL2_POWER_PREFERENCE_ATTEMPTS` (`high-performance` → `low-power` → `powerPreference` omitted); never `requestAdapter` |
+| Internal targets | `rg11b10ufloat` under `rg11b10ufloat-renderable`, else `rgba8unorm` | `RGBA16F` layer/tracer targets when the context renders it, else `RGBA8` (see below) |
+| Context loss | `device.lost` → recoverable overlay | `webglcontextlost` → the same overlay; `webglcontextrestored` → boot again on the same context |
+| Texture headroom | At most two `requestDevice` strategies, both on default limits, then the live device is reused | `gl.MAX_TEXTURE_SIZE` |
+
+`getWebGL2ContextAttributes(options, powerPreference)` (`gpuOptions.ts`) builds every attempt from `RENDERER_CANVAS_OPTIONS_MATRIX.webgl2`, and `gpuOptions.test.ts` checks this table against it. WebXR's xr-compatible context goes through the same `createWebGL2Context`.
+
+**Context attempts (WebGL2).** `createWebGL2Context` tries `high-performance`, then `low-power`, then attributes with `powerPreference` omitted, and logs one `[Chromashift:GPU] WebGL2 context ready` info line naming the attempt that succeeded. A null `getContext` creates nothing, so each attempt is a fresh request. If all three return null it logs an error and throws `WebGL2UnavailableError`; the explicit WebGL session never falls through to WebGPU. Once granted, the context is remembered per canvas: `getContext` is sticky (a second call returns the same context, or null), so every later bootstrap on that canvas — a React effect re-run, **Retry GPU**, a restore — reuses it rather than asking again.
+
+**Context loss (WebGL2).** `watchWebGL2Context` listens on the canvas. `webglcontextlost` is `preventDefault()`ed — without that the browser never restores — and the orchestrator destroys its slot and reports `webglContextLostRuntimeError()`: `kind: 'device-lost'`, recoverable, the same overlay `device.lost` raises. Its listeners outlive that teardown. On `webglcontextrestored` the orchestrator calls `onContextRestored`, and `useAppWebGPUInit` re-runs the Retry GPU path: a fresh orchestrator over the restored context, which recompiles every program, reallocates every FBO and reloads the current image. **Retry GPU** pressed while the context is still lost answers with the same overlay (`WebGL2ContextLostError`). If the restore never arrives, **Reload page** is the way out.
+
+**MSAA (WebGL2).** The context `antialias` flag only multisamples the default framebuffer, and every pass renders into an FBO, so it never antialiased the picture. The Viewport **MSAA 4x** toggle reaches `WebGLRenderer.setAntialiasing` instead, which gives the executor's pool a sample count. The band-layer passes then draw into one shared multisample renderbuffer (`createMultisampleTarget` in `webgl/resources.ts`, `samples: 4`, clamped to what the context supports for the format) and `blitFramebuffer` it into the existing single-sample layer texture — what WebGPU does with its MSAA texture and resolve target. Persistence and the compositor stay 1×. Toggling reallocates that renderbuffer on the same context; nothing creates a new one, which is why `antialias` stays `false`.
+
+**Internal targets (WebGL2).** `selectWebGLInternalFormat(gl)` (`webgl/resources.ts`) enables `EXT_color_buffer_half_float` (or `EXT_color_buffer_float`, which includes it) and checks that an `RGBA16F` framebuffer is complete. When it is, the executor's pool — layers, tracers, `history` rings, every intermediate target — allocates `RGBA16F`, so additive tracers no longer clip at 1.0 before the compositor. Otherwise it stays `RGBA8`, draws the same, and `window.webglInternalFormatNote` says the tracers clip (`webglInternalFormatNote`, the twin of `canvasHdrNote`); `window.webglInternalFormat` names the format either way. Targets that are read back — debug readback, export, the stationary previews, the upsample composite — stay `RGBA8` / `UNSIGNED_BYTE`. This is not Canvas HDR: WebGL has no `toneMapping: 'extended'`, the canvas is 8-bit, and the Viewport HDR toggle stays hidden.
+
+**`desynchronized` (WebGL2).** Off by default. A low-latency canvas can hand the compositor its buffer before a `readPixels` / `toBlob` / Playwright screenshot reads it, which is exactly what preserve-drawing-buffer exists for. `resolveWebGL2Desynchronized(preserve)` therefore honours `?desynchronized=1` only when `resolveWebGL2PreserveDrawingBuffer()` resolved **off**, and `getWebGL2ContextAttributes` refuses the pair again on its own. Under automation (`navigator.webdriver`) preserve is on, so the param is ignored there unless the run also passes `?preserve_drawing_buffer=0`.
 
 **`preserveDrawingBuffer` (WebGL2).** Off by default: the live diagnostic session never reads the canvas back, and preserving costs a copy per frame. It matches WebXR, which already passes `false` explicitly. `resolveWebGL2PreserveDrawingBuffer()` (`gpuOptions.ts`) turns it on for the paths that *do* read back — `canvas.toBlob` / `toDataURL` / `gl.readPixels` outside the draw call, and Playwright element screenshots — by checking, in order:
 
@@ -81,13 +108,14 @@ RendererOrchestrator.bootstrap(primaryCanvas)
 - **Probe.** `probeCanvasHdr` runs one HDR configure at bootstrap, verified through `getConfiguration()` where the browser has it. It publishes `window.canvasHdrAvailable` / `window.canvasHdrReason`. The reason also reports `(dynamic-range: high)`, since an SDR display still clips.
 - **Fallback.** `configureWebGpuCanvas` caches the answer per page, like `'standard'`. A UA that throws or drops the format or tone mapping gets an SDR configure in the same call, so the canvas is never left black. `configureWebGpuCanvas` returns the presentation it actually applied.
 - **Which passes change.** Each `WebGPURenderer` chooses its present passes from the canvas texture's format. On an `rgba16float` canvas the frame's graph variant presents `hdr-extended`: the `output` node carries `presentation`, and the compositor writing it emits the `toHdrPresentWgsl` source into an `rgba16float` target (docs/PASS_GRAPH.md § *The hdr-extended present*). The inspect views build their HDR `TracerInspectPass` the same way, on first use. Export keeps drawing the SDR variant. Until the device has validated the HDR variant, the canvas is cleared rather than drawn with SDR pipelines it cannot take.
+- **Readback is RGBA.** The SDR canvas format is the browser's preferred one, often `bgra8unorm`, and export renders offscreen in that format. `GpuReadback.readTexturePixels` and the tracer export swap R and B when the texture is `bgra*` (`packRgbaRows`), so PNG / video export and the stationary previews always get RGBA. `e2e/webgpu-bgra-export.spec.ts` forces `getPreferredCanvasFormat()` to `bgra8unorm` and compares against `rgba8unorm`.
 - **Export stays SDR.** `exportFrame` (WebM / WebCodecs / PNG sequence) always renders to the SDR pipelines' format through `encode_display`. The tracer PNG renders offscreen. Upscale captures the canvas via a 2D `drawImage`, which converts to the 2D canvas's SDR space. WebGL has no extended canvas tone mapping, so the toggle is hidden there.
 - **Internal targets.** Canvas HDR does not request new device features. If `rg11b10ufloat-renderable` was not granted, the frame has already clipped in `rgba8unorm`. Diagnostics then shows `window.canvasHdrNote`: "canvas HDR requested, internal targets are rgba8unorm — highlights still clip".
 - **Manual HDR-display check.** Use Chrome on an HDR monitor with OS HDR on. Load a bright image, raise *Tracer above* intensity and stamp boost until trails saturate, then toggle **Canvas HDR**. With it on, overlapping additive trails should glow brighter than the UI's white. With it off, they should match it. Toggling back off must look identical to a fresh session.
 
 ## Limits and features
 
-- **Limits / device lease**: one `GPUAdapter` and at most one live `GPUDevice` per page. `requestWebGpuDevice` walks **at most three** strategies — `default-limits` (omit `requiredLimits`) → `canvas-limits` (longest canvas edge, floored at 256 so a 150px layout glitch cannot reshape the request) → `no-optional-features` — then **stops**. A live device is reused; canvas resize reconfigures the context / recreates textures on that device. Queue-create / `E_OUTOFMEMORY` sets `gpuFatal` and never calls `requestDevice` again until reload. React effect re-runs, rAF, and ResizeObserver must not reset `attempt` to 1 (#157 / #158).
+- **Limits / device lease**: one `GPUAdapter` and at most one live `GPUDevice` per page. `requestWebGpuDevice` walks **at most two** strategies — `default-limits` (omit `requiredLimits`) → `no-optional-features` (the same, without the optional features) — then **stops**. There used to be a `canvas-limits` strategy between them, requesting a `maxTextureDimension2D` sized to the canvas; it could never help, because a request that failed on default limits does not succeed by asking for *more*. When the device is lost, `releasePageGpuDevice` drops the adapter with it: an adapter that has made a device is consumed and its second `requestDevice` rejects, so **Retry GPU** starts again from `requestAdapter`. The lease releases itself on `device.lost` (whoever's handler runs first), and a detached `attachDeviceDiagnostics` listener stays silent, so a dead renderer's handler does not report into its successor. A live device is reused; canvas resize reconfigures the context / recreates textures on that device. Queue-create / `E_OUTOFMEMORY` sets `gpuFatal` and never calls `requestDevice` again until reload. React effect re-runs, rAF, and ResizeObserver must not reset `attempt` to 1 (#157 / #158).
 - **Perf HUD timestamps**: `GpuTimestampProfiler` resolves into a two-slot buffer whose slots are **256 bytes apart** — `resolveQuerySet`'s destination offset must be a multiple of 256. Packing the 48-byte payloads end to end put slot 1 at offset 48, failing validation; because the resolve shares the frame's command encoder, that discarded the whole command buffer on every other frame (a steady black blink whenever the HUD was on). The profiler also opts out entirely when `GPUCommandEncoder.prototype.writeTimestamp` is missing, rather than throwing mid-encode after the swap-chain texture has been acquired.
 - **Logs**: one `[Chromashift:GPU] Adapter ready` and one `[Chromashift:GPU] requestDevice` at **info** per session (`attempt` index + strategy). Further strategies are **debug**. Failures are **error** so D3D12 OOM is not buried.
 - **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) to what the adapter supports. That list is only `timestamp-query` (Perf HUD), `rg11b10ufloat-renderable` (HDR internal targets via `selectInternalColorFormat`) and `texture-formats-tier1` (the GPU analysis lane's `r8uint` storage mask — see *gpu-chores* below). They are **optional**: a failed `requestDevice` retries with `requiredFeatures: []` before giving up. None are required for core rendering. `float32-filterable` is **not** requested — the graph never samples 32-bit float textures. `device.features` after bootstrap is the source of truth (`WebGpuCapabilityReport`).
@@ -141,14 +169,16 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 | Event | Handler | UI |
 |---|---|---|
 | `device.lost` (non-destroyed) | `deviceLostRuntimeError` | Recoverable overlay: **Retry GPU** or reload |
-| `device.onuncapturederror` | Logged + `uncapturedRuntimeError` | Console + non-recoverable notice |
+| `webglcontextlost` (WebGL) | `watchWebGL2Context` → `webglContextLostRuntimeError` | The same recoverable overlay; `webglcontextrestored` re-boots on the same context, or **Reload page** if it never comes |
+| `device.onuncapturederror` | `attachDeviceDiagnostics` → logged; rendering continues | Console only |
+| A pipeline the device refused (inspect views, a compare slot's renderer, the collision-stats blit) | `PipelineCompileError` → `pipelineRuntimeError` | Dismissable notice with the compiler's `line:column` messages; the frame keeps drawing (that view shows the composite) |
 | Bootstrap failure | `toBootstrapRuntimeError` | Blocking overlay; **not** recoverable (no Retry GPU). Queue OOM names command-queue exhaustion. **Open WebGL diagnostic session** remains. |
 
 ### Recovery actions
 
 | Action | Behaviour |
 |---|---|
-| **Retry GPU** (in-app) | Device-lost only. Re-runs `RendererOrchestrator.bootstrap` on the page adapter; `gpuFatal` (OOM / exhausted strategies) refuses another `requestDevice` until reload. Preserves reducer settings and current image index. |
+| **Retry GPU** (in-app) | Device-lost only. Re-runs `RendererOrchestrator.bootstrap` on the page adapter; `gpuFatal` (OOM / exhausted strategies) refuses another `requestDevice` until reload. Preserves reducer settings and current image index. On WebGL it re-uses the canvas's context, and answers with the same overlay while that context is still lost. |
 | **Reload page** | Full navigation |
 | **Open WebGL diagnostic session** | `openWebGlDiagnosticSession()` → persist preference and `location.assign(?renderer=webgl)`. New page load. Never an in-place silent switch. |
 
@@ -179,4 +209,4 @@ Pure helpers are covered by Vitest without a React tree:
 npm test
 ```
 
-Tests live in `src/engine/gpuBootstrap.test.ts` and `src/engine/RendererOrchestrator.test.ts`.
+Tests live beside each module (`adapter.test.ts`, `canvasConfig.test.ts`, `gpuErrors.test.ts`, `gpuOptions.test.ts`, `webgl2Context.test.ts`) and in `src/engine/RendererOrchestrator.test.ts` (Retry GPU on a fresh adapter, one error-scope pop, detachable device-lost listeners, refused secondary pipelines), `src/engine/webgpu/GpuReadback.test.ts` (BGRA → RGBA readback) and `src/engine/webgpu/WebGPUPipelines.test.ts` (compiler messages). In the browser, `e2e/webgpu-device-loss.spec.ts` destroys the device and clicks **Retry GPU**, and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.

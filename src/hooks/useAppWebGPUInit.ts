@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useState, type MutableRefObject } from 'react';
 import { computeAverageLuminanceWith } from '../engine/WasmEngine';
-import type { ImageEntry } from '../engine/TextureManager';
+import type { ImageEntry } from '../engine/library/imageEntry';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/types/RendererContracts';
 import type { ChromashiftTextureHandle } from '../engine/types/TextureHandle';
 import { getRendererPreference, publishRendererBootFailure, publishRendererBreadcrumbs } from '../engine/rendererMode';
@@ -10,23 +10,19 @@ import {
   publishWebGpuProbe,
   recordProbeStageFailure,
   recordProbeSuccess,
-} from '../engine/webgpuProbe';
-import {
-  getGpuFatalError,
-  releasePageGpuDevice,
-  toBootstrapRuntimeError,
-  type GpuRuntimeError,
-  type WebGpuSession,
-} from '../engine/gpuBootstrap';
-import { listLocalImages } from '../engine/LocalLibrary';
-import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/corpusManifest';
+} from '../engine/webgpu/webgpuProbe';
+import { getGpuFatalError, toBootstrapRuntimeError, type GpuRuntimeError } from '../engine/gpu/gpuErrors';
+import { releasePageGpuDevice } from '../engine/webgpu/adapter';
+import { type WebGpuSession } from '../engine/webgpu/webgpuSession';
+import { listLocalImages } from '../engine/library/LocalLibrary';
+import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/library/corpusManifest';
 import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
 import { activatePassGraph, passGraphSelection, presetGraphSource } from '../engine/graph';
 
 export interface UseAppWebGPUInitProps {
   mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
   antialiasEnabled: boolean;
-  displayColorSpace: import('../engine/gpuOptions').DisplayColorSpace;
+  displayColorSpace: import('../engine/gpu/gpuOptions').DisplayColorSpace;
   canvasHdr: boolean;
   setGpuError: (err: GpuRuntimeError | null) => void;
   orchestratorRef: MutableRefObject<RendererOrchestrator | null>;
@@ -188,6 +184,8 @@ export function useAppWebGPUInit({
   const canvasHdrRef = useRef(canvasHdr);
   canvasHdrRef.current = canvasHdr;
   const [isGpuRetrying, setIsGpuRetrying] = useState(false);
+  /** `retryGpuBootstrap`, for the WebGL restore path that runs before it is defined. */
+  const retryGpuBootstrapRef = useRef<(() => Promise<void>) | null>(null);
 
   const destroyActiveOrchestrator = useCallback(() => {
     activeOrchestratorRef.current?.destroy();
@@ -211,6 +209,11 @@ export function useAppWebGPUInit({
     const preferredBackend = getRendererPreference();
     const onRuntimeError = (error: GpuRuntimeError) => {
       if (isCancelled(cancelToken, signal)) return;
+      // A refused pipeline: shown, but the session keeps drawing without it.
+      if (error.kind === 'pipeline') {
+        setGpuError(error);
+        return;
+      }
       if (error.kind !== 'device-lost') return;
       clearOrchestratorRefs(
         orchestratorRef,
@@ -294,6 +297,14 @@ export function useAppWebGPUInit({
           antialias: antialiasEnabledRef.current,
           backend: 'webgl',
           onRuntimeError,
+          // The browser restored a lost context: boot again on it, exactly as
+          // Retry GPU would. Not gated on this boot's cancel token — a Retry
+          // pressed while the context was still lost aborts it, and the
+          // restore must still land. The canvas ref is null once unmounted.
+          onContextRestored: () => {
+            if (mainCanvasRef.current !== canvas) return;
+            void retryGpuBootstrapRef.current?.();
+          },
         });
         orchestrator = bootstrapped.orchestrator;
         activeOrchestratorRef.current = orchestrator;
@@ -458,7 +469,7 @@ export function useAppWebGPUInit({
           console.warn('Failed to load specific image from URL:', e);
           setSpecificImageError(`Failed to load image: ${specificUrl}`);
           if (entries.length > 0) {
-            const tex = await localTextureManager.loadTexture(entries[0].url);
+            const tex = await localTextureManager.loadTexture(entries[0]!.url);
             if (bailIfCancelled()) return;
 
             localRenderer.setTexture(tex);
@@ -467,7 +478,7 @@ export function useAppWebGPUInit({
           }
         }
       } else if (entries.length > 0) {
-        const tex = await localTextureManager.loadTexture(entries[0].url);
+        const tex = await localTextureManager.loadTexture(entries[0]!.url);
         if (bailIfCancelled()) return;
 
         localRenderer.setTexture(tex);
@@ -560,6 +571,8 @@ export function useAppWebGPUInit({
     setGpuError,
   ]);
 
+  retryGpuBootstrapRef.current = retryGpuBootstrap;
+
   const initRef = useRef(init);
   initRef.current = init;
 
@@ -600,12 +613,24 @@ export function useAppWebGPUInit({
 
       destroyActiveOrchestrator();
     };
-    // Page-lifetime GPU boot (#157 / #158). `init` changes every render because
-    // `useChromashiftRefs()` returns a new object, which used to re-run this
-    // effect, reset requestDevice to attempt 1, and OOM D3D12 command queues.
-    // Resize / antialias / colour-space changes must reconfigure, not reboot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Page-lifetime GPU boot (#157 / #158): every dependency here is stable —
+    // refs, the store's memoized actions, a `[]` callback — so this runs once.
+    // `init` is read through `initRef` because it is rebuilt every render; a
+    // re-run would reset requestDevice to attempt 1 and could OOM D3D12
+    // command queues. Resize / antialias / colour-space changes must
+    // reconfigure, not reboot.
+  }, [
+    setGpuError,
+    setGpuReady,
+    destroyActiveOrchestrator,
+    orchestratorRef,
+    deviceRef,
+    webGpuSessionRef,
+    gpuImageAnalysisRef,
+    rendererRef,
+    textureManagerRef,
+    sourceTextureRef,
+  ]);
 
   useEffect(() => {
     orchestratorRef.current?.setCanvasColorSpace(displayColorSpace);

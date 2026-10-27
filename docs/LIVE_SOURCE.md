@@ -22,19 +22,21 @@ or clicking Stop, releases the stream/file and returns to the normal image pipel
 
 ## How it works
 
-- **`LiveSourceManager`** (`src/engine/LiveSource.ts`) owns one `HTMLVideoElement` fed by
+- **`LiveSourceManager`** (`src/engine/live/LiveSource.ts`) owns one `HTMLVideoElement` fed by
   either a `MediaStream` (camera/screen) or a looping local file. Only one source is active at
   a time — starting a new one tears down whatever was running.
 - **`TextureManager.updateVideoTexture()`** / **`WebGLTextureManager.updateVideoTexture()`**
   upload the current frame (`copyExternalImageToTexture` on WebGPU, `texImage2D` on WebGL) into
   a texture reused under a single cache key (`LIVE_SOURCE_CACHE_KEY` in
-  `src/engine/liveSourceTexture.ts`), recreated only when the frame resolution changes — not
+  `src/engine/live/liveSourceTexture.ts`), recreated only when the frame resolution changes — not
   every frame. No mip chain is generated (the frame is replaced every call, so trilinear
   filtering would be wasted GPU time). This keeps texture memory stable over long sessions
   instead of growing per frame.
 - **`useLiveSource`** (`src/hooks/useLiveSource.ts`) owns the manager instance, the
-  start/stop handlers, and a dedicated `requestAnimationFrame` loop (mirroring
-  `useReactiveInput`'s own loop rather than piggybacking on the main render loop) that:
+  start/stop handlers, and a `sources`-phase task on the app's frame clock
+  (`engine/frame/FrameClock.ts`) — registered only while a source is active, and run
+  before the render phase every tick, so a frame always draws the video frame just
+  uploaded. The task:
   1. Uploads the current frame every tick and routes the resulting texture handle through
      `applySourceTexture` — the same path used for still images, so it reaches the primary
      renderer and any active compare/quad slots.
@@ -43,7 +45,7 @@ or clicking Stop, releases the stream/file and returns to the normal image pipel
      frame — recomputing CR0P band thresholds at 30–60fps would be wasted work for a value
      that only needs to track slow lighting changes.
   3. Publishes `window.liveSourceActive` / `window.liveSourceKind` / `window.liveSourceFps`
-     breadcrumbs for automation and diagnostics (`src/engine/liveSourceBreadcrumbs.ts`).
+     breadcrumbs for automation and diagnostics (`src/engine/live/liveSourceBreadcrumbs.ts`).
 - **`media.liveSource`** (`src/state/types.ts`) is runtime-only reducer state — `active`,
   `kind`, `label`, `width`, `height`, `error`. It is **not** part of the serialized preset
   schema (`ChromashiftSettingsInput` already excludes the rest of `media` for the same
@@ -270,8 +272,8 @@ Presets are versioned: schema **v5** added these four fields, and a v1–v4 docu
 
 ## Testing
 
-- **Unit**: `src/engine/liveSourceTexture.test.ts` (recreate-on-resize decision, pure),
-  `src/engine/LiveSource.test.ts` (`LiveSourceManager` source-kind routing — camera,
+- **Unit**: `src/engine/live/liveSourceTexture.test.ts` (recreate-on-resize decision, pure),
+  `src/engine/live/LiveSource.test.ts` (`LiveSourceManager` source-kind routing — camera,
   screen-share, video-file, teardown-on-switch, `onEnded` — against a minimal stubbed
   `document`/`navigator`/`URL`, since this repo's Vitest config runs in the `node`
   environment without jsdom), `src/state/liveSourceActions.test.ts` (reducer + action).

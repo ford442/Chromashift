@@ -36,7 +36,7 @@ import {
   toHdrPresentWgsl,
 } from './templates/wgsl';
 import type { UniformLayout } from './templates/uniformLayout';
-import type { CanvasPresentation } from '../gpuOptions';
+import type { CanvasPresentation } from '../gpu/gpuOptions';
 import { WGSL_BLEND_HELPERS } from '../shaders/common';
 import type {
   CompiledGraph,
@@ -132,7 +132,7 @@ function emitPass(
       // that reads a `motion` node carries the temporal term too — the motion
       // variant of the same pass, with the field as one more texture.
       const inputs = node.kind === 'decay' ? layerCount : inputCount;
-      const motion = node.kind === 'decay' && byId.get(node.inputs[0])?.kind === 'motion';
+      const motion = node.kind === 'decay' && byId.get(node.inputs[0]!)?.kind === 'motion';
       const fragment = webgpu
         ? emitCoincidenceDecayWgsl(inputs, { motion })
         : emitCoincidenceDecayGlsl(inputs, { motion });
@@ -255,7 +255,7 @@ export function compileGraph(graph: PassGraph, backend: GraphBackend): CompiledG
   const canvasOf = new Map<string, CanvasPresentation>();
   for (const node of graph.nodes) {
     if (node.kind !== 'output') continue;
-    canvasOf.set(node.inputs[0], node.params.presentation === 'hdr-extended' ? 'hdr-extended' : 'sdr');
+    canvasOf.set(node.inputs[0]!, node.params.presentation === 'hdr-extended' ? 'hdr-extended' : 'sdr');
   }
   const emitted = schedule.passes.map((pass) =>
     emitPass(

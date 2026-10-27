@@ -1,6 +1,6 @@
-import type { ImageEntry } from '../engine/TextureManager';
-import { countLocalEntries } from '../engine/corpusIndex';
-import { parseDisplayColorSpace } from '../engine/gpuOptions';
+import type { ImageEntry } from '../engine/library/imageEntry';
+import { countLocalEntries } from '../engine/library/corpusIndex';
+import { parseDisplayColorSpace } from '../engine/gpu/gpuOptions';
 import { clampLayerCount } from '../engine/graph/layerSpecs';
 import {
   DEFAULT_FPS,
@@ -19,8 +19,9 @@ import type {
   TracersSlice,
   UiSlice,
 } from './types';
-import type { CompareViewState } from '../engine/compareViews';
-import type { MidiBinding, ReactiveSettings } from '../engine/reactive/types';
+import type { MidiBinding } from '../engine/reactive/types';
+import type { ChromashiftSettingsInput } from './settingsSchema';
+import { withParam, type ParamPath } from './params';
 
 /** The `LayersSlice` fields that carry one value per layer. */
 export type PerLayerField = 'angles' | 'extensions' | 'opacities';
@@ -47,7 +48,7 @@ function resizePerLayer(
   fill: (index: number) => number,
 ): number[] {
   if (values.length === count) return values as number[];
-  return Array.from({ length: count }, (_, i) => (i < values.length ? values[i] : fill(i)));
+  return Array.from({ length: count }, (_, i) => (i < values.length ? values[i]! : fill(i)));
 }
 
 /**
@@ -58,7 +59,7 @@ function resizePerLayer(
  * layer-count control — so every writer funnels through here rather than each
  * one remembering to resize all three arrays.
  */
-export function normalizeLayersSlice(layers: LayersSlice): LayersSlice {
+function normalizeLayersSlice(layers: LayersSlice): LayersSlice {
   const count = clampLayerCount(layers.count);
   const resized = {} as Record<PerLayerField, number[]>;
   let moved = count !== layers.count;
@@ -94,7 +95,9 @@ export type ChromashiftAction =
   | { type: 'reactive/patch'; patch: Partial<import('../engine/reactive/types').ReactiveSlice> }
   | { type: 'reactive/setMidiBindings'; bindings: MidiBinding[] }
   | { type: 'reactive/addMidiBinding'; binding: MidiBinding }
-  | { type: 'reactive/removeMidiBinding'; param: import('../engine/reactive/types').MidiParamId }
+  | { type: 'reactive/removeMidiBinding'; param: ParamPath }
+  /** Set one parameter by path, coerced into its range (MIDI, attract, modulation). */
+  | { type: 'param/set'; path: ParamPath; value: number }
   | { type: 'settings/apply'; settings: ChromashiftSettingsInput; presetId?: string }
   | { type: 'compare/setLayout'; layout: import('../engine/compareViews').CompareLayoutMode }
   | { type: 'compare/setSyncPlay'; syncPlay: boolean }
@@ -103,23 +106,7 @@ export type ChromashiftAction =
   | { type: 'compare/setQuadLayerIndex'; quadLayerIndex: import('../engine/compareViews').QuadLayerIndex }
   | { type: 'compare/cycleQuadLayer' };
 
-/** Serializable preset payload (excludes runtime GPU/media corpus state). */
-export interface ChromashiftSettingsInput {
-  layers?: Partial<LayersSlice>;
-  tracers?: Partial<TracersSlice>;
-  output?: Partial<Omit<OutputSlice, 'tracerInspect'>> & { tracerInspect?: Partial<TracerInspectState> };
-  engine?: Pick<EngineSlice, 'fps' | 'paused' | 'engineMode' | 'avgLuminance'>;
-  ui?: Pick<UiSlice, 'isAutoPlayActive' | 'imageChangeInterval' | 'referenceBlendMode' | 'overlayImageSource' | 'referenceOpacity' | 'upscaleModel'>;
-  reactive?: Partial<ReactiveSettings>;
-  compare?: CompareViewState;
-  viewport?: {
-    quarterZoom?: boolean;
-    halfOverlay?: boolean;
-    colorSpace?: import('../engine/gpuOptions').DisplayColorSpace;
-    canvasHdr?: boolean;
-  };
-  kiosk?: Pick<UiSlice, 'kioskEnabled' | 'kioskUiHidden' | 'kioskAttractMode'>;
-}
+export type { ChromashiftSettingsInput } from './settingsSchema';
 
 /**
  * Merge `patch` into `slice`, returning `slice` itself when nothing moved.
@@ -299,6 +286,9 @@ function reduceSlices(
 
     case 'reactive/patch':
       return { ...state, reactive: { ...state.reactive, ...action.patch } };
+
+    case 'param/set':
+      return withParam(state, action.path, action.value);
 
     case 'reactive/setMidiBindings':
       return {

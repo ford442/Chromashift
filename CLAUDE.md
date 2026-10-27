@@ -12,7 +12,9 @@ AGENTS.md wins.
 npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
-npm test          # Vitest unit tests
+npm run knip      # Unused files, exports and dependencies (knip.json)
+npm test          # Vitest: node project (*.test.ts) + happy-dom project (*.dom.test.tsx)
+npm run test:coverage  # The same with v8 coverage (coverage/, gitignored)
 npm run shaders:validate  # naga + glslangValidator over every shader variant (needs naga-cli, glslang)
 npm run test:e2e  # Playwright smoke (WebGL)
 npm run test:cpp  # C++ host tests (:werror is the CI gate, :asan is opt-in, :simd needs emsdk)
@@ -40,7 +42,7 @@ All use strict mode. `skipLibCheck: true` avoids noise from `.d.ts` files in `no
 
 ## Verifying changes to the lazy-loaded upscaler workers
 
-After touching `src/engine/Upscaler.ts`, `upscaler.worker.ts`, or `nunif.worker.ts`, run
+After touching `src/engine/upscale/Upscaler.ts`, `upscaler.worker.ts`, or `nunif.worker.ts`, run
 `npm run build` (includes `check:dist`) — `dist/assets/index-*.js` must contain no
 `tfjs`/`ort-wasm` references, and `dist/` must contain no `ort-wasm*.wasm`. Worker
 chunks load on demand when the user clicks Upscale. See AGENTS.md's "Upscaler

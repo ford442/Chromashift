@@ -28,7 +28,7 @@ for real-time rendering.
 | **In scope (export / offline)** | `advanceAnglesBy` | Video-export angle stepping when Engine = C++ WASM |
 | **In scope (per frame)** | `computeMotionFlowWith` | Optical flow behind `motionMode: 'direction'`, on backends with no compute lane (WebGL, or WebGPU with `?no_gpu_compute` / a compute decline). The only per-frame WASM call, and it runs in `motion.worker.ts`, never on the animation thread |
 | **Out of scope (GPU)** | Layer rotation, persistence/compositing, tracer decay, tracer overlap detection | Handled by WGSL/GLSL shaders in `WebGPURenderer` / `WebGLRenderer`; the per-frame decay multiplier is the pure `durationToDecay()` in `math/decay.ts` (constants from `shared/decay.json`, see [Shared decay table](#shared-decay-table-shareddecayjson)), and the 3-layer overlap ("coincidence") detection is a `gpu-chores` compute pass (`op: 'coincidence'`, see `docs/gpu-bootstrap.md`) with a fragment-shader fallback — neither is ever dispatched through WASM |
-| **Test / benchmark only** | `durationToDecayWith`, `simulateTracerDecayWith`, `buildRotationMat3With`, `computeLuminanceHistogramWith`, `computeColorBandCountsWith`, bulk classify helpers | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
+| **Test / benchmark only** | `durationToDecayWith`, `classifyPixelsBulkWith`; the C++ `classifyPixel`, `buildRotationMat3`, `simulateTracerDecay`, `computeLuminanceHistogram` and `computeColorBandCounts` exports (no TS dispatcher) | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
 
 **Selection order for image analysis** — encoded in the **`gpu-chores`** facade
 (`src/engine/compute/chores/`) as `CHORE_BACKEND_ORDER` and walked by
@@ -100,11 +100,11 @@ and the unit/C++ host tests — see "Test / benchmark only" above.
 | `loadWasmEngine` | `hooks/useAppLifecycle.ts` | App startup |
 | `isWasmReady` | `hooks/appUiProps/buildControlProps.ts` | UI state (Engine badge) |
 | `computeAverageLuminanceWith` | `hooks/useAppWebGPUInit.ts` | Load-time (image load) |
-| `computeAverageLuminanceStridedWith` | `engine/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
+| `computeAverageLuminanceStridedWith` | `engine/live/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
 | `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts` (both only on the mask-generation error path); also called by `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage`/`computeAverageLuminance` | Load-time |
 | `classifyImageMaskWith` | `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage` | Load-time (mask generation) |
 | `advanceAnglesBy` | `engine/videoExport/exportVideoFrameLoop.ts` | Video export |
-| `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
+| `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/live/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
 
 No `*With()` dispatcher is called from a per-frame render or animation-loop path
 (`useAnimationLoop.ts`, `WebGPURenderer.ts` and the graph executor / `WebGLRenderer.ts`
@@ -124,15 +124,15 @@ update this table if one is ever intentionally added.
 |---|---|---|
 | `computeAverageLuminance` | `computeAverageLuminanceWith` | ITU-R BT.709 average luminance over an RGBA pixel buffer |
 | `computeAverageLuminanceStrided` | `computeAverageLuminanceStridedWith` | Strided luminance for large (4K–8K) images |
-| `classifyPixel` | `classifyPixelWith` | Maps a single pixel's RGB + avgLum to a colour-band index (0–10) |
+| `classifyPixel` | — (benchmark / C++ tests) | Maps a single pixel's RGB + avgLum to a colour-band index (0–10) |
 | `buildBandLut` | `buildBandLut` (TS) / WASM heap | 256-entry band LUT from avgLuminance |
 | `classifyPixelsBulk` | `classifyPixelsBulkWith` | Batch version of `classifyPixel` — one WASM call for the whole image |
 | `classifyPixelsBulkLut` | — | Bulk classification via the band LUT (scalar) / the SIMD ladder |
 | `computeClassificationMask` | `classifyImageMaskWith` | Generates compact uint8 band mask (`width × height`) for GPU `r8uint` texture upload |
 | `computeClassificationMaskLut` | `classifyImageMaskWith` (preferred WASM path) | Byte-identical mask via the LUT shortcut (scalar) / the SIMD ladder |
-| `computeLuminanceHistogram` | `computeLuminanceHistogramWith` | 256-bucket ITU-R BT.709 luminance histogram |
-| `computeColorBandCounts` | `computeColorBandCountsWith` | 11-bucket pixel count per Chromashift colour band |
-| `buildRotationMat3` | `buildRotationMat3With` | Column-major 3×3 rotation matrix (matches `rotation.ts`) |
+| `computeLuminanceHistogram` | — (benchmark / C++ tests) | 256-bucket ITU-R BT.709 luminance histogram |
+| `computeColorBandCounts` | — (benchmark / C++ tests) | 11-bucket pixel count per Chromashift colour band |
+| `buildRotationMat3` | — (benchmark / C++ tests; TS is `math/rotation.ts`) | Column-major 3×3 rotation matrix (matches `rotation.ts`) |
 
 ### Frame timing & tracer helpers
 
@@ -140,7 +140,7 @@ update this table if one is ever intentionally added.
 |---|---|---|
 | `durationToDecay` | `durationToDecayWith` | Per-frame decay multiplier for tracer persistence timing |
 | `advanceLayerAngles` | — (reference for `advanceAnglesBy`) | Step `count` layer angles with 360° wrapping |
-| `simulateTracerDecay` | `simulateTracerDecayWith` | Apply per-frame decay to a Float32 RGBA buffer in-place (CPU-side tracer simulation) |
+| `simulateTracerDecay` | — (benchmark / C++ tests) | Apply per-frame decay to a Float32 RGBA buffer in-place (CPU-side tracer simulation) |
 | `computeMotionFlow` | `computeMotionFlowWith` | Coarse-to-fine Lucas–Kanade optical flow over two low-resolution luminance planes; mirrors `chores/motionKernel.ts` and the WGSL flow passes (see `docs/LIVE_SOURCE.md`) |
 
 `advanceLayerAngles` takes `(const float* angles, const float* steps, float* out,
@@ -540,6 +540,22 @@ or, on older browsers:
 [WasmEngine] WebAssembly SIMD128 unsupported — using the TypeScript engine.
 ```
 
+The probe module is built from its sections (`wasmSection` + `leb128` in `loadEngine.ts`),
+so every size field is computed rather than typed in. The hand-written bytes it replaced
+had two section sizes short (`0x0f`/`0x0d` for 22/20-byte bodies): `WebAssembly.validate`
+rejected the module on every browser, and the engine silently never loaded.
+`loadEngine.test.ts` pins `isWasmSimdSupported() === true` under Node 22, which has SIMD128.
+
+**Load status breadcrumbs.** The main thread publishes `window.wasmEngineState`
+(`'idle' | 'loading' | 'ready' | 'unavailable' | 'error'`) and `window.wasmEngineError`
+(the caught message, or `null`). `unavailable` means no SIMD128; `error` means the fetch or
+instantiation threw, and is also logged once as
+`[WasmEngine] C++ WASM engine failed to load — using the TypeScript engine:` with the error.
+Workers have no `window`, so `analysis.worker.ts` and `motion.worker.ts` return their
+module's status with every response and their hosts merge it into
+`window.wasmEngineWorkers` (`{ analysis?, motion? }`, each `{ state, error }`).
+`e2e/wasm-engine.spec.ts` asserts `ready` on the main thread and in both workers.
+
 > **Note:** there is deliberately no separate scalar WASM build. The scalar kernel bodies are
 > still compiled — they finish every SIMD loop's tail, the host `g++` test build runs them
 > alone, and `make -C cpp test-simd` links a `CS_FORCE_SCALAR` copy next to the SIMD engine
@@ -565,18 +581,29 @@ auto-play).
 `classifyImageMaskWith` and `computeMotionFlowWith` put their outputs in the same
 persistent buffer, after the inputs, so a mask or flow field costs no allocation per call.
 Separate small output buffers (histogram: 1 KB, band counts: 44 bytes) are still
-allocated per-call because they are fixed-size and inexpensive. On the C++ side,
+allocated per-call because they are fixed-size and inexpensive, through
+`withWasmScratch` (freed in a `finally`).
+
+Every allocation goes through `checkedMalloc`: with `ALLOW_MEMORY_GROWTH` a `_malloc`
+the heap cannot grow to fit returns `0` instead of aborting, and the caller would then
+copy the pixels over heap offset 0. `checkedMalloc` throws instead.
+
+Strided luminance copies only its samples. `computeAverageLuminanceStridedWith` with
+`stride > 1` packs the sampled pixels in JS and hands C++ a contiguous run (stride 1), and
+`computeImageAverageLuminanceWith` reads only the sampled rows out of the image
+(`getStridedRows`). At 8K and stride 30 that is ~37k pixels instead of a ~132 MB frame,
+and the result is the same: the C++ sums are exact. On the C++ side,
 `computeMotionFlow` keeps its half-resolution scratch planes in a grow-only arena for the
 same reason.
 
 ### Guidelines for future WASM integrations
 
-- **Always free** temporary allocations (`_malloc` / `_free`) unless you are
-  intentionally keeping a persistent buffer.
+- **Always free** temporary allocations: use `withWasmScratch` (or `getPersistentBuf`
+  for a buffer you mean to keep), never a bare `_malloc`, which returns `0` on failure.
 - **Do not hold** a heap pointer across `await` boundaries — memory may have moved
   if `ALLOW_MEMORY_GROWTH` caused a reallocation.
 - **Prefer bulk operations** (`classifyPixelsBulkWith`) over per-pixel calls
-  (`classifyPixelWith`) to minimise JS↔WASM boundary crossings.
+  to minimise JS↔WASM boundary crossings.
 - **Avoid accessing** `HEAPU8` / `HEAPF32` etc. after calling any function that
   may trigger heap growth, as typed array views can be invalidated.
 
@@ -632,8 +659,8 @@ src/engine/
     │   └── decay.ts         Pure TS decay/angle fallbacks (re-exports math/decay.ts)
     └── dispatch/
         ├── luminance.ts      computeAverageLuminance(Strided)?With, computeImageAverageLuminanceWith
-        ├── classification.ts classifyPixel(sBulk)?With, classifyImageMaskWith, histogram/band-count
-        └── animation.ts      durationToDecayWith, advanceAnglesBy, buildRotationMat3With, simulateTracerDecayWith
+        ├── classification.ts classifyPixelsBulkWith, classifyImageMaskWith
+        └── animation.ts      durationToDecayWith, advanceAnglesBy
 ```
 
 `WasmEngine.ts` is the single integration point consumed by `App.tsx`, and stays a thin
@@ -686,20 +713,6 @@ The WASM binary has not been built yet.  Run `npm run build:wasm` (requires Emsc
 Not in the current phase.  The GPU pipeline (WebGPU / WGSL shaders) lives entirely in
 `WebGPURenderer.ts` and is not planned to be moved into WASM.  The C++ engine handles
 CPU-side computations (luminance analysis, pixel classification, frame timing helpers).
-
-**Q: When should I use `classifyPixelsBulkWith` vs `classifyPixelWith`?**
-
-For analysis of a full image, always use `classifyPixelsBulkWith`.  It avoids `N` separate
-JS↔WASM boundary crossings and processes the entire buffer inside a single C++ call, which
-is significantly faster at high pixel counts.  Use `classifyPixelWith` only when you need
-to classify a handful of pixels on-demand.
-
-**Q: What is `simulateTracerDecayWith` useful for?**
-
-It provides a CPU-side equivalent of the WGSL persistence shader's decay step.  Useful for
-unit tests, offline thumbnail generation, or any scenario where the full GPU pipeline is not
-available.  For real-time rendering the GPU persistence pipeline in `WebGPURenderer.ts` is
-always more efficient.
 
 **Q: Does switching engines restart the current image/level?**
 

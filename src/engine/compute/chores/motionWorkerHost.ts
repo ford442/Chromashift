@@ -24,6 +24,7 @@ import {
 import type { CpuMotionFieldHost, CpuMotionFieldResult, MotionFramePixels } from './types';
 import type { MotionProtocol } from '../motion.worker';
 import { createWorkerRpc } from '../../workers/rpc';
+import { publishWorkerWasmEngine } from '../../diagnostics';
 
 export type MotionWorkerFactory = () => Worker;
 
@@ -58,7 +59,7 @@ export function createMotionWorkerHost(
     // A fresh copy so the transfer cannot neuter a buffer the caller still owns
     // (the sampler's `ImageData` is reused frame to frame).
     const pixels = frame.data.slice().buffer;
-    const response = await rpc.call('motion-field', {
+    const { wasmEngine, ...response } = await rpc.call('motion-field', {
       pixels,
       width: frame.width,
       height: frame.height,
@@ -68,6 +69,7 @@ export function createMotionWorkerHost(
       flow,
       useWasm,
     }, { transfer: [pixels] });
+    publishWorkerWasmEngine('motion', wasmEngine);
     return { ...response, mode: 'worker' };
   }
 

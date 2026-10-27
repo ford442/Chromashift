@@ -1,22 +1,26 @@
 import type { PassGraphSource } from './graph/variants';
-import { WebGPURenderer } from './WebGPURenderer';
+import { WebGPURenderer } from './webgpu/WebGPURenderer';
 import { WebGLRenderer } from './webgl/WebGLRenderer';
-import { TextureManager } from './TextureManager';
-import { WebGLTextureManager } from './WebGLTextureManager';
+import { TextureManager } from './webgpu/TextureManager';
+import { WebGLTextureManager } from './webgl/WebGLTextureManager';
 import { GpuImageAnalysis } from './compute/GpuImageAnalysis';
 import { publishGpuComputeBreadcrumbs, readGpuComputeDiagnostics } from './compute/chores/support';
-import { resolveWebGL2PreserveDrawingBuffer, type CanvasPresentation } from './gpuOptions';
+import {
+  resolveWebGL2Desynchronized,
+  resolveWebGL2PreserveDrawingBuffer,
+  type CanvasPresentation,
+} from './gpu/gpuOptions';
 import { acquireGpuChoreSession, type GpuChoreLease } from './compute/GpuChoreSession';
 import { getRendererPreference } from './rendererMode';
 import {
-  bootstrapWebGpu,
-  configureWebGpuCanvas,
-  createWebGL2Context,
+  pipelineRuntimeError,
+  webglContextLostRuntimeError,
   withErrorScope,
   type GpuRuntimeError,
-  type WebGpuCanvasOptions,
-  type WebGpuSession,
-} from './gpuBootstrap';
+} from './gpu/gpuErrors';
+import { configureWebGpuCanvas, type WebGpuCanvasOptions } from './webgpu/canvasConfig';
+import { bootstrapWebGpu, type WebGpuSession } from './webgpu/webgpuSession';
+import { createWebGL2Context, watchWebGL2Context } from './webgl/webgl2Context';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './types/RendererContracts';
 
 /** Default slot id for the main viewport canvas. */
@@ -35,6 +39,13 @@ export interface RendererOrchestratorOptions {
   backend?: RendererBackend;
   backendPreference?: RendererBackend;
   onRuntimeError?: (error: GpuRuntimeError) => void;
+  /**
+   * WebGL only: the browser restored a context this orchestrator lost. The
+   * orchestrator tore itself down at `webglcontextlost`; bootstrap a new one
+   * on the same canvas, which reuses the restored context (no second
+   * `getContext`) and rebuilds every program and FBO on it.
+   */
+  onContextRestored?: () => void;
 }
 
 export interface BootstrapRendererOrchestratorOptions extends RendererOrchestratorOptions {
@@ -60,6 +71,7 @@ export interface RendererOrchestratorDeps {
   bootstrapWebGpu: typeof bootstrapWebGpu;
   configureWebGpuCanvas: typeof configureWebGpuCanvas;
   createWebGL2Context: typeof createWebGL2Context;
+  watchWebGL2Context: typeof watchWebGL2Context;
   createWebGPURenderer: (
     device: GPUDevice,
     context: GPUCanvasContext,
@@ -75,6 +87,7 @@ export interface RendererOrchestratorDeps {
   createWebGLRenderer: (
     canvas: HTMLCanvasElement,
     gl: WebGL2RenderingContext,
+    antialias: boolean,
   ) => ChromashiftRenderer;
   createTextureManager: (device: GPUDevice) => ChromashiftTextureManager;
   createWebGLTextureManager: (gl: WebGL2RenderingContext) => ChromashiftTextureManager;
@@ -84,17 +97,22 @@ export interface RendererOrchestratorDeps {
   getRendererPreference: () => RendererBackend;
 }
 
-export const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
+const defaultRendererOrchestratorDeps: RendererOrchestratorDeps = {
   bootstrapWebGpu,
   configureWebGpuCanvas,
   createWebGL2Context,
+  watchWebGL2Context,
   createWebGPURenderer: (device, context, format, antialias) =>
     withErrorScope(device, 'validation', 'WebGPURenderer', () =>
       new WebGPURenderer(device, context, format, antialias),
     ),
   createSecondaryWebGPURenderer: (device, context, format, antialias) =>
     new WebGPURenderer(device, context, format, antialias),
-  createWebGLRenderer: (canvas, gl) => new WebGLRenderer(canvas, gl),
+  createWebGLRenderer: (canvas, gl, antialias) => {
+    const renderer = new WebGLRenderer(canvas, gl);
+    renderer.setAntialiasing(antialias);
+    return renderer;
+  },
   createTextureManager: (device) => new TextureManager(device),
   createWebGLTextureManager: (gl) => new WebGLTextureManager(gl),
   createGpuImageAnalysis: (device) => new GpuImageAnalysis(device),
@@ -124,8 +142,17 @@ export class RendererOrchestrator {
   private fallbackReason: string | null = null;
   private readonly antialias: boolean;
   private readonly onRuntimeError?: (error: GpuRuntimeError) => void;
+  private onContextRestored?: () => void;
   private readonly deps: RendererOrchestratorDeps;
   private destroyed = false;
+  /** Detaches the WebGL context-loss listeners; `null` on WebGPU. */
+  private unwatchWebGLContext: (() => void) | null = null;
+  /**
+   * Set at `webglcontextlost`. The orchestrator is destroyed then, but its
+   * listeners stay attached until `webglcontextrestored` — the one event that
+   * can bring the canvas back.
+   */
+  private webglContextLost = false;
   private resizePending = false;
   private canvasOptions: WebGpuCanvasOptions = {};
   /** The pass-graph source every slot draws, or `null` for the default graph. */
@@ -177,6 +204,7 @@ export class RendererOrchestrator {
       baseOptions.onRuntimeError,
       resolvedDeps,
     );
+    orchestrator.onContextRestored = baseOptions.onContextRestored;
 
     const primarySlotId = objectStyle && primaryCanvasOrOptions.primarySlotId
       ? primaryCanvasOrOptions.primarySlotId
@@ -190,8 +218,14 @@ export class RendererOrchestrator {
     // as visual-parity bugs. The WebGL branch is reachable only when
     // preference or `backend: 'webgl'` is explicit. See docs/webgl-fallback.md.
     if (preferredBackend === 'webgl') {
-      orchestrator.bootstrapWebGL(primaryCanvas);
-      orchestrator.createSlot(primarySlotId, primaryCanvas);
+      try {
+        orchestrator.bootstrapWebGL(primaryCanvas);
+        orchestrator.createSlot(primarySlotId, primaryCanvas);
+      } catch (webglError) {
+        // Detach the context-loss listeners along with everything else.
+        orchestrator.destroy();
+        throw webglError;
+      }
     } else {
       try {
         await orchestrator.bootstrapWebGpuSession(primaryCanvas);
@@ -402,6 +436,10 @@ export class RendererOrchestrator {
     this.choreLease?.release();
     this.textureManager?.destroy();
     this.session?.detach();
+    if (!this.webglContextLost) {
+      this.unwatchWebGLContext?.();
+      this.unwatchWebGLContext = null;
+    }
 
     this.choreLease = null;
     this.gpuImageAnalysis = null;
@@ -418,9 +456,10 @@ export class RendererOrchestrator {
       antialias: this.antialias,
       canvasOptions: this.canvasOptions,
       onRuntimeError: (error) => {
-        if (error.kind === 'device-lost' && !this.destroyed) {
-          this.destroy();
-        }
+        // A destroyed orchestrator has been replaced (Retry GPU, a React
+        // re-run); its successor reports for the device now.
+        if (this.destroyed) return;
+        if (error.kind === 'device-lost') this.destroy();
         this.onRuntimeError?.(error);
       },
     });
@@ -437,14 +476,44 @@ export class RendererOrchestrator {
 
   private bootstrapWebGL(primaryCanvas: HTMLCanvasElement): void {
     this.primaryCanvas = primaryCanvas;
+    // Off for a live session; on for screenshot / readback callers. See
+    // resolveWebGL2PreserveDrawingBuffer for how that is decided.
+    const preserveDrawingBuffer = resolveWebGL2PreserveDrawingBuffer();
     const gl = this.deps.createWebGL2Context(primaryCanvas, {
       antialias: this.antialias,
-      // Off for a live session; on for screenshot / readback callers. See
-      // resolveWebGL2PreserveDrawingBuffer for how that is decided.
-      preserveDrawingBuffer: resolveWebGL2PreserveDrawingBuffer(),
+      preserveDrawingBuffer,
+      desynchronized: resolveWebGL2Desynchronized(preserveDrawingBuffer),
     });
     this.webglContext = gl;
     this.textureManager = this.deps.createWebGLTextureManager(gl);
+    this.unwatchWebGLContext = this.deps.watchWebGL2Context(primaryCanvas, {
+      onLost: () => this.handleWebGLContextLost(),
+      onRestored: () => this.handleWebGLContextRestored(),
+    });
+  }
+
+  /**
+   * `webglcontextlost`: every program, FBO and texture on the context is gone.
+   * Tear the slot down like a WebGPU `device.lost` and surface the same
+   * recoverable overlay; the listeners outlive `destroy()` to hear the restore.
+   */
+  private handleWebGLContextLost(): void {
+    if (this.webglContextLost) return;
+    this.webglContextLost = true;
+    if (!this.destroyed) this.destroy();
+    this.onRuntimeError?.(webglContextLostRuntimeError());
+  }
+
+  /**
+   * `webglcontextrestored`: the same context object is usable again, empty.
+   * Hand recovery to the caller, which bootstraps a fresh orchestrator on it.
+   */
+  private handleWebGLContextRestored(): void {
+    if (!this.webglContextLost) return;
+    this.webglContextLost = false;
+    this.unwatchWebGLContext?.();
+    this.unwatchWebGLContext = null;
+    this.onContextRestored?.();
   }
 
   private resetWebGpuResources(): void {
@@ -498,9 +567,20 @@ export class RendererOrchestrator {
     );
 
     const slot: RendererSlot = { id, canvas, renderer, webgpuContext: context };
+    this.watchRendererErrors(slot);
     this.slots.set(id, slot);
     this.applyPassGraph(slot);
     return slot;
+  }
+
+  /** Forward the slot renderer's refused pipelines to the overlay while this orchestrator lives. */
+  private watchRendererErrors(slot: RendererSlot): void {
+    slot.renderer.setRuntimeErrorHandler?.((error) => this.reportRuntimeError(error));
+  }
+
+  /** A non-fatal runtime error (a refused pipeline): reported unless this orchestrator was replaced. */
+  private reportRuntimeError(error: GpuRuntimeError): void {
+    if (!this.destroyed) this.onRuntimeError?.(error);
   }
 
   private createWebGpuSlot(id: string, canvas: HTMLCanvasElement): RendererSlot {
@@ -509,14 +589,24 @@ export class RendererOrchestrator {
     }
 
     const context = this.resolveWebGpuContext(canvas);
-    const renderer = this.deps.createSecondaryWebGPURenderer(
-      this.session.device,
-      context,
-      this.session.format,
-      this.antialias,
-    );
+    // Synchronous (a compare layout opens its slots in one go), so the scope
+    // is checked after the fact: the slot is in use by the time the device
+    // answers, but whatever it created invalidly is named, not silent.
+    const device = this.session.device;
+    device.pushErrorScope('validation');
+    let renderer: ChromashiftRenderer;
+    try {
+      renderer = this.deps.createSecondaryWebGPURenderer(device, context, this.session.format, this.antialias);
+    } finally {
+      void device.popErrorScope().then((error) => {
+        if (!error) return;
+        console.error(`[RendererOrchestrator] Slot "${id}" renderer failed validation:`, error.message);
+        this.reportRuntimeError(pipelineRuntimeError(`The "${id}" view's renderer`, error.message));
+      }, () => {});
+    }
 
     const slot: RendererSlot = { id, canvas, renderer, webgpuContext: context };
+    this.watchRendererErrors(slot);
     this.slots.set(id, slot);
     this.applyPassGraph(slot);
     return slot;
@@ -533,7 +623,7 @@ export class RendererOrchestrator {
       throw new Error('WebGL orchestrator supports only a single renderer slot.');
     }
 
-    const renderer = this.deps.createWebGLRenderer(canvas, this.webglContext);
+    const renderer = this.deps.createWebGLRenderer(canvas, this.webglContext, this.antialias);
     const slot: RendererSlot = { id, canvas, renderer };
     this.slots.set(id, slot);
     this.applyPassGraph(slot);

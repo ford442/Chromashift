@@ -1,6 +1,6 @@
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { effectiveLayerScaleForMultiView, isMultiViewLayout, multiViewPerformanceNote } from '../engine/compareViews';
-import { isOverlayImageSourceAvailable } from '../engine/overlayImageSource';
+import { isOverlayImageSourceAvailable } from '../engine/library/overlayImageSource';
 import type { ChromashiftRefs } from './refs/types';
 import type { ChromashiftStore } from './useChromashiftStore';
 import type { WebXrControls } from './useWebXr';

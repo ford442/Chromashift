@@ -5,7 +5,7 @@ import { PreviewStrip } from './PreviewStrip';
 import { ChromeShell } from './ChromeShell';
 import { useOverlayProps } from './useOverlayProps';
 import { useRenderCount } from '../debug/renderCounts';
-import { collectImageFilesFromDataTransfer } from '../engine/fileDrop';
+import { collectImageFilesFromDataTransfer } from '../engine/library/fileDrop';
 import type { AppUIProps } from './AppUI.types';
 
 export function AppUI(props: AppUIProps) {
@@ -45,6 +45,7 @@ export function AppUI(props: AppUIProps) {
     setLivePreviewEnabled,
     gpuError,
     onRetryGpu,
+    onDismissGpuError,
     isGpuRetrying,
     avgLuminance,
     engineMode,
@@ -197,6 +198,7 @@ export function AppUI(props: AppUIProps) {
         showKioskRemote={showKioskRemote}
         gpuError={gpuError}
         onRetryGpu={onRetryGpu}
+        onDismissGpuError={onDismissGpuError}
         isGpuRetrying={isGpuRetrying}
         avgLuminance={avgLuminance}
         engineMode={engineMode}

@@ -182,7 +182,7 @@ function ridgePlane(centreX: number, centreY: number): LuminancePlane {
 
 function flowAt(field: { flow: Float32Array; width: number }, x: number, y: number) {
   const i = (y * field.width + x) * 2;
-  return { vx: field.flow[i], vy: field.flow[i + 1] };
+  return { vx: field.flow[i]!, vy: field.flow[i + 1]! };
 }
 
 describe('halveLuminancePlane', () => {
@@ -254,7 +254,7 @@ describe('lucasKanadeFlow', () => {
   it('recovers the sign of a bar translating down and to the right', () => {
     // The ridge moves +2 cells in x and +1 in y between the two frames.
     const field = lucasKanadeFlow(ridgePlane(8, 7), ridgePlane(6, 6));
-    for (const [x, y] of [[7, 7], [8, 7], [9, 7], [8, 6], [8, 8], [6, 6], [10, 9]]) {
+    for (const [x, y] of [[7, 7], [8, 7], [9, 7], [8, 6], [8, 8], [6, 6], [10, 9]] as const) {
       const { vx, vy } = flowAt(field, x, y);
       expect(vx).toBeGreaterThan(0);
       expect(vy).toBeGreaterThan(0);
@@ -281,12 +281,12 @@ describe('lucasKanadeFlow', () => {
       1.947979, 1.010215, // (6, 6)
       1.941304, 0.998794, // (10, 9)
     ]);
-    const cells = [[7, 7], [8, 7], [9, 7], [8, 6], [8, 8], [6, 6], [10, 9]];
+    const cells = [[7, 7], [8, 7], [9, 7], [8, 6], [8, 8], [6, 6], [10, 9]] as const;
     const field = lucasKanadeFlow(ridgePlane(8, 7), ridgePlane(6, 6));
     cells.forEach(([x, y], index) => {
       const { vx, vy } = flowAt(field, x, y);
-      expect(vx).toBeCloseTo(golden[index * 2], 5);
-      expect(vy).toBeCloseTo(golden[index * 2 + 1], 5);
+      expect(vx).toBeCloseTo(golden[index * 2]!, 5);
+      expect(vy).toBeCloseTo(golden[index * 2 + 1]!, 5);
     });
   });
 

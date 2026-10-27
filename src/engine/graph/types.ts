@@ -7,7 +7,7 @@
  * backend can emit).
  */
 
-import type { CanvasPresentation } from '../gpuOptions';
+import type { CanvasPresentation } from '../gpu/gpuOptions';
 import type { UniformLayout } from './templates/uniformLayout';
 
 /** Backends a graph can be compiled for. */

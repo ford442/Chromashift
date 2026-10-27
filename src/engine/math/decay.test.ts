@@ -18,8 +18,8 @@ import {
 const HOT_PATH_FILES = [
   '../graph/exec/WebGpuGraphExecutor.ts',
   '../graph/exec/uniforms.ts',
-  '../WebGPURenderer.ts',
-  '../StationaryPreviewRenderer.ts',
+  '../webgpu/WebGPURenderer.ts',
+  '../webgpu/StationaryPreviewRenderer.ts',
   '../compute/chores/webgpuBackend.ts',
   '../webgl/WebGLRenderer.ts',
   '../graph/exec/WebGLGraphExecutor.ts',

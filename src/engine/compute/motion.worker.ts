@@ -30,7 +30,7 @@ import {
   motionMagnitudeField,
   type LuminancePlane,
 } from './chores/motionKernel';
-import { loadWasmEngine, isWasmReady } from '../wasm/loadEngine';
+import { getWasmEngineStatus, loadWasmEngine, isWasmReady, type WasmEngineStatus } from '../wasm/loadEngine';
 import { computeMotionFlowWith } from '../wasm/dispatch/motion';
 import { exposeWorkerRpc } from '../workers/rpc';
 
@@ -56,6 +56,8 @@ export interface MotionFieldResponse {
   flow: Float32Array | null;
   width: number;
   height: number;
+  /** This worker's own engine instance — the main thread publishes it. */
+  wasmEngine: WasmEngineStatus;
 }
 
 export type MotionProtocol = {
@@ -97,6 +99,6 @@ exposeWorkerRpc<MotionProtocol>(self, {
 
     ctx.transfer(field.buffer);
     if (flow) ctx.transfer(flow.buffer);
-    return { field, flow, width: current.width, height: current.height };
+    return { field, flow, width: current.width, height: current.height, wasmEngine: getWasmEngineStatus() };
   },
 });

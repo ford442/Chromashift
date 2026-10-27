@@ -156,7 +156,7 @@ export function buildTrails3Graph(
  * or the node editor will use. They are authored for the canonical three bands;
  * the builders above are what scale with the layer count.
  */
-export const STARTER_GRAPHS = {
+const STARTER_GRAPHS = {
   smear: bodySmearStarter,
   feedback: feedbackWarpStarter,
 } as const;

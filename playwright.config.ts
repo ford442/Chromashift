@@ -37,7 +37,7 @@ export default defineConfig({
       // (Playwright screenshots, kiosk, presets). Distinct from chromium-webgpu.
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts/,
+      testIgnore: /webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts/,
     },
     {
       name: 'chromium-webgpu',
@@ -47,7 +47,7 @@ export default defineConfig({
           args: WEBGPU_LAUNCH_ARGS,
         },
       },
-      testMatch: /webgpu-smoke\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts/,
+      testMatch: /webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts/,
     },
   ],
   webServer: {

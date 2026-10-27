@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { publishKioskBreadcrumbs } from '../engine/kioskMode';
+import { attractValues, publishKioskBreadcrumbs } from '../engine/kioskMode';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 const ATTRACT_TICK_MS = 2000;
@@ -96,10 +96,7 @@ export function useKioskMode(refs: ChromashiftRefs, store: ChromashiftStore): {
 
     const id = window.setInterval(() => {
       const t = (performance.now() - attractStartRef.current) / 1000;
-      actions.setTracerAboveIntensity(0.78 + 0.12 * Math.sin(t / 45));
-      actions.setTracerBelowIntensity(0.28 + 0.08 * Math.sin(t / 62 + 1));
-      actions.setStampBoost(1.6 + 0.6 * Math.sin(t / 90 + 2));
-      actions.setAvgLuminance(Math.round(120 + 18 * Math.sin(t / 75 + 0.5)));
+      for (const { path, value } of attractValues(t)) actions.setParam(path, value);
     }, ATTRACT_TICK_MS);
 
     return () => window.clearInterval(id);

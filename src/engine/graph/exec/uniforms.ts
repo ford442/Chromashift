@@ -40,7 +40,7 @@ export function rendererStateValue<K extends DefaultedField>(
 const flag = (value: boolean): number => (value ? 1 : 0);
 
 /** One layer's opacity: the global multiplier times its own. */
-export function frameLayerOpacity(state: RendererState, index: number): number {
+function frameLayerOpacity(state: RendererState, index: number): number {
   const perLayer = state.layerOpacities?.[index] ?? DEFAULT_PER_LAYER_OPACITY;
   return rendererStateValue(state, 'layerOpacity') * perLayer;
 }
@@ -82,7 +82,7 @@ export function bandLayerUniforms(
 export type TracerRole = 'below' | 'above';
 
 /** Configured lifetime of one tracer timescale, in milliseconds. */
-export function tracerDurationMs(state: RendererState, role: TracerRole): number {
+function tracerDurationMs(state: RendererState, role: TracerRole): number {
   return role === 'below'
     ? rendererStateValue(state, 'tracerBelowDuration')
     : rendererStateValue(state, 'tracerAboveDuration');

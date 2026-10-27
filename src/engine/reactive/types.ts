@@ -1,19 +1,13 @@
 
-/** Parameters exposed to MIDI learn / bindings. */
-export type MidiParamId =
-  | 'layers.extensions.0'
-  | 'layers.extensions.1'
-  | 'layers.extensions.2'
-  | 'tracers.aboveIntensity'
-  | 'tracers.belowIntensity'
-  | 'engine.avgLuminance';
+import type { ParamPath } from '../../state/settingsSchema';
 
 export interface MidiBinding {
   /** MIDI channel 0–15, or -1 for any channel. */
   channel: number;
   /** Control Change number 0–127. */
   controller: number;
-  param: MidiParamId;
+  /** Any automatable parameter — see `state/params.ts`. */
+  param: ParamPath;
 }
 
 export interface AudioLevelSnapshot {
@@ -50,16 +44,7 @@ export interface ReactiveSlice extends ReactiveSettings {
   micError: string | null;
   midiAvailable: boolean;
   midiError: string | null;
-  midiLearnTarget: MidiParamId | null;
+  midiLearnTarget: ParamPath | null;
   /** Live analyser levels for UI meters (runtime only). */
   audioLevels: AudioLevelSnapshot;
 }
-
-export const MIDI_PARAM_LABELS: Record<MidiParamId, string> = {
-  'layers.extensions.0': 'Layer 0 rate (°)',
-  'layers.extensions.1': 'Layer 1 rate (°)',
-  'layers.extensions.2': 'Layer 2 rate (°)',
-  'tracers.aboveIntensity': 'Tracer above intensity',
-  'tracers.belowIntensity': 'Tracer below intensity',
-  'engine.avgLuminance': 'Avg luminance',
-};

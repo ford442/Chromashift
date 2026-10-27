@@ -24,11 +24,13 @@
 import type { RenderCountsApi } from '../debug/renderCounts';
 import type { CompareLayoutMode } from './compareViews';
 import type { GpuComputeDiagnostics } from './compute/chores/support';
+import type { WebGLInternalFormat } from './gpu/gpuOptions';
 import type { MotionFlowStats } from './compute/chores/motionKernel';
 import type { GraphPresetName } from './graph/altGraphs';
-import type { LiveSourceKind } from './LiveSource';
+import type { LiveSourceKind } from './live/LiveSource';
 import type { RendererBackend } from './types/RendererContracts';
-import type { WebGpuProbeResult } from './webgpuProbe';
+import type { WebGpuProbeResult } from './webgpu/webgpuProbe';
+import type { WasmEngineState, WasmEngineStatus } from './wasm/loadEngine';
 
 export interface ChromashiftDiagnostics {
   // ── Renderer selection (rendererMode.ts, webgpuProbe.ts) ────────────────────
@@ -43,8 +45,12 @@ export interface ChromashiftDiagnostics {
   webgpuProbe: WebGpuProbeResult;
   /** WebGL internal render-target scale (`webgl/WebGLRenderer.ts`). */
   webglInternalScale: number;
+  /** The WebGL pool's layer/tracer format: `rgba16f` when the context renders it (`selectWebGLInternalFormat`). */
+  webglInternalFormat: WebGLInternalFormat;
+  /** Set while the WebGL pool is 8-bit, so tracers clip (see `webglInternalFormatNote`). */
+  webglInternalFormatNote: string | null;
 
-  // ── Canvas presentation (gpuBootstrap.ts, WebGPURenderer.ts) ────────────────
+  // ── Canvas presentation (canvasConfig.ts, WebGPURenderer.ts) ────────────────
   /** Whether `hdr-extended` canvas presentation is available this session. */
   canvasHdrAvailable: boolean;
   /** Why (or why not), for diagnostics and E2E. */
@@ -77,6 +83,18 @@ export interface ChromashiftDiagnostics {
   motionFieldFlow: MotionFlowStats | null;
   /** Mean magnitude of the last field, in [0,1]. */
   motionFieldEnergy: number;
+
+  // ── C++ WASM engine (wasm/loadEngine.ts) — see docs/wasm-engine.md ─────────
+  /** The main thread's engine: set once `loadWasmEngine()` settles. */
+  wasmEngineState: WasmEngineState;
+  /** Why it is `unavailable` or `error`; `null` once it is `ready`. */
+  wasmEngineError: string | null;
+  /**
+   * Each worker's own engine instance, as its last reply reported it. A
+   * worker loads its engine on its first job with Engine mode = WASM, so a
+   * worker is absent until then.
+   */
+  wasmEngineWorkers: Partial<Record<'analysis' | 'motion', WasmEngineStatus>>;
 
   // ── Textures (textureCacheBreadcrumbs.ts) ───────────────────────────────────
   textureCacheSize: number;
@@ -165,6 +183,8 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   rendererFallbackReason: true,
   webgpuProbe: true,
   webglInternalScale: true,
+  webglInternalFormat: true,
+  webglInternalFormatNote: true,
   canvasHdrAvailable: true,
   canvasHdrReason: true,
   canvasHdrNote: true,
@@ -180,6 +200,9 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   motionFieldHasFlow: true,
   motionFieldFlow: true,
   motionFieldEnergy: true,
+  wasmEngineState: true,
+  wasmEngineError: true,
+  wasmEngineWorkers: true,
   textureCacheSize: true,
   textureCacheBytes: true,
   compareLayout: true,
@@ -222,6 +245,12 @@ export function publishDiagnostic<K extends DiagnosticKey>(key: K, value: Chroma
 export function publishDiagnostics(values: Partial<ChromashiftDiagnostics>): void {
   const w = target();
   if (w) Object.assign(w, values);
+}
+
+/** Record one worker's engine status in `wasmEngineWorkers`. */
+export function publishWorkerWasmEngine(worker: 'analysis' | 'motion', status: WasmEngineStatus): void {
+  const w = target();
+  if (w) w.wasmEngineWorkers = { ...w.wasmEngineWorkers, [worker]: status };
 }
 
 /** Read one breadcrumb; `undefined` until something has published it. */

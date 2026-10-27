@@ -1,5 +1,6 @@
 import type { CollisionStats } from '../types/RendererState';
-import { PixelPackRead } from './asyncReadback';
+import { COLLISION_STATS_SIZE, CollisionStatsRequest, collisionStatsFromPixels, type CollisionSample } from '../collisionStats';
+import { PixelPackRead, readTargetPixelsAsync } from './asyncReadback';
 import { createTarget, destroyTarget, readTargetPixels, type RenderTarget } from './resources';
 
 /**
@@ -9,11 +10,11 @@ import { createTarget, destroyTarget, readTargetPixels, type RenderTarget } from
 export type HeatmapDraw = (target: RenderTarget, size: number) => boolean;
 
 export class WebGLReadback {
-  static readonly DIAGNOSTIC_SIZE = 64;
+  static readonly DIAGNOSTIC_SIZE = COLLISION_STATS_SIZE;
 
   private readonly gl: WebGL2RenderingContext;
   private diagnosticTarget: RenderTarget | null = null;
-  private statsQueued: ((stats: CollisionStats) => void) | null = null;
+  private readonly stats = new CollisionStatsRequest();
   private readonly statsPack: PixelPackRead;
 
   constructor(gl: WebGL2RenderingContext) {
@@ -22,14 +23,12 @@ export class WebGLReadback {
   }
 
   requestCollisionStats(callback: (stats: CollisionStats) => void): boolean {
-    if (this.statsQueued) return false;
-    this.statsQueued = callback;
-    return true;
+    return this.stats.request(callback);
   }
 
   afterFrame(drawHeatmap: HeatmapDraw): void {
     this.collectStats();
-    if (this.statsQueued && !this.statsPack.busy) {
+    if (this.stats.outstanding && !this.statsPack.busy) {
       const size = WebGLReadback.DIAGNOSTIC_SIZE;
       this.diagnosticTarget ??= createTarget(this.gl, size, size);
       if (drawHeatmap(this.diagnosticTarget, size)) {
@@ -46,18 +45,12 @@ export class WebGLReadback {
    * Pack `target` and resolve on a later frame. Export and the stationary
    * previews use this so a full-frame read does not freeze input.
    */
-  async readTexturePixelsAsync(
+  readTexturePixelsAsync(
     target: RenderTarget,
     width: number,
     height: number,
   ): Promise<Uint8ClampedArray<ArrayBuffer> | null> {
-    const pack = new PixelPackRead(this.gl);
-    try {
-      pack.start(target, width, height);
-      return await pack.wait();
-    } finally {
-      pack.destroy();
-    }
+    return readTargetPixelsAsync(this.gl, target, width, height);
   }
 
   destroy(): void {
@@ -69,37 +62,18 @@ export class WebGLReadback {
   }
 
   private collectStats(): void {
-    if (!this.statsQueued) return;
+    if (!this.stats.outstanding) return;
     const pixels = this.statsPack.poll();
     if (!pixels) return;
-    const callback = this.statsQueued;
-    this.statsQueued = null;
-    callback(collisionStatsFromPixels(pixels));
+    this.stats.settle(collisionStatsFromPixels(pixels, 3, decodeHeatmap));
   }
-
 }
 
-function collisionStatsFromPixels(pixels: Uint8ClampedArray<ArrayBuffer>): CollisionStats {
-  const stats: CollisionStats = {
-    sampledPixels: WebGLReadback.DIAGNOSTIC_SIZE * WebGLReadback.DIAGNOSTIC_SIZE,
-    twoOverlapPixels: 0,
-    threeOverlapPixels: 0,
-    dominantLayerWins: [0, 0, 0],
-    averageCollision: 0,
+/** The coincidence heatmap's colours: hotter and yellower where more layers overlap. */
+function decodeHeatmap(r: number, g: number, b: number): CollisionSample {
+  return {
+    collision: Math.max(r, g, b) / 255,
+    overlap: r > 200 && g > 170 ? 'full' : b > 180 || g > 150 ? 'partial' : 'none',
+    dominantLayer: r >= g && r >= b ? 0 : g >= b ? 1 : 2,
   };
-  let sum = 0;
-  for (let index = 0; index < pixels.length; index += 4) {
-    const r = pixels[index];
-    const g = pixels[index + 1];
-    const b = pixels[index + 2];
-    const hit = Math.max(r, g, b) / 255;
-    sum += hit;
-    if (r > 200 && g > 170) stats.threeOverlapPixels += 1;
-    else if (b > 180 || g > 150) stats.twoOverlapPixels += 1;
-    if (r >= g && r >= b) stats.dominantLayerWins[0] += 1;
-    else if (g >= b) stats.dominantLayerWins[1] += 1;
-    else stats.dominantLayerWins[2] += 1;
-  }
-  stats.averageCollision = sum / stats.sampledPixels;
-  return stats;
 }

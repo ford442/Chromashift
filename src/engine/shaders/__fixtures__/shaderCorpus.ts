@@ -19,10 +19,10 @@ import { applyGraphVariant, compileGraph, MAX_LAYER_COUNT } from '../../graph';
 import { buildGraphPreset, GRAPH_PRESETS } from '../../graph/altGraphs';
 import { buildEncodePlan } from '../../graph/exec/plan';
 import { createNodeProgram, type NodeProgramContext } from '../../graph/exec/nodePipelines';
-import type { CanvasPresentation } from '../../gpuOptions';
-import { TextureManager } from '../../TextureManager';
+import type { CanvasPresentation } from '../../gpu/gpuOptions';
+import { TextureManager } from '../../webgpu/TextureManager';
 import * as webglShaders from '../../webgl/shaders';
-import { WebGPUPipelines } from '../../WebGPUPipelines';
+import { WebGPUPipelines } from '../../webgpu/WebGPUPipelines';
 import { diagnosticFragmentSource } from '../diagnostics';
 import { createPipelineRecorder, type RecordedPipeline } from './recordingDevice';
 
@@ -100,12 +100,9 @@ export function buildShaderCorpus(): ShaderCorpus {
     for (const presentation of PRESENTATIONS) {
       recorder.context = `inspect-${layerCount}-${presentation}`;
       const pipelines = new WebGPUPipelines(device, 'bgra8unorm', layerCount, presentation);
-      pipelines.createTracerViewPipeline();
-      pipelines.createDisplayPipeline();
-      pipelines.createHeatmapPipeline();
-      pipelines.createComparePipeline();
-      pipelines.createPersistDiagnosticBlitPipeline();
-      pipelines.createStampDiagnosticViewPipeline();
+      // Async builders, but each records its pipeline before its first await.
+      void pipelines.createInspectPipelines();
+      void pipelines.createPersistDiagnosticBlitPipeline();
     }
   }
 

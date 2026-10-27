@@ -140,9 +140,9 @@ describe('gpu-chores runtime', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
     expect(result.attempts.map((a) => a.backend)).toEqual(['webgpu', 'wasm', 'ts']);
-    expect(result.attempts[0].reason).toContain('No GPU-resident source');
-    expect(result.attempts[1].reason).toContain('WASM module not ready');
-    expect(result.attempts[2].outcome).toBe('failed');
+    expect(result.attempts[0]?.reason).toContain('No GPU-resident source');
+    expect(result.attempts[1]?.reason).toContain('WASM module not ready');
+    expect(result.attempts[2]?.outcome).toBe('failed');
     expect(result.reason).toContain('ts:');
   });
 
@@ -159,7 +159,7 @@ describe('gpu-chores runtime', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
     expect(result.attempts).toHaveLength(1);
-    expect(result.attempts[0].backend).toBe('webgpu');
+    expect(result.attempts[0]?.backend).toBe('webgpu');
   });
 
   it('registers no webgpu lane on a WebGL backend (no device adopted)', async () => {
@@ -265,9 +265,9 @@ describe('gpu-chores runtime — coincidence op (GPU-only, no CPU lane)', () => 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
     expect(result.attempts.map((a) => a.backend)).toEqual(['webgpu', 'wasm', 'ts']);
-    expect(result.attempts[0].reason).toContain('not registered');
-    expect(result.attempts[1].reason).toContain('GPU compute only');
-    expect(result.attempts[2].reason).toContain('GPU compute only');
+    expect(result.attempts[0]?.reason).toContain('not registered');
+    expect(result.attempts[1]?.reason).toContain('GPU compute only');
+    expect(result.attempts[2]?.reason).toContain('GPU compute only');
   });
 
   it('a coincidence job never falls back to a CPU lane even when GPU declines', async () => {
@@ -282,8 +282,8 @@ describe('gpu-chores runtime — coincidence op (GPU-only, no CPU lane)', () => 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
     expect(result.attempts.map((a) => a.backend)).toEqual(['webgpu', 'wasm', 'ts']);
-    expect(result.attempts[1].reason).toContain('GPU compute only');
-    expect(result.attempts[2].reason).toContain('GPU compute only');
+    expect(result.attempts[1]?.reason).toContain('GPU compute only');
+    expect(result.attempts[2]?.reason).toContain('GPU compute only');
   });
 });
 
@@ -463,8 +463,8 @@ describe('gpu-chores runtime — motion-field op', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
     expect(result.attempts).toHaveLength(1);
-    expect(result.attempts[0].backend).toBe('webgpu');
-    expect(result.attempts[0].reason).toContain('No GPU-resident source frame');
+    expect(result.attempts[0]?.backend).toBe('webgpu');
+    expect(result.attempts[0]?.reason).toContain('No GPU-resident source frame');
   });
 
   it('never silently skips: a total failure reports every attempt', async () => {
@@ -480,8 +480,8 @@ describe('gpu-chores runtime — motion-field op', () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('expected failure');
     expect(result.attempts.map((a) => a.backend)).toEqual(['webgpu', 'wasm', 'ts']);
-    expect(result.attempts[1].reason).toContain('No decoded frame pixels');
-    expect(result.attempts[2].reason).toContain('No decoded frame pixels');
+    expect(result.attempts[1]?.reason).toContain('No decoded frame pixels');
+    expect(result.attempts[2]?.reason).toContain('No decoded frame pixels');
   });
 
   it('publishes motionField breadcrumbs, leaving the image-analysis pair untouched', async () => {

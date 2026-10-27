@@ -91,38 +91,40 @@ describe('createWorkerRpc', () => {
   it('rejects every call in flight when the worker crashes, and respawns on the next call', async () => {
     const workers: ScriptedWorker[] = [];
     const rpc = createWorkerRpc<EchoProtocol>(() => {
-      workers.push(new ScriptedWorker());
-      return workers[workers.length - 1].asWorker();
+      const worker = new ScriptedWorker();
+      workers.push(worker);
+      return worker.asWorker();
     }, { label: 'echo' });
 
     const a = rpc.call('echo', { text: 'a' });
     const b = rpc.call('echo', { text: 'b' });
-    workers[0].crash('out of memory');
+    workers[0]!.crash('out of memory');
     await expect(a).rejects.toThrow('echo worker: out of memory');
     await expect(b).rejects.toThrow('echo worker: out of memory');
     expect(rpc.pending).toBe(0);
-    expect(workers[0].terminated).toBe(true);
+    expect(workers[0]!.terminated).toBe(true);
 
     const c = rpc.call('echo', { text: 'c' });
     expect(workers).toHaveLength(2);
-    workers[1].resolveCall(0, { text: 'C' });
+    workers[1]!.resolveCall(0, { text: 'C' });
     await expect(c).resolves.toEqual({ text: 'C' });
   });
 
   it('rejects every call in flight on messageerror but keeps the worker', async () => {
     const workers: ScriptedWorker[] = [];
     const rpc = createWorkerRpc<EchoProtocol>(() => {
-      workers.push(new ScriptedWorker());
-      return workers[workers.length - 1].asWorker();
+      const worker = new ScriptedWorker();
+      workers.push(worker);
+      return worker.asWorker();
     }, { label: 'echo' });
 
     const a = rpc.call('echo', { text: 'a' });
-    workers[0].messageError();
+    workers[0]!.messageError();
     await expect(a).rejects.toThrow('could not be deserialized');
 
     const b = rpc.call('echo', { text: 'b' });
     expect(workers).toHaveLength(1);
-    workers[0].resolveCall(1, { text: 'B' });
+    workers[0]!.resolveCall(1, { text: 'B' });
     await expect(b).resolves.toEqual({ text: 'B' });
   });
 

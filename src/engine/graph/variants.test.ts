@@ -30,9 +30,9 @@ describe('withMotionTerm', () => {
     const graph = withMotionTerm(buildDefaultGraph());
     const terms = graph.nodes.filter((n) => n.kind === 'motion');
     expect(terms).toHaveLength(1);
-    expect(terms[0].inputs).toEqual([DEFAULT_GRAPH_IDS.coincidence, MOTION_FIELD_SOURCE_ID]);
-    expect(node(graph, DEFAULT_GRAPH_IDS.tracerBelow).inputs).toEqual([terms[0].id]);
-    expect(node(graph, DEFAULT_GRAPH_IDS.tracerAbove).inputs).toEqual([terms[0].id]);
+    expect(terms[0]?.inputs).toEqual([DEFAULT_GRAPH_IDS.coincidence, MOTION_FIELD_SOURCE_ID]);
+    expect(node(graph, DEFAULT_GRAPH_IDS.tracerBelow).inputs).toEqual([terms[0]!.id]);
+    expect(node(graph, DEFAULT_GRAPH_IDS.tracerAbove).inputs).toEqual([terms[0]!.id]);
     expect(node(graph, MOTION_FIELD_SOURCE_ID)).toMatchObject({ kind: 'source', params: { role: 'motion-field' } });
     expect(() => validateGraph(graph)).not.toThrow();
   });
@@ -43,8 +43,23 @@ describe('withMotionTerm', () => {
     expect(existing).toHaveLength(1);
     const graph = withMotionTerm(smear);
     const fields = graph.nodes.filter((n) => n.kind === 'source' && n.params.role === 'motion-field');
-    expect(fields.map((n) => n.id)).toEqual([existing[0].id]);
-    expect(graph.nodes.find((n) => n.kind === 'motion')!.inputs[1]).toBe(existing[0].id);
+    expect(fields.map((n) => n.id)).toEqual([existing[0]!.id]);
+    expect(graph.nodes.find((n) => n.kind === 'motion')!.inputs[1]).toBe(existing[0]!.id);
+  });
+
+  it('leaves a decay of the wrong arity for validation to refuse', () => {
+    const graph = buildDefaultGraph();
+    const below = node(graph, DEFAULT_GRAPH_IDS.tracerBelow);
+    const malformed: PassGraph = {
+      ...graph,
+      nodes: graph.nodes.map((n) =>
+        n === below ? { ...n, inputs: [...n.inputs, DEFAULT_GRAPH_IDS.coincidence] } : n),
+    };
+    const rewritten = withMotionTerm(malformed);
+    // The well-formed decay still gets the term; the two-input one is untouched.
+    expect(node(rewritten, DEFAULT_GRAPH_IDS.tracerBelow).inputs)
+      .toEqual([...below.inputs, DEFAULT_GRAPH_IDS.coincidence]);
+    expect(() => validateGraph(rewritten)).toThrow(PassGraphError);
   });
 
   it('leaves a graph with no accumulator alone', () => {
@@ -73,7 +88,7 @@ describe('the motion field is a source, checked by role', () => {
   it('refuses a motion node whose field is not a motion-field source', () => {
     const graph = withMotionTerm(buildDefaultGraph());
     const term = graph.nodes.find((n) => n.kind === 'motion')!;
-    term.inputs = [term.inputs[0], DEFAULT_GRAPH_IDS.layer(0)];
+    term.inputs = [term.inputs[0]!, DEFAULT_GRAPH_IDS.layer(0)];
     expect(() => validateGraph(graph)).toThrow(PassGraphError);
     expect(() => validateGraph(graph)).toThrow(/must read a 'source' node with role 'motion-field'/);
   });

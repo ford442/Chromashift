@@ -39,7 +39,8 @@ export class WebGLDebugPasses {
   ): void {
     const gl = this.gl;
     const program = this.programForMode(debugMode);
-    const layer = state.layers[layerIndex];
+    // The executor calls this per layer step of a graph built for `state.layers`.
+    const layer = state.layers[layerIndex]!;
     activateProgram(gl, program);
     bindTexture(gl, program, 'u_source', 0, sourceTexture);
     uniform1i(gl, program, 'u_layerIndex', layerIndex);

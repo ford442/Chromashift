@@ -6,7 +6,7 @@ import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
   const { state, getState, actions } = store;
-  const { rendererRef, mainCanvasRef, animAnglesRef } = refs;
+  const { rendererRef, mainCanvasRef, animAnglesRef, frameClockRef } = refs;
   const abortRef = useRef<AbortController | null>(null);
 
   const syncCodecSupport = useMemo(() => detectVideoCodecSupport(), []);
@@ -67,6 +67,7 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
         {
           ...settings,
           signal: abortRef.current.signal,
+          clock: frameClockRef.current,
           onProgress: (frame, total) => {
             actions.setVideoExportProgress(frame / total);
           },
@@ -86,7 +87,7 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
       actions.setIsAutoPlayActive(wasAutoPlay);
       actions.setIsPaused(wasPaused);
     }
-  }, [rendererRef, mainCanvasRef, animAnglesRef, getState, actions]);
+  }, [rendererRef, mainCanvasRef, animAnglesRef, frameClockRef, getState, actions]);
 
   const patchVideoExportSettings = actions.patchVideoExportSettings;
 

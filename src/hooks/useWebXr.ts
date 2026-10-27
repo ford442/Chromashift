@@ -19,7 +19,7 @@ export interface WebXrControls {
 
 export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrControls {
   const { state } = store;
-  const { renderStateRef, animAnglesRef } = refs;
+  const { renderStateRef, animAnglesRef, frameClockRef } = refs;
   const presenterRef = useRef<WebXrPresenter | null>(null);
 
   const [xrAvailable, setXrAvailable] = useState(false);
@@ -73,7 +73,7 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
         await presenter.syncTexture(image.url);
       }
 
-      presenter.setFrameRenderer((renderer, viewport, fps) => {
+      presenter.setFrameRenderer((renderer, viewport, fps, advance) => {
         const live = renderStateRef.current;
         const imageUrl = live.media.imageList[live.media.currentIndex]?.url;
         if (imageUrl) {
@@ -81,10 +81,10 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
         }
         const angles = animAnglesRef.current.slice();
         const built = buildRendererState(live, angles);
-        renderer.render({ ...built, ...xrRendererStateOverrides(built) }, fps, viewport);
+        renderer.render({ ...built, ...xrRendererStateOverrides(built, advance) }, fps, viewport);
       }, current.engine.fps);
 
-      await presenter.enter(() => {
+      await presenter.enter(frameClockRef.current, () => {
         publishXrImmersiveBreadcrumb(false);
         setXrImmersive(false);
         setXrBusy(false);
@@ -97,7 +97,7 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
     } finally {
       setXrBusy(false);
     }
-  }, [animAnglesRef, renderStateRef, xrBusy, xrEnterAllowed, xrImmersive]);
+  }, [animAnglesRef, frameClockRef, renderStateRef, xrBusy, xrEnterAllowed, xrImmersive]);
 
   /** `enterXr` with the promise discarded — a stable identity for the overlay props. */
   const startXr = useCallback(() => { void enterXr(); }, [enterXr]);

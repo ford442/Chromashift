@@ -2,54 +2,21 @@
  * Pass graph — a declarative IR the renderers compile, instead of a pipeline
  * they hard-code. See docs/PASS_GRAPH.md for the design and the migration plan.
  */
-export type {
-  AllocationPlan,
-  CompiledGraph,
-  EdgeType,
-  EmittedPass,
-  GraphBackend,
-  GraphNode,
-  GraphOutputs,
-  HistoryRing,
-  NodeKind,
-  NodeKindSpec,
-  ParamValue,
-  PassGraph,
-  PoolSlot,
-  ResolutionClass,
-  ScheduledPass,
-  TextureLifetime,
-} from './types';
+export { PassGraphError } from './errors';
+export { validateGraph } from './validate';
+export { passOrder, scheduleGraph } from './schedule';
 export {
-  HISTORY_MAX_FRAMES,
-  HISTORY_MIN_FRAMES,
-  NODE_KINDS,
-  isKnownNodeKind,
-  nodeKindSpec,
-  nodeResolution,
-} from './nodeKinds';
-export { PassGraphError, type GraphErrorCode } from './errors';
-export { validateGraph, type FeedbackEdge, type ValidationResult } from './validate';
-export { passOrder, scheduleGraph, type Schedule } from './schedule';
-export {
-  EXTERNAL_SLOT,
-  SWAPCHAIN_SLOT,
   allocateTextures,
   estimateVram,
   ringTexturesByResolution,
   sharedSlots,
 } from './allocate';
 export { structuralHash, structuralKey } from './hash';
-export { backendSupports, supportedNodeKinds } from './capabilities';
+export { supportedNodeKinds } from './capabilities';
 export { compileGraph, graphCompileCount, resetGraphCompileCache } from './compile';
 export { DEFAULT_GRAPH_IDS, DEFAULT_LAYER_COUNT, buildDefaultGraph } from './defaultGraph';
 export {
-  GRAPH_PRESETS,
-  STARTER_GRAPHS,
-  buildBlurGraph,
   buildGraphPreset,
-  buildWarpGraph,
-  isGraphPresetName,
   parsePassGraphJson,
   type GraphPresetName,
 } from './altGraphs';
@@ -58,13 +25,9 @@ export {
 // WebGL diagnostic chunk (or the reverse). Import `./exec/WebGpuGraphExecutor`
 // or `./exec/WebGLGraphExecutor` directly instead.
 export {
-  CANONICAL_LAYER_COUNT,
-  CANONICAL_LAYER_SPECS,
   MAX_LAYER_COUNT,
   assertLayerCount,
   buildLayerSpecs,
-  clampLayerCount,
-  type LayerSpec,
 } from './layerSpecs';
 export {
   activatePassGraph,
@@ -74,15 +37,11 @@ export {
   publishGraphVariant,
   publishSlotExecuting,
   setStoredPassGraphPreference,
-  type PassGraphSelection,
 } from './gate';
 export {
-  MOTION_FIELD_SOURCE_ID,
   applyGraphVariant,
   graphVariantKey,
   presetGraphSource,
-  withMotionTerm,
   type GraphVariant,
   type PassGraphSource,
 } from './variants';
-export { normaliseShaderSource } from './shaderText';

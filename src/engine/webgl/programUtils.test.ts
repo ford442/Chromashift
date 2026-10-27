@@ -73,7 +73,8 @@ describe('programUtils uniforms', () => {
 });
 
 describe('the WebGL passes', () => {
-  it('set only uniforms some WebGL shader declares', () => {
+  // Compiles every preset at every layer count: seconds under coverage and a loaded suite.
+  it('set only uniforms some WebGL shader declares', { timeout: 30_000 }, () => {
     // Every GLSL source the backend can link: its own shaders and every pass
     // the pass graph emits for it, at every preset and layer count.
     const declared = new Set([
@@ -92,6 +93,6 @@ describe('the WebGL passes', () => {
       .matchAll(/(?:uniform1[fi]|bindTexture)\(\s*gl,\s*[\w.]+,\s*'(\w+)'/g)]
       .map((match) => `${basename(path)}: ${match[1]}`));
     expect(used.length).toBeGreaterThan(20);
-    expect(used.filter((entry) => !declared.has(entry.split(': ')[1]))).toEqual([]);
+    expect(used.filter((entry) => !declared.has(entry.split(': ')[1]!))).toEqual([]);
   });
 });

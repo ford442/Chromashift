@@ -224,7 +224,7 @@ describe('every WGSL module the app builds', PARSE_TIMEOUT, () => {
 describe('every pipeline layout matches its shaders', PARSE_TIMEOUT, () => {
   const groups = new Map<string, RecordedPipeline[]>();
   for (const pipeline of corpus.pipelines) {
-    const [family] = pipeline.context.split('-');
+    const family = pipeline.context.split('-')[0]!;
     groups.set(family, [...(groups.get(family) ?? []), pipeline]);
   }
 
@@ -236,7 +236,7 @@ describe('every pipeline layout matches its shaders', PARSE_TIMEOUT, () => {
 
   it('catches a drifted layout (the check itself works)', () => {
     const chore = corpus.pipelines.find((pipeline) => pipeline.context === 'chores-motion')!;
-    const [layout] = chore.layouts;
+    const layout = chore.layouts[0]!;
     const drifted: RecordedPipeline = {
       ...chore,
       layouts: [{ entries: [...layout.entries].map((entry) =>

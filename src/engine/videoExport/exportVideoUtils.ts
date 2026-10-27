@@ -10,7 +10,7 @@ export function yieldToMain(): Promise<void> {
   });
 }
 
-export function resolvePassMode(includeTracers: boolean, passMode: ExportPassMode): ExportPassMode {
+function resolvePassMode(includeTracers: boolean, passMode: ExportPassMode): ExportPassMode {
   if (!includeTracers && passMode === 'composite') return 'layers';
   return passMode;
 }

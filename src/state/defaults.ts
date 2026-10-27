@@ -12,6 +12,7 @@ import { CANONICAL_LAYER_COUNT } from '../engine/graph/layerSpecs';
 import type { ExportPassMode } from '../engine/types/RendererContracts';
 import type { RendererState } from '../engine/types/RendererState';
 import type { ChromashiftState, PerLayer } from './types';
+import type { CompareViewState } from '../engine/compareViews';
 
 /** Session defaults that are also what a renderer assumes when the field is absent. */
 export const DEFAULT_TRACER_ABOVE_INTENSITY = 0.85;
@@ -80,7 +81,7 @@ export const RENDERER_STATE_DEFAULTS = {
 /** Fallback for one entry of `RendererState.layerOpacities`. */
 export const DEFAULT_PER_LAYER_OPACITY = 1;
 
-export const DEFAULT_AUDIO_LEVELS = {
+const DEFAULT_AUDIO_LEVELS = {
   bass: 0,
   mid: 0,
   high: 0,
@@ -117,13 +118,11 @@ export function defaultExtensions(count: number = DEFAULT_LAYER_COUNT): PerLayer
 }
 
 /** Per-layer opacity multipliers (all opaque) for a `count`-layer session. */
-export function defaultOpacities(count: number = DEFAULT_LAYER_COUNT): PerLayer<number> {
+function defaultOpacities(count: number = DEFAULT_LAYER_COUNT): PerLayer<number> {
   return Array.from({ length: count }, () => 1);
 }
 
 export const DEFAULT_ANGLES: PerLayer<number> = defaultAngles();
-/** Spin rates (°), normalized to 30 FPS — wall-clock °/s = value × 30. */
-export const DEFAULT_EXTENSIONS: PerLayer<number> = defaultExtensions();
 export const DEFAULT_FPS = 30;
 
 export const DEFAULT_COLLISION_STATS = {
@@ -134,7 +133,7 @@ export const DEFAULT_COLLISION_STATS = {
   averageCollision: 0,
 };
 
-export const DEFAULT_VIDEO_EXPORT_SETTINGS = {
+const DEFAULT_VIDEO_EXPORT_SETTINGS = {
   durationSec: 5,
   fps: DEFAULT_FPS,
   resolutionScale: 1,
@@ -146,7 +145,7 @@ export const DEFAULT_VIDEO_EXPORT_SETTINGS = {
   quality: 'high' as const,
 };
 
-export const DEFAULT_LIVE_SOURCE: import('./types').LiveSourceState = {
+const DEFAULT_LIVE_SOURCE: import('./types').LiveSourceState = {
   active: false,
   kind: null,
   label: null,
@@ -154,6 +153,18 @@ export const DEFAULT_LIVE_SOURCE: import('./types').LiveSourceState = {
   height: 0,
   error: null,
 };
+
+/** The single-view layout a fresh session (and a preset without one) starts in. */
+export function createDefaultCompareView(): CompareViewState {
+  return {
+    layout: 'single',
+    syncPlay: true,
+    swipePosition: 0.5,
+    quadLayerIndex: 0,
+    slotA: defaultCompareSlot('a', 'Live'),
+    slotB: defaultCompareSlot('b', 'Preset B'),
+  };
+}
 
 export function createInitialState(): ChromashiftState {
   return {
@@ -253,14 +264,7 @@ export function createInitialState(): ChromashiftState {
       kioskUiHidden: false,
       kioskAttractMode: false,
       shortcutsOverlayVisible: false,
-      compareView: {
-        layout: 'single',
-        syncPlay: true,
-        swipePosition: 0.5,
-        quadLayerIndex: 0,
-        slotA: defaultCompareSlot('a', 'Live'),
-        slotB: defaultCompareSlot('b', 'Preset B'),
-      },
+      compareView: createDefaultCompareView(),
     },
     reactive: {
       enabled: false,

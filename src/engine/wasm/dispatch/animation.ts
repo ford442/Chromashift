@@ -5,9 +5,8 @@
  * calls `durationToDecay()` from `math/decay.ts` directly.
  */
 
-import { buildRotationMat3 } from '../../math/rotation';
 import { canUseWasmFn, getWasmModule } from '../loadEngine';
-import { durationToDecay, tsAdvanceAngles, tsSimulateTracerDecay } from '../fallbacks/decay';
+import { durationToDecay, tsAdvanceAngles } from '../fallbacks/decay';
 
 /**
  * Compute the tracer persistence decay multiplier via the WASM/TS dispatcher.
@@ -56,60 +55,4 @@ export function advanceAnglesBy(
   steps: readonly number[],
 ): number[] {
   return tsAdvanceAngles(angles, steps);
-}
-
-/**
- * Build a column-major 3×3 rotation matrix for a layer angle in degrees.
- * Matches `buildRotationMat3()` in src/engine/math/rotation.ts.
- */
-export function buildRotationMat3With(
-  angleDeg: number,
-  useWasm: boolean,
-): Float32Array {
-  if (canUseWasmFn('_buildRotationMat3', useWasm)) {
-    const mod = getWasmModule()!;
-    const outPtr = mod._malloc(9 * 4);
-    mod._buildRotationMat3(angleDeg, outPtr);
-    const result = new Float32Array(9);
-    result.set(mod.HEAPF32.subarray(outPtr >> 2, (outPtr >> 2) + 9));
-    mod._free(outPtr);
-    return result;
-  }
-
-  return buildRotationMat3(angleDeg);
-}
-
-/**
- * Apply per-frame decay to a flat Float32 RGBA buffer in-place.
- *
- * Each channel (R, G, B, A) is multiplied by `decayFactor`.  This replicates
- * the decay step of the WGSL persistence shader and is useful for CPU-side
- * tracer simulation and unit tests.  For real-time rendering the GPU pipeline
- * in `WebGPURenderer` handles this more efficiently.
- *
- * @param buffer      Float32 RGBA buffer — values in [0, 1], modified in-place.
- * @param decayFactor Per-frame multiplier, typically from `durationToDecayWith`.
- * @param useWasm     Attempt to use the C++ WASM engine.
- */
-export function simulateTracerDecayWith(
-  buffer: Float32Array,
-  decayFactor: number,
-  useWasm: boolean,
-): void {
-  const pixelCount = Math.floor(buffer.length / 4);
-
-  if (canUseWasmFn('_simulateTracerDecay', useWasm)) {
-    const mod = getWasmModule()!;
-    const byteCount = pixelCount * 4 * 4; // pixelCount × 4 channels × 4 bytes/float
-    const ptr = mod._malloc(byteCount);
-    // Copy buffer into WASM heap (HEAPF32 is indexed by float, not byte)
-    mod.HEAPF32.set(buffer.subarray(0, pixelCount * 4), ptr >> 2);
-    mod._simulateTracerDecay(ptr, pixelCount, decayFactor);
-    // Copy result back
-    buffer.set(mod.HEAPF32.subarray(ptr >> 2, (ptr >> 2) + pixelCount * 4));
-    mod._free(ptr);
-    return;
-  }
-
-  tsSimulateTracerDecay(buffer, decayFactor);
 }

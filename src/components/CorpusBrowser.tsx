@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { ImageEntry } from '../engine/TextureManager';
-import { buildCorpusIndex, filterCorpusIndex, type CorpusIndex } from '../engine/corpusIndex';
+import type { ImageEntry } from '../engine/library/imageEntry';
+import { buildCorpusIndex, filterCorpusIndex, type CorpusIndex } from '../engine/library/corpusIndex';
 
 /** Card width (`w-36`) plus the `gap-3` between cards, in px. */
 const TILE_WIDTH = 144;
@@ -213,14 +213,14 @@ const VirtualCardRow = memo(function VirtualCardRow({
   return (
     <div className="relative h-[11.5rem]" style={{ width: virtualizer.getTotalSize() }}>
       {virtualizer.getVirtualItems().map((item) => {
-        const corpusIndex = matches[item.index];
+        const corpusIndex = matches[item.index]!;
         const entry = index.entries[corpusIndex];
         if (!entry) return null;
         return (
           <Card
             key={corpusIndex}
             entry={entry}
-            label={index.labels[corpusIndex]}
+            label={index.labels[corpusIndex]!}
             corpusIndex={corpusIndex}
             isCurrent={corpusIndex === currentIndex}
             isReference={entry.url === referenceUrl}

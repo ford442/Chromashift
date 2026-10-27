@@ -28,7 +28,7 @@ export function scheduleGraph(graph: PassGraph, validation: ValidationResult): S
   const onStack = new Set<string>([graph.output]);
 
   while (stack.length > 0) {
-    const frame = stack[stack.length - 1];
+    const frame = stack[stack.length - 1]!;
     const node = byId.get(frame.id)!;
     if (frame.next >= node.inputs.length) {
       stack.pop();
@@ -39,7 +39,7 @@ export function scheduleGraph(graph: PassGraph, validation: ValidationResult): S
       }
       continue;
     }
-    const inputId = node.inputs[frame.next];
+    const inputId = node.inputs[frame.next]!;
     frame.next += 1;
     if (feedback.has(`${frame.id}->${inputId}`)) continue;
     if (visited.has(inputId) || onStack.has(inputId)) continue;

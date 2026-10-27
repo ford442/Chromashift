@@ -4,12 +4,15 @@ import { buildGraphPreset, GRAPH_PRESETS, TRAILS3_ECHO_ID } from '../altGraphs';
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from '../defaultGraph';
 import { withMotionTerm } from '../variants';
 import type { RendererState } from '../../types/RendererState';
-import { createFakeWebGl, type FakeTexture, type FakeWebGl } from './__fixtures__/fakeWebGl';
+import { createFakeWebGl, type FakeDraw, type FakeTexture, type FakeWebGl } from './__fixtures__/fakeWebGl';
 import { buildEncodePlan } from './plan';
 import { WebGLGraphExecutor, type WebGLGraphEncodeParams, type WebGLGraphInputs } from './WebGLGraphExecutor';
 import { WebGLProgramCache } from './webglProgramCache';
 import { graphTracerDuration } from './uniforms';
 import { durationToDecay } from '../../math/decay';
+
+/** `N` draws as a tuple, so destructured draws are each defined. */
+type Draws<N extends number, T extends FakeDraw[] = []> = T['length'] extends N ? T : Draws<N, [...T, FakeDraw]>;
 
 const STATE: RendererState = {
   layers: [{ angleDeg: 0 }, { angleDeg: 10, flipY: true }, { angleDeg: 20 }],
@@ -52,12 +55,18 @@ describe('WebGLGraphExecutor', () => {
     return compiled;
   };
 
+  /** The frame's first `count` draws, checked to be there. */
+  const firstDraws = <N extends number>(count: N): Draws<N> => {
+    expect(fake.draws.length).toBeGreaterThanOrEqual(count);
+    return fake.draws.slice(0, count) as Draws<N>;
+  };
+
   it('draws the default graph as the plan orders it: three bands, two accumulators, one composite', () => {
     adopt();
     executor.encode(inputs, params());
 
     expect(fake.draws).toHaveLength(6);
-    const [l0, l1, l2, below, above, composite] = fake.draws;
+    const [l0, l1, l2, below, above, composite] = firstDraws(6);
     for (const layer of [l0, l1, l2]) {
       expect(layer.fragment).toContain('uniform int u_layerIndex;');
       expect([layer.target?.width, layer.target?.height]).toEqual([400, 300]);
@@ -100,14 +109,14 @@ describe('WebGLGraphExecutor', () => {
   it('ping-pongs each accumulator: this frame reads what the last one wrote', () => {
     adopt();
     executor.encode(inputs, params());
-    const first = fake.draws[4];
+    const first = fake.draws[4]!;
     fake.draws.length = 0;
     executor.encode(inputs, params());
-    const second = fake.draws[4];
+    const second = fake.draws[4]!;
     expect(second.samplers.u_previous).toBe(first.target);
     expect(second.target).toBe(first.samplers.u_previous);
     // The compositor reads the history side, as the WebGPU executor does.
-    expect(fake.draws[5].samplers.u_tracerAbove).toBe(first.target);
+    expect(fake.draws[5]!.samplers.u_tracerAbove).toBe(first.target);
   });
 
   it('freezes the accumulators on a paused frame', () => {
@@ -131,8 +140,8 @@ describe('WebGLGraphExecutor', () => {
     expect(accumulators).toHaveLength(3);
     // The echo's own 6 s at 30 fps, not either of the session's durations.
     const echoDecay = durationToDecay(graphTracerDuration(6000, 30), 30);
-    expect(accumulators.some((draw) => Math.abs(draw.uniforms.u_decay - echoDecay) < 1e-9)).toBe(true);
-    const composite = fake.draws[fake.draws.length - 1];
+    expect(accumulators.some((draw) => Math.abs(draw.uniforms.u_decay! - echoDecay) < 1e-9)).toBe(true);
+    const composite = fake.draws[fake.draws.length - 1]!;
     expect(composite.samplers.u_tracer2).toBeDefined();
     expect(composite.uniforms.u_tracerOpacity2).toBe(0.45);
     expect(executor.encodedPasses()).toContain(TRAILS3_ECHO_ID);
@@ -144,7 +153,7 @@ describe('WebGLGraphExecutor', () => {
     const plan = buildEncodePlan(compiled);
     const historyWrites = plan.steps.filter((step) => step.kind === 'history').length;
     expect(fake.draws).toHaveLength(plan.steps.length + historyWrites);
-    expect(fake.draws[fake.draws.length - 1].target).toBeNull();
+    expect(fake.draws[fake.draws.length - 1]!.target).toBeNull();
   });
 
   it('draws the temporal term with the field bound after the previous frame', () => {
@@ -162,7 +171,7 @@ describe('WebGLGraphExecutor', () => {
   it('writes the smear ring at its head and taps every slot', () => {
     adopt(buildGraphPreset('smear'));
     executor.encode(inputs, params());
-    const [write, taps, displace] = fake.draws;
+    const [write, taps, displace] = firstDraws(3);
     expect(write.samplers.u_source).toBe(source);
     expect(taps.samplers.u_ring0).toBe(write.target);
     expect(taps.uniforms.u_weight0).toBe(1);
@@ -172,9 +181,9 @@ describe('WebGLGraphExecutor', () => {
 
     fake.draws.length = 0;
     executor.encode(inputs, params());
-    const [nextWrite, nextTaps] = fake.draws;
+    const [nextWrite, nextTaps] = firstDraws(2);
     expect(nextWrite.target).toBe(nextTaps.samplers.u_ring1);
-    expect(nextTaps.uniforms.u_weight1).toBeGreaterThan(nextTaps.uniforms.u_weight0);
+    expect(nextTaps.uniforms.u_weight1).toBeGreaterThan(nextTaps.uniforms.u_weight0!);
   });
 
   it('keeps the previous graph on the canvas when the context rejects a program', () => {
@@ -206,7 +215,7 @@ describe('WebGLGraphExecutor', () => {
       viewport: { x: 0, y: 0, width: 64, height: 64 },
     })).toBe(true);
     expect(fake.draws).toHaveLength(1);
-    expect(fake.draws[0].uniforms.u_mainViewMode).toBe(6);
+    expect(fake.draws[0]!.uniforms.u_mainViewMode).toBe(6);
     expect(executor.outputTargets()!.tracers).toEqual(tracers);
   });
 
@@ -216,9 +225,93 @@ describe('WebGLGraphExecutor', () => {
     const outputs = executor.outputTargets()!;
     expect(outputs.layers.map((t) => t.texture)).toEqual(fake.draws.slice(0, 3).map((draw) => draw.target));
     // After the frame the read side is what it just wrote: below, then above.
-    expect(outputs.tracers.map((t) => t.texture)).toEqual([fake.draws[3].target, fake.draws[4].target]);
+    expect(outputs.tracers.map((t) => t.texture)).toEqual([fake.draws[3]!.target, fake.draws[4]!.target]);
     expect(compileGraph(buildDefaultGraph(), 'webgl').outputs.tracers)
       .toEqual([DEFAULT_GRAPH_IDS.tracerBelow, DEFAULT_GRAPH_IDS.tracerAbove]);
+  });
+
+  describe('MSAA', () => {
+    it('multisamples the band layers only, resolving each into its layer texture', () => {
+      adopt();
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+
+      const [l0, l1, l2, below, above, composite] = firstDraws(6);
+      for (const layer of [l0, l1, l2]) {
+        expect(layer.samples).toBe(4);
+        expect(layer.target).toBeNull();
+        expect([layer.renderbuffer?.width, layer.renderbuffer?.height]).toEqual([400, 300]);
+      }
+      // One shared renderbuffer, as WebGPU shares one MSAA texture.
+      expect(new Set([l0, l1, l2].map((draw) => draw.renderbuffer)).size).toBe(1);
+      for (const pass of [below, above, composite]) expect(pass.samples).toBe(1);
+      expect(composite.target).toBeNull();
+      expect(composite.renderbuffer).toBeNull();
+
+      const layers = executor.outputTargets()!.layers.map((t) => t.texture);
+      expect(fake.blits.map((blit) => blit.to)).toEqual(layers);
+      expect(fake.blits.every((blit) => blit.from === l0.renderbuffer)).toBe(true);
+      // The accumulators read the resolved textures, never the renderbuffer.
+      expect(below.samplers.u_layer0).toBe(layers[0]);
+      expect(executor.layerSampleCount).toBe(4);
+    });
+
+    it('reallocates the renderbuffer on a toggle, on the same context', () => {
+      adopt();
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+      const first = fake.renderbuffers[0]!;
+
+      executor.setSampleCount(1);
+      executor.encode(inputs, params());
+      expect(first.deleted).toBe(true);
+      expect(fake.draws.slice(-6).every((draw) => draw.samples === 1)).toBe(true);
+      expect(executor.layerSampleCount).toBe(1);
+
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+      expect(fake.renderbuffers).toHaveLength(2);
+      expect(fake.renderbuffers[1]!.deleted).toBe(false);
+    });
+
+    it('draws single-sample where the format allows no multisampling', () => {
+      fake = createFakeWebGl({ sampleCounts: [] });
+      executor = new WebGLGraphExecutor(fake.gl);
+      adopt();
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+      expect(fake.renderbuffers).toHaveLength(0);
+      expect(fake.draws.every((draw) => draw.samples === 1)).toBe(true);
+    });
+  });
+
+  describe('internal format', () => {
+    const gl = (fakeGl: FakeWebGl) => fakeGl.gl as unknown as Record<'RGBA8' | 'RGBA16F', number>;
+
+    it('stays RGBA8 without a renderable half-float extension, and still draws', () => {
+      adopt();
+      executor.encode(inputs, params());
+      expect(executor.internalFormat).toBe('rgba8');
+      expect(fake.draws).toHaveLength(6);
+      const pooled = fake.draws.slice(0, 5).map((draw) => draw.target!);
+      expect(pooled.every((t) => t.internalFormat === gl(fake).RGBA8)).toBe(true);
+    });
+
+    it('allocates layer, tracer and MSAA targets as RGBA16F under EXT_color_buffer_half_float', () => {
+      fake = createFakeWebGl({ extensions: ['EXT_color_buffer_half_float'] });
+      executor = new WebGLGraphExecutor(fake.gl);
+      adopt();
+      executor.encode(inputs, params());
+      expect(executor.internalFormat).toBe('rgba16f');
+      const pooled = fake.draws.slice(0, 5).map((draw) => draw.target!);
+      expect(pooled.every((t) => t.internalFormat === gl(fake).RGBA16F)).toBe(true);
+
+      // The resolve blits between equal formats (the fake throws otherwise).
+      executor.setSampleCount(4);
+      executor.encode(inputs, params());
+      expect(fake.renderbuffers[0]!.internalFormat).toBe(gl(fake).RGBA16F);
+      expect(fake.blits).toHaveLength(3);
+    });
   });
 });
 

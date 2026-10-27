@@ -29,8 +29,8 @@ describe('createWorkerChromashiftCpuHost', () => {
 
     expect(worker).not.toBeNull();
     expect(worker!.calls).toHaveLength(1);
-    expect(worker!.calls[0].message.method).toBe('image-analysis');
-    expect(worker!.calls[0].transfer).toHaveLength(1);
+    expect(worker!.calls[0]!.message.method).toBe('image-analysis');
+    expect(worker!.calls[0]!.transfer).toHaveLength(1);
 
     worker!.resolveCall(0, {
       avgLuminance: 100,
@@ -61,7 +61,7 @@ describe('createWorkerChromashiftCpuHost', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(worker!.calls[0].message.method).toBe('average-luminance');
+    expect(worker!.calls[0]!.message.method).toBe('average-luminance');
     worker!.resolveCall(0, { avgLuminance: 77 });
 
     await expect(resultPromise).resolves.toEqual({ avgLuminance: 77, mode: 'worker' });

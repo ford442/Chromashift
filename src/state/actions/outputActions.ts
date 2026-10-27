@@ -7,7 +7,7 @@ export function createOutputActions(dispatch: ChromashiftDispatch) {
       dispatch({ type: 'output/patch', patch: { squareCanvas } }),
     setAntialiasEnabled: (antialiasEnabled: boolean) =>
       dispatch({ type: 'output/patch', patch: { antialiasEnabled } }),
-    setDisplayColorSpace: (displayColorSpace: import('../../engine/gpuOptions').DisplayColorSpace) =>
+    setDisplayColorSpace: (displayColorSpace: import('../../engine/gpu/gpuOptions').DisplayColorSpace) =>
       dispatch({ type: 'output/patch', patch: { displayColorSpace } }),
     setCanvasHdr: (canvasHdr: boolean) =>
       dispatch({ type: 'output/patch', patch: { canvasHdr } }),

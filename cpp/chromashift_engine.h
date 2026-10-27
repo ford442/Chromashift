@@ -160,7 +160,8 @@ void computeLuminanceHistogram(const uint8_t* pixels, uint32_t byteLen,
  * @param pixels     Tightly-packed RGBA bytes.
  * @param byteLen    Total byte length.
  * @param avgLum     Per-image average luminance [0–255].
- * @param outCounts  Caller-allocated array of 11 uint32 values.
+ * @param outCounts  Caller-allocated array of BAND_COUNT + 1 (11) uint32 values:
+ *                   one per band index, dark/grey last.
  */
 void computeColorBandCounts(const uint8_t* pixels, uint32_t byteLen,
                             int avgLum, uint32_t* outCounts);

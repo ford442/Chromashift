@@ -62,15 +62,15 @@ export class ScriptedWorker extends FakeWorkerBase {
   }
 
   resolveCall(index: number, res: unknown): void {
-    this.reply({ rpc: 'ok', id: this.calls[index].message.id, res });
+    this.reply({ rpc: 'ok', id: this.calls[index]!.message.id, res });
   }
 
   rejectCall(index: number, message: string): void {
-    this.reply({ rpc: 'error', id: this.calls[index].message.id, message });
+    this.reply({ rpc: 'error', id: this.calls[index]!.message.id, message });
   }
 
   progressCall(index: number, progress: unknown): void {
-    this.reply({ rpc: 'progress', id: this.calls[index].message.id, progress });
+    this.reply({ rpc: 'progress', id: this.calls[index]!.message.id, progress });
   }
 }
 

@@ -7,7 +7,7 @@ import type { LayerState } from '../types/RendererState';
  */
 export const EXTENSION_REFERENCE_FPS = 30;
 
-export function degreesToRadians(degrees: number): number {
+function degreesToRadians(degrees: number): number {
   return (degrees * Math.PI) / 180;
 }
 

@@ -13,12 +13,24 @@ export interface FakeTexture {
   readonly id: number;
   width: number;
   height: number;
+  /** The sized internal format `texImage2D` was given (`RGBA8`, `RGBA16F`, …). */
+  internalFormat: number;
+  deleted: boolean;
+}
+
+export interface FakeRenderbuffer {
+  readonly id: number;
+  width: number;
+  height: number;
+  samples: number;
+  internalFormat: number;
   deleted: boolean;
 }
 
 interface FakeFramebuffer {
   readonly id: number;
   texture: FakeTexture | null;
+  renderbuffer: FakeRenderbuffer | null;
 }
 
 interface FakeShader {
@@ -35,8 +47,12 @@ interface FakeProgram {
 }
 
 export interface FakeDraw {
-  /** The texture drawn into, or `null` for the default framebuffer. */
+  /** The texture drawn into, or `null` for the default framebuffer or a renderbuffer. */
   target: FakeTexture | null;
+  /** The renderbuffer drawn into, when the framebuffer has one. */
+  renderbuffer: FakeRenderbuffer | null;
+  /** Samples of the draw's attachment: the renderbuffer's, else 1. */
+  samples: number;
   fragment: string;
   /** Sampler uniform → the texture its unit had bound at draw time. */
   samplers: Record<string, FakeTexture | null>;
@@ -45,10 +61,25 @@ export interface FakeDraw {
   viewport: [number, number, number, number];
 }
 
+/** A `blitFramebuffer` — the MSAA resolve. */
+export interface FakeBlit {
+  from: FakeRenderbuffer | FakeTexture | null;
+  to: FakeTexture | FakeRenderbuffer | null;
+}
+
+export interface FakeWebGlOptions {
+  /** Extensions `getExtension` grants. Default: none (an 8-bit context). */
+  extensions?: readonly string[];
+  /** What `getInternalformatParameter(RENDERBUFFER, *, SAMPLES)` lists. Default `[4]`. */
+  sampleCounts?: readonly number[];
+}
+
 export interface FakeWebGl {
   gl: WebGL2RenderingContext;
   draws: FakeDraw[];
+  blits: FakeBlit[];
   textures: FakeTexture[];
+  renderbuffers: FakeRenderbuffer[];
   programsLinked: () => number;
   /** Fail to compile any shader whose source this matches. */
   rejectShader: (test: ((source: string) => boolean) | null) => void;
@@ -56,16 +87,22 @@ export interface FakeWebGl {
 
 const UNIFORM = /\buniform\s+(?:(?:lowp|mediump|highp)\s+)?(\w+)\s+(\w+)\s*;/g;
 
-export function createFakeWebGl(): FakeWebGl {
+export function createFakeWebGl(options: FakeWebGlOptions = {}): FakeWebGl {
   let nextId = 1;
   const textures: FakeTexture[] = [];
+  const renderbuffers: FakeRenderbuffer[] = [];
   const draws: FakeDraw[] = [];
+  const blits: FakeBlit[] = [];
+  const extensions = new Set(options.extensions ?? []);
   let linked = 0;
   let reject: ((source: string) => boolean) | null = null;
 
   let activeUnit = 0;
   const units = new Map<number, FakeTexture | null>();
+  /** The draw framebuffer — what `FRAMEBUFFER` and `DRAW_FRAMEBUFFER` bind. */
   let framebuffer: FakeFramebuffer | null = null;
+  let readFramebuffer: FakeFramebuffer | null = null;
+  let renderbuffer: FakeRenderbuffer | null = null;
   let program: FakeProgram | null = null;
   let viewport: [number, number, number, number] = [0, 0, 0, 0];
 
@@ -76,8 +113,14 @@ export function createFakeWebGl(): FakeWebGl {
     LINK_STATUS: 4,
     ACTIVE_UNIFORMS: 5,
     FRAMEBUFFER_COMPLETE: 6,
+    FRAMEBUFFER: 7,
+    READ_FRAMEBUFFER: 8,
+    DRAW_FRAMEBUFFER: 9,
+    RGBA8: 10,
+    RGBA16F: 11,
     TEXTURE0: 1000,
   };
+  const attachment = (fb: FakeFramebuffer | null) => fb?.texture ?? fb?.renderbuffer ?? null;
 
   const impl: Record<string, unknown> = {
     createShader: (type: number): FakeShader => ({ type, source: '' }),
@@ -90,9 +133,10 @@ export function createFakeWebGl(): FakeWebGl {
     attachShader: (p: FakeProgram, shader: FakeShader) => { p.shaders.push(shader); },
     linkProgram: (p: FakeProgram) => {
       for (const shader of p.shaders) {
+        // Both groups are mandatory in UNIFORM, so a match always has them.
         for (const [, type, name] of shader.source.matchAll(UNIFORM)) {
-          p.uniformNames.push(name);
-          if (type.startsWith('sampler')) p.samplerNames.add(name);
+          p.uniformNames.push(name!);
+          if (type!.startsWith('sampler')) p.samplerNames.add(name!);
         }
       }
       linked += 1;
@@ -109,23 +153,51 @@ export function createFakeWebGl(): FakeWebGl {
     uniform1i: (location: { program: FakeProgram; name: string }, value: number) => {
       location.program.values.set(location.name, value);
     },
-    activeTexture: (unit: number) => { activeUnit = unit - constants.TEXTURE0; },
+    activeTexture: (unit: number) => { activeUnit = unit - constants.TEXTURE0!; },
     createTexture: (): FakeTexture => {
-      const texture = { id: nextId++, width: 0, height: 0, deleted: false };
+      const texture = { id: nextId++, width: 0, height: 0, internalFormat: 0, deleted: false };
       textures.push(texture);
       return texture;
     },
     bindTexture: (_target: number, texture: FakeTexture | null) => { units.set(activeUnit, texture); },
-    texImage2D: (_target: number, _level: number, _format: number, width: number, height: number) => {
+    texImage2D: (_target: number, _level: number, internalFormat: number, width: number, height: number) => {
       const bound = units.get(activeUnit);
       if (bound) {
         bound.width = width;
         bound.height = height;
+        bound.internalFormat = internalFormat;
       }
     },
+    getExtension: (name: string) => (extensions.has(name) ? {} : null),
+    getInternalformatParameter: () => Int32Array.from(options.sampleCounts ?? [4]),
+    createRenderbuffer: (): FakeRenderbuffer => {
+      const rb = { id: nextId++, width: 0, height: 0, samples: 0, internalFormat: 0, deleted: false };
+      renderbuffers.push(rb);
+      return rb;
+    },
+    bindRenderbuffer: (_target: number, rb: FakeRenderbuffer | null) => { renderbuffer = rb; },
+    renderbufferStorageMultisample: (_t: number, samples: number, internalFormat: number, width: number, height: number) => {
+      if (renderbuffer) Object.assign(renderbuffer, { samples, internalFormat, width, height });
+    },
+    deleteRenderbuffer: (rb: FakeRenderbuffer) => { rb.deleted = true; },
+    framebufferRenderbuffer: (_t: number, _a: number, _rt: number, rb: FakeRenderbuffer) => {
+      if (framebuffer) framebuffer.renderbuffer = rb;
+    },
+    blitFramebuffer: () => {
+      const from = attachment(readFramebuffer);
+      const to = attachment(framebuffer);
+      // A multisample resolve must land in the same format (GLES 3.0 §4.3.3).
+      if (from && to && from.internalFormat !== to.internalFormat) {
+        throw new Error('blitFramebuffer between different internal formats');
+      }
+      blits.push({ from, to });
+    },
     deleteTexture: (texture: FakeTexture) => { texture.deleted = true; },
-    createFramebuffer: (): FakeFramebuffer => ({ id: nextId++, texture: null }),
-    bindFramebuffer: (_target: number, fb: FakeFramebuffer | null) => { framebuffer = fb; },
+    createFramebuffer: (): FakeFramebuffer => ({ id: nextId++, texture: null, renderbuffer: null }),
+    bindFramebuffer: (target: number, fb: FakeFramebuffer | null) => {
+      if (target !== constants.READ_FRAMEBUFFER) framebuffer = fb;
+      if (target !== constants.DRAW_FRAMEBUFFER) readFramebuffer = fb;
+    },
     framebufferTexture2D: (_t: number, _a: number, _tt: number, texture: FakeTexture) => {
       if (framebuffer) framebuffer.texture = texture;
     },
@@ -143,8 +215,11 @@ export function createFakeWebGl(): FakeWebGl {
         }
       }
       const fragment = program.shaders.find((s) => s.type === constants.FRAGMENT_SHADER)?.source ?? '';
+      const rb = framebuffer?.renderbuffer ?? null;
       draws.push({
         target,
+        renderbuffer: rb,
+        samples: rb?.samples ?? 1,
         fragment,
         samplers,
         uniforms: Object.fromEntries([...program.values].filter(([name]) => !program!.samplerNames.has(name))),
@@ -167,7 +242,9 @@ export function createFakeWebGl(): FakeWebGl {
   return {
     gl,
     draws,
+    blits,
     textures,
+    renderbuffers,
     programsLinked: () => linked,
     rejectShader: (test) => { reject = test; },
   };

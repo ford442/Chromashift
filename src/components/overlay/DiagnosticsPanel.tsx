@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { sliderProps } from '../../state/params';
 import { PerformanceSparkline } from '../PerformanceSparkline';
 import {
   useCollisionStats,
@@ -189,9 +190,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           <span className="text-[10px] text-cyan-200/70 font-mono">{Math.round(diagnosticsOpacity * 100)}%</span>
           <input
             type="range"
-            min={0}
-            max={1}
-            step={0.01}
+            {...sliderProps('output.diagnosticsOpacity')}
             value={diagnosticsOpacity}
             onChange={(e) => onDiagnosticsOpacityChange(Number(e.target.value))}
             className="flex-1 h-1 accent-cyan-400"
@@ -203,9 +202,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           </span>
           <input
             type="range"
-            min={1}
-            max={4}
-            step={0.1}
+            {...sliderProps('output.stampBoost')}
             value={stampBoost}
             onChange={(e) => onStampBoostChange(Number(e.target.value))}
             className="flex-1 h-1 accent-cyan-400"
@@ -314,9 +311,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           </span>
           <input
             type="range"
-            min={1}
-            max={12}
-            step={0.1}
+            {...sliderProps('output.tracerInspect.zoom')}
             value={tracerInspectZoom}
             onChange={(e) => onTracerInspectZoomChange(Number(e.target.value))}
             className="flex-1 h-1 accent-amber-400"
@@ -328,9 +323,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
           </span>
           <input
             type="range"
-            min={0.5}
-            max={2.0}
-            step={0.01}
+            {...sliderProps('output.tracerInspect.exposure')}
             value={tracerInspectExposure}
             onChange={(e) => onTracerInspectExposureChange(Number(e.target.value))}
             className="flex-1 h-1 accent-amber-400"

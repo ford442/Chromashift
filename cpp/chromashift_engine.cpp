@@ -462,7 +462,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE
 void computeColorBandCounts(const uint8_t* pixels, uint32_t byteLen,
                             int avgLum, uint32_t* outCounts)
 {
-    for (int b = 0; b < 11; ++b) outCounts[b] = 0u;
+    for (std::size_t b = 0; b < BAND_COUNT + 1u; ++b) outCounts[b] = 0u;
 
     const float offset = lightDarkOffset(avgLum);
     const uint32_t pixelCount = byteLen / 4u;

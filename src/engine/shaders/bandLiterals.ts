@@ -12,10 +12,10 @@ export const BAND_SHADER_FLOAT = Object.fromEntries(
   ]),
 ) as Record<BandName, string>;
 
-/** WGSL alias — interpolate into WGSL template strings. */
+/** WGSL alias — interpolate into WGSL template strings. @alias */
 export const BAND_WGSL = BAND_SHADER_FLOAT;
 
-/** GLSL alias — interpolate into GLSL template strings. */
+/** GLSL alias — interpolate into GLSL template strings. @alias */
 export const BAND_GLSL = BAND_SHADER_FLOAT;
 
 /** Dark/grey band upper bound (rgb <= this) — derived from borderYellow. */

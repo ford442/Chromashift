@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { computeVideoAverageLuminance, LiveSourceManager, type LiveSourceKind } from '../engine/LiveSource';
-import { publishLiveSourceBreadcrumbs } from '../engine/liveSourceBreadcrumbs';
-import { LIVE_SOURCE_CACHE_KEY } from '../engine/liveSourceTexture';
+import type { FrameTick } from '../engine/frame/FrameClock';
+import { computeVideoAverageLuminance, LiveSourceManager, type LiveSourceKind } from '../engine/live/LiveSource';
+import { publishLiveSourceBreadcrumbs } from '../engine/live/liveSourceBreadcrumbs';
+import { LIVE_SOURCE_CACHE_KEY } from '../engine/live/liveSourceTexture';
 import { createChromashiftCpuHost } from '../engine/compute/chores/chromashiftHost';
 import {
   publishMotionFieldBreadcrumbs,
@@ -9,7 +10,7 @@ import {
   publishMotionFieldFlow,
   publishMotionFieldHasFlow,
 } from '../engine/compute/chores';
-import { LiveMotionSampler } from '../engine/liveMotionField';
+import { LiveMotionSampler } from '../engine/live/liveMotionField';
 import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
 
 /** How often to resample average luminance from the live frame (ms). */
@@ -35,15 +36,16 @@ export interface LiveSourceHandlers {
 
 /**
  * Owns a `LiveSourceManager` and wires it to `media.liveSource` state plus a
- * dedicated per-frame upload loop (mirrors `useReactiveInput`'s own
- * `requestAnimationFrame` loop rather than reusing `useAnimationLoop`, so a
- * live source works whether or not the render loop happens to be running).
+ * per-frame upload task in the frame clock's `sources` phase — registered only
+ * while a source is active, and independent of the render loop's tasks.
  * Texture upload is throttled to the display's refresh rate; luminance
  * analysis is throttled further to `ANALYSIS_INTERVAL_MS`.
  */
 export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): LiveSourceHandlers {
   const { state, actions } = store;
-  const { liveSourceManagerRef, textureManagerRef, rendererRef, engineModeRef, renderStateRef } = refs;
+  const {
+    liveSourceManagerRef, textureManagerRef, rendererRef, engineModeRef, renderStateRef, frameClockRef,
+  } = refs;
   const liveSource = state.media.liveSource;
 
   // `refs` (the composed bundle) gets a new object identity every App render
@@ -137,7 +139,7 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
       return;
     }
 
-    let raf = 0;
+    const clock = frameClockRef.current;
     lastAnalysisRef.current = 0;
     frameCountRef.current = 0;
     lastFpsSyncRef.current = performance.now();
@@ -195,7 +197,8 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
         });
     };
 
-    const tick = (now: number) => {
+    // sources: upload this frame's video before `modulate` / `render` read it.
+    const upload = ({ now }: FrameTick) => {
       const manager = liveSourceManagerRef.current;
       const textureManager = textureManagerRef.current;
       if (manager?.active && textureManager) {
@@ -226,13 +229,11 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
         frameCountRef.current = 0;
         lastFpsSyncRef.current = now;
       }
-
-      raf = requestAnimationFrame(tick);
     };
 
-    raf = requestAnimationFrame(tick);
+    const unregister = clock.register('sources', upload, 'live-source-upload');
     return () => {
-      cancelAnimationFrame(raf);
+      unregister();
       motionSamplerRef.current?.destroy();
       motionSamplerRef.current = null;
       lastMotionAtRef.current = 0;
@@ -243,7 +244,7 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
     };
   }, [
     liveSource.active, actions, liveSourceManagerRef, textureManagerRef,
-    engineModeRef, renderStateRef, rendererRef,
+    engineModeRef, renderStateRef, rendererRef, frameClockRef,
   ]);
 
   return { handleStartCamera, handleStartScreenShare, handleLoadVideoFile, handleStopLiveSource };

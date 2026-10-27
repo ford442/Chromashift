@@ -29,7 +29,9 @@ For what's already shipped vs. planned next, see [docs/ROADMAP.md](docs/ROADMAP.
 npm run dev       # Start Vite dev server (http://localhost:5173)
 npm run build     # Type-check with tsc then build to dist/
 npm run lint      # ESLint (flat config, v9+)
-npm test          # Vitest unit tests (src/**/*.test.ts)
+npm run knip      # Unused files, exports and dependencies (knip.json)
+npm test          # Vitest: src/**/*.test.ts on node, src/**/*.dom.test.tsx on happy-dom
+npm run test:coverage  # The same with v8 coverage (coverage/, gitignored)
 npm run shaders:validate  # Dump every WGSL/GLSL variant; naga + glslangValidator over each
 npm run test:e2e  # Playwright E2E (all projects; install browsers first)
 npm run test:e2e:webgl   # Playwright chromium: explicit WebGL diagnostic backend
@@ -80,7 +82,10 @@ src/
 ├── state/                    # Reducer, slices, and (de)serialization — see `ChromashiftState`
 │   ├── chromashiftReducer.ts, defaults.ts, types.ts
 │   ├── actions/                  # Dispatch wrapper factories mirroring reducer slices (media, compare, reactive, …)
+│   ├── settingsSchema.ts, schemaFields.ts  # The preset schema (ranges + metadata) and its lenient decoder
+│   ├── params.ts                 # ParamPath registry: ParamSpec, getParam/withParam, sliderProps
 │   └── serializeSettings.ts, presetUrl.ts, presetLibrary.ts, presetGallery.ts  # see docs/PRESETS.md
+├── test/                     # DOM test support: domSetup.ts (RTL cleanup), renderAppHook.tsx (hook under the real store)
 └── engine/
     ├── graph/                # Pass-graph IR + compiler + WebGPU executor — see docs/PASS_GRAPH.md
     │   ├── types.ts, nodeKinds.ts     # The IR and the per-node-kind registry
@@ -111,30 +116,51 @@ src/
     │   ├── persistence.ts    # Tracer persistence pass (emitted coincidence+decay template)
     │   ├── compositor.ts     # Final compositor pass (emitted blend template)
     │   └── diagnostics.ts    # Tracer view, display, heatmap, diagnostic, compare passes
-    ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache, evictExcept()
-    ├── WebGLTextureManager.ts # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
-    ├── LocalLibrary.ts       # IndexedDB-backed local image library (drag-and-drop uploads)
-    ├── fileDrop.ts           # Flattens a drop's DataTransfer (incl. folders) into File[]
-    ├── workers/              # rpc.ts: the one typed main-thread ↔ worker channel all four workers use
-    ├── Upscaler.ts           # Lazy Web Worker wrapper for the two upscale backends below
-    ├── upscaler.worker.ts    # TF.js Real-ESRGAN / Real-CUGAN
-    ├── nunif.worker.ts       # onnxruntime-web swin_unet (waifu2x)
-    ├── viewModes.ts          # MAIN_VIEW_MODES enum (composite, tracer, layers, quarter-zoom, …)
-    ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
-    ├── types/                # RendererState, RendererContracts (renderer/texture-manager interfaces), TextureHandle — import the module directly
-    ├── gpuBootstrap.ts, gpuOptions.ts  # Adapter/device/context setup, limits, device.lost
-    ├── WebGLRenderer.ts      # Re-export shim → webgl/WebGLRenderer.ts
+    ├── webgpu/               # The WebGPU backend
+    │   ├── WebGPURenderer.ts     # One canvas's WebGPU frame: picks the graph variant, the executor draws it
+    │   ├── webgpuSession.ts      # bootstrapWebGpu(): one canvas's session on the page's leased device
+    │   ├── adapter.ts            # Adapter + page device gate (≤ 2 requestDevice strategies), capability reports
+    │   ├── canvasConfig.ts       # Canvas configure: SDR / hdr-extended, tone-mapping + HDR probes
+    │   ├── webgpuProbe.ts        # Boot probe: adapter/device pre-flight + the failure overlay's report
+    │   ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache, evictExcept()
+    │   ├── MotionFieldPass.ts    # WebGPU motion field (borrows the shared chore backend); halfFloat.ts packs its upload
+    │   ├── WebGPUPipelines.ts, TracerInspectPass.ts, GpuReadback.ts  # inspect views + readback (they read the graph's outputs)
+    │   ├── StationaryPreviewRenderer.ts  # Isolated 128×128 side-preview thumbnails at preset angles
+    │   └── bindGroups.ts, GpuTimestampProfiler.ts  # identity-keyed bind-group slots; WebGPU perf HUD
     ├── webgl/                # WebGL2 diagnostic / XR renderer — draws the pass graph (graph/exec/WebGLGraphExecutor.ts)
     │   ├── WebGLRenderer.ts, WebGLDebugPasses.ts, WebGLReadback.ts,
     │   │   WebGLMotionField.ts, WebGLStationaryPreviewRenderer.ts
+    │   ├── WebGLTextureManager.ts  # Image fetch, HTMLImageElement/raw pixels → WebGLTexture
+    │   ├── webgl2Context.ts      # createWebGL2Context (sticky per canvas) + context-loss watch
     │   ├── resources.ts, programUtils.ts
     │   └── shaders/          # GLSL sources — layers/persistence/compositor emitted from graph/templates/glsl.ts
-    ├── WebGPURenderer.ts     # One canvas's WebGPU frame: picks the graph variant, the executor draws it
+    ├── gpu/                  # Backend-agnostic GPU setup
+    │   ├── gpuOptions.ts         # Canvas/context options matrix both backends build from
+    │   └── gpuErrors.ts          # GpuRuntimeError + mappings, error scopes, device diagnostics, fatal breaker
+    ├── textures/             # TextureCache: URL cache, LRU byte budget, in-flight dedupe — both texture managers sit on it
+    ├── library/              # Where images come from
+    │   ├── imageEntry.ts         # ImageEntry: one corpus URL or local upload
+    │   ├── corpusManifest.ts, corpusIndex.ts  # Remote corpus list (revalidated IndexedDB copy) + search index
+    │   ├── LocalLibrary.ts       # IndexedDB-backed local image library (drag-and-drop uploads)
+    │   ├── fileDrop.ts           # Flattens a drop's DataTransfer (incl. folders) into File[]
+    │   └── overlayImageSource.ts # Whether an overlay image source (source/reference/previous) is loaded
+    ├── live/                 # Camera / screen / video-file source: LiveSource.ts, its texture, breadcrumbs,
+    │                         # and liveMotionField.ts (CPU-lane motion sampler for the WebGL backend)
+    ├── upscale/              # Lazy-loaded AI upscalers (see "Upscaler (lazy-loaded)")
+    │   ├── Upscaler.ts           # Lazy Web Worker wrapper for the two upscale backends below
+    │   ├── upscaler.worker.ts    # TF.js Real-ESRGAN / Real-CUGAN
+    │   └── nunif.worker.ts       # onnxruntime-web swin_unet (waifu2x)
+    ├── workers/              # rpc.ts: the one typed main-thread ↔ worker channel all four workers use
+    ├── frame/                # FrameClock: the one requestAnimationFrame loop, in ordered phases
+    ├── reactive/             # Audio analyser, MIDI controller, modulation
+    ├── xr/                   # WebXR presenter (immersive-vr spike)
+    ├── wasm/                 # WASM engine loader, dispatch, TypeScript fallbacks (WasmEngine.ts is the barrel)
+    ├── viewModes.ts          # MAIN_VIEW_MODES enum (composite, tracer, layers, quarter-zoom, …)
+    ├── rendererMode.ts       # URL/localStorage renderer selection + runtime breadcrumbs
+    ├── types/                # RendererState, RendererContracts (renderer/texture-manager interfaces), TextureHandle — import the module directly
     ├── motionModes.ts         # MotionMode enum + defaults for the temporal tracer term
-    ├── MotionFieldPass.ts     # WebGPU motion field (borrows the shared chore backend)
-    ├── liveMotionField.ts     # CPU-lane motion sampler for the WebGL diagnostic backend
-    ├── WebGPUPipelines.ts, TracerInspectPass.ts, GpuReadback.ts  # inspect views + readback (they read the graph's outputs)
-    ├── bindGroups.ts, GpuTimestampProfiler.ts  # identity-keyed bind-group slots; WebGPU perf HUD
+    ├── stationaryPreview.ts  # Side-preview plan/states shared by both StationaryPreviewRenderers
+    ├── collisionStats.ts     # Collision-stats tally + one-at-a-time request, shared by both readbacks
     ├── telemetryStore.ts     # useSyncExternalStore telemetry (angles, CPU/GPU timing, collision stats) — outside React state
     ├── videoExport/          # Offline frame-by-frame WebM/MP4 export (WebCodecs + mediabunny, MediaRecorder fallback) — see docs/VIDEO_EXPORT.md
     ├── color/               # Named colour profiles — schema, validation, LUT baking
@@ -194,13 +220,14 @@ http://localhost:5173/?renderer=webgpu   # default
 http://localhost:5173/?renderer=webgl    # diagnostic / XR / Playwright
 ```
 
-**Boot probe**: `probeWebGPU()` (`src/engine/webgpuProbe.ts`) pre-flights the
+**Boot probe**: `probeWebGPU()` (`src/engine/webgpu/webgpuProbe.ts`) pre-flights the
 WebGPU path only: secure context → `navigator.gpu` → `requestAdapter`, publishing
 `window.webgpuProbe` `{ ok, browser, stage, reason, adapter, features, limits }`.
 It stops before `requestDevice()` and shares the page-lifetime adapter cache
-with bootstrap. One `GPUDevice` per page: `requestDevice` walks at most three
-strategies (`default-limits` → `canvas-limits` → `no-optional-features`), then
-stops. `E_OUTOFMEMORY` sets a fatal circuit breaker — no further
+with bootstrap. One `GPUDevice` per page: `requestDevice` walks at most two
+strategies (`default-limits` → `no-optional-features`), then stops; a lost
+device releases the page's adapter too, so **Retry GPU** requests a fresh one
+(an adapter that has made a device cannot make another). `E_OUTOFMEMORY` sets a fatal circuit breaker — no further
 `requestDevice` until reload. Resize reconfigures the existing device; it
 must not boot again. See [docs/gpu-bootstrap.md](docs/gpu-bootstrap.md) and
 issues #157 / #158. The GPU error overlay may offer **Open WebGL
@@ -232,7 +259,7 @@ Uniforms follow the same single-source rule. A uniform block is declared as a ty
 
 ### Rendering Pipeline (Detailed)
 
-1. `fetchCorpusManifest('./images.json')` (`src/engine/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
+1. `fetchCorpusManifest('./images.json')` (`src/engine/library/corpusManifest.ts`) loads the image list on startup, revalidating it against an IndexedDB copy (see "Corpus manifest" below).
 2. `TextureManager.loadTexture(url)` converts each image to a `GPUTexture` (`rgba8unorm-srgb`) via `copyExternalImageToTexture`; `WebGLTextureManager.loadTexture(url)` uploads the same decoded image to a WebGL texture.
 3. `WebGPURenderer` creates:
    a `WebGpuGraphExecutor`, which builds — from the compiled graph, cached per device on its
@@ -267,7 +294,16 @@ indices only. Band bounds for `cr0p-classic` must stay in sync with `shared/band
 
 ### Presets & Shareable URLs
 
-Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 8`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Invalid presets fall back to defaults with `ui.presetLoadError` set. Schema v3 adds `layers.colorProfileId` (+ an embedded table in file exports only — share URLs carry the id alone); v4 adds `viewport.colorSpace` (`srgb` / `display-p3`); v7 adds `layers.count`; v8 adds `viewport.canvasHdr` (opt-in `hdr-extended` canvas presentation, see `docs/gpu-bootstrap.md`). v1/v2 documents migrate to the classic profile and sRGB canvas. See `docs/PRESETS.md`.
+Render settings serialize to a versioned JSON document (`src/state/serializeSettings.ts`, `version: 8`). `src/state/presetUrl.ts` encodes it as a base64url `?preset=` parameter applied inside the store's lazy initializer — before the first frame. The Presets panel (`PresetsPanel.tsx` + `usePresets.ts`) offers a built-in gallery (`presetGallery.ts`), named localStorage presets (`presetLibrary.ts`), share-URL copy, and JSON file export/import. Every untrusted document is decoded through `state/settingsSchema.ts` (`ChromashiftSettingsInput` is inferred from it): bad fields are clamped or dropped with one warning listing their paths, and only an unusable envelope (bad JSON, unsupported version) falls back to defaults with `ui.presetLoadError` set. Schema v3 adds `layers.colorProfileId` (+ an embedded table in file exports only — share URLs carry the id alone); v4 adds `viewport.colorSpace` (`srgb` / `display-p3`); v7 adds `layers.count`; v8 adds `viewport.canvasHdr` (opt-in `hdr-extended` canvas presentation, see `docs/gpu-bootstrap.md`). v1/v2 documents migrate to the classic profile and sRGB canvas. See `docs/PRESETS.md`.
+
+### Parameter registry (`state/params.ts`)
+
+Every numeric session setting has a dotted path that is the same in the preset schema and in `ChromashiftState` (`tracers.aboveIntensity`, `layers.extensions.7`). `ParamPath` — the automatable subset — and `NumericSettingPath` — all of them — are **types generated from `settingLeavesSchema`** in `settingsSchema.ts`; a leaf is a parameter unless its `num()` says `automatable: false` (layer count, modes, resolution scales, inspector view, …, each with a reason). There is no hand-kept list: `params.test.ts` pins the two lists, so a new numeric leaf fails that test until it is classified.
+
+- `paramSpec(path)` / `listParams(layerCount)` — range, default, curve, label and unit; per-layer parameters are listed once per layer of the session.
+- `getParam` / `withParam` — pure read / write with structural sharing; `withParam` coerces exactly as a preset load would and never grows a per-layer array past `layers.count`. The reducer's `param/set` action is `withParam`.
+- `sliderProps(path)` — `min`/`max`/`step` for a panel slider; the panels spread it instead of repeating literals.
+- MIDI bindings target any `ParamPath` (`paramFromUnit` maps CC 0–127 along the curve); the Reactive panel lists every parameter for MIDI learn. The kiosk attract drift (`engine/kioskMode.ts` `attractValues`) writes through `setParam` too.
 
 ### Kiosk / gallery installation
 
@@ -279,7 +315,7 @@ Dual 2-up, swipe split, and quad analytical grid are shipped on WebGPU (see [doc
 
 ### Local Image Library (drag-and-drop)
 
-Dropping image files (or whole folders) anywhere on `#chromashift-container` persists them to IndexedDB (`src/engine/LocalLibrary.ts`, db `chromashift-library`) — labels, dimensions, and a small WebP thumbnail alongside the original bytes — so the personal library survives page reloads without any server upload. `src/engine/fileDrop.ts` flattens a drop's `DataTransfer` (including nested folders, via `webkitGetAsEntry`) into a plain `File[]`; `useMediaHandlers.handleDropFiles` writes them to IndexedDB and appends `ImageEntry`s carrying a `localId` and a `blob:` URL — the corpus, image strip, and texture pipeline don't otherwise distinguish local from remote entries.
+Dropping image files (or whole folders) anywhere on `#chromashift-container` persists them to IndexedDB (`src/engine/library/LocalLibrary.ts`, db `chromashift-library`) — labels, dimensions, and a small WebP thumbnail alongside the original bytes — so the personal library survives page reloads without any server upload. `src/engine/library/fileDrop.ts` flattens a drop's `DataTransfer` (including nested folders, via `webkitGetAsEntry`) into a plain `File[]`; `useMediaHandlers.handleDropFiles` writes them to IndexedDB and appends `ImageEntry`s carrying a `localId` and a `blob:` URL — the corpus, image strip, and texture pipeline don't otherwise distinguish local from remote entries.
 
 `CorpusBrowser` shows a LOCAL/REMOTE badge per entry (using `thumbUrl`, not the full-res `url`, to avoid decoding full images just for a 144px thumbnail) and a "Clear Library" button that wipes IndexedDB and drops every `localId`-tagged entry from the corpus. Local and remote entries are the same `ImageEntry` shape all the way through the browser — virtualization, search, and the badge all read the one list.
 
@@ -290,12 +326,12 @@ Dropping image files (or whole folders) anywhere on `#chromashift-container` per
 - **Virtualized.** `@tanstack/react-virtual`'s `useVirtualizer({ horizontal: true })` renders the visible window plus `OVERSCAN` cards on each side. The virtualizer lives in the `VirtualCardRow` leaf because `useVirtualizer` is a library the React Compiler cannot memoize around (`react-hooks/incompatible-library`); keeping it there would leave the header and search index compilable. The compiler itself is **not** enabled — only the `react-hooks` v7 lint rules are — so today the memoization is the manual discipline under "Subscription model". Enabling it needs `render-churn.spec.ts` stable first, and an audit of components that read mutable `window` breadcrumbs during render (`CanvasHdrNote`, the HDR toggle in `ViewportPanel`), which the compiler would be free to memoize. It receives the scroll element *through state* (a callback ref), not a ref object: a child's mount effect runs before an ancestor's ref is attached, so a ref object is still `null` when the virtualizer first looks for something to observe.
 - **Mounted only while open.** `ImageStrip` renders `CorpusBrowser` only when the strip is open, so a closed browser costs no observers and no index — and `ImageStrip` itself keeps rendering as rarely as `e2e/render-churn.spec.ts` demands.
 - **Thumbnails are guarded, not just lazy.** Every `<img>` carries `loading="lazy" decoding="async"`, but the actual `src` is withheld until an `IntersectionObserver` says the card has stayed on screen for `THUMB_SETTLE_MS`. Flinging the strip therefore does not queue a request per card swept past.
-- **Searchable.** `engine/corpusIndex.ts` precomputes a display label and a lowercased `label + url` haystack per entry once per corpus identity (`buildCorpusIndex`, memoized on the array); `filterCorpusIndex` then does one pass of AND-ed substring terms. It returns *corpus* indices, so a click in a filtered view still selects the right entry.
+- **Searchable.** `engine/library/corpusIndex.ts` precomputes a display label and a lowercased `label + url` haystack per entry once per corpus identity (`buildCorpusIndex`, memoized on the array); `filterCorpusIndex` then does one pass of AND-ed substring terms. It returns *corpus* indices, so a click in a filtered view still selects the right entry.
 - **`localCount` is derived in the reducer.** `media.localCount` is recomputed by `chromashiftReducer` whenever `media.imageList` is replaced (`countLocalEntries`), so the browser never scans thousands of entries per render.
 
 `e2e/corpus-browser.spec.ts` pins all of this against a stubbed 3137-entry corpus (`stubLargeCorpus` in `e2e/helpers/mockCorpus.ts`).
 
-### Corpus manifest (`engine/corpusManifest.ts`)
+### Corpus manifest (`engine/library/corpusManifest.ts`)
 
 The manifest is ~360 kB fetched before the first frame. `fetchCorpusManifest` keeps the parsed entries in IndexedDB (db `chromashift-corpus`) alongside the response's `ETag`/`Last-Modified`, and revalidates on the next visit with `If-None-Match` / `If-Modified-Since` and `cache: 'no-cache'`. A 304 — or a 200 whose ETag matches what was stored, which is what the browser returns when it satisfies the revalidation from its own HTTP cache — reuses the cached entries and skips the parse. Every cache path is best-effort: no IndexedDB, no validators, a storage error, or a dead network all degrade to a plain fetch (or to serving the last good copy), never to a failed boot. `TextureManager.fetchImageList` remains on the renderer contract for direct callers, but the boot path goes through the cached loader.
 
@@ -305,11 +341,11 @@ Because local entries are ordinary `blob:` URLs, `TextureManager`/`WebGLTextureM
 
 A webcam feed, shared screen, or looping local video file can drive the main composite in
 place of a still image — same rotating layers, tracers, and audio-reactive/MIDI modulation.
-`LiveSourceManager` (`src/engine/LiveSource.ts`) owns one `HTMLVideoElement` fed by a
+`LiveSourceManager` (`src/engine/live/LiveSource.ts`) owns one `HTMLVideoElement` fed by a
 `MediaStream` or file; `TextureManager`/`WebGLTextureManager.updateVideoTexture()` re-upload
 the current frame into a texture reused across calls (recreated only on resolution change, no
 mip chain) so memory stays stable over long sessions. `useLiveSource` (`src/hooks/useLiveSource.ts`)
-runs its own `requestAnimationFrame` loop (mirroring `useReactiveInput`'s pattern) for per-frame
+registers a `sources`-phase task on the frame clock (see "Frame clock" below) for per-frame
 upload and once-a-second luminance resampling, and publishes `window.liveSourceActive` /
 `window.liveSourceKind` / `window.liveSourceFps` breadcrumbs. `media.liveSource` is
 runtime-only state — never serialized into presets, so a shared preset URL never silently
@@ -317,7 +353,7 @@ requests camera/screen access. See [LIVE_SOURCE.md](docs/LIVE_SOURCE.md).
 
 ### Upscaler (lazy-loaded)
 
-`Upscaler` (`src/engine/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web is fetched on initial page load — only after the user actually invokes an upscale. `npm run build` runs `check:dist`, which asserts `dist/` contains no `ort-wasm*.wasm` and that `dist/assets/index-*.js` has no `tfjs`/`ort-wasm` references.
+`Upscaler` (`src/engine/upscale/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web is fetched on initial page load — only after the user actually invokes an upscale. `npm run build` runs `check:dist`, which asserts `dist/` contains no `ort-wasm*.wasm` and that `dist/assets/index-*.js` has no `tfjs`/`ort-wasm` references.
 
 - **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not** bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
 - **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Model ONNX files default to `NUNIF_DEFAULT_BASE` in `Upscaler.ts`; override with `VITE_NUNIF_BASE` to self-host `models/swin_unet/` and `models/utils/`. The ORT wasm runtime is **not** bundled in `dist/` — Vite resolves `onnxruntime-web-use-extern-wasm` (see `vite.config.ts`) and the worker loads `ort-wasm-simd-threaded.{mjs,wasm}` at runtime from `VITE_NUNIF_ORT_WASM_BASE` (default `https://test.1ink.us/nunif/ort`). Mirror those two files from `node_modules/onnxruntime-web/dist/` on the server once per ORT version upgrade; for local dev without the mirror, point `VITE_NUNIF_ORT_WASM_BASE` at jsDelivr in `.env.local`.
@@ -413,7 +449,7 @@ MSAA pipelines must match the render-pass attachment `sampleCount`. A 4× pipeli
 
 Per-pass GPU timing uses the optional `timestamp-query` feature. At bootstrap, Chromashift requests every adapter-supported entry in `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`): `timestamp-query`, `rg11b10ufloat-renderable` and `texture-formats-tier1`. Missing features skip the corresponding path (CPU-only HUD, rgba8 internal targets, CPU classification mask). Breadcrumbs: `window.gpuTimestampAvailable`, `window.gpuTimestampReason`.
 
-`GpuTimestampProfiler` (`src/engine/GpuTimestampProfiler.ts`) wraps the live render path in `WebGPURenderer`:
+`GpuTimestampProfiler` (`src/engine/webgpu/GpuTimestampProfiler.ts`) wraps the live render path in `WebGPURenderer`:
 
 1. **Layers** — three colour-band passes (MSAA resolve when enabled).
 2. **Motion** — the quarter-resolution motion field, when `tracers.motionMode` is not `off`. The marker is written every frame regardless, so the row reads `0.00 ms` when the pass did not run rather than shifting every row below it.
@@ -501,6 +537,8 @@ The `avgLuminance` uniform is computed automatically when an image loads — pre
 
 ### State & Animation Loop (`App.tsx`)
 
+**Frame clock (`engine/frame/FrameClock.ts`).** There is exactly one `requestAnimationFrame` loop. Every per-frame subsystem registers a task on the app's `FrameClock` (`refs.frameClockRef`), which runs the phases in a fixed order each tick: **input** (`useReactiveInput`'s `audio-input`: sample the analyser and derive `reactiveModRef`) → **sources** (`useLiveSource`'s `live-source-upload`) → **modulate** (`useAnimationLoop`'s `animation-angles`: the fps throttle and the angle clock) → **render** (`main-render` for the canvas and compare slot B; `xr-render` while immersive) → **telemetry** (`render-telemetry`, `audio-meters`; each throttles itself). Anything a later phase reads is written in an earlier phase — never rely on registration order within a phase. A subsystem that is off **unregisters** (reactive input with audio off, no live source, export in progress) instead of spinning as a no-op; with nothing registered the clock requests no frames. While an XR session presents, `WebXrPresenter.enter(clock)` swaps the clock onto the session's frame loop (`xrSessionScheduler`), so every output shares the headset's tick. Video export puts the clock in **offline** mode (`enterOffline`) and `step`s it once per exported frame with `dt = 1000 / fps`, its own `render` task awaited in place of the canvas — the same phases, in the same order, as live. `e2e/frame-clock.spec.ts` asserts one rAF callback per frame (idle and with reactive input on).
+
 - Default layer spin rates: `[130, 230, 330]` (normalized degrees; wall-clock °/s = value × 30). FPS only changes sampling density — not angular speed.
 - Default FPS: 30.
 - Auto-play: every `imageChangeInterval` seconds the current image index changes to a random entry from `images.json`.
@@ -521,7 +559,8 @@ Edit `public/images.json` to change the image list:
 ## Code Style & Conventions
 
 - **Linting**: ESLint v9 flat config (`eslint.config.js`). Extends `@eslint/js/recommended`, `typescript-eslint/recommended`, `react-hooks/flat/recommended`, and `react-refresh/vite`, plus four type-aware rules (`parserOptions.projectService`, so every linted file must belong to one of the tsconfig projects): `no-floating-promises`, `no-misused-promises`, `await-thenable`, and `switch-exhaustiveness-check`. GPU lifecycle is promise-shaped (`requestDevice`, `mapAsync`, `onSubmittedWorkDone`, `device.lost`), and a dropped promise is a dropped error — mark a deliberate fire-and-forget with `void`. An async handler a component calls from a DOM event is typed `() => Promise<void>` in its props and voided at the DOM edge (`onClick={() => void onExportVideo()}`), not wrapped in `buildOverlayProps.ts` (that would break reference stability), and must catch and report its own errors.
-- **TypeScript**: Strict mode is enabled. Three project references are used:
+- **Dead code**: `knip` (`knip.json`, CI `web` job) fails on unused files, exports, dependencies and duplicate exports. Tests count as users. Entries beyond what its Vite/Vitest/Playwright plugins find: `scripts/*.mjs` and `src/engine/compute/chores/index.ts` (the `gpu-chores` public surface sibling apps import, so its exports are not checked). Exported types used in their own file are allowed; values are not — drop the `export` instead. An intentional second name for one value (the `*_WGSL` / `*_GLSL` literal aliases) is tagged `@alias`.
+- **TypeScript**: Strict mode is enabled, plus `noImplicitOverride` and `noUncheckedIndexedAccess` in `tsconfig.app.json`. For an index the compiler cannot prove in range, prefer restructuring (iterate entries, a tuple type) or a real guard; use `!` only when the index is in range by construction, and keep guards out of hot per-pixel loops. Three project references are used:
   - `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`.
   - `tsconfig.node.json` — compiles `vite.config.ts` and `vitest.config.ts`, includes `@types/node`.
   - `tsconfig.e2e.json` — type-checks `e2e/` and `playwright.config.ts` (Playwright itself only strips types), so a spec reading a renamed breadcrumb fails `tsc -b`.
@@ -536,8 +575,9 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 
 | Tier | Command | Scope |
 |------|---------|-------|
-| **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `presetUrl`), engine (`blendModes`, `gpuBootstrap`, `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
-| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
+| **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `settingsSchema`, a `fast-check` property test over `deserializeSettings`, `presetUrl`), engine (`blendModes`, `adapter` / `canvasConfig` / `gpuErrors` / `gpuOptions` (GPU bootstrap), `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
+| **Vitest (DOM)** | `npm test` | `src/**/*.dom.test.tsx` only, on happy-dom through React Testing Library (vitest project `dom`; everything else stays on the `node` project, so an engine test cannot lean on a DOM by accident). `src/test/renderAppHook.tsx` renders a hook under the real ref bundle and store, so a test drives it with real actions and reads real state back. Per-frame hooks are stepped deterministically with the frame clock's offline mode (`frameClockRef.current.enterOffline()` + `step(dt)`). Covered: `useAnimationLoop`, `useReactiveInput` (mic and MIDI classes faked), `useKioskMode`, `usePresets`. `npm run test:coverage` adds a v8 coverage report |
+| **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`), the WASM engine loading on the page and in both workers (`wasm-engine.spec.ts`, `window.wasmEngineState` / `wasmEngineWorkers`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`), export readback on a forced `bgra8unorm` canvas (`webgpu-bgra-export.spec.ts`; run with `--workers=1`), **Retry GPU** after a simulated `device.destroy()` loss (`webgpu-device-loss.spec.ts`). Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/test_engine.cpp` via `g++` — band ladder vs the original linear scan, bulk-kernel/single-pixel parity, luminance, decay and motion-flow math against the engine's scalar path; no Emscripten required |
 | **C++ SIMD128** | `npm run test:cpp:simd` | The same suite built with `em++ -msimd128` and run under Node — the code the browser runs — then `cpp/tests/simd_parity.cpp`: the SIMD engine and a `CS_FORCE_SCALAR` copy linked into one module and compared **bit for bit** on every kernel, at odd sizes and on NaN/denormal/extreme inputs. Needs emsdk |
 | **WASM perf gate** | `npm run bench:wasm -- --assert` | Runs every bulk kernel of the committed `public/chromashift_engine.wasm` over a deterministic 3841×2161 golden image (odd on purpose, so the scalar tails run) and fails below the throughput floors in `public/wasm-benchmark-core.mjs` — catches a silent loss of the SIMD128 path — and checks both mask kernels against the scalar `classifyPixel` export. Same image and floors as `/wasm-benchmark.html` |
@@ -547,8 +587,8 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | Job | What it runs |
 |-----|----------------|
 | `guard` | Blocks `dist/` and accidental secrets in PR diffs |
-| `web` | `npm run lint`, `npx tsc -b`, `npm run build` |
-| `unit` | `npm test` (Vitest) |
+| `web` | `npm run lint`, `npm run knip`, `npx tsc -b`, `npm run build` |
+| `unit` | `npm run test:coverage` (Vitest + v8 coverage): the totals go to the job summary (`scripts/coverage-summary.mjs`) and the HTML report is the `coverage-html` artifact. Reported, not gated — no threshold yet |
 | `shaders` | `node scripts/validate-shaders.mjs --require-glslang`: dumps every WGSL/GLSL variant (`shaderBindings.test.ts`), then `naga` + `glslangValidator` (naga-cli pinned and cached) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu` + SwiftShader Vulkan) |

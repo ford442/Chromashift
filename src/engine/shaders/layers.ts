@@ -4,5 +4,4 @@ export {
   fragmentShaderRedOrange,
   fragmentShaderVioletBlue,
   fragmentShaderGreenYellow,
-  layerFragmentSources,
 } from '../graph/templates/canonicalWgsl';

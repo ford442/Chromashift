@@ -45,7 +45,7 @@ function classifyPixelF32(r: number, g: number, b: number, avgLum: number): numb
   const rgb = Math.fround(lum + Math.fround(lightDark / 2));
 
   for (let i = 0; i < BAND_THRESHOLDS.length; i += 1) {
-    if (rgb > BAND_THRESHOLDS[i]) return i;
+    if (rgb > BAND_THRESHOLDS[i]!) return i;
   }
   return BAND_THRESHOLDS.length;
 }
@@ -61,7 +61,7 @@ function computeClassificationMaskF32(
   const roundedAvg = Math.round(avgLum);
   for (let i = 0; i < width * height; i += 1) {
     const o = i * 4;
-    mask[i] = classifyPixelF32(data[o], data[o + 1], data[o + 2], roundedAvg);
+    mask[i] = classifyPixelF32(data[o]!, data[o + 1]!, data[o + 2]!, roundedAvg);
   }
   return mask;
 }
@@ -130,9 +130,9 @@ describe('classification mask golden parity', () => {
   });
 
   it('WGSL classify_band is generated from BAND_THRESHOLDS (single source of truth)', () => {
-    for (let i = 0; i < BAND_THRESHOLDS.length; i += 1) {
+    for (const [i, threshold] of BAND_THRESHOLDS.entries()) {
       expect(WGSL_IMAGE_ANALYSIS_HELPERS).toContain(
-        `if (rgb > ${BAND_THRESHOLDS[i].toFixed(1)}) { return ${i}u; }`,
+        `if (rgb > ${threshold.toFixed(1)}) { return ${i}u; }`,
       );
     }
     expect(WGSL_IMAGE_ANALYSIS_HELPERS).toContain(`return ${BAND_THRESHOLDS.length}u;`);
@@ -146,16 +146,16 @@ describe('classification mask golden parity', () => {
     const pixelCount = width * height;
     for (let i = 0; i < pixelCount; i += 1) {
       const o = i * 4;
-      const lum = bt709Luminance(rgba[o], rgba[o + 1], rgba[o + 2]);
+      const lum = bt709Luminance(rgba[o]!, rgba[o + 1]!, rgba[o + 2]!);
       exactSum += lum;
-      histogram[Math.min(255, Math.max(0, Math.floor(lum)))] += 1;
+      histogram[Math.min(255, Math.max(0, Math.floor(lum)))]! += 1;
     }
 
     let bucketSum = 0;
     let count = 0;
-    for (let bucket = 0; bucket < 256; bucket += 1) {
-      bucketSum += bucket * histogram[bucket];
-      count += histogram[bucket];
+    for (const [bucket, n] of histogram.entries()) {
+      bucketSum += bucket * n;
+      count += n;
     }
 
     expect(count).toBe(pixelCount);
