@@ -154,6 +154,46 @@ describe('RendererOrchestrator', () => {
     expect(deps.createWebGPURenderer).toHaveBeenCalledOnce();
   });
 
+  // The headless renderer's path (docs/HEADLESS.md): no canvas anywhere.
+  it('bootstraps the primary slot onto an offscreen target', async () => {
+    const target = mockWebGpuContext();
+    const renderer = { ...mockRenderer(), setPassGraph: vi.fn() } as unknown as ChromashiftRenderer;
+    const deps = createMockDeps({
+      bootstrapWebGpu: vi.fn(async (options) => mockSession(options.target as GPUCanvasContext)),
+      createWebGPURenderer: vi.fn(async () => renderer),
+    });
+
+    const { orchestrator, primarySlot } = await RendererOrchestrator.bootstrap({
+      primaryTarget: target,
+      primaryFormat: 'rgba8unorm',
+      backend: 'webgpu',
+    }, deps);
+
+    expect(deps.bootstrapWebGpu).toHaveBeenCalledWith(expect.objectContaining({ target, format: 'rgba8unorm' }));
+    expect(vi.mocked(deps.bootstrapWebGpu).mock.calls[0]![0]).not.toHaveProperty('canvas');
+    expect(primarySlot).toMatchObject({ id: PRIMARY_SLOT_ID, canvas: null, webgpuContext: target });
+    expect(deps.createWebGPURenderer).toHaveBeenCalledWith(expect.anything(), target, expect.anything(), false);
+
+    const source = presetGraphSource('default');
+    orchestrator.setPassGraph(source);
+    expect(renderer.setPassGraph).toHaveBeenCalledWith(source, { slot: PRIMARY_SLOT_ID, primary: true });
+  });
+
+  it('takes exactly one of a canvas and an offscreen target, and the target only on WebGPU', async () => {
+    const deps = createMockDeps();
+    await expect(RendererOrchestrator.bootstrap({ primaryCanvas: undefined, backend: 'webgpu' }, deps))
+      .rejects.toThrow(/exactly one of primaryCanvas and primaryTarget/);
+    await expect(RendererOrchestrator.bootstrap({
+      primaryCanvas: mockCanvas('main'),
+      primaryTarget: mockWebGpuContext(),
+      backend: 'webgpu',
+    }, deps)).rejects.toThrow(/exactly one of primaryCanvas and primaryTarget/);
+    await expect(RendererOrchestrator.bootstrap({ primaryTarget: mockWebGpuContext(), backend: 'webgl' }, deps))
+      .rejects.toThrow(/WebGL backend presents to a canvas/);
+    expect(deps.bootstrapWebGpu).not.toHaveBeenCalled();
+    expect(deps.createWebGL2Context).not.toHaveBeenCalled();
+  });
+
   it('adds and removes secondary WebGPU slots', async () => {
     const primaryCanvas = mockCanvas('main');
     const secondaryContext = mockWebGpuContext();

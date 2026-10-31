@@ -128,6 +128,23 @@ export function computeImageAverageLuminanceWith(
 }
 
 /**
+ * {@link computeImageAverageLuminanceWith} over RGBA bytes already decoded —
+ * the same samples (above 256 px a full-resolution stride of
+ * `floor(max(w,h) / 256)`, otherwise every pixel), for a host with no canvas
+ * to read an image through: the headless renderer (docs/HEADLESS.md).
+ */
+export function computePixelsAverageLuminanceWith(
+  pixels: Uint8Array | Uint8ClampedArray,
+  width: number,
+  height: number,
+  useWasm: boolean,
+): number {
+  const maxDim = Math.max(width, height);
+  const stride = maxDim > 256 ? Math.max(1, Math.floor(maxDim / 256)) : 1;
+  return computeAverageLuminanceStridedWith(pixels, width, height, stride, useWasm);
+}
+
+/**
  * Every `xStride`-th pixel of every `yStride`-th row, packed row-major:
  * `ceil(width / xStride) × ceil(height / yStride)` RGBA pixels.
  */

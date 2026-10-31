@@ -20,6 +20,7 @@ import {
 } from './gpu/gpuErrors';
 import { configureWebGpuCanvas, type WebGpuCanvasOptions } from './webgpu/canvasConfig';
 import { bootstrapWebGpu, type WebGpuSession } from './webgpu/webgpuSession';
+import type { PresentationTarget } from './webgpu/presentationTarget';
 import { createWebGL2Context, watchWebGL2Context } from './webgl/webgl2Context';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './types/RendererContracts';
 
@@ -28,10 +29,11 @@ export const PRIMARY_SLOT_ID = 'main';
 
 export interface RendererSlot {
   id: string;
-  canvas: HTMLCanvasElement;
+  /** `null` for a slot that presents offscreen (a `primaryTarget`). */
+  canvas: HTMLCanvasElement | null;
   renderer: ChromashiftRenderer;
-  /** Present for WebGPU-backed slots. */
-  webgpuContext?: GPUCanvasContext;
+  /** Present for WebGPU-backed slots: the canvas's context, or the offscreen target. */
+  webgpuContext?: PresentationTarget;
 }
 
 export interface RendererOrchestratorOptions {
@@ -49,7 +51,15 @@ export interface RendererOrchestratorOptions {
 }
 
 export interface BootstrapRendererOrchestratorOptions extends RendererOrchestratorOptions {
-  primaryCanvas: HTMLCanvasElement;
+  /** The main viewport canvas. Exactly one of `primaryCanvas` and `primaryTarget`. */
+  primaryCanvas?: HTMLCanvasElement;
+  /**
+   * WebGPU only: present the primary slot into this offscreen target instead
+   * of a canvas — `HeadlessSurface` under Node (docs/HEADLESS.md).
+   */
+  primaryTarget?: PresentationTarget;
+  /** The SDR present format with a `primaryTarget`; a canvas uses the preferred one. */
+  primaryFormat?: GPUTextureFormat;
   primarySlotId?: string;
 }
 
@@ -74,13 +84,13 @@ export interface RendererOrchestratorDeps {
   watchWebGL2Context: typeof watchWebGL2Context;
   createWebGPURenderer: (
     device: GPUDevice,
-    context: GPUCanvasContext,
+    context: PresentationTarget,
     format: GPUTextureFormat,
     antialias: boolean,
   ) => ChromashiftRenderer | Promise<ChromashiftRenderer>;
   createSecondaryWebGPURenderer: (
     device: GPUDevice,
-    context: GPUCanvasContext,
+    context: PresentationTarget,
     format: GPUTextureFormat,
     antialias: boolean,
   ) => ChromashiftRenderer;
@@ -185,7 +195,11 @@ export class RendererOrchestrator {
     deps: RendererOrchestratorDeps = defaultRendererOrchestratorDeps,
   ): Promise<BootstrapRendererOrchestratorResult | RendererOrchestratorBootstrapResult> {
     const objectStyle = isBootstrapRendererOrchestratorOptions(primaryCanvasOrOptions);
-    const primaryCanvas = objectStyle ? primaryCanvasOrOptions.primaryCanvas : primaryCanvasOrOptions;
+    const primaryCanvas = objectStyle ? primaryCanvasOrOptions.primaryCanvas ?? null : primaryCanvasOrOptions;
+    const primaryTarget = objectStyle ? primaryCanvasOrOptions.primaryTarget ?? null : null;
+    if ((primaryCanvas === null) === (primaryTarget === null)) {
+      throw new Error('RendererOrchestrator.bootstrap needs exactly one of primaryCanvas and primaryTarget.');
+    }
     const baseOptions = objectStyle
       ? primaryCanvasOrOptions
       : isRendererOrchestratorDeps(optionsOrDeps)
@@ -218,6 +232,9 @@ export class RendererOrchestrator {
     // as visual-parity bugs. The WebGL branch is reachable only when
     // preference or `backend: 'webgl'` is explicit. See docs/webgl-fallback.md.
     if (preferredBackend === 'webgl') {
+      if (!primaryCanvas) {
+        throw new Error('The WebGL backend presents to a canvas; an offscreen primaryTarget is WebGPU-only.');
+      }
       try {
         orchestrator.bootstrapWebGL(primaryCanvas);
         orchestrator.createSlot(primarySlotId, primaryCanvas);
@@ -228,7 +245,12 @@ export class RendererOrchestrator {
       }
     } else {
       try {
-        await orchestrator.bootstrapWebGpuSession(primaryCanvas);
+        await orchestrator.bootstrapWebGpuSession(
+          primaryCanvas ? { canvas: primaryCanvas } : {
+            target: primaryTarget!,
+            format: objectStyle ? primaryCanvasOrOptions.primaryFormat : undefined,
+          },
+        );
         await orchestrator.createPrimaryWebGpuSlot(primarySlotId, primaryCanvas);
       } catch (primaryError) {
         // Release anything the partial WebGPU boot allocated, then rethrow so
@@ -326,7 +348,9 @@ export class RendererOrchestrator {
   private applyPassGraph(slot: RendererSlot): void {
     slot.renderer.setPassGraph?.(this.passGraphSource, {
       slot: slot.id,
-      primary: slot.canvas === this.primaryCanvas,
+      primary: slot.canvas === null
+        ? slot.webgpuContext === this.session?.context
+        : slot.canvas === this.primaryCanvas,
     });
   }
 
@@ -449,10 +473,12 @@ export class RendererOrchestrator {
     this.webglContext = null;
   }
 
-  private async bootstrapWebGpuSession(primaryCanvas: HTMLCanvasElement): Promise<void> {
-    this.primaryCanvas = primaryCanvas;
+  private async bootstrapWebGpuSession(
+    primary: { canvas: HTMLCanvasElement } | { target: PresentationTarget; format?: GPUTextureFormat },
+  ): Promise<void> {
+    this.primaryCanvas = 'canvas' in primary ? primary.canvas : null;
     this.session = await this.deps.bootstrapWebGpu({
-      canvas: primaryCanvas,
+      ...primary,
       antialias: this.antialias,
       canvasOptions: this.canvasOptions,
       onRuntimeError: (error) => {
@@ -531,7 +557,7 @@ export class RendererOrchestrator {
     session.context.unconfigure();
   }
 
-  private resolveWebGpuContext(canvas: HTMLCanvasElement): GPUCanvasContext {
+  private resolveWebGpuContext(canvas: HTMLCanvasElement): PresentationTarget {
     if (!this.session) {
       throw new Error('WebGPU session is not bootstrapped.');
     }
@@ -550,7 +576,8 @@ export class RendererOrchestrator {
     return ctx;
   }
 
-  private async createPrimaryWebGpuSlot(id: string, canvas: HTMLCanvasElement): Promise<RendererSlot> {
+  /** The primary slot, on the session's context — the canvas's, or the offscreen target (`canvas: null`). */
+  private async createPrimaryWebGpuSlot(id: string, canvas: HTMLCanvasElement | null): Promise<RendererSlot> {
     if (!this.session) {
       throw new Error('WebGPU session is not bootstrapped.');
     }
@@ -558,7 +585,7 @@ export class RendererOrchestrator {
       throw new Error(`Renderer slot "${id}" already exists.`);
     }
 
-    const context = this.resolveWebGpuContext(canvas);
+    const context = canvas ? this.resolveWebGpuContext(canvas) : this.session.context;
     const renderer = await this.deps.createWebGPURenderer(
       this.session.device,
       context,
@@ -634,7 +661,7 @@ export class RendererOrchestrator {
 function isBootstrapRendererOrchestratorOptions(
   value: HTMLCanvasElement | BootstrapRendererOrchestratorOptions,
 ): value is BootstrapRendererOrchestratorOptions {
-  return typeof value === 'object' && value !== null && 'primaryCanvas' in value;
+  return typeof value === 'object' && value !== null && ('primaryCanvas' in value || 'primaryTarget' in value);
 }
 
 function isRendererOrchestratorDeps(value: unknown): value is RendererOrchestratorDeps {

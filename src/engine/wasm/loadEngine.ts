@@ -189,12 +189,24 @@ const SIMD_PROBE_MODULE: Uint8Array<ArrayBuffer> = (() => {
 })();
 
 /**
- * Attempt to load the compiled C++ WASM engine.
+ * Where the engine is outside a page — Node, for the headless renderer
+ * (docs/HEADLESS.md): the glue's URL and the binary's bytes. The glue is built
+ * `-s ENVIRONMENT=web,worker` and has no Node file loader, so the bytes are
+ * handed to it and it never fetches (as `scripts/bench-wasm.mjs` does).
+ */
+export interface WasmEngineSource {
+  glueUrl: string;
+  wasmBinary: Uint8Array;
+}
+
+/**
+ * Attempt to load the compiled C++ WASM engine — from the page's
+ * `public/` assets, or from `source` where there is no page.
  *
  * Safe to call multiple times — subsequent calls resolve with the cached state.
  * Returns `true` when the WASM module loaded successfully, `false` otherwise.
  */
-export async function loadWasmEngine(): Promise<boolean> {
+export async function loadWasmEngine(source?: WasmEngineSource): Promise<boolean> {
   if (loadState === 'ready')       return true;
   if (loadState === 'unavailable' || loadState === 'error') return false;
 
@@ -224,10 +236,12 @@ export async function loadWasmEngine(): Promise<boolean> {
     // no `window` — the ReferenceError used to be swallowed by the catch below
     // and reported as "WASM assets not built", so both workers silently ran the
     // TypeScript fallback forever.
-    const assetBaseUrl = new URL(import.meta.env.BASE_URL || './', globalThis.location.href);
-    const engineUrl = new URL('chromashift_engine.js', assetBaseUrl).href;
+    const engineUrl = source?.glueUrl ?? new URL(
+      'chromashift_engine.js',
+      new URL(import.meta.env.BASE_URL || './', globalThis.location.href),
+    ).href;
     const glue = await import(/* @vite-ignore */ engineUrl) as GlueModule;
-    wasmModule = await glue.default();
+    wasmModule = await glue.default(source ? { wasmBinary: source.wasmBinary } : undefined);
     settle('ready', null);
     logStaleWasmExports();
 

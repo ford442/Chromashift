@@ -1,0 +1,116 @@
+{
+  "version": 8,
+  "settings": {
+    "layers": {
+      "count": 3,
+      "angles": [
+        0,
+        0,
+        0
+      ],
+      "extensions": [
+        130,
+        230,
+        330
+      ],
+      "opacity": 1,
+      "opacities": [
+        1,
+        1,
+        1
+      ],
+      "scale": 1,
+      "colorMode": 2,
+      "sobelEnabled": false,
+      "softCropEnabled": false,
+      "colorProfileId": "cr0p-classic",
+      "colorProfile": null
+    },
+    "tracers": {
+      "aboveIntensity": 0.85,
+      "belowIntensity": 0,
+      "aboveDuration": 500,
+      "belowDuration": 2000,
+      "mode": 0,
+      "scale": 1,
+      "layerBlendMode": 0,
+      "tracerBlendMode": 0,
+      "motionMode": "off",
+      "motionGain": 1,
+      "motionDecayBias": 0.5,
+      "motionThreshold": 0.04
+    },
+    "output": {
+      "mainViewMode": 0,
+      "outputMode": 0,
+      "diagnosticsMode": false,
+      "diagnosticsOpacity": 0.55,
+      "stampBoost": 1.8,
+      "peakCollisionsOnly": false,
+      "webglDebugMode": 0,
+      "squareCanvas": true,
+      "antialiasEnabled": false,
+      "performanceHudEnabled": false,
+      "performanceAutoDegrade": false,
+      "tracerInspect": {
+        "zoom": 1,
+        "pan": {
+          "x": 0,
+          "y": 0
+        },
+        "heatmap": false,
+        "exposure": 1.04,
+        "tonemap": true,
+        "showLayers": false
+      }
+    },
+    "engine": {
+      "fps": 30,
+      "paused": false,
+      "engineMode": "ts",
+      "avgLuminance": 128
+    },
+    "ui": {
+      "isAutoPlayActive": true,
+      "imageChangeInterval": 5,
+      "referenceBlendMode": "hidden",
+      "overlayImageSource": "reference",
+      "referenceOpacity": 0.22,
+      "upscaleModel": "realesrgan:general_plus"
+    },
+    "reactive": {
+      "enabled": false,
+      "audioEnabled": false,
+      "midiEnabled": false,
+      "audioSensitivity": 1,
+      "midiBindings": []
+    },
+    "viewport": {
+      "quarterZoom": false,
+      "halfOverlay": false,
+      "colorSpace": "srgb",
+      "canvasHdr": false
+    },
+    "compare": {
+      "layout": "single",
+      "syncPlay": true,
+      "swipePosition": 0.5,
+      "quadLayerIndex": 0,
+      "slotA": {
+        "id": "a",
+        "label": "Live",
+        "settings": {}
+      },
+      "slotB": {
+        "id": "b",
+        "label": "Preset B",
+        "settings": {}
+      }
+    },
+    "kiosk": {
+      "kioskEnabled": false,
+      "kioskUiHidden": false,
+      "kioskAttractMode": false
+    }
+  }
+}
