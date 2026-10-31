@@ -105,6 +105,20 @@ describe('probeWebGPU', () => {
     expect(result.stage).toBe('adapter');
     expect(result.reason).toContain('No WebGPU adapter');
     expect(result.browser).toContain('Edge');
+    expect(result.featureLevel).toBeNull();
+  });
+
+  it('reports a compatibility-mode adapter when that is all the browser offers', async () => {
+    installGlobals({
+      gpu: {
+        requestAdapter: vi.fn(async (options?: GPURequestAdapterOptions) =>
+          options?.featureLevel === 'compatibility' ? mockAdapter() : null),
+      },
+    });
+    const result = await probeWebGPU();
+
+    expect(result.ok).toBe(true);
+    expect(result.featureLevel).toBe('compatibility');
   });
 
   it('reports a throwing requestAdapter rather than rejecting', async () => {
@@ -151,6 +165,7 @@ describe('probeWebGPU', () => {
     });
     expect(result.features).toContain('timestamp-query');
     expect(result.limits?.maxTextureDimension2D).toBe(8192);
+    expect(result.featureLevel).toBe('core');
   });
 });
 

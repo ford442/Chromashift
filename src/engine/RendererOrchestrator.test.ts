@@ -66,6 +66,7 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
     canvasHdrAvailable: false,
     canvasHdrReason: 'test',
     adapterReport: {
+      featureLevel: 'core',
       vendor: 'test',
       architecture: 'test',
       device: 'test',
@@ -78,6 +79,7 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
       },
     },
     capabilities: {
+      featureLevel: 'core',
       adapterOptionalFeatures: [],
       requestedOptionalFeatures: [],
       grantedOptionalFeatures: [],

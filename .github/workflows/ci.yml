@@ -142,3 +142,35 @@ jobs:
         run: npx playwright test --project=chromium-webgpu
         env:
           CI: true
+
+  e2e-webgpu-browsers:
+    name: Playwright E2E (WebGPU, ${{ matrix.browser }})
+    runs-on: ${{ matrix.os }}
+    needs: [web]
+    timeout-minutes: 20
+    # Non-blocking until green twice (#228): a red run here does not fail CI.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each where its browser ships WebGPU: Firefox 141+ on Windows,
+          # Safari 26's WebKit on macOS. Playwright's Linux builds expose no
+          # navigator.gpu, so there every test would skip.
+          - browser: firefox
+            os: windows-latest
+          - browser: webkit
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright ${{ matrix.browser }}
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Run the WebGPU smoke and executor specs
+        run: npx playwright test --project=${{ matrix.browser }}
+        env:
+          CI: true
