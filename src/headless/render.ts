@@ -43,7 +43,7 @@ export async function* renderClip(
     usePresetAngles: true,
   };
   const dims = {
-    ...computeExportDimensions(state, options.width, options.height, request),
+    ...computeExportDimensions(options.width, options.height, request),
     // An exact frame count: the export panel's half-second floor is a UI limit.
     totalFrames: Math.max(1, Math.floor(options.frames)),
   };
