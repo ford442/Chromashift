@@ -33,6 +33,7 @@
     "test:cpp:asan": "make -C cpp test-asan",
     "test:cpp:simd": "make -C cpp test-simd",
     "compile-commands": "make -C cpp compile-commands",
+    "check:compile-commands": "node scripts/check-compile-commands.mjs",
     "bench:wasm": "node scripts/bench-wasm.mjs"
   },
   "dependencies": {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { advanceAnglesBy } from '../WasmEngine';
+import { advanceAngles } from '../math/rotation';
 import {
   detectVideoCodecSupport,
   evenDimension,
@@ -103,12 +103,12 @@ describe('deterministic angle stepping', () => {
   const extensions: [number, number, number] = [130, 230, 330];
   const start: [number, number, number] = [0, 0, 0];
 
-  it('produces identical sequences in TypeScript mode', () => {
+  it('produces identical sequences', () => {
     let a = [...start];
     let b = [...start];
     for (let i = 0; i < 150; i += 1) {
-      a = advanceAnglesBy(a, extensions);
-      b = advanceAnglesBy(b, extensions);
+      a = advanceAngles(a, extensions, 30);
+      b = advanceAngles(b, extensions, 30);
       expect(a).toEqual(b);
     }
   });

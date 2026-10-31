@@ -62,8 +62,8 @@ first because #226 and #228 move or reuse exactly the paths they fix.
 | P1 | Checked inputs, one parameter registry, one frame clock | [#226](https://github.com/ford442/Chromashift/issues/226) | Foundation | L | Validated settings schema, `ParamPath`, `FrameClock`. Depends on #225; unblocks #177, #178, #227 |
 | P1 | One graph everywhere | [#228](https://github.com/ford442/Chromashift/issues/228) | Platform | XL | Safari/Firefox WebGPU, the WebGL executor, a headless Dawn renderer + CLI. Depends on #225 |
 | P1 | Multi-output slots | [#178](https://github.com/ford442/Chromashift/issues/178) | Architecture | L | XR as an orchestrator peer, kiosk walls, one chore session |
-| P2 | Performance timeline (schema v9) | [#224](https://github.com/ford442/Chromashift/issues/224) | Feature | L | Keyframe value params; drives export and kiosk. Re-files the closed #153 |
-| P2 | Modulation matrix | [#227](https://github.com/ford442/Chromashift/issues/227) | Feature | L | Any source → any `ParamPath`, recorded takes. Depends on #226 |
+| P2 | Performance timeline (schema v9) | [#224](https://github.com/ford442/Chromashift/issues/224) | Feature | L | Keyframe value params; drives export and kiosk. Re-files the closed #153. Sampling stays TypeScript — [Where code runs](wasm-engine.md#where-code-runs) |
+| P2 | Modulation matrix | [#227](https://github.com/ford442/Chromashift/issues/227) | Feature | L | Any source → any `ParamPath`, recorded takes. Depends on #226. Routes evaluate in TypeScript — [Where code runs](wasm-engine.md#where-code-runs) |
 | P2 | Previous-frame feedback | [#223](https://github.com/ford442/Chromashift/issues/223) | Architecture | M | A `history` edge the validator accepts; starter `?graph=recurse` |
 | P2 | One ONNX Runtime WebGPU ML stack | [#206](https://github.com/ford442/Chromashift/issues/206) | Feature | L | Drop TF.js; depth + subject-matte sources for the pass graph |
 | P2 | Pass-graph node editor | [#177](https://github.com/ford442/Chromashift/issues/177) | Feature | L | `@xyflow/react` + versioned graph JSON |

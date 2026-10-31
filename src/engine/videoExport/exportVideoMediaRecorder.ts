@@ -38,7 +38,7 @@ export async function exportVideoMediaRecorder(
     throw new Error('No supported video MIME type found for MediaRecorder.');
   }
 
-  const dims = computeExportDimensions(state, baseWidth, baseHeight, request);
+  const dims = computeExportDimensions(baseWidth, baseHeight, request);
 
   const exportCanvas = document.createElement('canvas');
   exportCanvas.width = dims.width;

@@ -35,7 +35,7 @@ Given the same:
 - export FPS (tracer decay timing + per-frame angle scaling),
 - duration and resolution scale,
 
-…the angle sequence and tracer accumulation are reproducible. Over a fixed duration, total rotation is the same at 20 or 60 FPS; higher FPS only densifies samples. The export path uses `extensionStepsForFps()` then `advanceAnglesBy()` (WASM when enabled, TypeScript fallback otherwise), matching the live loop.
+…the angle sequence and tracer accumulation are reproducible. Over a fixed duration, total rotation is the same at 20 or 60 FPS; higher FPS only densifies samples. The export path calls `advanceAngles(angles, extensions, fps)` from `math/rotation.ts` — the same function as the live loop, in TypeScript only — so both agree on the angle clock, including when the layer count changes (`extensions` decides the count; a layer the clock does not cover starts at 0).
 
 ## Encoding paths
 
@@ -79,7 +79,7 @@ exportVideoWebCodecs()                              exportVideoMediaRecorder()
          ↓                                                      ↓
          └──────────── exportVideoFrameLoop() ─────────────────┘
                                     ↓
-              for each frame: advanceAnglesBy → buildRendererState
+              for each frame: advanceAngles → buildRendererState
                                     ↓
               renderer.exportFrame()  (WebGPU or WebGL)
 ```
@@ -88,8 +88,8 @@ exportVideoWebCodecs()                              exportVideoMediaRecorder()
 
 ## Tests
 
-- `src/engine/videoExport/videoExport.test.ts` — codec helpers, `probeVideoExportCapabilities`, container resolution, and `advanceAnglesBy` determinism.
-- `src/engine/videoExport/videoExporter.test.ts` — offline loop harness with fake renderer:
+- `src/engine/videoExport/videoExport.test.ts` — codec helpers, `probeVideoExportCapabilities`, container resolution, and `advanceAngles` determinism.
+- `src/engine/videoExport/videoExporter.test.ts` — offline loop harness with fake renderer (including export-vs-live angle agreement across a layer-count change):
   - **MediaRecorder path** (probe stubbed to fallback): frame count (5s @ 30fps → 150 frames), progress reporting, preset-vs-live start angles, identical angle sequences across runs, cancel via `AbortSignal` (render size restored), tracer exclusion forcing the layers pass.
   - **WebCodecs path** (fake `VideoEncoder` probe + stubbed mediabunny `CanvasSource`/`Output`): frame count, quality option passthrough, cancel restores render size.
 

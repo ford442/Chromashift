@@ -50,9 +50,8 @@ EXPORTED_FUNCS := \
   _classifyPixelsBulk,_classifyPixelsBulkLut,\
   _computeClassificationMask,_computeClassificationMaskLut,\
   _computeLuminanceHistogram,_computeColorBandCounts,\
-  _buildRotationMat3,_durationToDecay,_advanceLayerAngles,\
-  _computeMotionFlow,\
-  _simulateTracerDecay
+  _buildRotationMat3,_durationToDecay,\
+  _computeMotionFlow
 
 # ─── Compile flags: the one source ───────────────────────────────────────────
 #

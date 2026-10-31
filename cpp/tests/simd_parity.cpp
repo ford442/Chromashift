@@ -44,7 +44,6 @@ CS_DECLARE_SCALAR(computeClassificationMask)
 CS_DECLARE_SCALAR(computeClassificationMaskLut)
 CS_DECLARE_SCALAR(computeLuminanceHistogram)
 CS_DECLARE_SCALAR(computeColorBandCounts)
-CS_DECLARE_SCALAR(simulateTracerDecay)
 CS_DECLARE_SCALAR(computeMotionFlow)
 #undef CS_DECLARE_SCALAR
 }
@@ -238,39 +237,6 @@ void checkAllPixelKernels()
     expectSame("computeAverageLuminance", "2^21+7 px random", &simd, &scalar, 1u);
 }
 
-// ─── simulateTracerDecay ─────────────────────────────────────────────────────
-
-void checkTracerDecay()
-{
-    const float specials[] = { kNaN, kInf, -kInf, kDenormal, -kDenormal, -0.0f, 0.0f,
-                               std::numeric_limits<float>::max(),
-                               std::numeric_limits<float>::min(), 1.0f };
-    const float factors[] = { 0.5f, 0.0f, -0.0f, 1.0f, 0.97f, kDenormal, 3.0f,
-                              kNaN, kInf, -1.0f };
-
-    Rng rng{ 0x7u };
-    for (uint32_t pixelCount = 0u; pixelCount <= 67u; ++pixelCount) {
-        const std::size_t n = pixelCount * 4u;
-        std::vector<float> input(n);
-        for (std::size_t i = 0; i < n; ++i) {
-            // One value in five is a special, so every lane position meets one.
-            input[i] = (rng.next() % 5u == 0u)
-                ? specials[rng.next() % (sizeof specials / sizeof specials[0])]
-                : rng.unit();
-        }
-        for (float factor : factors) {
-            std::vector<float> simd = input;
-            std::vector<float> scalar = input;
-            simulateTracerDecay(simd.data(), pixelCount, factor);
-            cs_scalar_simulateTracerDecay(scalar.data(), pixelCount, factor);
-            char label[64];
-            std::snprintf(label, sizeof label, "%u px factor=%g",
-                          pixelCount, static_cast<double>(factor));
-            expectSame("simulateTracerDecay", label, simd.data(), scalar.data(), n);
-        }
-    }
-}
-
 // ─── computeMotionFlow ───────────────────────────────────────────────────────
 
 enum class Planes { Random, MovingRidge, Identical, Zero, WithNaN, Denormal, Huge, Negative };
@@ -365,7 +331,6 @@ int main()
 {
     std::printf("Running SIMD128-vs-scalar parity...\n");
     checkAllPixelKernels();
-    checkTracerDecay();
     checkMotionFlow();
     if (failures == 0) {
         std::printf("All %ld comparisons bit-exact.\n", comparisons);

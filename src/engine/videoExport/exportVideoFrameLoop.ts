@@ -1,6 +1,6 @@
-import { advanceAnglesBy } from '../WasmEngine';
 import { buildRendererState } from '../buildRendererState';
 import { FrameClock } from '../frame/FrameClock';
+import { advanceAngles } from '../math/rotation';
 import type { ChromashiftRenderer, ExportFrameResult } from '../types/RendererContracts';
 import type { ChromashiftState } from '../../state/types';
 import type { VideoExportRequest } from './VideoExporter';
@@ -70,7 +70,7 @@ export async function* exportVideoFrameLoop(
 
       yield { frameResult, frameIndex: frame };
 
-      angles = advanceAnglesBy(angles, dims.frameSteps);
+      angles = advanceAngles(angles, state.layers.extensions, dims.fps);
       request.onProgress?.(frame + 1, dims.totalFrames);
 
       if (frame % 2 === 1) {

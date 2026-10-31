@@ -13,7 +13,9 @@ import {
 /**
  * Per-frame render/persistence/compositor files must compute decay directly and
  * stay off the WASM bridge entirely — no `*With()` dispatcher, no `WasmEngine`
- * import, no reach into `wasm/dispatch`. See issue #145.
+ * import, no reach into `wasm/dispatch`. See issue #145. The angle clock
+ * (`math/rotation.ts`, live loop, video export) is held to the same rule: a
+ * per-frame scalar is TypeScript (docs/wasm-engine.md, "Where code runs").
  */
 const HOT_PATH_FILES = [
   '../graph/exec/WebGpuGraphExecutor.ts',
@@ -25,6 +27,8 @@ const HOT_PATH_FILES = [
   '../graph/exec/WebGLGraphExecutor.ts',
   '../webgl/WebGLStationaryPreviewRenderer.ts',
   '../../hooks/useAnimationLoop.ts',
+  './rotation.ts',
+  '../videoExport/exportVideoFrameLoop.ts',
 ];
 
 describe('durationToDecay', () => {

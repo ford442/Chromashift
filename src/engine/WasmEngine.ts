@@ -26,5 +26,4 @@ export {
   computeImageAverageLuminanceWith,
   classifyImageMaskWith,
   durationToDecayWith,
-  advanceAnglesBy,
 } from './wasm/dispatch';

@@ -1,4 +1,3 @@
-import { extensionStepsForFps } from '../math/rotation';
 import type { ExportPassMode } from '../types/RendererContracts';
 import type { ChromashiftState } from '../../state/types';
 import { evenDimension } from './videoCodecs';
@@ -20,10 +19,10 @@ export function resolveStartAngles(
   liveAngles: number[],
   usePresetAngles: boolean,
 ): number[] {
-  if (usePresetAngles) {
-    return [...state.layers.angles] as number[];
-  }
-  return [...liveAngles] as number[];
+  const start = usePresetAngles ? state.layers.angles : liveAngles;
+  // `extensions` is the layer-count authority, as in `advanceAngles` — the live
+  // clock may still be a frame behind a count change when an export starts.
+  return state.layers.extensions.map((_, i) => start[i] ?? 0);
 }
 
 export interface ExportDimensions {
@@ -34,11 +33,9 @@ export interface ExportDimensions {
   canvasWidth: number;
   canvasHeight: number;
   passMode: ExportPassMode;
-  frameSteps: number[];
 }
 
 export function computeExportDimensions(
-  state: ChromashiftState,
   baseWidth: number,
   baseHeight: number,
   request: VideoExportRequest,
@@ -50,7 +47,6 @@ export function computeExportDimensions(
   const width = evenDimension(baseWidth * scale);
   const height = evenDimension(baseHeight * scale);
   const passMode = resolvePassMode(request.includeTracers, request.passMode);
-  const frameSteps = extensionStepsForFps(state.layers.extensions, fps);
   const canvasWidth = Math.max(1, Math.round(baseWidth));
   const canvasHeight = Math.max(1, Math.round(baseHeight));
 
@@ -62,7 +58,6 @@ export function computeExportDimensions(
     canvasWidth,
     canvasHeight,
     passMode,
-    frameSteps,
   };
 }
 
