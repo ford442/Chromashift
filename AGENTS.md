@@ -36,8 +36,6 @@ npm run shaders:validate  # Dump every WGSL/GLSL variant; naga + glslangValidato
 npm run test:e2e  # Playwright E2E (all projects; install browsers first)
 npm run test:e2e:webgl   # Playwright chromium: explicit WebGL diagnostic backend
 npm run test:e2e:webgpu  # WebGPU smoke + compare layouts (chromium-webgpu project)
-npm run test:gpu  # Vitest project `gpu`: Dawn in Node — pixel goldens + browser parity (needs a Vulkan driver)
-npx chromashift render <settings.json> --image <img> --out clip.mp4  # Headless CLI — see docs/HEADLESS.md
 npm run test:e2e:browsers  # WebGPU smoke + executor specs in Firefox and WebKit (skip without navigator.gpu)
 npm run test:cpp  # C++ host tests (g++, no Emscripten); :werror / :asan variants exist
 npm run test:cpp:simd # the same suite on the em++ -msimd128 build + bit-exact SIMD/scalar parity (needs emsdk)
@@ -82,10 +80,6 @@ src/
 │   ├── useMediaHandlers.ts       # File/drop/upscale handlers (handleDropFiles, handleLoadFile, …)
 │   ├── useAnimationLoop.ts, useAppLifecycle.ts, useClassificationMask.ts,
 │   │   useTracerInspectInteraction.ts, useVideoExport.ts, usePresets.ts
-├── headless/                 # Node only, never bundled: the renderer on Dawn + `bin/chromashift` — see docs/HEADLESS.md
-│   ├── session.ts, HeadlessSurface.ts, dawn.ts  # The page's bootstrap over an offscreen PresentationTarget
-│   ├── cli.ts, render.ts, encode.ts, settings.ts, image.ts  # render / still / golden: export loop → ffmpeg | PNGs
-│   └── goldens.ts, *.gpu.test.ts, __golden__/  # The canonical pixel goldens (vitest project `gpu`)
 ├── state/                    # Reducer, slices, and (de)serialization — see `ChromashiftState`
 │   ├── chromashiftReducer.ts, defaults.ts, types.ts
 │   ├── actions/                  # Dispatch wrapper factories mirroring reducer slices (media, compare, reactive, …)
@@ -128,7 +122,6 @@ src/
     │   ├── webgpuSession.ts      # bootstrapWebGpu(): one canvas's session on the page's leased device
     │   ├── adapter.ts            # Adapter + page device gate (≤ 2 requestDevice strategies), capability reports
     │   ├── canvasConfig.ts       # Canvas configure: SDR / hdr-extended, tone-mapping + HDR probes
-    │   ├── presentationTarget.ts # PresentationTarget: the canvas-context subset the renderer holds (canvas or HeadlessSurface)
     │   ├── webgpuProbe.ts        # Boot probe: adapter/device pre-flight + the failure overlay's report
     │   ├── TextureManager.ts     # Image fetch, ImageBitmap → GPUTexture, URL cache, evictExcept()
     │   ├── MotionFieldPass.ts    # WebGPU motion field (borrows the shared chore backend); halfFloat.ts packs its upload
@@ -568,9 +561,8 @@ Edit `public/images.json` to change the image list:
 
 - **Linting**: ESLint v9 flat config (`eslint.config.js`). Extends `@eslint/js/recommended`, `typescript-eslint/recommended`, `react-hooks/flat/recommended`, and `react-refresh/vite`, plus four type-aware rules (`parserOptions.projectService`, so every linted file must belong to one of the tsconfig projects): `no-floating-promises`, `no-misused-promises`, `await-thenable`, and `switch-exhaustiveness-check`. GPU lifecycle is promise-shaped (`requestDevice`, `mapAsync`, `onSubmittedWorkDone`, `device.lost`), and a dropped promise is a dropped error — mark a deliberate fire-and-forget with `void`. An async handler a component calls from a DOM event is typed `() => Promise<void>` in its props and voided at the DOM edge (`onClick={() => void onExportVideo()}`), not wrapped in `buildOverlayProps.ts` (that would break reference stability), and must catch and report its own errors.
 - **Dead code**: `knip` (`knip.json`, CI `web` job) fails on unused files, exports, dependencies and duplicate exports. Tests count as users. Entries beyond what its Vite/Vitest/Playwright plugins find: `scripts/*.mjs` and `src/engine/compute/chores/index.ts` (the `gpu-chores` public surface sibling apps import, so its exports are not checked). Exported types used in their own file are allowed; values are not — drop the `export` instead. An intentional second name for one value (the `*_WGSL` / `*_GLSL` literal aliases) is tagged `@alias`.
-- **TypeScript**: Strict mode is enabled, plus `noImplicitOverride` and `noUncheckedIndexedAccess` in `tsconfig.app.json`. For an index the compiler cannot prove in range, prefer restructuring (iterate entries, a tuple type) or a real guard; use `!` only when the index is in range by construction, and keep guards out of hot per-pixel loops. Four project references are used:
-  - `tsconfig.app.json` — compiles `src/` except `src/headless/`, includes `vite/client` and `@webgpu/types`.
-  - `tsconfig.headless.json` — compiles `src/headless/` (and what it imports) with `@types/node` added: the Node-only renderer and CLI, so browser code never sees Node globals.
+- **TypeScript**: Strict mode is enabled, plus `noImplicitOverride` and `noUncheckedIndexedAccess` in `tsconfig.app.json`. For an index the compiler cannot prove in range, prefer restructuring (iterate entries, a tuple type) or a real guard; use `!` only when the index is in range by construction, and keep guards out of hot per-pixel loops. Three project references are used:
+  - `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`.
   - `tsconfig.node.json` — compiles `vite.config.ts` and `vitest.config.ts`, includes `@types/node`.
   - `tsconfig.e2e.json` — type-checks `e2e/` and `playwright.config.ts` (Playwright itself only strips types), so a spec reading a renamed breadcrumb fails `tsc -b`.
 - **Breadcrumbs**: every `window.*` breadcrumb is declared once, in `ChromashiftDiagnostics` (`src/engine/diagnostics.ts`), and the `Window` type is augmented from it. Publish with `publishDiagnostic(key, value)` / `publishDiagnostics({…})` (no-ops without a `window`, so no guard is needed); never cast `window` to add a field. A new breadcrumb must also be listed in `DIAGNOSTIC_KEYS` (the build fails until it is), and `diagnostics.test.ts` fails on a cast, a direct `window.<key> =` assignment or a `declare global` `Window` block anywhere else in `src/`. Specs read them as plain `window.x` inside `page.evaluate` (typed) or through `e2e/helpers/diagnostics.ts` (`readDiagnostic`, `waitForDiagnostic`). Test-only globals a spec installs itself (`__longTasks`, `__readMainCanvasFrame`) are declared in that spec.
@@ -587,7 +579,6 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | **Vitest** | `npm test` | Unit tests in `src/**/*.test.ts` — math (`decay`, `rotation`, `bandClassification`), state (`serializeSettings`, `settingsSchema`, a `fast-check` property test over `deserializeSettings`, `presetUrl`), engine (`blendModes`, `adapter` / `canvasConfig` / `gpuErrors` / `gpuOptions` (GPU bootstrap), `goldenMask`, `kioskMode`, `compareViews`, `GpuTimestampProfiler`, `colorProfile`, `colorProfileLibrary`, `buildRendererState`, video export, reactive modulation) |
 | **Vitest (DOM)** | `npm test` | `src/**/*.dom.test.tsx` only, on happy-dom through React Testing Library (vitest project `dom`; everything else stays on the `node` project, so an engine test cannot lean on a DOM by accident). `src/test/renderAppHook.tsx` renders a hook under the real ref bundle and store, so a test drives it with real actions and reads real state back. Per-frame hooks are stepped deterministically with the frame clock's offline mode (`frameClockRef.current.enterOffline()` + `step(dt)`). Covered: `useAnimationLoop`, `useReactiveInput` (mic and MIDI classes faked), `useKioskMode`, `usePresets`. `npm run test:coverage` adds a v8 coverage report |
 | **Playwright** | `npm run test:e2e` | E2E specs under `e2e/`. **`chromium` project** (`npm run test:e2e:webgl`): WebGL smoke (`smoke.spec.ts`), preset URL hydration (`preset-url.spec.ts`), kiosk (`kiosk.spec.ts`), viewport transforms (`viewport-transforms.spec.ts`), colour profiles (`color-profiles.spec.ts`), corpus browser windowing/search/manifest caching (`corpus-browser.spec.ts`), WebGPU hard-fail policy (`webgpu-hard-fail.spec.ts`), the WASM engine loading on the page and in both workers (`wasm-engine.spec.ts`, `window.wasmEngineState` / `wasmEngineWorkers`). **`chromium-webgpu` project** (`npm run test:e2e:webgpu`, `--enable-unsafe-webgpu`): WebGPU smoke (`webgpu-smoke.spec.ts`), compare dual/swipe/quad (`compare-*.spec.ts`), v2 compare preset URL (`preset-compare.spec.ts`), export readback on a forced `bgra8unorm` canvas (`webgpu-bgra-export.spec.ts`; run with `--workers=1`), **Retry GPU** after a simulated `device.destroy()` loss (`webgpu-device-loss.spec.ts`). **`firefox` / `webkit` projects** (`npm run test:e2e:browsers`): `webgpu-smoke.spec.ts` + `graph-executor.spec.ts` on each browser's own WebGPU. A test skips only when the build has no `navigator.gpu` (`webgpuProbe.stage`), and the SwiftShader frame goldens become a content check. Opt-in screenshot specs: `opacity-test.spec.ts`, `renderer-parity.spec.ts` (`RECORD_SCREENSHOTS=1`). Install browsers once: `npx playwright install --with-deps chromium` |
-| **Vitest (GPU)** | `npm run test:gpu` | `src/**/*.gpu.test.ts` (vitest project `gpu`, opt-in via `CHROMASHIFT_GPU_TESTS=1`, so `npm test` needs no Vulkan): the real renderer in Node on Dawn's `webgpu` package. The **canonical pixel goldens** (`src/headless/__golden__/`: the default graph at 1/3/7/10 layers and every starter / shape preset, pixelmatch at the E2E tolerance) and the browser's `e2e/__golden__` frames reproduced byte-for-byte, both on Playwright Chromium's SwiftShader Vulkan; a boot-and-draw check on the system driver (lavapipe on CI). See `docs/HEADLESS.md` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/test_engine.cpp` via `g++` — band ladder vs the original linear scan, bulk-kernel/single-pixel parity, luminance, decay and motion-flow math against the engine's scalar path; no Emscripten required |
 | **C++ SIMD128** | `npm run test:cpp:simd` | The same suite built with `em++ -msimd128` and run under Node — the code the browser runs — then `cpp/tests/simd_parity.cpp`: the SIMD engine and a `CS_FORCE_SCALAR` copy linked into one module and compared **bit for bit** on every kernel, at odd sizes and on NaN/denormal/extreme inputs. Needs emsdk |
 | **WASM perf gate** | `npm run bench:wasm -- --assert` | Runs every bulk kernel of the committed `public/chromashift_engine.wasm` over a deterministic 3841×2161 golden image (odd on purpose, so the scalar tails run) and fails below the throughput floors in `public/wasm-benchmark-core.mjs` — catches a silent loss of the SIMD128 path — and checks both mask kernels against the scalar `classifyPixel` export. Same image and floors as `/wasm-benchmark.html` |
@@ -602,7 +593,6 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | `shaders` | `node scripts/validate-shaders.mjs --require-glslang`: dumps every WGSL/GLSL variant (`shaderBindings.test.ts`), then `naga` + `glslangValidator` (naga-cli pinned and cached) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu` + SwiftShader Vulkan) |
-| `headless` | Mesa lavapipe + ffmpeg + Playwright Chromium (for its SwiftShader ICD), `npm run test:gpu`, then the CLI smoke: a 90-frame `examples/cr0p.json` `.mp4` (frame count checked with ffprobe) and a still, uploaded as the `headless-out` artifact |
 | `e2e-webgpu-browsers` | **Non-blocking** (`continue-on-error`, until green twice): `npx playwright test --project=firefox` on `windows-latest`, `--project=webkit` on `macos-latest`, each where the browser ships WebGPU |
 
 `ci.yml` has no C++ job. The engine is built and tested by **`wasm.yml`** alone, on any change to `cpp/**`, `shared/*.json`, `scripts/codegen-*.mjs`, the bench, or the committed artifacts:
@@ -655,10 +645,6 @@ Chromashift layers four independent capability checks:
 | **ORT (onnxruntime-web)** | Optional waifu2x upscaling (`nunif.worker.ts`) | Any WebGPU/WebGL2 browser; loaded lazily only when "Upscale" is clicked | Real-ESRGAN/Real-CUGAN via TF.js (`upscaler.worker.ts`) covers the other upscale path |
 
 Safari and Firefox draw the same frame on WebGPU as Chrome (#228). A `bgra8unorm` preferred format, a missing `timestamp-query` and lower limits are each handled, and nothing compatibility mode withholds is used by the graph. If a graph ever needs something, it is refused by capability name (`unsupported-capability`), never drawn black; see `docs/gpu-bootstrap.md` § *Compatibility mode* for the audit. Playwright's `firefox` / `webkit` projects cover them, non-blocking. `?renderer=webgl` stays a diagnostic / XR backend, not a browser workaround.
-
-Outside a browser, the headless renderer (`bin/chromashift`, `npm run test:gpu`) needs Node 22 and a
-Vulkan driver: a GPU, or Mesa's lavapipe on a GPU-less box (`mesa-vulkan-drivers`). `ffmpeg` is optional.
-See `docs/HEADLESS.md`.
 
 See `docs/gpu-bootstrap.md` (WebGPU/WebGL matrix), `docs/wasm-engine.md` (SIMD build/browser
 support), and the Upscaler section above (ORT vs TF.js) for the full detail behind this table.

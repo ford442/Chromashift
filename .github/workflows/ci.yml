@@ -143,43 +143,6 @@ jobs:
         env:
           CI: true
 
-  headless:
-    name: Headless renderer (Dawn)
-    runs-on: ubuntu-latest
-    needs: [guard]
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-      # No GPU on the runner: Dawn draws on Mesa's lavapipe, and on the
-      # SwiftShader Vulkan beside Playwright's Chromium for the pinned goldens
-      # (docs/HEADLESS.md § Which rasterizer).
-      - name: Install Vulkan (lavapipe) and ffmpeg
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers ffmpeg
-      - run: npm ci
-      - name: Install Playwright Chromium (for its SwiftShader Vulkan)
-        run: npx playwright install chromium
-      - run: npm run test:gpu
-      - name: CLI smoke
-        run: |
-          npx chromashift render examples/cr0p.json --image examples/sweep.png --frames 90 --out headless-out/cr0p.mp4
-          frames=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames -of csv=p=0 headless-out/cr0p.mp4)
-          test "$frames" = 90 || { echo "expected 90 frames, got $frames"; exit 1; }
-          npx chromashift still examples/cr0p.json --image examples/sweep.png --out headless-out/cr0p.png
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() && hashFiles('headless-out/**') != '' }}
-        with:
-          name: headless-out
-          path: headless-out/
-          retention-days: 14
-
   e2e-webgpu-browsers:
     name: Playwright E2E (WebGPU, ${{ matrix.browser }})
     runs-on: ${{ matrix.os }}

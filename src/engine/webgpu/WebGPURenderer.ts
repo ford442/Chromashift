@@ -41,7 +41,6 @@ import {
   selectInternalColorFormat,
 } from '../gpu/gpuOptions';
 import { publishDiagnostic } from '../diagnostics';
-import type { PresentationTarget } from './presentationTarget';
 import { deviceFeatureLevel } from './adapter';
 import { getCanvasHdrSupport } from './canvasConfig';
 
@@ -105,8 +104,7 @@ export class WebGPURenderer {
   static readonly DIAGNOSTIC_SIZE = GpuReadback.DIAGNOSTIC_SIZE;
 
   private device         : GPUDevice;
-  /** The canvas's context, or an offscreen target (`presentationTarget.ts`). */
-  private context        : PresentationTarget;
+  private context        : GPUCanvasContext;
   private internalFormat : GPUTextureFormat;
   /** The SDR canvas format's inspect/readback layouts at the canonical layer count. */
   public pipelines: WebGPUPipelines;
@@ -169,7 +167,7 @@ export class WebGPURenderer {
   private graphPrimary = true;
   private destroyed = false;
 
-  constructor(device: GPUDevice, context: PresentationTarget, format: GPUTextureFormat, enableMSAA = false) {
+  constructor(device: GPUDevice, context: GPUCanvasContext, format: GPUTextureFormat, enableMSAA = false) {
     this.device  = device;
     this.context = context;
     this.internalFormat = selectInternalColorFormat(device);
