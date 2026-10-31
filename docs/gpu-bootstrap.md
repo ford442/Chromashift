@@ -7,6 +7,7 @@ Chromashift centralizes renderer initialization in a few small modules, and docu
 | `src/engine/webgpu/webgpuSession.ts` | `bootstrapWebGpu()` — one canvas's session on the page's leased device |
 | `src/engine/webgpu/adapter.ts` | Adapter request, the page device gate (`requestDevice` strategies), adapter / capability reports |
 | `src/engine/webgpu/canvasConfig.ts` | `configureWebGpuCanvas()` — SDR / `hdr-extended`, the tone-mapping and HDR probes |
+| `src/engine/webgpu/presentationTarget.ts` | `PresentationTarget` — the part of `GPUCanvasContext` the renderer uses; a canvas context, or the headless renderer's offscreen `HeadlessSurface` |
 | `src/engine/gpu/gpuErrors.ts` | `GpuRuntimeError` and the mappings into it, `withErrorScope`, device diagnostics, the fatal breaker |
 | `src/engine/webgl/webgl2Context.ts` | `createWebGL2Context()` (one sticky context per canvas) and `watchWebGL2Context()` |
 
@@ -57,6 +58,29 @@ RendererOrchestrator.bootstrap(primaryCanvas)
 | `device.lost` | Orchestrator destroys all active slots; shared `onRuntimeError` surfaces the recoverable overlay |
 | In-app retry | **Retry GPU** (device-lost only) re-runs `RendererOrchestrator.bootstrap` without navigation. `E_OUTOFMEMORY` / exhausted strategies are **not** retryable — reload required. |
 | Tests | `RendererOrchestrator.test.ts` mocks bootstrap/factories — no WebGPU adapter required in CI |
+
+### Without a canvas: `PresentationTarget`
+
+The session, the orchestrator's slots and `WebGPURenderer` hold a
+`PresentationTarget`, not a `GPUCanvasContext`: `configure`, `unconfigure`,
+`getCurrentTexture`, and `getConfiguration` when the UA has it. A canvas
+context is one. The headless renderer's `HeadlessSurface`
+(`src/headless/`, [HEADLESS.md](HEADLESS.md)) is another: an offscreen texture
+that keeps the context's contract (it refuses the formats a canvas refuses and
+echoes its configuration). So the one configure path, `configureWebGpuCanvas`
+and the HDR probe, drives both.
+
+```ts
+await RendererOrchestrator.bootstrap({
+  primaryTarget: surface,        // instead of primaryCanvas: exactly one of the two
+  primaryFormat: 'rgba8unorm',   // instead of navigator.gpu.getPreferredCanvasFormat()
+  backend: 'webgpu',             // the WebGL backend needs a canvas
+});
+```
+
+Everything else is the page's: the adapter gate, the device lease, the
+`TextureManager`, the chore lease, the slot's renderer and executor. A slot
+without a canvas is the primary slot when its target is the session's.
 
 `useAppWebGPUInit` delegates bootstrap and primary-slot creation to the orchestrator; image corpus loading stays in the hook. `useCompareSlotRenderer` calls `createSlot('compare-b')` / `destroySlot` when dual layout is active. Secondary slots must be created **after** bootstrap and destroyed **before** `orchestrator.destroy()` (the compare hook runs between init and unmount for this ordering).
 
@@ -299,4 +323,6 @@ Pure helpers are covered by Vitest without a React tree:
 npm test
 ```
 
-Tests live beside each module (`adapter.test.ts` — including the compatibility-mode attempt and its limits —, `canvasConfig.test.ts`, `gpuErrors.test.ts`, `gpuOptions.test.ts`, `webgl2Context.test.ts`) and in `src/engine/RendererOrchestrator.test.ts` (Retry GPU on a fresh adapter, one error-scope pop, detachable device-lost listeners, refused secondary pipelines), `src/engine/webgpu/GpuReadback.test.ts` (BGRA → RGBA readback) and `src/engine/webgpu/WebGPUPipelines.test.ts` (compiler messages). `src/engine/graph/capabilities.test.ts` pins the capability bits and that no preset variant needs a bit compatibility mode withholds. In the browser, `e2e/webgpu-device-loss.spec.ts` destroys the device and clicks **Retry GPU**, and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.
+Tests live beside each module (`adapter.test.ts` — including the compatibility-mode attempt and its limits —, `canvasConfig.test.ts`, `gpuErrors.test.ts`, `gpuOptions.test.ts`, `webgl2Context.test.ts`) and in `src/engine/RendererOrchestrator.test.ts` (Retry GPU on a fresh adapter, one error-scope pop, detachable device-lost listeners, refused secondary pipelines), `src/engine/webgpu/GpuReadback.test.ts` (BGRA → RGBA readback) and `src/engine/webgpu/WebGPUPipelines.test.ts` (compiler messages). `src/engine/graph/capabilities.test.ts` pins the capability bits and that no preset variant needs a bit compatibility mode withholds. On a real device, `npm run test:gpu` boots the same bootstrap in Node on
+Dawn (`src/headless/*.gpu.test.ts`, the `headless` CI job; see
+[HEADLESS.md](HEADLESS.md#goldens)). In the browser, `e2e/webgpu-device-loss.spec.ts` destroys the device and clicks **Retry GPU**, and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.
