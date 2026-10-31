@@ -3,6 +3,7 @@ import { createInitialState } from '../../state/defaults';
 import type { ChromashiftRenderer, ExportFrameOptions } from '../types/RendererContracts';
 import type { RendererState } from '../types/RendererState';
 import { FrameClock } from '../frame/FrameClock';
+import { advanceAngles } from '../math/rotation';
 import { exportVideo, type VideoExportRequest } from './VideoExporter';
 import type { VideoExportCapabilities } from './videoCodecs';
 
@@ -311,6 +312,32 @@ describe('exportVideo (offline render loop)', () => {
     expect(runA.frameAngles[0]).toEqual([12, 34, 56]);
     expect(runA.frameAngles).toEqual(runB.frameAngles);
     expect(runA.frameAngles[1]).not.toEqual(runA.frameAngles[0]);
+  });
+
+  // The live loop and export are one angle clock: `extensions` decides the layer
+  // count in both, whichever array a count change left behind.
+  it.each([
+    { name: 'more extensions than angles', angles: [10, 20, 30], extensions: [130, 230, 330, 40, 50] },
+    { name: 'fewer extensions than angles', angles: [10, 20, 30, 40, 50], extensions: [130, 230, 330] },
+  ])('steps the same angles as the live clock when $name', async ({ angles, extensions }) => {
+    const state = createInitialState();
+    state.layers.angles = angles;
+    state.layers.extensions = extensions;
+    const fps = 10;
+
+    const run = makeFakeRenderer();
+    await exportVideo(run.renderer, state, [], 320, 240, makeRequest({ fps, durationSec: 1 }));
+
+    let live = angles;
+    expect(run.frameAngles).toHaveLength(10);
+    run.frameAngles.forEach((frame, k) => {
+      // Frame 0 is the start angles; every later frame is one live tick further on.
+      if (k > 0) live = advanceAngles(live, extensions, fps);
+      expect(frame, `frame ${k}`).toEqual(
+        k === 0 ? extensions.map((_, i) => angles[i] ?? 0) : live,
+      );
+      expect(frame).toHaveLength(extensions.length);
+    });
   });
 
   it('produces matching total rotation at 30 and 60 FPS over the same duration', async () => {

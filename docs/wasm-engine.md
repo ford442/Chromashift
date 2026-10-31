@@ -25,10 +25,9 @@ for real-time rendering.
 | Category | Functions | Role |
 |---|---|---|
 | **In scope (load-time)** | `computeAverageLuminanceWith`, `computeAverageLuminanceStridedWith`, `classifyImageMaskWith`, histogram/band helpers | Average luminance and classification masks when GPU compute analysis (#82) is unavailable; strided luminance for large (4K–8K) and upscaled buffers |
-| **In scope (export / offline)** | `advanceAnglesBy` | Video-export angle stepping when Engine = C++ WASM |
 | **In scope (per frame)** | `computeMotionFlowWith` | Optical flow behind `motionMode: 'direction'`, on backends with no compute lane (WebGL, or WebGPU with `?no_gpu_compute` / a compute decline). The only per-frame WASM call, and it runs in `motion.worker.ts`, never on the animation thread |
 | **Out of scope (GPU)** | Layer rotation, persistence/compositing, tracer decay, tracer overlap detection | Handled by WGSL/GLSL shaders in `WebGPURenderer` / `WebGLRenderer`; the per-frame decay multiplier is the pure `durationToDecay()` in `math/decay.ts` (constants from `shared/decay.json`, see [Shared decay table](#shared-decay-table-shareddecayjson)), and the 3-layer overlap ("coincidence") detection is a `gpu-chores` compute pass (`op: 'coincidence'`, see `docs/gpu-bootstrap.md`) with a fragment-shader fallback — neither is ever dispatched through WASM |
-| **Test / benchmark only** | `durationToDecayWith`, `classifyPixelsBulkWith`; the C++ `classifyPixel`, `buildRotationMat3`, `simulateTracerDecay`, `computeLuminanceHistogram` and `computeColorBandCounts` exports (no TS dispatcher) | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
+| **Test / benchmark only** | `durationToDecayWith`, `classifyPixelsBulkWith`; the C++ `classifyPixel`, `buildRotationMat3`, `computeLuminanceHistogram` and `computeColorBandCounts` exports (no TS dispatcher) | `public/wasm-benchmark.html`, C++ host tests, WASM/TS parity tests — not used in the live render loop |
 
 **Selection order for image analysis** — encoded in the **`gpu-chores`** facade
 (`src/engine/compute/chores/`) as `CHORE_BACKEND_ORDER` and walked by
@@ -89,6 +88,42 @@ lane-selection enum pinned-lane parity tests rely on.
 
 ---
 
+## Where code runs
+
+Three homes, one rule each. The split is already how the code is laid out; this is the
+test a new function has to pass before it gets a fourth copy somewhere else.
+
+| Work | Home | Why | Examples |
+|---|---|---|---|
+| **Bulk pixels** — a kernel over every pixel of an image or field | C++ / WASM, off the main thread | Throughput. SIMD128 bodies, pinned bit-exact against the scalar tails by `tests/simd_parity.cpp` | `computeAverageLuminance`, `computeClassificationMask{,Lut}`, `computeMotionFlow` (Lucas–Kanade) — the exports the `*With()` dispatchers call |
+| **Per-frame scalars** — a handful of floats per frame | TypeScript | A `_malloc`, two heap copies and a `_free` cost more than the loop | The decay factor (`math/decay.ts`), the layer angles (`advanceAngles` in `math/rotation.ts`), and — when they exist — timeline sampling and modulation |
+| **GPU pixels** — pixels that never come back to the CPU | WGSL / GLSL, emitted from the node templates in `graph/templates/` | A readback to run them in WASM would cost more than the pass | Tracer decay and persistence, compositing. The persistence pass never calls into WASM |
+
+What follows from it:
+
+- **One implementation per scalar.** The live loop (`useAnimationLoop`) and video export
+  (`exportVideoFrameLoop`) both call `advanceAngles`, so they cannot disagree about the angle
+  clock. `layers.extensions` is the layer-count authority: a layer the previous angles do not
+  cover starts at 0, and a surplus angle is dropped. The export's start angles are fitted the
+  same way (`resolveStartAngles`).
+- **`durationToDecay` is called directly.** `graph/exec/uniforms.ts` imports it from
+  `math/decay.ts`. `durationToDecayWith` exists for the parity tests and the benchmark page, and
+  `math/decay.test.ts` fails if a per-frame file — the uniform path, the renderers, the live
+  loop, the angle clock — imports a WASM dispatcher.
+- **No export without a caller.** `EXPORTED_FUNCS` (the Makefile) and `WASM_API_FUNCTIONS`
+  (`wasm/types.ts`) list what the browser calls; every instance — main thread, analysis worker,
+  motion worker — pays for each. `advanceLayerAngles` (the angle step) and `simulateTracerDecay`
+  (a CPU tracer decay the GPU pass made redundant) were removed on that basis: the TypeScript
+  test of `advanceAngles` is the oracle for the angle step, and there is no CPU tracer to
+  decay.
+- **For [#224](https://github.com/ford442/Chromashift/issues/224) (timeline) and
+  [#227](https://github.com/ford442/Chromashift/issues/227) (modulation matrix).** Sampling a few
+  dozen keyframes or evaluating modulation routes is a per-frame scalar job: it lives in
+  TypeScript next to `advanceAngles`, and does not become a WASM export. If either needs the
+  frame's angles, it calls `advanceAngles` rather than keeping its own copy.
+
+---
+
 ## Call-site matrix
 
 Every production call site of a `*With()` dispatcher (or of `loadWasmEngine` / `isWasmReady`),
@@ -103,12 +138,13 @@ and the unit/C++ host tests — see "Test / benchmark only" above.
 | `computeAverageLuminanceStridedWith` | `engine/live/LiveSource.ts`, `hooks/useMediaHandlers.ts`; also called internally by `computeImageAverageLuminanceWith` | Load-time / live source |
 | `computeImageAverageLuminanceWith` | `hooks/useMediaHandlers.ts`, `hooks/useImagePlayback.ts` (both only on the mask-generation error path); also called by `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage`/`computeAverageLuminance` | Load-time |
 | `classifyImageMaskWith` | `chores/chromashiftHost.ts` and, inside the analysis worker, `analysis.worker.ts` — both reached indirectly from `hooks/useClassificationMask.ts` via `CpuChoreHost.analyzeImage` | Load-time (mask generation) |
-| `advanceAnglesBy` | `engine/videoExport/exportVideoFrameLoop.ts` | Video export |
 | `computeMotionFlowWith` | `engine/compute/motion.worker.ts`, reached from `engine/live/liveMotionField.ts` via `chores/motionWorkerHost.ts` | Per frame (throttled), `motionMode: 'direction'` only |
 
 No `*With()` dispatcher is called from a per-frame render or animation-loop path
 (`useAnimationLoop.ts`, `WebGPURenderer.ts` and the graph executor / `WebGLRenderer.ts`
-compositor and persistence passes). Tracer decay used to be the one documented exception
+compositor and persistence passes). The layer angles are not a dispatcher at all:
+`advanceAngles()` in `math/rotation.ts` is plain TypeScript, called by the live loop and by
+video export (see [Where code runs](#where-code-runs)). Tracer decay used to be the one documented exception
 (`durationToDecayWith`, routed through WASM per frame for formula parity only); it now
 calls `durationToDecay()` from `math/decay.ts` directly (see [#145](https://github.com/ford442/Chromashift/issues/145)).
 Any new per-frame call site into `src/engine/wasm/` should be treated as a scope violation —
@@ -134,25 +170,18 @@ update this table if one is ever intentionally added.
 | `computeColorBandCounts` | — (benchmark / C++ tests) | 11-bucket pixel count per Chromashift colour band |
 | `buildRotationMat3` | — (benchmark / C++ tests; TS is `math/rotation.ts`) | Column-major 3×3 rotation matrix (matches `rotation.ts`) |
 
-### Frame timing & tracer helpers
+### Frame timing & motion
 
 | C++ function | TS dispatcher | Description |
 |---|---|---|
 | `durationToDecay` | `durationToDecayWith` | Per-frame decay multiplier for tracer persistence timing |
-| `advanceLayerAngles` | — (reference for `advanceAnglesBy`) | Step `count` layer angles with 360° wrapping |
-| `simulateTracerDecay` | — (benchmark / C++ tests) | Apply per-frame decay to a Float32 RGBA buffer in-place (CPU-side tracer simulation) |
 | `computeMotionFlow` | `computeMotionFlowWith` | Coarse-to-fine Lucas–Kanade optical flow over two low-resolution luminance planes; mirrors `chores/motionKernel.ts` and the WGSL flow passes (see `docs/LIVE_SOURCE.md`) |
 
-`advanceLayerAngles` takes `(const float* angles, const float* steps, float* out,
-uint32_t count)` — a session runs 1–10 band layers, so the angle list is a pointer
-and a count rather than a fixed argument list. `out` may alias `angles`.
-
-`advanceAnglesBy()` does not call it: for at most ten floats, a `_malloc`, two heap
-copies and a `_free` per exported frame cost more than the loop, so the dispatcher
-always runs the TypeScript mirror (`fallbacks/decay.ts`). The export stays as the
-reference that mirror follows, with its wrap and aliasing rules pinned by the host
-tests. (The deprecated six-float `advanceLayerAngles3` wrapper is gone; every
-committed artifact since #194 exports the count-taking ABI.)
+There is no C++ layer-angle step and no CPU tracer decay: `advanceLayerAngles` and
+`simulateTracerDecay` were exported, tested and called by nothing. The angle clock is
+`advanceAngles()` in `math/rotation.ts` (a `_malloc`, two heap copies and a `_free` per frame
+would cost more than the loop over at most ten floats), and tracer decay runs in the
+persistence pass on the GPU. See [Where code runs](#where-code-runs).
 
 ### Colour band classification logic
 
@@ -260,7 +289,6 @@ live in `simd_util.h`:
 | `classifyPixelsBulk{,Lut}` | 4 pixels per iteration, i32 band indices stored directly |
 | `computeLuminanceHistogram` | Vectorised luminance + `trunc_sat`; the bucket increment is a scatter, so lanes are drained scalar |
 | `computeColorBandCounts` | Vectorised ladder, scalar tally |
-| `simulateTracerDecay` | Straight `f32x4` multiply |
 | `computeMotionFlow` (`cpp/motion_flow.cpp`) | 2×2 `halvePlane` deinterleaves even/odd lanes with `wasm_i32x4_shuffle` and sums them `((a + b) + c) + d`, the scalar order; the coarse LK level solves 4 interior cells per lane (`clampQuad` passes a NaN through, as the scalar clamp does). The fine level stays scalar: its warped bilinear fetch is a per-cell gather |
 
 Output is bit-identical to the scalar path, for every kernel. The luminance step issues its
@@ -416,6 +444,7 @@ The output lands in `public/` so Vite's dev server and production build both ser
 ```bash
 npm run check:wasm          # checks that emcc is on PATH
 make -C cpp verify-exports  # EXPORTED_FUNCTIONS matches chromashift_engine.h 1:1
+npm run compile-commands && npm run check:compile-commands  # clangd database covers every .cpp, with the build's flags
 npm run test:cpp            # host-side g++ unit tests (band ladder, bulk kernels, durationToDecay)
 npm run test:cpp:werror     # same tests, -Werror — what wasm.yml's host-tests job runs
 npm run test:cpp:simd       # same tests on em++ -msimd128 + bit-exact SIMD/scalar parity (needs emsdk)
@@ -442,6 +471,16 @@ npm run compile-commands    # writes cpp/compile_commands.json
 This emits one real `-c <file> -o <file>.o` command per translation unit, with the compiler and flags passed in by `cpp/Makefile` — there is no second copy of the flags to keep in sync. It is gitignored because it embeds absolute paths; regenerate it per checkout. `cpp/.clangd` points clangd at it.
 
 With emsdk active (`$EMSDK` set, e.g. after `source emsdk_env.sh`), the engine TUs (`chromashift_engine.cpp`, `motion_flow.cpp`) and the parity harness get a **wasm32** entry — emsdk's own `clang++ --target=wasm32-unknown-emscripten --sysroot=$EMSDK/upstream/emscripten/cache/sysroot` plus `WASM_CXXFLAGS` (`-msimd128` included), i.e. what emcc compiles. Every `#if CS_HAS_SIMD` block sits in front of a scalar tail that is always compiled, so clangd then sees **all** of the code: diagnostics and navigation inside the SIMD kernels as well as the scalar bodies. Without emsdk the engine TUs fall back to the host (`g++`) entry and the SIMD blocks grey out; `tests/test_engine.cpp` always gets the host entry. Rerun `npm run compile-commands` after activating emsdk.
+
+`npm run check:compile-commands` (`scripts/check-compile-commands.mjs`) verifies the database, with the file lists and flag sets read from `cpp/Makefile` through `make` rather than copied:
+
+- every `cpp/**/*.cpp` on disk is an entry — a TU added to a test target but to none of `SRCS`, `TEST_SRC` or `PARITY_SRCS` is invisible to clangd, and fails here;
+- every entry carries the tokens of `CXXFLAGS_COMMON` (`-std=c++17 -Wall -Wextra -ffp-contract=off -I.`) and none carries `-mrelaxed-simd`;
+- with `$EMSDK` set, the engine and parity entries are `wasm32` with `WASM_CXXFLAGS` (`-msimd128`, `-fno-exceptions`, `-fno-rtti`), not host fallbacks.
+
+Without emsdk the engine entries are host entries and the parity TUs are absent by design, so the check passes on a laptop. `wasm.yml`'s `wasm` job has the pinned emsdk and passes `--require-wasm`, so a wasm32 entry that cannot be emitted fails there. The database itself stays gitignored.
+
+The database does not carry `-Werror` (the shipped `emcc` line does not either — only `test-werror` and the SIMD tests do), so the editor reports warnings where the gate fails the build on them.
 
 ### Clean
 
@@ -476,7 +515,8 @@ any `EMSCRIPTEN_KEEPALIVE` symbol in the header is missing from `EXPORTED_FUNCS`
 the `wasm` job of `wasm.yml`. Adding a function
 means touching three places — the header, `EXPORTED_FUNCS`, and `WASM_API_FUNCTIONS` in
 `src/engine/wasm/types.ts` (which `loadEngine.ts` checks at load time to warn about a stale
-build).
+build). It also means giving it a caller on the load or per-frame path: a bulk-pixel kernel
+earns an export, a per-frame scalar does not (see [Where code runs](#where-code-runs)).
 
 ---
 
@@ -656,11 +696,11 @@ src/engine/
     ├── imageBytes.ts         Shared canvas→RGBA byte helpers (used by dispatch + fallbacks)
     ├── fallbacks/
     │   ├── luminance.ts     Pure TS luminance fallbacks
-    │   └── decay.ts         Pure TS decay/angle fallbacks (re-exports math/decay.ts)
+    │   └── decay.ts         Pure TS decay fallback (re-exports math/decay.ts)
     └── dispatch/
         ├── luminance.ts      computeAverageLuminance(Strided)?With, computeImageAverageLuminanceWith
         ├── classification.ts classifyPixelsBulkWith, classifyImageMaskWith
-        └── animation.ts      durationToDecayWith, advanceAnglesBy
+        └── animation.ts      durationToDecayWith
 ```
 
 `WasmEngine.ts` is the single integration point consumed by `App.tsx`, and stays a thin

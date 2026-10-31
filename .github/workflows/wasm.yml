@@ -11,6 +11,7 @@ on:
       - 'scripts/codegen-*.mjs'
       - 'scripts/bench-wasm.mjs'
       - 'scripts/gen-compile-commands.mjs'
+      - 'scripts/check-compile-commands.mjs'
       - 'public/chromashift_engine.*'
       - 'public/wasm-benchmark-core.mjs'
       - '.github/workflows/wasm.yml'
@@ -21,6 +22,7 @@ on:
       - 'scripts/codegen-*.mjs'
       - 'scripts/bench-wasm.mjs'
       - 'scripts/gen-compile-commands.mjs'
+      - 'scripts/check-compile-commands.mjs'
       - 'public/chromashift_engine.*'
       - 'public/wasm-benchmark-core.mjs'
       - '.github/workflows/wasm.yml'
@@ -71,6 +73,18 @@ jobs:
       # SIMD-vs-scalar parity harness (cpp/tests/simd_parity.cpp), both -Werror.
       - name: SIMD128 tests + SIMD/scalar parity (-Werror)
         run: npm run test:cpp:simd
+
+      # clangd reads cpp/compile_commands.json (gitignored — absolute paths), so
+      # nothing else notices when it drifts from the build. Runs after the SIMD
+      # step so emcc has populated the sysroot the wasm32 entries point at.
+      # --require-wasm: this job has the pinned emsdk, so an entry that could not
+      # be emitted as wasm32 + -msimd128 is a failure here, not a quiet fallback.
+      - name: compile_commands.json covers every TU, with the build's flags
+        run: |
+          emcc_path="$(readlink -f "$(command -v emcc)")"
+          export EMSDK="${EMSDK:-$(dirname "$(dirname "$(dirname "$emcc_path")")")}"
+          make -C cpp compile-commands
+          npm run check:compile-commands -- --require-wasm
 
       # Force a clean recompile. Plain `make release` is a no-op when committed
       # public/chromashift_engine.* are newer than cpp sources (or share equal

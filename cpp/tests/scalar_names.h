@@ -26,6 +26,4 @@
 #define computeColorBandCounts         cs_scalar_computeColorBandCounts
 #define buildRotationMat3              cs_scalar_buildRotationMat3
 #define durationToDecay                cs_scalar_durationToDecay
-#define advanceLayerAngles             cs_scalar_advanceLayerAngles
-#define simulateTracerDecay            cs_scalar_simulateTracerDecay
 #define computeMotionFlow              cs_scalar_computeMotionFlow

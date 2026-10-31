@@ -25,5 +25,4 @@ export {
 
 export {
   durationToDecayWith,
-  advanceAnglesBy,
 } from './dispatch/animation';

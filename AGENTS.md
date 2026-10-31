@@ -600,7 +600,7 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | Job (`wasm.yml`) | What it runs |
 |-----|----------------|
 | `host-tests` | `npm run test:cpp:werror` (g++, no emsdk) |
-| `wasm` | installs the emsdk pinned in `cpp/emsdk.version` + `make -C cpp check` (pin) + `make -C cpp verify-exports` + `npm run test:cpp:simd` (`-Werror`) + `npm run build:wasm:force` + `npm run bench:wasm -- --assert` + fails if `public/chromashift_engine.{js,wasm}` or `cpp/*_table.h` differ from the clean rebuild |
+| `wasm` | installs the emsdk pinned in `cpp/emsdk.version` + `make -C cpp check` (pin) + `make -C cpp verify-exports` + `npm run test:cpp:simd` (`-Werror`) + `make -C cpp compile-commands` and `npm run check:compile-commands -- --require-wasm` (every `cpp/**/*.cpp` is a database entry; engine entries are wasm32 + `-msimd128` + `-ffp-contract=off`) + `npm run build:wasm:force` + `npm run bench:wasm -- --assert` + fails if `public/chromashift_engine.{js,wasm}` or `cpp/*_table.h` differ from the clean rebuild |
 
 WebGPU E2E runs in the `chromium-webgpu` Playwright project with
 `--enable-unsafe-webgpu` plus the SwiftShader Vulkan flags (see

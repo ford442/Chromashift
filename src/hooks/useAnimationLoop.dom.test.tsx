@@ -1,6 +1,6 @@
 import { act } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { advanceAngles } from '../engine/compareViews';
+import { advanceAngles } from '../engine/math/rotation';
 import type { ReactiveModulation } from '../engine/reactive/types';
 import type { ChromashiftRenderer, RenderTiming } from '../engine/types/RendererContracts';
 import type { RendererState } from '../engine/types/RendererState';

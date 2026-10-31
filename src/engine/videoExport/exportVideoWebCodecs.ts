@@ -39,7 +39,7 @@ export async function exportVideoWebCodecs(
   caps: VideoExportCapabilities,
 ): Promise<VideoExportResult> {
   const mediabunny = await import('mediabunny');
-  const dims = computeExportDimensions(state, baseWidth, baseHeight, request);
+  const dims = computeExportDimensions(baseWidth, baseHeight, request);
   const container = resolveWebCodecsContainer(request.container, caps);
 
   const format = container === 'mp4'

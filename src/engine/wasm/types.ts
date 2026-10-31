@@ -40,15 +40,6 @@ export interface ChromashiftWasmModule {
   /** Per-frame tracer decay multiplier. */
   _durationToDecay(durationMs: number, fps: number): number;
   /**
-   * Advance `count` layer angles. `anglesPtr` and `stepsPtr` each point at
-   * `count` float32 values; the result is written to `outPtr`, which may alias
-   * `anglesPtr`.
-   */
-  _advanceLayerAngles(anglesPtr: number, stepsPtr: number,
-                      outPtr: number, count: number): void;
-  /** Apply decay in-place to a float RGBA buffer on the WASM heap. */
-  _simulateTracerDecay(bufPtr: number, pixelCount: number, decayFactor: number): void;
-  /**
    * Coarse-to-fine Lucas–Kanade flow over two `width * height` float luminance
    * planes; writes `width * height * 2` interleaved `vx, vy` floats to outPtr.
    */
@@ -90,8 +81,6 @@ export const WASM_API_FUNCTIONS = [
   '_computeColorBandCounts',
   '_buildRotationMat3',
   '_durationToDecay',
-  '_advanceLayerAngles',
-  '_simulateTracerDecay',
   '_computeMotionFlow',
 ] as const satisfies ReadonlyArray<keyof ChromashiftWasmModule>;
 

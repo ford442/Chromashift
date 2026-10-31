@@ -197,42 +197,6 @@ void buildRotationMat3(float angleDeg, float* outMat3);
 float durationToDecay(float durationMs, float fps);
 
 /**
- * Advance `count` layer rotation angles by their per-frame step values,
- * keeping all results in [0, 360).
- *
- * Takes pointers rather than a fixed argument list so a session with any layer
- * count (1–10, one per canonical band) calls the same symbol.
- *
- * The app's `advanceAnglesBy()` deliberately runs this in TypeScript: for at
- * most ten floats the heap round trip costs more than the loop. This export is
- * the reference that loop (src/engine/wasm/fallbacks/decay.ts) mirrors, and the
- * host tests pin its wrap and aliasing rules.
- *
- * @param angles  Pointer to `count` floats: current angles in degrees.
- * @param steps   Pointer to `count` floats: per-frame step sizes in degrees.
- * @param out     Caller-allocated array of `count` floats; receives the new
- *                angles. May alias `angles`.
- * @param count   Number of layers. Zero is a no-op.
- */
-void advanceLayerAngles(const float* angles, const float* steps,
-                        float* out, uint32_t count);
-
-/**
- * Apply per-frame decay to a flat RGBA float buffer in-place.
- *
- * Each component (R, G, B, A) is multiplied by decayFactor.  This replicates
- * the decay step of the WGSL persistence shader and is useful for CPU-side
- * tracer simulation and unit tests.
- *
- * @param tracerBuffer  Float32 RGBA buffer: R,G,B,A,R,G,B,A,…  Each value
- *                      should be in [0, 1].  Modified in-place.
- * @param pixelCount    Number of pixels (buffer length = pixelCount * 4).
- * @param decayFactor   Per-frame multiplier, typically from durationToDecay().
- */
-void simulateTracerDecay(float* tracerBuffer, uint32_t pixelCount,
-                         float decayFactor);
-
-/**
  * Coarse-to-fine Lucas-Kanade optical flow over two low-resolution luminance
  * planes.
  *
