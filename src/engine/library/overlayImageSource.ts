@@ -1,5 +1,7 @@
 import type { ImageEntry } from './imageEntry';
-import type { OverlayImageSource } from '../../components/overlay/types';
+
+/** Which image feeds the viewport blend overlay (when blend mode is not hidden). */
+export type OverlayImageSource = 'source' | 'reference' | 'previous' | 'separated';
 
 export function isOverlayImageSourceAvailable(
   source: OverlayImageSource,
