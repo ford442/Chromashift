@@ -16,7 +16,10 @@ pipeline they hard-code.
 > `WebGLGraphExecutor` walks the same encode plan over an FBO pool, every
 > shape draws on it, and its default-graph frame is the hand-written WebGL
 > passes' frame, pinned in `e2e/__golden__/webgl-default-composite.png` (see
-> [The WebGL executor](#the-webgl-executor)).
+> [The WebGL executor](#the-webgl-executor)). And it runs **headless**, in Node
+> on Dawn: the same renderer and executor over an offscreen surface, whose
+> frames are the browser's byte for byte on SwiftShader and are pinned as the
+> canonical pixel goldens (see [Headless](#headless)).
 > See [Phase 2](#phase-2--shipped) and [Phase 3](#phase-3--shipped) for what
 > landed and [what is left](#not-done-yet).
 
@@ -823,6 +826,29 @@ viewport. A `?graph=feedback` session shows the feedback graph in the headset.
 WebGL stays an explicit backend: `?renderer=webgl` is the only way in, never
 an automatic fallback.
 
+## Headless
+
+`WebGpuGraphExecutor` also runs outside a tab (#228). Dawn's Node bindings
+(the `webgpu` package) provide `navigator.gpu`. `RendererOrchestrator` then
+bootstraps exactly as it does on a page, with a `HeadlessSurface` (an
+offscreen `PresentationTarget`) in place of the canvas context. No executor
+code knows the difference. `bin/chromashift` renders clips and stills through
+the browser's export loop, and the `gpu` Vitest project pins the graph's
+frames:
+
+- **The canonical pixel goldens** (`src/headless/__golden__/`) are the default
+  graph at 1, 3, 7 and 10 layers and every shape and starter preset (`blur`,
+  `warp`, `smear`, `feedback`, `trails3`). They are compared with pixelmatch at
+  the E2E tolerance and run on every push in the `headless` CI job, with no
+  browser involved.
+- **The browser check.** On the SwiftShader Vulkan that `chromium-webgpu`
+  draws with, the headless live frame *is* `e2e/__golden__/default-composite`,
+  `tracer-view` and `quarter-zoom`, byte for byte. The E2E goldens stay the
+  browser's own check.
+
+The CLI, the rasterizer choice and the encoder decision are in
+[HEADLESS.md](HEADLESS.md).
+
 ### Not done yet
 
 - **`history` feedback cycles.** A ring whose oldest slot could close a cycle
@@ -832,6 +858,8 @@ an automatic fallback.
   (see [The compute-fed stamp](#the-compute-fed-stamp-decided)).
 - **The node editor.** `@xyflow/react` in a Graph panel (#177). The IR is useful
   with a named preset and a JSON text field, which is why it is still not here.
+  The same work lets `chromashift render --graph` take a graph document, not
+  only a preset name: `PassGraphSource` names a `GraphPresetName` today.
 
 ## Files
 

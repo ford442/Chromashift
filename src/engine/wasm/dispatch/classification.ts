@@ -21,7 +21,7 @@ import { getImageDataAtNaturalSize, type PixelSource } from '../imageBytes';
  *                   one band index (0–10) per pixel.
  */
 export function classifyPixelsBulkWith(
-  imageData: ImageData,
+  imageData: { readonly data: Uint8Array | Uint8ClampedArray },
   avgLum: number,
   useWasm: boolean,
 ): Int32Array {
@@ -67,8 +67,20 @@ export function classifyImageMaskWith(
 ): { mask: Uint8Array; width: number; height: number } | null {
   const imageData = getImageDataAtNaturalSize(image);
   if (!imageData) return null;
+  return classifyPixelsMaskWith(imageData.data, imageData.width, imageData.height, avgLum, useWasm);
+}
 
-  const { data, width, height } = imageData;
+/**
+ * {@link classifyImageMaskWith} over RGBA bytes already decoded — for a host
+ * with no canvas to read an image through (the headless renderer).
+ */
+export function classifyPixelsMaskWith(
+  data: Uint8Array | Uint8ClampedArray,
+  width: number,
+  height: number,
+  avgLum: number,
+  useWasm: boolean,
+): { mask: Uint8Array; width: number; height: number } {
   const pixelCount = width * height;
 
   // `_computeClassificationMask` (no LUT) is the benchmark/parity twin: every
@@ -87,7 +99,7 @@ export function classifyImageMaskWith(
     return { mask, width, height };
   }
 
-  const bands = classifyPixelsBulkWith(imageData, avgLum, false);
+  const bands = classifyPixelsBulkWith({ data }, avgLum, false);
   const mask = new Uint8Array(pixelCount);
   mask.set(bands);
   return { mask, width, height };

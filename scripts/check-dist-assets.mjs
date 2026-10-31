@@ -2,6 +2,7 @@
 /**
  * Post-build guard: main bundle must stay free of lazy upscaler deps, and ORT
  * wasm must not be emitted into dist/ (runtime loads from VITE_NUNIF_ORT_WASM_BASE).
+ * Nothing of the Node-only headless renderer (src/headless/) may reach dist/ at all.
  */
 
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -99,7 +100,23 @@ for (const chunk of [entryChunkPath]) {
   }
 }
 
+// The headless renderer (src/headless/, docs/HEADLESS.md) runs under Node:
+// Dawn's bindings, sharp, the golden tooling and the CLI must never be bundled,
+// and no chunk may import a `node:` built-in. Every chunk, not just the entry.
+const HEADLESS_LEAKS = [
+  [/(?:\bfrom|\bimport\(|\brequire\()\s*["'](?:webgpu|sharp|pngjs|pixelmatch)["']/, 'imports a Node-only headless dependency'],
+  [/(?:\bfrom|\bimport\(|\brequire\()\s*["']node:/, 'imports a node: built-in'],
+  [/dawn\.node|@img\/sharp/, 'carries Dawn\'s or sharp\'s native loader'],
+  [/HeadlessSurface|src\/headless\//, 'carries headless renderer code'],
+];
+for (const file of allFiles.filter((f) => /\.m?js$/.test(f))) {
+  const text = await readFile(file, 'utf8');
+  for (const [pattern, what] of HEADLESS_LEAKS) {
+    if (pattern.test(text)) fail(`${file} ${what} — src/headless/ is Node-only and must stay out of dist/`);
+  }
+}
+
 console.log(
   'check:dist — OK (no ort-wasm*.wasm in dist; main chunk clean; '
-  + 'analysis and motion workers are their own chunks)',
+  + 'analysis and motion workers are their own chunks; no headless code)',
 );

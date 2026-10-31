@@ -4,6 +4,7 @@
  */
 import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../gpu/gpuOptions';
 import { publishDiagnostics } from '../diagnostics';
+import type { PresentationTarget } from './presentationTarget';
 
 export interface WebGpuCanvasOptions {
   colorSpace?: PredefinedColorSpace;
@@ -86,13 +87,12 @@ export function getCanvasToneMappingSupport(): boolean | null {
  * caller falls back to configure-and-catch — once.
  */
 function probeToneMappingFromConfiguration(
-  context: GPUCanvasContext,
+  context: PresentationTarget,
   mode: GPUCanvasToneMappingMode = 'standard',
   format?: GPUTextureFormat,
 ): boolean | null {
-  const readConfiguration = (context as GPUCanvasContext & {
-    getConfiguration?: () => GPUCanvasConfiguration | null;
-  }).getConfiguration;
+  // Absent on a canvas context before Chrome 131.
+  const readConfiguration = context.getConfiguration;
   if (typeof readConfiguration !== 'function') return null;
   try {
     const applied = readConfiguration.call(context);
@@ -109,7 +109,7 @@ function probeToneMappingFromConfiguration(
  * format or tone mapping. The result is cached either way.
  */
 function tryConfigureHdrCanvas(
-  context: GPUCanvasContext,
+  context: PresentationTarget,
   device: GPUDevice,
   format: GPUTextureFormat,
   options: WebGpuCanvasOptions,
@@ -140,7 +140,7 @@ function tryConfigureHdrCanvas(
  * actually applied.
  */
 export function configureWebGpuCanvas(
-  context: GPUCanvasContext,
+  context: PresentationTarget,
   device: GPUDevice,
   format: GPUTextureFormat,
   options?: WebGpuCanvasOptions,
@@ -154,7 +154,7 @@ export function configureWebGpuCanvas(
 }
 
 function configureSdrCanvas(
-  context: GPUCanvasContext,
+  context: PresentationTarget,
   device: GPUDevice,
   format: GPUTextureFormat,
   options: WebGpuCanvasOptions,
@@ -207,7 +207,7 @@ function configureSdrCanvas(
  * configured for whatever the caller configures next; never throws.
  */
 export function probeCanvasHdr(
-  context: GPUCanvasContext,
+  context: PresentationTarget,
   device: GPUDevice,
   format: GPUTextureFormat,
 ): { available: boolean; reason: string } {

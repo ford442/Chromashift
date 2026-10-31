@@ -57,3 +57,6 @@ test-results/shaders/
 test-results/.last-run.json
 # `vitest --coverage` output.
 coverage/
+
+# The headless CI job's CLI smoke output (.github/workflows/ci.yml).
+headless-out/

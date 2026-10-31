@@ -17,10 +17,12 @@ export {
   computeAverageLuminanceWith,
   computeAverageLuminanceStridedWith,
   computeImageAverageLuminanceWith,
+  computePixelsAverageLuminanceWith,
 } from './dispatch/luminance';
 
 export {
   classifyImageMaskWith,
+  classifyPixelsMaskWith,
 } from './dispatch/classification';
 
 export {

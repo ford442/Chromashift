@@ -22,9 +22,15 @@ import {
   publishCanvasHdrBreadcrumbs,
   type WebGpuCanvasOptions,
 } from './canvasConfig';
+import type { PresentationTarget } from './presentationTarget';
 
 export interface WebGpuBootstrapOptions extends RendererCanvasOptions {
-  canvas: HTMLCanvasElement;
+  /** The canvas to present to. Exactly one of `canvas` and `target`. */
+  canvas?: HTMLCanvasElement;
+  /** An offscreen presentation target in place of a canvas (`HeadlessSurface`). */
+  target?: PresentationTarget;
+  /** The SDR present format; defaults to `navigator.gpu.getPreferredCanvasFormat()`. */
+  format?: GPUTextureFormat;
   powerPreference?: GPUPowerPreference;
   canvasOptions?: WebGpuCanvasOptions;
   onRuntimeError?: (error: GpuRuntimeError) => void;
@@ -33,7 +39,8 @@ export interface WebGpuBootstrapOptions extends RendererCanvasOptions {
 export interface WebGpuSession {
   adapter: GPUAdapter;
   device: GPUDevice;
-  context: GPUCanvasContext;
+  /** The primary canvas's context, or the offscreen target bootstrap was given. */
+  context: PresentationTarget;
   format: GPUTextureFormat;
   adapterReport: GpuAdapterReport;
   capabilities: WebGpuCapabilityReport;
@@ -51,7 +58,8 @@ export interface WebGpuSession {
 /**
  * One canvas's WebGPU session on the page's leased device: adapter and device
  * (`adapter.ts`), canvas configuration (`canvasConfig.ts`) and device
- * diagnostics (`gpuErrors.ts`).
+ * diagnostics (`gpuErrors.ts`). An offscreen `target` takes the canvas's
+ * place through the same configure (`presentationTarget.ts`).
  */
 export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<WebGpuSession> {
   const fatal = getGpuFatalError();
@@ -75,12 +83,12 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
   const device = await requestWebGpuDevice(adapter, requestedOptionalFeatures);
   const capabilities = buildWebGpuCapabilityReport(adapter, device, requestedOptionalFeatures);
   const timestampQueryAvailable = capabilities.timestampQueryAvailable;
-  const context = options.canvas.getContext('webgpu');
+  const context = options.target ?? options.canvas?.getContext('webgpu') ?? null;
   if (!context) {
     throw new Error('Failed to get WebGPU context from canvas.');
   }
 
-  const format = navigator.gpu.getPreferredCanvasFormat();
+  const format = options.format ?? navigator.gpu.getPreferredCanvasFormat();
   let canvasOptions: WebGpuCanvasOptions = { ...options.canvasOptions };
   const canvasHdr = probeCanvasHdr(context, device, format);
   publishCanvasHdrBreadcrumbs(canvasHdr.available, canvasHdr.reason);

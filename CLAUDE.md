@@ -17,6 +17,7 @@ npm test          # Vitest: node project (*.test.ts) + happy-dom project (*.dom.
 npm run test:coverage  # The same with v8 coverage (coverage/, gitignored)
 npm run shaders:validate  # naga + glslangValidator over every shader variant (needs naga-cli, glslang)
 npm run test:e2e  # Playwright smoke (WebGL)
+npm run test:gpu  # Vitest `gpu` project: Dawn in Node, pixel goldens (needs a Vulkan driver; docs/HEADLESS.md)
 npm run test:cpp  # C++ host tests (:werror is the CI gate, :asan is opt-in, :simd needs emsdk)
 npm run compile-commands  # cpp/compile_commands.json for clangd (gitignored)
 npm run preview   # Preview the production build locally
@@ -32,9 +33,10 @@ Roadmap: [docs/ROADMAP.md](docs/ROADMAP.md). Testing detail: [AGENTS.md](AGENTS.
 
 ## TypeScript Config Notes
 
-Three project references are used:
+Four project references are used:
 
-- `tsconfig.app.json` — compiles `src/`, includes `vite/client` and `@webgpu/types`
+- `tsconfig.app.json` — compiles `src/` except `src/headless/`, includes `vite/client` and `@webgpu/types`
+- `tsconfig.headless.json` — compiles `src/headless/` (the Node-only renderer and CLI) with `@types/node` added
 - `tsconfig.node.json` — compiles `vite.config.ts` and `vitest.config.ts`, includes `@types/node`
 - `tsconfig.e2e.json` — type-checks `e2e/` against the app's types (breadcrumbs come from `src/engine/diagnostics.ts`)
 

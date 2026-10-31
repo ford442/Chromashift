@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "bin": {
+    "chromashift": "bin/chromashift.mjs"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -15,6 +18,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:gpu": "CHROMASHIFT_GPU_TESTS=1 vitest run --project gpu",
     "shaders:validate": "node scripts/validate-shaders.mjs",
     "test:e2e": "playwright test",
     "test:e2e:webgl": "playwright test --project=chromium",
@@ -54,6 +58,7 @@
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^24.12.0",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/webxr": "^0.5.24",
@@ -67,11 +72,15 @@
     "globals": "^17.4.0",
     "happy-dom": "^20.14.6",
     "knip": "^6.40.0",
+    "pixelmatch": "^8.0.0",
+    "pngjs": "^7.0.0",
+    "sharp": "^0.35.5",
     "tailwindcss": "^4.2.1",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^7.0.0",
     "vitest": "^3.2.7",
+    "webgpu": "^0.6.2",
     "wgsl_reflect": "1.6.0"
   },
   "overrides": {
