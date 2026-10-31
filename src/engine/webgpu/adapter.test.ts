@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getGpuFatalError } from '../gpu/gpuErrors';
 import {
+  adapterFeatureLevel,
   buildWebGpuCapabilityReport,
+  deviceFeatureLevel,
   listAvailableOptionalFeatures,
   logAdapterReport,
   releasePageGpuDevice,
@@ -343,6 +345,106 @@ describe('Retry GPU after a device loss', () => {
   });
 });
 
+describe('compatibility mode', () => {
+  const originalGpu = (navigator as { gpu?: GPU }).gpu;
+
+  beforeEach(() => {
+    resetGpuDeviceGateForTests();
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'gpu', { value: originalGpu, configurable: true });
+    resetGpuDeviceGateForTests();
+    vi.restoreAllMocks();
+  });
+
+  function compatibilityAdapter(options: { maxTextureDimension2D?: number; canDoCore?: boolean; failFirst?: boolean } = {}) {
+    const calls: GPUDeviceDescriptor[] = [];
+    const adapter = {
+      features: new Set(['timestamp-query', ...(options.canDoCore ? ['core-features-and-limits'] : [])]),
+      limits: mockAdapterLimits({ maxTextureDimension2D: options.maxTextureDimension2D ?? 16384 }),
+      requestDevice: vi.fn(async (descriptor: GPUDeviceDescriptor = {}) => {
+        calls.push(descriptor);
+        if (options.failFirst && calls.length === 1) throw new Error('simulated request failure');
+        return liveDevice([...(descriptor.requiredFeatures ?? [])]);
+      }),
+    } as unknown as GPUAdapter;
+    return { adapter, calls };
+  }
+
+  /** A browser over a GL ES / D3D11-class backend: a compatibility-mode adapter, never a core one. */
+  function offerOnlyCompatibility(adapter: GPUAdapter) {
+    const requestAdapter = vi.fn(async (options?: GPURequestAdapterOptions) =>
+      options?.featureLevel === 'compatibility' ? adapter : null);
+    Object.defineProperty(navigator, 'gpu', { value: { requestAdapter }, configurable: true });
+    return requestAdapter;
+  }
+
+  it('asks for a compatibility-mode adapter last, after every core attempt', async () => {
+    const { adapter } = compatibilityAdapter();
+    const requestAdapter = offerOnlyCompatibility(adapter);
+
+    expect(await requestWebGpuAdapter()).toBe(adapter);
+    expect(requestAdapter.mock.calls.map(([options]) => options)).toEqual([
+      { powerPreference: 'high-performance' },
+      { powerPreference: 'low-power' },
+      undefined,
+      { featureLevel: 'compatibility' },
+    ]);
+    expect(adapterFeatureLevel(adapter)).toBe('compatibility');
+  });
+
+  it('never asks for one when a core adapter is offered', async () => {
+    const core = mockAdapter();
+    const requestAdapter = vi.fn(async () => core);
+    Object.defineProperty(navigator, 'gpu', { value: { requestAdapter }, configurable: true });
+
+    expect(await requestWebGpuAdapter()).toBe(core);
+    expect(requestAdapter).toHaveBeenCalledTimes(1);
+    expect(adapterFeatureLevel(core)).toBe('core');
+  });
+
+  it("raises a compatibility device's texture limit to core's, never past the adapter's", async () => {
+    for (const [adapterLimit, requested] of [[16384, 8192], [4096, 4096]] as const) {
+      resetGpuDeviceGateForTests();
+      const { adapter, calls } = compatibilityAdapter({ maxTextureDimension2D: adapterLimit });
+      offerOnlyCompatibility(adapter);
+
+      const device = await requestWebGpuDevice((await requestWebGpuAdapter())!, ['timestamp-query']);
+
+      expect(calls).toEqual([{ requiredLimits: { maxTextureDimension2D: requested }, requiredFeatures: ['timestamp-query'] }]);
+      expect(deviceFeatureLevel(device)).toBe('compatibility');
+      expect(buildWebGpuCapabilityReport(adapter, device, ['timestamp-query']).featureLevel).toBe('compatibility');
+    }
+  });
+
+  it('asks a compatibility adapter that can do core for core, at the default limits', async () => {
+    const { adapter, calls } = compatibilityAdapter({ canDoCore: true });
+    offerOnlyCompatibility(adapter);
+
+    const device = await requestWebGpuDevice((await requestWebGpuAdapter())!, ['timestamp-query']);
+
+    expect(adapterFeatureLevel(adapter)).toBe('core');
+    expect(calls).toEqual([{ requiredFeatures: ['core-features-and-limits', 'timestamp-query'] }]);
+    expect(deviceFeatureLevel(device)).toBe('core');
+  });
+
+  it('drops the raised limit with the optional features on the second strategy', async () => {
+    const { adapter, calls } = compatibilityAdapter({ failFirst: true });
+    offerOnlyCompatibility(adapter);
+
+    await requestWebGpuDevice((await requestWebGpuAdapter())!, ['timestamp-query']);
+
+    expect(calls).toEqual([
+      { requiredLimits: { maxTextureDimension2D: 8192 }, requiredFeatures: ['timestamp-query'] },
+      {},
+    ]);
+  });
+});
+
 describe('logAdapterReport', () => {
   afterEach(() => {
     resetGpuDeviceGateForTests();
@@ -353,6 +455,7 @@ describe('logAdapterReport', () => {
     resetGpuDeviceGateForTests();
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
     const report = {
+      featureLevel: 'core' as const,
       vendor: 'nvidia',
       architecture: 'gcn',
       device: 'pascal',

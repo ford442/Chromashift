@@ -115,7 +115,7 @@ RendererOrchestrator.bootstrap(primaryCanvas)
 
 ## Limits and features
 
-- **Limits / device lease**: one `GPUAdapter` and at most one live `GPUDevice` per page. `requestWebGpuDevice` walks **at most two** strategies — `default-limits` (omit `requiredLimits`) → `no-optional-features` (the same, without the optional features) — then **stops**. There used to be a `canvas-limits` strategy between them, requesting a `maxTextureDimension2D` sized to the canvas; it could never help, because a request that failed on default limits does not succeed by asking for *more*. When the device is lost, `releasePageGpuDevice` drops the adapter with it: an adapter that has made a device is consumed and its second `requestDevice` rejects, so **Retry GPU** starts again from `requestAdapter`. The lease releases itself on `device.lost` (whoever's handler runs first), and a detached `attachDeviceDiagnostics` listener stays silent, so a dead renderer's handler does not report into its successor. A live device is reused; canvas resize reconfigures the context / recreates textures on that device. Queue-create / `E_OUTOFMEMORY` sets `gpuFatal` and never calls `requestDevice` again until reload. React effect re-runs, rAF, and ResizeObserver must not reset `attempt` to 1 (#157 / #158).
+- **Limits / device lease**: one `GPUAdapter` and at most one live `GPUDevice` per page. `requestWebGpuDevice` walks **at most two** strategies — `default-limits` (omit `requiredLimits`; on a compatibility-mode adapter, core's texture size capped at the adapter's, see [Compatibility mode](#compatibility-mode)) → `no-optional-features` (default limits, without the optional features) — then **stops**. There used to be a `canvas-limits` strategy between them, requesting a `maxTextureDimension2D` sized to the canvas; it could never help, because a request that failed on default limits does not succeed by asking for *more*. When the device is lost, `releasePageGpuDevice` drops the adapter with it: an adapter that has made a device is consumed and its second `requestDevice` rejects, so **Retry GPU** starts again from `requestAdapter`. The lease releases itself on `device.lost` (whoever's handler runs first), and a detached `attachDeviceDiagnostics` listener stays silent, so a dead renderer's handler does not report into its successor. A live device is reused; canvas resize reconfigures the context / recreates textures on that device. Queue-create / `E_OUTOFMEMORY` sets `gpuFatal` and never calls `requestDevice` again until reload. React effect re-runs, rAF, and ResizeObserver must not reset `attempt` to 1 (#157 / #158).
 - **Perf HUD timestamps**: `GpuTimestampProfiler` resolves into a two-slot buffer whose slots are **256 bytes apart** — `resolveQuerySet`'s destination offset must be a multiple of 256. Packing the 48-byte payloads end to end put slot 1 at offset 48, failing validation; because the resolve shares the frame's command encoder, that discarded the whole command buffer on every other frame (a steady black blink whenever the HUD was on). The profiler also opts out entirely when `GPUCommandEncoder.prototype.writeTimestamp` is missing, rather than throwing mid-encode after the swap-chain texture has been acquired.
 - **Logs**: one `[Chromashift:GPU] Adapter ready` and one `[Chromashift:GPU] requestDevice` at **info** per session (`attempt` index + strategy). Further strategies are **debug**. Failures are **error** so D3D12 OOM is not buried.
 - **Features**: `listAvailableOptionalFeatures()` filters `CHROMASHIFT_OPTIONAL_FEATURES` (`gpuOptions.ts`) to what the adapter supports. That list is only `timestamp-query` (Perf HUD), `rg11b10ufloat-renderable` (HDR internal targets via `selectInternalColorFormat`) and `texture-formats-tier1` (the GPU analysis lane's `r8uint` storage mask — see *gpu-chores* below). They are **optional**: a failed `requestDevice` retries with `requiredFeatures: []` before giving up. None are required for core rendering. `float32-filterable` is **not** requested — the graph never samples 32-bit float textures. `device.features` after bootstrap is the source of truth (`WebGpuCapabilityReport`).
@@ -123,6 +123,95 @@ RendererOrchestrator.bootstrap(primaryCanvas)
 - **Display colour space**: `buildWebGpuCanvasConfiguration` defaults to `colorSpace: 'srgb'`. The Viewport **Display P3** control sets `display-p3` on every canvas via `RendererOrchestrator.setCanvasColorSpace`. Colour-profile LUTs remain sRGB (documented in [COLOR_PROFILES.md](COLOR_PROFILES.md)).
 - **Output transfer function**: the pipeline works in **linear light** end to end — source images upload as `rgba8unorm-srgb` (so sampling decodes), and the internal targets (`rg11b10ufloat` / `rgba8unorm`) are linear. `navigator.gpu.getPreferredCanvasFormat()` never returns an `-srgb` format, so every pass that renders to the **canvas format** applies the sRGB OETF itself via `encode_display` (`WGSL_OUTPUT_ENCODE`, emitted into the compositor, tracer view, display, heatmap and compare shaders). Omitting it let the display apply its EOTF twice and crushed every frame. The encode is an exact inverse of the upload decode — a passthrough frame round-trips to the bytes that were uploaded — and carries **no tone curve**; values above 1.0 clip at white. Colours authored in display space (letterbox fill, the compare divider) return *before* the encode, or are written as their linear equivalents.
 - **Probe vs renderer breadcrumbs**: `publishWebGpuProbe` writes `window.webgpuProbe` only. `window.usingWebGPU` / `window.rendererType` are set by `publishRendererBreadcrumbs` after device + swapchain exist. A successful adapter probe must not make `waitForWebGPU` return early.
+
+## Compatibility mode
+
+WebGPU has two feature levels. Core is what Chrome, Edge, Safari and Firefox
+hand out on a D3D12 / Metal / Vulkan GPU. **Compatibility mode** is what a
+GL ES / D3D11-class backend can offer: the same API with a few features
+withheld and lower default limits (#228).
+
+**The adapter attempts.** `requestWebGpuAdapter` asks for core first:
+`high-performance`, then `low-power`, then no preference. Only when every one
+of those returns `null` does it ask for `featureLevel: 'compatibility'`. A
+browser without compatibility mode ignores the member, so there the last
+attempt is the previous one again. The level is recorded in
+`window.webgpuProbe.featureLevel` (`'core'` / `'compatibility'`, `null`
+without an adapter), the `Adapter ready` log and the capability report. A
+compatibility adapter that can do core (`core-features-and-limits` among its
+features) gets a core device: its device request asks for that feature.
+
+**Limits.** These are a compatibility device's defaults where they differ
+from core's, read off Dawn:
+
+| Limit | Compatibility | Core |
+|---|---|---|
+| `maxTextureDimension2D` (and 1D) | 4096 | 8192 |
+| `maxColorAttachments` | 4 | 8 |
+| `maxUniformBufferBindingSize` | 16384 | 65536 |
+| `maxComputeInvocationsPerWorkgroup`, `maxComputeWorkgroupSizeX/Y` | 128 | 256 |
+| `maxInterStageShaderVariables` | 15 | 16 |
+| `maxStorageBuffersInVertexStage`, `maxStorageTexturesInVertexStage` | 0 | 8, 4 |
+| `maxStorageBuffersInFragmentStage` | 4 (0 on GL ES) | 8 |
+
+The frame fits all of them except the texture size. A 2× export of a 4K
+canvas, or a large photo, needs more than 4096. So the device request asks for
+`maxTextureDimension2D: min(adapter's, 8192)`, which is core's default and
+never more than the adapter has, and for nothing else. A core device asks for
+no limits at all. An export that is still too large for the device is refused
+by name ("Export size … is larger than this GPU's maxTextureDimension2D"),
+not exported black.
+
+**What it withholds, and what the graph uses.** Each restriction that could
+touch a pipeline is a capability bit in `src/engine/graph/capabilities.ts`
+(`DeviceCapability`):
+
+| Restriction | The pipelines | Bit |
+|---|---|---|
+| Blend state or write mask differing between a pass's color attachments | Every target is `{ format }`, with the default blend and mask (`nodePipelines.ts`, `WebGPUPipelines.ts`, the mip blit), including the two targets of the decay pass | `independent-blend` |
+| `textureLoad` of a depth texture | No depth textures | `depth-texture-load` |
+| Storage buffers / textures in a fragment shader (none on GL ES) | Storage bindings only in compute (`chores/kernels.ts`, `motionFlowKernels.ts`, the stamp kernel) | `fragment-storage` |
+| `r8uint` storage (`texture-formats-tier1`, optional at either level) | The GPU analysis lane's mask; without it the lane declines and the C++ engine runs | `r8uint-storage` |
+| `rgba16float` canvas with `extended` tone mapping | The `hdr-extended` present, probed at bootstrap; SDR otherwise | `hdr-canvas` |
+| One view dimension per texture; no cube arrays | 2D textures and 2D views only | — |
+| `sample_mask`, `sample_index`, sample / linear interpolation | None | — |
+
+`WEBGPU_NEEDS` lists the bits each node kind's program needs. Today it is
+empty, and `hdr-canvas` follows from an `hdr-extended` output. When
+`WebGPURenderer` compiles a variant, it checks the graph against the device's
+bits (`webGpuDeviceCapabilities`). A variant that needs a withheld bit is an
+`unsupported-capability` refusal naming it, reported like any other refusal,
+and the default graph draws.
+
+The audit behind the table was run on Dawn through the headless renderer
+(docs/HEADLESS.md), with the device forced to compatibility mode. Dawn
+validates compatibility mode on any backend. It covered the default graph at
+1, 3, 7 and 10 layers, every other shape at three, every main view (on every
+shape), Quarter Zoom and the export pass modes, with MSAA off and on, and
+produced no validation errors. The one failure
+was a texture over 4096, which the limit request above removes.
+`capabilities.test.ts` pins that no preset variant needs a withheld bit.
+
+**Safari and Firefox** draw the same frame on core WebGPU. What differs is
+already handled:
+
+- The preferred canvas format can be `bgra8unorm` (Safari's is). Readback and
+  export swizzle it (`packRgbaRows`; `e2e/webgpu-bgra-export.spec.ts`).
+- `timestamp-query` can be absent (Safari). The Perf HUD then shows CPU timing.
+- Limits can be lower. No limit is ever requested above the adapter's: none on
+  core, the texture size above on compatibility mode.
+- Canvas HDR is probed, as everywhere (`getConfiguration` where the browser
+  has it, configure-and-catch where it does not).
+
+Playwright's `firefox` and `webkit` projects run `webgpu-smoke.spec.ts` and
+`graph-executor.spec.ts` on each browser's default WebGPU exposure. A test
+skips only when the build exposes no `navigator.gpu`
+(`webgpuProbe.stage === 'navigator-gpu'`), and the SwiftShader frame goldens
+become a content check there. In CI they run where the browsers ship WebGPU:
+Firefox on `windows-latest`, WebKit on `macos-latest`. Both are non-blocking
+until they have been green twice. Playwright's Linux builds expose no
+`navigator.gpu` (Firefox's is behind `dom.webgpu.enabled` and then
+blocklisted without a GPU), so locally on Linux every test skips.
 
 ## gpu-chores: compute device adoption
 
@@ -190,7 +279,8 @@ After canvas resize or DPR changes, `RendererOrchestrator.resizeAll()` reconfigu
 
 | Requirement | Notes |
 |---|---|
-| Browser | Chrome 113+, Edge 113+, or Chrome Canary with WebGPU enabled |
+| Browser | Chrome 113+, Edge 113+, Safari 26+, Firefox 141+ on Windows (other Firefox platforms as they ship WebGPU) |
+| Feature level | Core, or [compatibility mode](#compatibility-mode) on a GL ES / D3D11-class GPU |
 | GPU | Any adapter that exposes `rgba16float` render targets (WebGPU core); discrete GPUs recommended for 4K+ canvases |
 | RAM | 8K intermediate textures need adapters with `maxTextureDimension2D ≥ 8192` |
 | Flags | If WebGPU is missing: `chrome://flags/#enable-unsafe-webgpu` (older builds) |
@@ -209,4 +299,4 @@ Pure helpers are covered by Vitest without a React tree:
 npm test
 ```
 
-Tests live beside each module (`adapter.test.ts`, `canvasConfig.test.ts`, `gpuErrors.test.ts`, `gpuOptions.test.ts`, `webgl2Context.test.ts`) and in `src/engine/RendererOrchestrator.test.ts` (Retry GPU on a fresh adapter, one error-scope pop, detachable device-lost listeners, refused secondary pipelines), `src/engine/webgpu/GpuReadback.test.ts` (BGRA → RGBA readback) and `src/engine/webgpu/WebGPUPipelines.test.ts` (compiler messages). In the browser, `e2e/webgpu-device-loss.spec.ts` destroys the device and clicks **Retry GPU**, and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.
+Tests live beside each module (`adapter.test.ts` — including the compatibility-mode attempt and its limits —, `canvasConfig.test.ts`, `gpuErrors.test.ts`, `gpuOptions.test.ts`, `webgl2Context.test.ts`) and in `src/engine/RendererOrchestrator.test.ts` (Retry GPU on a fresh adapter, one error-scope pop, detachable device-lost listeners, refused secondary pipelines), `src/engine/webgpu/GpuReadback.test.ts` (BGRA → RGBA readback) and `src/engine/webgpu/WebGPUPipelines.test.ts` (compiler messages). `src/engine/graph/capabilities.test.ts` pins the capability bits and that no preset variant needs a bit compatibility mode withholds. In the browser, `e2e/webgpu-device-loss.spec.ts` destroys the device and clicks **Retry GPU**, and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.

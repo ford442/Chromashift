@@ -1,5 +1,6 @@
 /**
- * The WebGPU adapter and the page's device gate: one adapter, at most two
+ * The WebGPU adapter and the page's device gate: one adapter (core, or a
+ * compatibility-mode one when no core adapter is offered), at most two
  * `requestDevice` strategies, and the adapter / capability reports.
  */
 import {
@@ -14,7 +15,12 @@ import {
   toBootstrapRuntimeError,
 } from '../gpu/gpuErrors';
 
+/** WebGPU's feature levels (`requestAdapter({ featureLevel })`). */
+export type GpuFeatureLevel = 'core' | 'compatibility';
+
 export interface GpuAdapterReport {
+  /** The level a device from this adapter runs at. */
+  featureLevel: GpuFeatureLevel;
   vendor: string;
   architecture: string;
   device: string;
@@ -28,6 +34,8 @@ export interface GpuAdapterReport {
 }
 
 export interface WebGpuCapabilityReport {
+  /** The level the device was granted. */
+  featureLevel: GpuFeatureLevel;
   adapterOptionalFeatures: GPUFeatureName[];
   requestedOptionalFeatures: GPUFeatureName[];
   grantedOptionalFeatures: GPUFeatureName[];
@@ -79,6 +87,23 @@ function emptyGpuDeviceGate(): GpuDeviceGate {
 let gpuDeviceGate: GpuDeviceGate = emptyGpuDeviceGate();
 
 /**
+ * Adapters the compatibility-mode attempt returned. A device from one runs at
+ * compatibility level unless the adapter can do core
+ * (`core-features-and-limits`), which its device request then asks for.
+ */
+const compatibilityAdapters = new WeakSet<GPUAdapter>();
+
+/** The level each device the gate acquired was granted. */
+const deviceFeatureLevels = new WeakMap<GPUDevice, GpuFeatureLevel>();
+
+/**
+ * Core's default `maxTextureDimension2D`, which the frame is sized against.
+ * A compatibility-mode device defaults to 4096, so a 4K canvas's 2× export
+ * or a large photo would fail validation and draw black.
+ */
+const CORE_MAX_TEXTURE_DIMENSION_2D = 8192;
+
+/**
  * Drop a lost/abandoned device so Retry GPU can acquire a new one. Does not
  * reset the fatal breaker.
  *
@@ -125,11 +150,53 @@ export async function requestWebGpuAdapter(
     }
 
     const fallback = await navigator.gpu!.requestAdapter();
-    if (fallback) gpuDeviceGate.adapter = fallback;
-    return fallback;
+    if (fallback) {
+      gpuDeviceGate.adapter = fallback;
+      return fallback;
+    }
+
+    // Last, compatibility mode: what a GL ES / D3D11-class backend offers when
+    // it has no core adapter. A browser without compatibility mode ignores
+    // the member, so there this is the request above again.
+    const compatibility = await navigator.gpu!.requestAdapter({ featureLevel: 'compatibility' });
+    if (compatibility) {
+      compatibilityAdapters.add(compatibility);
+      gpuDeviceGate.adapter = compatibility;
+    }
+    return compatibility;
   })();
 
   return gpuDeviceGate.adapterPromise;
+}
+
+/**
+ * The level a device from `adapter` runs at: core, unless the adapter came
+ * from the compatibility-mode attempt and cannot do core.
+ */
+export function adapterFeatureLevel(adapter: GPUAdapter): GpuFeatureLevel {
+  return compatibilityAdapters.has(adapter) && !adapter.features.has('core-features-and-limits')
+    ? 'compatibility'
+    : 'core';
+}
+
+/** The level `device` was granted; `core` for a device the gate did not acquire. */
+export function deviceFeatureLevel(device: GPUDevice): GpuFeatureLevel {
+  return deviceFeatureLevels.get(device) ?? 'core';
+}
+
+/**
+ * The limits a device request asks for, never above the adapter's own.
+ * On a core adapter that is none: the frame fits core's defaults, so asking
+ * for more could only make a request fail that would otherwise succeed. On a
+ * compatibility-mode adapter it is core's texture size, which the frame needs
+ * (the audit in docs/gpu-bootstrap.md § Compatibility mode found every other
+ * limit within compatibility's defaults), capped at what the adapter has.
+ */
+function deriveRequiredLimits(adapter: GPUAdapter): GPUDeviceDescriptor['requiredLimits'] {
+  if (adapterFeatureLevel(adapter) === 'core') return undefined;
+  return {
+    maxTextureDimension2D: Math.min(adapter.limits.maxTextureDimension2D, CORE_MAX_TEXTURE_DIMENSION_2D),
+  };
 }
 
 interface DeviceRequestStrategy {
@@ -139,16 +206,25 @@ interface DeviceRequestStrategy {
 }
 
 /**
- * Default limits with the optional features, then default limits without
- * them. Limits are never raised: the frame fits the defaults, so asking for
- * more could only make a request fail that would otherwise succeed.
+ * The frame's limits with the optional features, then default limits without
+ * them. The frame's limits are the defaults, except on a compatibility-mode
+ * adapter ({@link deriveRequiredLimits}). A compatibility adapter that can do
+ * core asks for `core-features-and-limits` in both, which makes the device core.
  */
-function buildDeviceRequestStrategies(requestedFeatures: GPUFeatureName[]): DeviceRequestStrategy[] {
+function buildDeviceRequestStrategies(
+  adapter: GPUAdapter,
+  requestedFeatures: GPUFeatureName[],
+): DeviceRequestStrategy[] {
+  const levelFeatures: GPUFeatureName[] = compatibilityAdapters.has(adapter)
+    && adapter.features.has('core-features-and-limits')
+    ? ['core-features-and-limits']
+    : [];
+  const requiredLimits = deriveRequiredLimits(adapter);
   const strategies: DeviceRequestStrategy[] = [
-    { name: 'default-limits', requiredLimits: undefined, features: requestedFeatures },
+    { name: 'default-limits', requiredLimits, features: [...levelFeatures, ...requestedFeatures] },
   ];
-  if (requestedFeatures.length > 0) {
-    strategies.push({ name: 'no-optional-features', requiredLimits: undefined, features: [] });
+  if (requestedFeatures.length > 0 || requiredLimits) {
+    strategies.push({ name: 'no-optional-features', requiredLimits: undefined, features: levelFeatures });
   }
   return strategies.slice(0, MAX_DEVICE_REQUEST_STRATEGIES);
 }
@@ -177,7 +253,7 @@ async function acquireWebGpuDevice(
   adapter: GPUAdapter,
   requiredFeatures: readonly GPUFeatureName[],
 ): Promise<GPUDevice> {
-  const strategies = buildDeviceRequestStrategies([...requiredFeatures]);
+  const strategies = buildDeviceRequestStrategies(adapter, [...requiredFeatures]);
 
   let lastError: unknown;
   for (const strategy of strategies) {
@@ -191,7 +267,12 @@ async function acquireWebGpuDevice(
     };
 
     try {
-      return await adapter.requestDevice(descriptor);
+      const device = await adapter.requestDevice(descriptor);
+      deviceFeatureLevels.set(
+        device,
+        compatibilityAdapters.has(adapter) && !device.features.has('core-features-and-limits') ? 'compatibility' : 'core',
+      );
+      return device;
     } catch (error) {
       lastError = error;
       console.error('[Chromashift:GPU] requestDevice failed', {
@@ -259,6 +340,7 @@ export function buildWebGpuCapabilityReport(
   const grantedOptionalFeatures = requestedOptionalFeatures.filter((feature) => device.features.has(feature));
   const missingRequestedFeatures = requestedOptionalFeatures.filter((feature) => !device.features.has(feature));
   return {
+    featureLevel: deviceFeatureLevel(device),
     adapterOptionalFeatures,
     requestedOptionalFeatures: [...requestedOptionalFeatures],
     grantedOptionalFeatures,
@@ -296,6 +378,7 @@ export function buildAdapterReport(
   adapter: GPUAdapter,
 ): GpuAdapterReport {
   return {
+    featureLevel: adapterFeatureLevel(adapter),
     vendor: adapterInfo.vendor,
     architecture: adapterInfo.architecture,
     device: adapterInfo.device,

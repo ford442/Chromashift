@@ -56,8 +56,8 @@ Detection runs via `detectVideoCodecSupport()` (sync, panel bootstrap) and `prob
 |---------|----------------------|------------------------|----------------|---------------|--------------|
 | Chrome 113+ | VP9 WebM | VP9 WebM | `video/webm;codecs=vp9` | Yes (primary) | Yes (fallback) |
 | Edge 113+ | VP9 WebM | VP9 WebM | `video/webm;codecs=vp9` | Yes | Yes |
-| Firefox 128+ | VP8 WebM (when supported) | VP8 WebM | `video/webm` | No stable WebGPU | Yes |
-| Safari 17+ | H.264 MP4 | H.264 MP4 | `video/mp4;codecs=avc1` | Limited | Yes |
+| Firefox 128+ | VP8 WebM (when supported) | VP8 WebM | `video/webm` | Firefox 141+ on Windows | Yes |
+| Safari 17+ | H.264 MP4 | H.264 MP4 | `video/mp4;codecs=avc1` | Safari 26+ | Yes |
 
 Notes:
 

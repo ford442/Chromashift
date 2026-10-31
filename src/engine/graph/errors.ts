@@ -15,7 +15,8 @@ export type GraphErrorCode =
   | 'output-kind'
   | 'unreachable-output'
   | 'invalid-param'
-  | 'unsupported-node';
+  | 'unsupported-node'
+  | 'unsupported-capability';
 
 export class PassGraphError extends Error {
   readonly code: GraphErrorCode;

@@ -5,6 +5,11 @@
 > an automatic rescue for a failed WebGPU boot. Default sessions require
 > WebGPU; adapter/device failure still **hard-fails** with the probe overlay.
 
+It is not the Firefox or Safari path either: both draw on WebGPU (Safari 26+,
+Firefox 141+ on Windows), and a GPU whose driver only reaches GL ES / D3D11
+gets WebGPU through compatibility mode before anyone needs WebGL (#228,
+[gpu-bootstrap.md § Compatibility mode](gpu-bootstrap.md#compatibility-mode)).
+
 Issue [#133](https://github.com/ford442/Chromashift/issues/133) removed silent
 `WebGPU → WebGL` fallback so Chrome-vs-Edge device bugs could not hide behind
 WebGL. Issue [#141](https://github.com/ford442/Chromashift/issues/141) restores
@@ -32,6 +37,8 @@ before the orchestrator. It stops **before** `requestDevice()`. Explicit WebGL
 sessions skip the probe so nothing is left for gpu-chores to adopt.
 
 Stages: `secure-context` → `navigator-gpu` → `adapter` → `device` → `context` → `ok`.
+The `adapter` stage asks for core first and for a compatibility-mode adapter
+last; `featureLevel` records which one boot got.
 
 On WebGPU failure the app shows a **blocking** error screen naming the stage,
 reason, browser, and adapter.
@@ -39,7 +46,7 @@ reason, browser, and adapter.
 ## Breadcrumbs
 
 ```js
-window.webgpuProbe        // { ok, browser, stage, reason, adapter, features, limits } (WebGPU path)
+window.webgpuProbe        // { ok, browser, stage, reason, adapter, featureLevel, features, limits } (WebGPU path)
 window.usingWebGPU        // true only when device + swapchain are live
 window.usingWebGL         // true only after a successful explicit WebGL bootstrap
 window.rendererType       // 'webgpu' | 'webgl' | null on a hard-failed boot

@@ -168,6 +168,11 @@ async function captureFrame(page: Page, target: string, variant = /./): Promise<
  */
 function expectHandEncoderFrame(frame: CanvasFrame, name: string): void {
   expectContent(frame, `the ${name} frame`);
+  // The goldens are SwiftShader's, read in `chromium-webgpu`. Firefox and
+  // WebKit draw on another rasterizer, which samples and rounds differently
+  // (docs/HEADLESS.md § Which rasterizer), so there a frame only has to have
+  // content; the spec's frame-against-frame comparisons still hold.
+  if (test.info().project.name !== GOLDEN_PROJECT) return;
   if (UPDATING_FRAME_GOLDENS) {
     writeFrameGolden(name, frame);
     return;
@@ -179,6 +184,9 @@ function expectHandEncoderFrame(frame: CanvasFrame, name: string): void {
   expect(differingPixels, `${name}: too many pixels differ from the hand encoder's frame`)
     .toBeLessThanOrEqual(frame.width * frame.height * 0.0005);
 }
+
+/** The project the frame goldens were captured in. */
+const GOLDEN_PROJECT = 'chromium-webgpu';
 
 /** A frame with more than one colour — the renderer drew *something*. */
 function expectContent(frame: CanvasFrame, what: string): void {

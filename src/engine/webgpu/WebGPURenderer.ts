@@ -12,6 +12,7 @@ import {
   type GraphVariant,
   type PassGraphSource,
 } from '../graph';
+import { missingCapabilityError, webGpuDeviceCapabilities } from '../graph/capabilities';
 import { WebGpuGraphExecutor, type GraphOutputTextures } from '../graph/exec/WebGpuGraphExecutor';
 import { buildEncodePlan, motionFieldUse, type MotionFieldUse } from '../graph/exec/plan';
 import type { CompiledGraph } from '../graph/types';
@@ -40,6 +41,8 @@ import {
   selectInternalColorFormat,
 } from '../gpu/gpuOptions';
 import { publishDiagnostic } from '../diagnostics';
+import { deviceFeatureLevel } from './adapter';
+import { getCanvasHdrSupport } from './canvasConfig';
 
 /**
  * WebGPURenderer — one canvas's WebGPU frame, drawn by the pass-graph
@@ -284,6 +287,15 @@ export class WebGPURenderer {
         entry = compileGraph(source.build(variant), 'webgpu');
         // Planning is where an encodable-but-not-drawable graph is refused.
         buildEncodePlan(entry);
+        // And here one that needs what this device withholds (compatibility
+        // mode), by name, before the device fails its pipelines.
+        const missing = missingCapabilityError(entry.graph, webGpuDeviceCapabilities({
+          featureLevel: deviceFeatureLevel(this.device),
+          features: this.device.features,
+          limits: this.device.limits,
+          hdrCanvas: getCanvasHdrSupport() === true,
+        }));
+        if (missing) throw missing;
         this.variantOrigins.set(entry, { name: source.name, key });
       } catch (error) {
         entry = passGraphRefusal(error);
@@ -527,6 +539,16 @@ export class WebGPURenderer {
     const height = Math.max(1, Math.floor(options.height));
     const fps = options.fps ?? 30;
     const passMode = options.passMode ?? 'composite';
+    // A texture past the device's limit fails validation and the export comes
+    // out black. Refuse it by name instead: a compatibility-mode device may be
+    // capped at 4096 (adapter.ts raises it to core's 8192 where it can).
+    const { maxTextureDimension2D } = this.device.limits;
+    if (width > maxTextureDimension2D || height > maxTextureDimension2D) {
+      throw new Error(
+        `Export size ${width}×${height} is larger than this GPU's maxTextureDimension2D (${maxTextureDimension2D}). `
+        + 'Lower the export resolution.',
+      );
+    }
 
     // An export is always SDR, so on an HDR canvas its variant may never have
     // drawn: wait for the device to validate it rather than export a black
