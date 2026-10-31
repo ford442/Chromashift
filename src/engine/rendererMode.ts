@@ -1,6 +1,9 @@
 import type { RendererBackend } from './types/RendererContracts';
 import { publishDiagnostics } from './diagnostics';
 
+/** Which compute implementation runs the bulk pixel work. */
+export type EngineMode = 'ts' | 'wasm';
+
 const STORAGE_KEY = 'chromashift.renderer';
 
 /**

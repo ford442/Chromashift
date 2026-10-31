@@ -50,6 +50,12 @@ npm run preview   # Preview the production build locally
 
 ## Architecture
 
+**Dependency direction: UI imports engine; the engine does not import UI.** Panels, hooks and
+`App.tsx` call into `src/engine/`; nothing under `src/engine/` may import `src/components/`,
+`src/hooks/` or `App` (type-only imports included). Shared names such as `OverlayImageSource`
+and `EngineMode` live in the engine and `components/overlay/types.ts` re-exports them.
+`no-restricted-imports` in `eslint.config.js` enforces this in `npm run lint` (the `web` CI job).
+
 This tree covers every top-level directory under `src/`; file comments are illustrative,
 not exhaustive — grep the directory itself for the full file list.
 
