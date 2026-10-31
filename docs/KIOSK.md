@@ -56,7 +56,7 @@ Press **Esc** again after restoring panels to use NUNIF normally. Remove `?kiosk
 | **Network** | Host `images.json` and corpus on fast LAN or local static server for offline installs |
 | **Diagnostic GL** | `?renderer=webgl` for screenshots / XR — not an automatic WebGPU rescue |
 
-Avoid Firefox/Safari for production installs until stable WebGPU is available. Do not treat `?renderer=webgl` as a silent kiosk fallback.
+Chrome and Edge are the tested kiosk browsers. Safari 26+ and Firefox 141+ (Windows) draw on WebGPU too, but CI covers them only with the non-blocking Playwright projects (#228), so try an install on them before relying on it. Do not treat `?renderer=webgl` as a silent kiosk fallback.
 
 ## GPU recovery
 

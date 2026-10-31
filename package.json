@@ -23,6 +23,7 @@
     "test:e2e": "playwright test",
     "test:e2e:webgl": "playwright test --project=chromium",
     "test:e2e:webgpu": "playwright test --project=chromium-webgpu",
+    "test:e2e:browsers": "playwright test --project=firefox --project=webkit",
     "test:e2e:update": "playwright test --update-snapshots",
     "build:wasm": "npm run codegen && make -C cpp release",
     "build:wasm:debug": "npm run codegen && make -C cpp debug",
@@ -37,6 +38,7 @@
     "test:cpp:asan": "make -C cpp test-asan",
     "test:cpp:simd": "make -C cpp test-simd",
     "compile-commands": "make -C cpp compile-commands",
+    "check:compile-commands": "node scripts/check-compile-commands.mjs",
     "bench:wasm": "node scripts/bench-wasm.mjs"
   },
   "dependencies": {

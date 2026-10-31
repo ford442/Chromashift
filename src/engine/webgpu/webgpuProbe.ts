@@ -20,7 +20,7 @@
  * `docs/webgl-fallback.md`.
  */
 
-import { readAdapterInfo, requestWebGpuAdapter } from './adapter';
+import { adapterFeatureLevel, readAdapterInfo, requestWebGpuAdapter, type GpuFeatureLevel } from './adapter';
 import { publishDiagnostic } from '../diagnostics';
 
 /** How far boot got before it stopped. */
@@ -56,6 +56,11 @@ export interface WebGpuProbeResult {
   reason: string | null;
   /** Adapter identity, or `null` when no adapter was obtained. */
   adapter: WebGpuProbeAdapter | null;
+  /**
+   * The level the adapter was granted at — `compatibility` when only the
+   * compatibility-mode attempt found one (`adapter.ts`) — or `null` without one.
+   */
+  featureLevel: GpuFeatureLevel | null;
   features: string[];
   limits: WebGpuProbeLimits | null;
 }
@@ -111,6 +116,7 @@ function emptyResult(stage: WebGpuProbeStage, reason: string | null): WebGpuProb
     stage,
     reason,
     adapter: null,
+    featureLevel: null,
     features: [],
     limits: null,
   };
@@ -195,6 +201,7 @@ export async function probeWebGPU(): Promise<WebGpuProbeResult> {
     stage: 'ok',
     reason: null,
     adapter: adapterFields,
+    featureLevel: adapterFeatureLevel(adapter),
     features: [...adapter.features],
     limits: {
       maxTextureDimension2D: limits?.maxTextureDimension2D ?? 0,

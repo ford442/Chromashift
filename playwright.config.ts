@@ -49,6 +49,21 @@ export default defineConfig({
       },
       testMatch: /webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts/,
     },
+    // WebGPU in Firefox and WebKit (#228): the smoke and the executor specs,
+    // on each browser's default WebGPU exposure. Where the build exposes no
+    // `navigator.gpu` (Playwright's Linux builds, today) each test skips on
+    // `webgpuProbe.stage` (`waitForWebGPU`), and the frame goldens, which are
+    // SwiftShader's, become a content check. Non-blocking in CI.
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+      testMatch: /webgpu-smoke\.spec\.ts|graph-executor\.spec\.ts/,
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+      testMatch: /webgpu-smoke\.spec\.ts|graph-executor\.spec\.ts/,
+    },
   ],
   webServer: {
     command: 'npm run dev',

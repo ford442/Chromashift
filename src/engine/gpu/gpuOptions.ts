@@ -189,7 +189,9 @@ export function internalColorFormatBytesPerPixel(format: GPUTextureFormat): numb
  *
  * `high-performance` first (discrete GPU on a laptop), `low-power` second (some
  * Chrome builds return null for `high-performance` under battery saver), then a
- * preference-less call so a machine with exactly one adapter still boots.
+ * preference-less call so a machine with exactly one adapter still boots, and
+ * last `featureLevel: 'compatibility'` for a GL ES / D3D11-class backend that
+ * offers no core adapter (`adapter.ts`).
  */
 export const WEBGPU_POWER_PREFERENCE_ATTEMPTS = [
   'high-performance',

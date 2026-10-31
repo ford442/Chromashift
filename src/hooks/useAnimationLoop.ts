@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { GPU_TIMING_HISTORY_SIZE } from '../engine/webgpu/GpuTimestampProfiler';
 import { buildRendererState } from '../engine/buildRendererState';
-import { advanceAngles, effectiveLayerScaleForMultiView, isQuadCompareLayout, isTwoSlotCompareLayout } from '../engine/compareViews';
+import { effectiveLayerScaleForMultiView, isQuadCompareLayout, isTwoSlotCompareLayout } from '../engine/compareViews';
+import { advanceAngles } from '../engine/math/rotation';
 import { renderTelemetry } from '../engine/telemetryStore';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { isXrImmersiveActive } from '../engine/xr/xrSupport';

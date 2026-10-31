@@ -28,5 +28,4 @@ export {
   classifyImageMaskWith,
   classifyPixelsMaskWith,
   durationToDecayWith,
-  advanceAnglesBy,
 } from './wasm/dispatch';
