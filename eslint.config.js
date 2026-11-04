@@ -38,4 +38,19 @@ export default defineConfig([
       }],
     },
   },
+  // UI imports engine; engine does not import UI. Panels, hooks and App call the
+  // engine, so `src/engine/` stays reusable by the headless CLI and sibling apps
+  // (see AGENTS.md, Architecture). Type-only imports count.
+  {
+    files: ['src/engine/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          regex: '(^|/)(components|hooks)(/|$)|(^|/)App(\\.tsx?)?$',
+          allowTypeImports: false,
+          message: 'src/engine/ must not import UI (components/, hooks/, App). UI imports engine, not the reverse; move shared types into engine/.',
+        }],
+      }],
+    },
+  },
 ])

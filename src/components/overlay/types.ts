@@ -5,9 +5,10 @@ import type { PresetsPanelProps } from './PresetsPanel';
 import type { RendererBackend } from '../../engine/types/RendererContracts';
 
 export type ReferenceBlendMode = 'hidden' | 'overlay' | 'split' | 'checker' | 'difference' | 'edge';
-/** Which image feeds the viewport blend overlay (when blend mode is not hidden). */
-export type OverlayImageSource = 'source' | 'reference' | 'previous' | 'separated';
-export type EngineMode = 'ts' | 'wasm';
+// Defined in the engine (it must not import UI); re-exported so panels keep their import sites.
+import type { OverlayImageSource } from '../../engine/library/overlayImageSource';
+import type { EngineMode } from '../../engine/rendererMode';
+export type { OverlayImageSource, EngineMode };
 /**
  * Index of a band layer, `0 … layers.count - 1`.
  *
