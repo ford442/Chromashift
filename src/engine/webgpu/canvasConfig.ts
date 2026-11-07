@@ -4,6 +4,7 @@
  */
 import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../gpu/gpuOptions';
 import { publishDiagnostics } from '../diagnostics';
+import { resolvePresentation } from '../color/presentation';
 import type { PresentationTarget } from './presentationTarget';
 
 export interface WebGpuCanvasOptions {
@@ -31,7 +32,13 @@ export function buildWebGpuCanvasConfiguration(
     // exports and the collision-stats blit all read offscreen targets — and
     // an unused COPY_SRC can keep the compositor off its scanout path.
     usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    colorSpace: options?.colorSpace ?? 'srgb',
+    // The tag follows the pixel path `color/presentation.ts` decides: the
+    // compositor converts into Display P3 before the canvas is tagged it,
+    // and Canvas HDR stays extended sRGB.
+    colorSpace: resolvePresentation({
+      colorSpace: options?.colorSpace === 'display-p3' ? 'display-p3' : 'srgb',
+      presentation: hdr ? 'hdr-extended' : 'sdr',
+    }).space,
   };
 
   if (hdr) {

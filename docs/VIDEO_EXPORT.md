@@ -48,6 +48,14 @@ Chromashift prefers **WebCodecs** when `VideoEncoder.isConfigSupported()` succee
 
 **mediabunny** (MPL-2.0) is lazy-loaded on first export click — it is not in the initial bundle. `npm run check:dist` asserts the main `index-*.js` chunk contains no `mediabunny` reference.
 
+### Colour space
+
+WebM / MP4 exports are SDR **sRGB**, whatever `viewport.colorSpace` the canvas
+presents in. The export loop renders with `presentationSpace: 'srgb'` (no
+Display-P3 conversion), because neither encoding path can store a colour space
+the muxer would carry. Stills are different: *Export Still* writes a PNG tagged
+with the presentation space actually applied (`docs/COLOR_PROFILES.md`).
+
 ## Browser codec support matrix
 
 Detection runs via `detectVideoCodecSupport()` (sync, panel bootstrap) and `probeVideoExportCapabilities()` (async, at export resolution) in `src/engine/videoExport/videoCodecs.ts`.

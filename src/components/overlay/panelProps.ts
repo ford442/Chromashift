@@ -166,6 +166,7 @@ const DIAGNOSTICS_KEYS = keysOf<DiagnosticsPanelProps>({
   onApplyPerformanceDegrade: true,
   onFreezeInspect: true,
   onExportTracer: true,
+  onExportStill: true,
   onTracerInspectHeatmapToggle: true,
   onTracerInspectZoomChange: true,
   onTracerInspectExposureChange: true,

@@ -112,6 +112,14 @@ pass/fail library would need a custom action on every leaf to get it.
 - **v7 and earlier → v8 Canvas HDR:** `viewport.canvasHdr` is `false`.
 - **v6 and earlier → v7 layer count:** documents hydrate as `layers.count: 3` with their angles / rates / opacities unchanged (see the v7 section above).
 - **v3 → v4 canvas colour space:** missing `viewport.colorSpace` defaults to `srgb`. Display P3 is opt-in.
+- **`display-p3` now converts, not just tags.** Before presentation conversion
+  existed, `colorSpace: "display-p3"` only re-tagged the WebGPU canvas, so a P3
+  display showed sRGB bytes in a wider gamut (dull, mis-tagged). The compositor
+  now converts sRGB → Display P3 before tagging (`docs/COLOR_PROFILES.md`), so
+  documents and URLs that said `display-p3` **look different** — they now show
+  the intended hues. This is deliberate: the stored enum is unchanged, so there
+  is no schema bump, and the old mis-tag is not kept for old URLs because it was
+  never the pictured intent. `srgb` documents are byte-identical.
 - **v2 → v3 colour profiles:** documents that predate profiles migrate to `cr0p-classic`, the look they were saved with. An embedded profile table is re-validated on read and dropped when invalid or when its `id` doesn't match `colorProfileId`. Share URLs omit the table and carry the id alone to stay short.
 - **v1 → v2 defaults:** Missing reactive toggles default to `false`. Missing `viewport` is hoisted from legacy `output.viewportQuarterZoom` / `viewportHalfOverlay` when present. Missing `compare` and `kiosk` default to the app's initial single-view / non-kiosk state; a partial `compare` fills in from the same default.
 - **Kiosk precedence:** When both a preset and `?kiosk=1` are present, the URL installation bootstrap wins (hides chrome, forces autoplay, etc.).

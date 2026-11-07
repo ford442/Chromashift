@@ -21,6 +21,8 @@ import {
 import { configureWebGpuCanvas, type WebGpuCanvasOptions } from './webgpu/canvasConfig';
 import { bootstrapWebGpu, type WebGpuSession } from './webgpu/webgpuSession';
 import type { PresentationTarget } from './webgpu/presentationTarget';
+import { publishDiagnostics } from './diagnostics';
+import { resolvePresentation } from './color/presentation';
 import { createWebGL2Context, watchWebGL2Context } from './webgl/webgl2Context';
 import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from './types/RendererContracts';
 
@@ -314,8 +316,22 @@ export class RendererOrchestrator {
    */
   setCanvasColorSpace(colorSpace: PredefinedColorSpace): void {
     this.canvasOptions = { ...this.canvasOptions, colorSpace };
+    this.publishPresentation();
     this.session?.setCanvasOptions(this.canvasOptions);
     this.resizeAll();
+  }
+
+  private publishPresentation(): void {
+    const { space } = resolvePresentation({
+      colorSpace: this.canvasOptions.colorSpace === 'display-p3' ? 'display-p3' : 'srgb',
+      presentation: this.canvasOptions.presentation,
+    });
+    publishDiagnostics({
+      presentationColorSpace: space,
+      presentationNote: space === 'display-p3'
+        ? 'Display P3: sRGB→P3 converted in the compositor; canvas tagged display-p3'
+        : null,
+    });
   }
 
   /**
@@ -326,6 +342,7 @@ export class RendererOrchestrator {
    */
   setCanvasPresentation(presentation: CanvasPresentation): void {
     this.canvasOptions = { ...this.canvasOptions, presentation };
+    this.publishPresentation();
     this.session?.setCanvasOptions(this.canvasOptions);
     this.resizeAll();
   }

@@ -50,7 +50,8 @@ import { createTarget, destroyTarget, type RenderTarget } from './resources';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { WebGLRenderViewport } from './types';
 import { publishDiagnostic, publishDiagnostics } from '../diagnostics';
-import { webglInternalFormatNote } from '../gpu/gpuOptions';
+import { webglInternalFormatNote, type DisplayColorSpace } from '../gpu/gpuOptions';
+import { tagWebGLDrawingBuffer, webglPresentationNote } from './presentationTag';
 
 export type { WebGLRenderViewport } from './types';
 
@@ -122,6 +123,8 @@ export class WebGLRenderer implements ChromashiftRenderer {
   private graphPrimary = true;
   /** The last frame's layer count, for `cpuMotionFieldUse`. */
   private lastLayerCount = DEFAULT_LAYER_COUNT;
+  private presentRequested: DisplayColorSpace | null = null;
+  private presentApplied: DisplayColorSpace = 'srgb';
 
   constructor(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext) {
     this.canvas = canvas;
@@ -253,7 +256,10 @@ export class WebGLRenderer implements ChromashiftRenderer {
     const internalH = Math.max(1, Math.round(destH * contentScale));
     const layerScale = viewport ? 1 : rendererStateValue(state, 'layerScale');
     const tracerScale = viewport ? 1 : rendererStateValue(state, 'tracerScale');
-    const upsample = !viewport && (internalW !== canvasW || internalH !== canvasH);
+    // Display P3 is converted in the blit, so a P3 frame always takes it.
+    const presentSpace = viewport ? 'srgb' : this.applyPresentation(state.presentationSpace ?? 'srgb');
+    const upsample = !viewport
+      && (presentSpace === 'display-p3' || internalW !== canvasW || internalH !== canvasH);
     const compositeTarget = upsample ? this.ensureCompositeTarget(internalW, internalH) : null;
     const drew = this.renderFrameInternal(state, fps, {
       layer: scaled(internalW, internalH, layerScale),
@@ -268,7 +274,7 @@ export class WebGLRenderer implements ChromashiftRenderer {
       },
     });
     if (drew && upsample && compositeTarget) {
-      this.blit.draw(compositeTarget.texture, canvasW, canvasH);
+      this.blit.draw(compositeTarget.texture, canvasW, canvasH, presentSpace);
     }
     if (!viewport) {
       this.readback.afterFrame((target, size) => this.graphExecutor.composite(this.inputs(), {
@@ -284,6 +290,24 @@ export class WebGLRenderer implements ChromashiftRenderer {
     this.lastCpuMs = elapsed;
     this.avgCpuMs = this.avgCpuMs === 0 ? elapsed : this.avgCpuMs * 0.9 + elapsed * 0.1;
     if (!viewport) this.pendingElapsedMs = elapsed;
+  }
+
+  /**
+   * Tag the default framebuffer for `requested` and return the space the blit
+   * should convert into. WebGL2 tags via `drawingBufferColorSpace` (where the
+   * UA has it); a framebuffer that cannot be tagged presents sRGB unconverted —
+   * converting without the tag would only mis-tag the canvas the other way.
+   */
+  private applyPresentation(requested: DisplayColorSpace): DisplayColorSpace {
+    if (requested === this.presentRequested) return this.presentApplied;
+    this.presentRequested = requested;
+    const tagged = tagWebGLDrawingBuffer(this.gl, requested);
+    this.presentApplied = requested === 'display-p3' && tagged ? 'display-p3' : 'srgb';
+    publishDiagnostics({
+      presentationColorSpace: this.presentApplied,
+      presentationNote: webglPresentationNote(requested, tagged),
+    });
+    return this.presentApplied;
   }
 
   restoreRenderSize(): void {

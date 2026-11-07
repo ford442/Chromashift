@@ -100,7 +100,7 @@ export default function App() {
     store,
     clearClassificationMask,
   );
-  const { handleExportTracer } = useTracerExport(refs, store);
+  const { handleExportTracer, handleExportStill } = useTracerExport(refs, store);
   const videoExport = useVideoExport(refs, store);
   const presets = usePresets(store);
   const colorProfiles = useColorProfiles(store);
@@ -128,6 +128,7 @@ export default function App() {
     handleUpscaleSource,
     handleUpscaleOutput,
     handleExportTracer,
+    handleExportStill,
     ...videoExport,
     ...presets,
     ...colorProfiles,

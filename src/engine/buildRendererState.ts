@@ -2,6 +2,7 @@ import { MAIN_VIEW_MODES } from './viewModes';
 import { motionModeIndex } from './motionModes';
 import { getColorProfileLut, isClassicProfile } from './color/colorProfile';
 import { resolveColorProfile } from './color/colorProfileLibrary';
+import { resolvePresentation } from './color/presentation';
 import type { ChromashiftState } from '../state/types';
 import type { LayerState, RendererState } from './types/RendererState';
 
@@ -130,6 +131,10 @@ export function buildRendererState(
   target.halfOverlayAlpha = 0.5;
   target.livePreviewEnabled = output.livePreviewEnabled;
   target.profilePerformance = output.performanceHudEnabled;
+  target.presentationSpace = resolvePresentation({
+    colorSpace: output.displayColorSpace,
+    presentation: output.canvasHdr ? 'hdr-extended' : 'sdr',
+  }).space;
 
   Object.assign(target, overrides);
 

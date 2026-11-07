@@ -99,6 +99,7 @@ fn encode_display(c: vec3<f32>) -> vec3<f32> {
 @group(0) @binding(4) var persistBelow   : texture_2d<f32>;
 @group(0) @binding(5) var persistAbove   : texture_2d<f32>;
 
+
 struct CompositorUniforms {
   tracerAboveOpacity : f32,
   tracerBelowOpacity : f32,
@@ -115,8 +116,29 @@ struct CompositorUniforms {
   viewportQuarterZoom: u32,
   halfOverlayAlpha   : f32,
   viewportHalfOverlay: u32,
+  /** Linear presentation matrix, row-major (color/presentation.ts). */
+  presentM00         : f32,
+  presentM01         : f32,
+  presentM02         : f32,
+  presentM10         : f32,
+  presentM11         : f32,
+  presentM12         : f32,
+  presentM20         : f32,
+  presentM21         : f32,
+  presentM22         : f32,
 };
 @group(0) @binding(6) var<uniform> cu : CompositorUniforms;
+
+// Unclamped so Canvas HDR (identity) keeps its above-white values; the SDR
+// encode clips after the conversion.
+fn present_gamut(c: vec3<f32>) -> vec3<f32> {
+  let m = mat3x3<f32>(
+    vec3<f32>(cu.presentM00, cu.presentM10, cu.presentM20),
+    vec3<f32>(cu.presentM01, cu.presentM11, cu.presentM21),
+    vec3<f32>(cu.presentM02, cu.presentM12, cu.presentM22),
+  );
+  return m * c;
+}
 
 fn viewportSampleUV(uv: vec2<f32>) -> vec2<f32> {
   if (cu.viewportQuarterZoom == 0u) {
@@ -135,6 +157,8 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
 
   let pBelowScaled = scale_premultiplied(pBelow, cu.tracerBelowOpacity);
   let pAboveScaled = scale_premultiplied(pAbove, cu.tracerAboveOpacity);
+
+
 
   let c0Opaque = scale_premultiplied(c0, cu.layerOpacity0);
   let c1Opaque = scale_premultiplied(c1, cu.layerOpacity1);
@@ -183,16 +207,19 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
   if (cu.outputMode == 1u) {
     // Tracer Focus: layers first, then both tracers on top.
     finalCol = alpha_blend(finalCol, layerCol);
+
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 2u) {
     // Tracer Only: suppress live layers.
+
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
   } else if (cu.outputMode == 3u) {
     finalCol = stamp;
   } else {
-    // Mixed (default): Below -> Layers -> Above.
+    // Mixed (default): [extra timescales ->] Below -> Layers -> Above.
+
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = alpha_blend(finalCol, layerCol);
     finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
@@ -218,7 +245,9 @@ fn compositeAt(sampleUV: vec2<f32>) -> vec4<f32> {
     graded = mix(graded, diagOverlay, clamp(cu.diagnosticsOpacity, 0.0, 1.0));
   }
   // The canvas format is never an -srgb one, so this pass owns the OETF.
-  return vec4<f32>(encode_display(graded), 1.0);
+  // Presentation space: the clipped linear-sRGB frame through the
+  // presentation matrix (identity for srgb), then the OETF.
+  return vec4<f32>(encode_display(present_gamut(graded)), 1.0);
 }
 
 @fragment

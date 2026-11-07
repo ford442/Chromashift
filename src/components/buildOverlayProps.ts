@@ -80,6 +80,7 @@ export function buildOverlayProps(
     onTracerInspectShowLayersToggle: p.setTracerInspectShowLayers,
     onResetInspectView: p.handleResetInspectView,
     onExportTracer: p.handleExportTracer,
+    onExportStill: p.handleExportStill,
     exportingVideo: p.exportingVideo,
     videoExportProgress: p.videoExportProgress,
     videoExportSettings: p.videoExportSettings,

@@ -44,6 +44,7 @@ export function buildControlProps(
     handleResetInspectView: actions.resetInspectView,
     exportingTracer: ui.exportingTracer,
     handleExportTracer: handlers.handleExportTracer,
+    handleExportStill: handlers.handleExportStill,
     exportingVideo: handlers.exportingVideo,
     videoExportProgress: handlers.videoExportProgress,
     videoExportSettings: handlers.videoExportSettings,
