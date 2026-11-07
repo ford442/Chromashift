@@ -95,3 +95,21 @@ describe('buildRendererState per-slot object reuse', () => {
     expect(withoutOverride.paused).toBe(state.engine.paused);
   });
 });
+
+describe('buildRendererState presentation space', () => {
+  const withOutput = (patch: Partial<ReturnType<typeof createInitialState>['output']>) => {
+    const state = createInitialState();
+    return { ...state, output: { ...state.output, ...patch } };
+  };
+
+  it('defaults to srgb', () => {
+    expect(buildRendererState(createInitialState(), [0, 0, 0]).presentationSpace).toBe('srgb');
+  });
+
+  it('resolves display-p3, except under Canvas HDR', () => {
+    expect(buildRendererState(withOutput({ displayColorSpace: 'display-p3' }), [0, 0, 0]).presentationSpace)
+      .toBe('display-p3');
+    expect(buildRendererState(withOutput({ displayColorSpace: 'display-p3', canvasHdr: true }), [0, 0, 0])
+      .presentationSpace).toBe('srgb');
+  });
+});

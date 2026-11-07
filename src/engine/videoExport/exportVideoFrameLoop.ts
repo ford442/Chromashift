@@ -44,6 +44,9 @@ export async function* exportVideoFrameLoop(
       viewportQuarterZoom: false,
       viewportHalfOverlay: false,
       diagnosticsMode: false,
+      // Video files stay SDR sRGB: the muxer stores no colour space, so the
+      // frames are never encoded for Display P3 (docs/VIDEO_EXPORT.md).
+      presentationSpace: 'srgb',
       ...(request.includeTracers
         ? {}
         : { tracerAboveIntensity: 0, tracerBelowIntensity: 0 }),

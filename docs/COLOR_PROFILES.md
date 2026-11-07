@@ -10,8 +10,52 @@ wedge — without forking a shader per palette.
 - Data: `shared/colorProfiles.json` (built-ins), localStorage `chromashift.colorProfiles` (yours)
 - Code: `src/engine/color/colorProfile.ts`, `colorProfileLibrary.ts`, `ProfileLutTexture.ts`
 - State: `layers.colorProfileId` + `layers.colorProfile` (preset schema v3+)
-- Working space: LUTs are **sRGB**. The Viewport Display P3 control only changes WebGPU canvas `colorSpace`, not the baked table.
+- Working space: LUTs are **sRGB**. The Viewport Display P3 control changes the *presentation* space (an sRGB→P3 conversion at the end of the frame plus the canvas tag), never the baked table — see [below](#band-profile-working-space-presentation-space).
 - Canvas HDR (`viewport.canvasHdr`) does not change this. Profiles stay in the sRGB working space, and extended presentation passes linear scene values above 1.0 through the UA's HDR path ([gpu-bootstrap.md](gpu-bootstrap.md)). Colour-managed LUTs baked for Display P3 / Rec.2020 are a follow-on for the profile designer (#143).
+
+## Band profile, working space, presentation space
+
+Three things that are easy to conflate — and that the code keeps apart:
+
+| | What it is | Where it lives | Changes with `viewport.colorSpace`? |
+|---|---|---|---|
+| **Band profile** | Which hue each luminance band gets (the LUT, or the classic branchy path) | `colorProfile.ts`, `shared/band.json`, `ProfileLutTexture.ts` | No |
+| **Working space** | The space bands, LUTs, layer/tracer targets and the BT.709 luminance ladder are defined in: **sRGB / BT.709**, always | `bandClassification.ts`, every internal target | No |
+| **Presentation space** | The canvas tag *plus* the conversion into it, applied once at the end of the frame | `src/engine/color/presentation.ts` | Yes |
+
+`resolvePresentation()` is the one place the pixel path is decided:
+
+- **`srgb`** — canvas tagged `srgb`, compositor matrix is the identity; shaders
+  write exactly what they did before (the `e2e/__golden__/` frames pin this, and
+  `presentation.test.ts` fails if the matrix is anything but identity).
+- **`display-p3`** — the composited linear-sRGB frame goes through
+  `SRGB_TO_DISPLAY_P3` (a named constant, uploaded in `CompositorUniforms` as
+  `presentM00…presentM22`) before the OETF, *then* the canvas is tagged
+  `display-p3`. Internal layer and tracer targets stay sRGB, so additive
+  tracers mean the same thing in both modes.
+- **Canvas HDR** stays extended sRGB: it is never converted into P3, and its
+  canvas is tagged `srgb` whatever `colorSpace` says.
+
+**WebGL.** The same enum and the same matrix: the WebGL compositor writes
+sRGB-encoded values, so its final blit decodes, applies `SRGB_TO_DISPLAY_P3`
+(emitted from the constant by `webgl/shaders/presentBlit.ts`) and re-encodes,
+and the drawing buffer is tagged with `drawingBufferColorSpace`. A UA that
+cannot tag the default framebuffer presents sRGB with no conversion — the
+diagnostics panel says so in one line (`presentationNote`).
+
+**Uploads.** When `ImageDecoder` reports the file's primaries as Display P3
+(`smpte432`), the WebGPU upload converts into sRGB so the band ladder sees the
+values it was tuned on. When the browser reports nothing, the bytes are
+uploaded exactly as before — no gamut is guessed. `window.imageColorSpace`
+records which happened.
+
+**Stills.** *Export Still* (Diagnostics panel) renders the composite with the
+applied presentation space and writes it through `getReadback2DContext`
+(`gpu/readbackContext.ts`) with the matching `colorSpace`, so the PNG is
+tagged with the space its bytes are in. A UA that cannot make a Display-P3 2D
+canvas gets an sRGB render and an sRGB file. The tracer export is always sRGB
+(the tracer-inspect pass does not run the presentation matrix). Video stays
+SDR sRGB (see `VIDEO_EXPORT.md`).
 
 ## Built-in profiles
 

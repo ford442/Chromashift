@@ -1,4 +1,5 @@
 import { DECAY_WGSL } from '../../shaders/decayLiterals';
+import { PRESENT_MATRIX_FIELDS, type PresentMatrixField } from '../../color/presentation';
 import { MOTION_FLOW_MIN_SPEED } from '../../compute/chores/motionKernel';
 import { DARK_RGB_MAX, type LayerSpec } from '../layerSpecs';
 import {
@@ -823,7 +824,8 @@ export type CompositorUniformName =
   | 'viewportQuarterZoom'
   | 'halfOverlayAlpha'
   | 'viewportHalfOverlay'
-  | CompositorExtraTracerName;
+  | CompositorExtraTracerName
+  | PresentMatrixField;
 
 const compositorLayouts = new Map<string, UniformLayout<CompositorUniformName>>();
 
@@ -859,6 +861,14 @@ export function compositorUniformLayout(
     { name: 'halfOverlayAlpha', kind: 'f32' },
     { name: 'viewportHalfOverlay', kind: 'u32' },
     ...extraTracers(tracerCount).map((j) => ({ name: `tracerOpacity${j}` as const, kind: 'f32' as const })),
+    // Presentation matrix (row-major), from `color/presentation.ts`: identity
+    // for `srgb`, `SRGB_TO_DISPLAY_P3` for `display-p3`. Last, so no earlier
+    // field moves.
+    ...PRESENT_MATRIX_FIELDS.map((name, i) => ({
+      name,
+      kind: 'f32' as const,
+      ...(i === 0 ? { doc: 'Linear presentation matrix, row-major (color/presentation.ts).' } : {}),
+    })),
   ];
   const layout = defineUniformLayout('CompositorUniforms', fields, { column: 19 });
   compositorLayouts.set(key, layout);
@@ -946,6 +956,17 @@ ${extraBindings}
 
 ${emitUniformStructWgsl(compositorUniformLayout(layerCount, tracerCount))}
 @group(0) @binding(${uniformBinding}) var<uniform> cu : CompositorUniforms;
+
+// Unclamped so Canvas HDR (identity) keeps its above-white values; the SDR
+// encode clips after the conversion.
+fn present_gamut(c: vec3<f32>) -> vec3<f32> {
+  let m = mat3x3<f32>(
+    vec3<f32>(cu.presentM00, cu.presentM10, cu.presentM20),
+    vec3<f32>(cu.presentM01, cu.presentM11, cu.presentM21),
+    vec3<f32>(cu.presentM02, cu.presentM12, cu.presentM22),
+  );
+  return m * c;
+}
 
 fn viewportSampleUV(uv: vec2<f32>) -> vec2<f32> {
   if (cu.viewportQuarterZoom == 0u) {
@@ -1040,7 +1061,9 @@ ${extraBlend}
     graded = mix(graded, diagOverlay, clamp(cu.diagnosticsOpacity, 0.0, 1.0));
   }
   // The canvas format is never an -srgb one, so this pass owns the OETF.
-  return vec4<f32>(encode_display(graded), 1.0);
+  // Presentation space: the clipped linear-sRGB frame through the
+  // presentation matrix (identity for srgb), then the OETF.
+  return vec4<f32>(encode_display(present_gamut(graded)), 1.0);
 }
 
 @fragment

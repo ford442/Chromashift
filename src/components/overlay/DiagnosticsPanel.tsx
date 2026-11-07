@@ -148,6 +148,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   onApplyPerformanceDegrade,
   onFreezeInspect,
   onExportTracer,
+  onExportStill,
   onTracerInspectHeatmapToggle,
   onTracerInspectZoomChange,
   onTracerInspectExposureChange,
@@ -159,6 +160,9 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   return (
     <div className="space-y-3">
       {rendererBackend === 'webgpu' && <CanvasHdrNote />}
+      {readDiagnostic('presentationNote') && (
+        <p className="text-[10px] text-zinc-400">{readDiagnostic('presentationNote')}</p>
+      )}
       <div className="panel-3d space-y-2">
         <div className="grid grid-cols-2 gap-1">
           <button
@@ -281,6 +285,15 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
             title="Export the current tracer inspection view as a PNG at the main canvas resolution"
           >
             {exportingTracer ? 'Exporting…' : 'Export Tracer'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onExportStill()}
+            disabled={exportingTracer}
+            className="text-[10px] px-2 py-1 rounded bg-zinc-800 border border-amber-500/30 hover:bg-zinc-700 text-amber-200 disabled:opacity-50"
+            title="Export the current composite as a PNG, tagged with the presentation colour space actually applied (sRGB or Display P3)"
+          >
+            {exportingTracer ? 'Exporting…' : 'Export Still'}
           </button>
         </div>
         <div className="grid grid-cols-2 gap-1">

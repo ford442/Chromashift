@@ -649,7 +649,9 @@ describe('WebGpuGraphExecutor', () => {
       const composite = blocks.find((block) => block.length === layout.bytes)!;
       const view = new DataView(new Uint8Array(composite).buffer);
       expect(view.getFloat32(uniformOffset(layout, 'tracerOpacity2'), true)).toBeCloseTo(0.45, 6);
-      expect(uniformOffset(layout, 'tracerOpacity2')).toBe(compositorUniformLayout(3).fields.length * 4);
+      // (the presentation matrix stays last, after the extra opacities)
+      expect(uniformOffset(layout, 'tracerOpacity2')).toBe(uniformOffset(compositorUniformLayout(3), 'presentM00'));
+      expect(uniformOffset(layout, 'presentM00')).toBe(uniformOffset(layout, 'tracerOpacity2') + 4);
     });
   });
 

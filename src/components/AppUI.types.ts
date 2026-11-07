@@ -44,6 +44,7 @@ export interface AppUiHandlerBundle {
   handleUpscaleSource: () => Promise<void>;
   handleUpscaleOutput: () => Promise<void>;
   handleExportTracer: () => Promise<void>;
+  handleExportStill: () => Promise<void>;
   exportingVideo: boolean;
   videoExportProgress: number;
   videoExportSettings: VideoExportSettings;
@@ -192,6 +193,7 @@ export interface AppUIControlProps {
   handleResetInspectView: () => void;
   exportingTracer: boolean;
   handleExportTracer: () => Promise<void>;
+  handleExportStill: () => Promise<void>;
   exportingVideo: boolean;
   videoExportProgress: number;
   videoExportSettings: VideoExportSettings;

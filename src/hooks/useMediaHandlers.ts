@@ -1,6 +1,9 @@
 import { useCallback, useEffect } from 'react';
 import { Upscaler, type UpscaleModel } from '../engine/upscale/Upscaler';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
+import { buildRendererState } from '../engine/buildRendererState';
+import { resolvePresentation } from '../engine/color/presentation';
+import { downloadBlob, encodeStillPng, stillExportSpace } from '../engine/color/stillExport';
 import {
   computeAverageLuminanceStridedWith,
   computeImageAverageLuminanceWith,
@@ -421,21 +424,11 @@ export function useTracerExport(
       });
       if (!result) return;
 
-      const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = result.width;
-      exportCanvas.height = result.height;
-      const exportCtx = exportCanvas.getContext('2d');
-      if (!exportCtx) return;
-      exportCtx.putImageData(new ImageData(result.data, result.width, result.height), 0, 0);
-      exportCanvas.toBlob((blob) => {
-        if (!blob) return;
-        const href = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = href;
-        link.download = `chromashift-tracer-${result.width}x${result.height}.png`;
-        link.click();
-        URL.revokeObjectURL(href);
-      }, 'image/png');
+      // The tracer-inspect pass writes sRGB (it does not run the presentation
+      // matrix), so its still is tagged sRGB whatever the canvas presents.
+      const png = await encodeStillPng(result, 'srgb');
+      if (!png) return;
+      downloadBlob(png.blob, `chromashift-tracer-${result.width}x${result.height}.png`);
     } catch (error) {
       // The button's click handler drops this promise: report here or nowhere.
       console.error('Tracer export failed:', error);
@@ -445,7 +438,44 @@ export function useTracerExport(
     }
   }, [rendererRef, mainCanvasRef, getState, actions]);
 
-  return { handleExportTracer };
+  /**
+   * A PNG of the current composite, encoded for — and tagged with — the
+   * presentation space `color/presentation.ts` resolves. Falls back to an
+   * sRGB render when the UA cannot tag a 2D canvas Display P3, so the file
+   * never claims a space its bytes are not in.
+   */
+  const handleExportStill = useCallback(async () => {
+    const renderer = rendererRef.current;
+    const snapshot = getState();
+    if (!renderer || snapshot.ui.exportingTracer) return;
+    actions.setExportingTracer(true);
+    try {
+      const mainCanvas = mainCanvasRef.current;
+      const width = Math.max(1, Math.round(mainCanvas?.width ?? 2048));
+      const height = Math.max(1, Math.round(mainCanvas?.height ?? 2048));
+      const requested = resolvePresentation({
+        colorSpace: snapshot.output.displayColorSpace,
+        presentation: snapshot.output.canvasHdr ? 'hdr-extended' : 'sdr',
+      }).space;
+      // WebGL converts only in its on-screen blit; its export readback is sRGB.
+      const space = renderer.backend === 'webgpu' ? stillExportSpace(requested) : 'srgb';
+      const state = buildRendererState(snapshot, refs.animAnglesRef.current, {
+        presentationSpace: space,
+      });
+      const result = await renderer.exportFrame(state, { width, height });
+      if (!result) return;
+      const png = await encodeStillPng(result, space);
+      if (!png) return;
+      downloadBlob(png.blob, `chromashift-still-${result.width}x${result.height}-${png.colorSpace}.png`);
+    } catch (error) {
+      console.error('Still export failed:', error);
+      alert(error instanceof Error ? error.message : 'Still export failed.');
+    } finally {
+      actions.setExportingTracer(false);
+    }
+  }, [rendererRef, mainCanvasRef, getState, actions, refs]);
+
+  return { handleExportTracer, handleExportStill };
 }
 
 export function useAppKeyboardShortcuts(

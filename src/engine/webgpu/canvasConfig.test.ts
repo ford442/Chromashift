@@ -38,6 +38,14 @@ describe('buildWebGpuCanvasConfiguration', () => {
     expect(config.toneMapping).toEqual({ mode: 'standard' });
   });
 
+  it('keeps Canvas HDR in extended sRGB: display-p3 is never tagged without its conversion', () => {
+    const config = buildWebGpuCanvasConfiguration(device, 'bgra8unorm', {
+      colorSpace: 'display-p3',
+      presentation: 'hdr-extended',
+    });
+    expect(config.colorSpace).toBe('srgb');
+  });
+
   it('hdr-extended configures an rgba16float canvas with extended tone mapping', () => {
     const config = buildWebGpuCanvasConfiguration(device, 'bgra8unorm', {
       presentation: 'hdr-extended',

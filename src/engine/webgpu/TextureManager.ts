@@ -7,6 +7,9 @@
  * `TextureCache`'s.
  */
 
+import { detectImageColorSpace } from '../color/imageColorSpace';
+import { planImageUpload } from '../color/presentation';
+import { publishDiagnostic } from '../diagnostics';
 import type { ChromashiftTextureManager } from '../types/RendererContracts';
 import { TextureCache, type UploadedTexture } from '../textures/TextureCache';
 import { createWebGpuTextureHandle, type ChromashiftTextureHandle } from '../types/TextureHandle';
@@ -42,7 +45,14 @@ export class TextureManager implements ChromashiftTextureManager {
       image.src = url;
     });
 
-    const imageBitmap = await createImageBitmap(image);
+    // The band ladder is tuned on sRGB values. When the decoder says the file
+    // is Display P3, convert into sRGB here; when it says nothing, upload
+    // exactly as before (no gamut is guessed).
+    const upload = planImageUpload(await detectImageColorSpace(url));
+    publishDiagnostic('imageColorSpace', upload.diagnostic);
+    const imageBitmap = upload.convertToSrgb
+      ? await createImageBitmap(image, { colorSpaceConversion: 'default' })
+      : await createImageBitmap(image);
     // Use srgb format so that standard photo/JPEG/PNG content (which is encoded
     // in sRGB) is automatically decoded to linear RGB on textureSample. This
     // gives correct luminance (BT.709) calculations and more accurate colour
@@ -61,7 +71,7 @@ export class TextureManager implements ChromashiftTextureManager {
 
     this.device.queue.copyExternalImageToTexture(
       { source: imageBitmap },
-      { texture },
+      upload.convertToSrgb ? { texture, colorSpace: 'srgb' } : { texture },
       [imageBitmap.width, imageBitmap.height],
     );
 

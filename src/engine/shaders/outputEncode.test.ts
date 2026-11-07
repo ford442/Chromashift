@@ -42,7 +42,7 @@ describe('canvas-format shaders encode their output', () => {
     // half-overlay), so the encode belongs there and must not be repeated.
     const occurrences = compositorFragmentSource.match(/encode_display\(/g) ?? [];
     expect(occurrences).toHaveLength(2); // the fn definition plus the one call
-    expect(compositorFragmentSource).toContain('return vec4<f32>(encode_display(graded), 1.0);');
+    expect(compositorFragmentSource).toContain('return vec4<f32>(encode_display(present_gamut(graded)), 1.0);');
   });
 
   it('leaves display-referred literals unencoded', () => {

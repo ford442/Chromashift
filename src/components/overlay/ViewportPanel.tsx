@@ -167,7 +167,7 @@ export const ViewportPanel = memo(function ViewportPanel({
             ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.4)]'
             : 'bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30'
         }`}
-        title="WebGPU canvas colorSpace. Colour-profile LUTs stay sRGB; this only changes presentation."
+        title="Presentation colour space: the composited frame is converted sRGB → Display P3 and the canvas tagged to match. Bands, LUTs and tracers stay in the sRGB working space; video export stays sRGB."
       >
         {displayColorSpace === 'display-p3' ? '◐ Display P3' : '◐ sRGB canvas'}
       </button>

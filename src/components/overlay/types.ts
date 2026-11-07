@@ -159,6 +159,8 @@ export interface DiagnosticsPanelProps {
   onApplyPerformanceDegrade: () => void;
   onFreezeInspect: () => void;
   onExportTracer: () => Promise<void>;
+  /** PNG of the composite, tagged with the presentation space applied. */
+  onExportStill: () => Promise<void>;
   onTracerInspectHeatmapToggle: (value: boolean) => void;
   onTracerInspectZoomChange: (value: number) => void;
   onTracerInspectExposureChange: (value: number) => void;

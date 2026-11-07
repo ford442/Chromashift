@@ -1,6 +1,7 @@
 import { DEFAULT_PER_LAYER_OPACITY, RENDERER_STATE_DEFAULTS } from '../../../state/defaults';
 import { durationToDecay } from '../../math/decay';
 import { MAIN_VIEW_MODES } from '../../viewModes';
+import { presentationMatrix, presentMatrixUniforms } from '../../color/presentation';
 import type { RendererState } from '../../types/RendererState';
 import type { UniformValues } from '../templates/uniformLayout';
 import type {
@@ -175,6 +176,8 @@ export function compositorUniforms(
     viewportQuarterZoom: flag(transforms && rendererStateValue(state, 'viewportQuarterZoom')),
     halfOverlayAlpha: rendererStateValue(state, 'halfOverlayAlpha'),
     viewportHalfOverlay: flag(transforms && rendererStateValue(state, 'viewportHalfOverlay')),
+    // Identity unless the frame presents to Display P3 (color/presentation.ts).
+    ...presentMatrixUniforms(presentationMatrix(state.presentationSpace)),
   };
   for (let i = 0; i < layerCount; i += 1) values[`layerOpacity${i}`] = frameLayerOpacity(state, i);
   options.extraTracerOpacities?.forEach((opacity, k) => { values[`tracerOpacity${k + 2}`] = opacity; });

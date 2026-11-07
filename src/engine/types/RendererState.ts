@@ -12,6 +12,12 @@ export interface RendererState {
    */
   layers               : LayerState[];
   avgLuminance         : number;
+  /**
+   * Presentation space the frame is encoded for, already resolved by
+   * `color/presentation.ts` (`srgb` under Canvas HDR). Absent = `srgb`, the
+   * identity. Working space stays sRGB whatever this says.
+   */
+  presentationSpace?   : import('../gpu/gpuOptions').DisplayColorSpace;
   layerOpacity?        : number;
   /** Per-layer opacity multiplier, parallel to {@link layers}. */
   layerOpacities?      : number[];

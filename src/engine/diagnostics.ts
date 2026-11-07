@@ -57,6 +57,12 @@ export interface ChromashiftDiagnostics {
   canvasHdrReason: string;
   /** Set while HDR presents over 8-bit internal targets (see `canvasHdrInternalNote`). */
   canvasHdrNote: string | null;
+  /** The presentation space actually applied (`color/presentation.ts`): what the canvas is converted for and tagged. */
+  presentationColorSpace: 'srgb' | 'display-p3';
+  /** One line on how Display P3 was (or was not) applied — e.g. WebGL converting in its blit. */
+  presentationNote: string | null;
+  /** What the last image upload's decoder reported about its colour space, and what was done (`planImageUpload`). */
+  imageColorSpace: string;
 
   // ── GPU timing (GpuTimestampProfiler.ts) ────────────────────────────────────
   gpuTimestampAvailable: boolean;
@@ -185,6 +191,9 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   webglInternalScale: true,
   webglInternalFormat: true,
   webglInternalFormatNote: true,
+  presentationColorSpace: true,
+  presentationNote: true,
+  imageColorSpace: true,
   canvasHdrAvailable: true,
   canvasHdrReason: true,
   canvasHdrNote: true,

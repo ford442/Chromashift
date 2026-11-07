@@ -101,7 +101,8 @@ describe('the shipped layouts', () => {
     expect(BAND_LAYER_UNIFORMS.bytes).toBe(32);
     expect(PERSIST_UNIFORMS.bytes).toBe(32);
     expect(PERSIST_MOTION_UNIFORMS.bytes).toBe(32);
-    expect(compositorUniformLayout(3).bytes).toBe(64);
+    // 15 scalars + the 9-float presentation matrix (color/presentation.ts).
+    expect(compositorUniformLayout(3).bytes).toBe(96);
     expect(HISTORY_UNIFORMS.fields).toHaveLength(HISTORY_MAX_FRAMES);
   });
 
