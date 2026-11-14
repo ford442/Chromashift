@@ -10,7 +10,7 @@ export function useCanvasResize(
   imageAspect: number,
   compareLayout: import('../engine/compareViews').CompareLayoutMode = 'single',
 ): void {
-  const { containerRef, mainCanvasRef, mainViewportRef, orchestratorRef, canvasARef, canvasBRef, canvasCRef } = refs;
+  const { containerRef, mainCanvasRef, mainViewportRef, renderHostRef, canvasARef, canvasBRef, canvasCRef } = refs;
   const dual = compareLayout === 'dual';
   const quad = isQuadCompareLayout(compareLayout);
   const twoSlot = isTwoSlotCompareLayout(compareLayout);
@@ -76,16 +76,13 @@ export function useCanvasResize(
       const canvasCssH = quad ? (cssH - 2) / 2 : cssH;
 
       let gpuResizeNeeded = false;
+      const host = renderHostRef.current;
 
+      // Through the host: a canvas handed to the render worker cannot be
+      // sized from here, so the new size is a message (and the host tracks it).
       const resizeOne = (canvas: HTMLCanvasElement | null, w: number, h: number) => {
         if (!canvas) return;
-        const nextW = Math.floor(w * dpr);
-        const nextH = Math.floor(h * dpr);
-        if (canvas.width !== nextW || canvas.height !== nextH) {
-          canvas.width = nextW;
-          canvas.height = nextH;
-          gpuResizeNeeded = true;
-        }
+        if (host.sizeCanvas(canvas, Math.floor(w * dpr), Math.floor(h * dpr))) gpuResizeNeeded = true;
       };
 
       if (quad) {
@@ -100,9 +97,7 @@ export function useCanvasResize(
         }
       }
 
-      if (gpuResizeNeeded) {
-        orchestratorRef.current?.resizeAll();
-      }
+      if (gpuResizeNeeded) host.flushResize();
     }
 
     resizeCanvas();
@@ -114,7 +109,7 @@ export function useCanvasResize(
       observer.disconnect();
       window.removeEventListener('resize', resizeCanvas);
     };
-  }, [containerRef, mainCanvasRef, mainViewportRef, orchestratorRef, canvasARef, canvasBRef, canvasCRef, squareCanvas, imageAspect, dual, quad, twoSlot, multiCell]);
+  }, [containerRef, mainCanvasRef, mainViewportRef, renderHostRef, canvasARef, canvasBRef, canvasCRef, squareCanvas, imageAspect, dual, quad, twoSlot, multiCell]);
 }
 
 export function useWasmEngineLoader(
@@ -133,23 +128,23 @@ export function useWasmEngineLoader(
 export function useCollisionStatsPoll(
   refs: ChromashiftRefs,
   gpuReady: boolean,
+  backend: import('../engine/types/RendererContracts').RendererBackend,
   setCollisionStats: (stats: CollisionStats) => void,
 ): void {
-  const { rendererRef } = refs;
+  const { renderHostRef } = refs;
 
   useEffect(() => {
-    if (!gpuReady || !rendererRef.current) return;
+    // A WebGL pixel-pack map drains every pass still queued on this context.
+    // On a deferred driver that is a multi-second hitch on the animation
+    // thread, so the live collision poll stays on the WebGPU readback path.
+    if (!gpuReady || backend === 'webgl') return;
+    const host = renderHostRef.current;
     let cancelled = false;
 
     const requestStats = () => {
-      const renderer = rendererRef.current;
-      // A WebGL pixel-pack map drains every pass still queued on this context.
-      // On a deferred driver that is a multi-second hitch on the animation
-      // thread, so the live collision poll stays on the WebGPU readback path.
-      if (!renderer || renderer.backend === 'webgl') return;
-      renderer.requestCollisionStats((stats) => {
-        if (!cancelled) setCollisionStats(stats);
-      });
+      void host.collisionStats().then((stats) => {
+        if (stats && !cancelled) setCollisionStats(stats);
+      }, () => {});
     };
 
     requestStats();
@@ -158,5 +153,5 @@ export function useCollisionStatsPoll(
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [rendererRef, gpuReady, setCollisionStats]);
+  }, [renderHostRef, gpuReady, backend, setCollisionStats]);
 }

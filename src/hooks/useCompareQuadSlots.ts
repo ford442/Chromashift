@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { isQuadCompareLayout } from '../engine/compareViews';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
-const QUAD_SLOT_IDS = {
+export const QUAD_SLOT_IDS = {
   a: 'quad-a',
   b: 'quad-b',
   c: 'quad-c',
@@ -11,56 +11,37 @@ const QUAD_SLOT_IDS = {
 /**
  * Lifecycle for quad layout stationary cells (Original, Layers, Tracer).
  *
- * Cell D (Composite) uses the primary orchestrator slot via useAppWebGPUInit.
- * Must run after useAppWebGPUInit so cleanup destroys quad slots before the device.
+ * Cell D (Composite) is the primary slot. Must run after useAppWebGPUInit so
+ * a reboot attaches the cells again once the GPU is ready.
  */
 export function useCompareQuadSlots(refs: ChromashiftRefs, store: ChromashiftStore): void {
   const { state } = store;
   const quadActive = isQuadCompareLayout(state.ui.compareView.layout);
   const gpuReady = state.engine.gpuReady;
   const backend = state.engine.backend;
-  const {
-    canvasARef,
-    canvasBRef,
-    canvasCRef,
-    quadRenderersRef,
-    orchestratorRef,
-    sourceTextureRef,
-    maskTextureRef,
-    refreshQuadCellsRef,
-  } = refs;
+  const { canvasARef, canvasBRef, canvasCRef, renderHostRef, refreshQuadCellsRef } = refs;
 
   useEffect(() => {
     if (!quadActive || !gpuReady || backend !== 'webgpu') return;
-    const orchestrator = orchestratorRef.current;
-    if (!orchestrator) return;
-
-    const renderers = quadRenderersRef.current;
-
+    const host = renderHostRef.current;
     const canvasByCell = {
       a: canvasARef.current,
       b: canvasBRef.current,
       c: canvasCRef.current,
     } as const;
 
+    const attached: string[] = [];
     for (const cell of ['a', 'b', 'c'] as const) {
       const canvas = canvasByCell[cell];
       if (!canvas) continue;
-      const slot = orchestrator.createSlot(QUAD_SLOT_IDS[cell], canvas);
-      if (sourceTextureRef.current) slot.renderer.setTexture(sourceTextureRef.current);
-      if (maskTextureRef.current) slot.renderer.setClassificationMaskTexture(maskTextureRef.current);
-      renderers[cell] = slot.renderer;
+      host.attach(QUAD_SLOT_IDS[cell], canvas);
+      attached.push(QUAD_SLOT_IDS[cell]);
     }
 
     refreshQuadCellsRef.current?.();
 
     return () => {
-      for (const cell of ['a', 'b', 'c'] as const) {
-        orchestrator.destroySlot(QUAD_SLOT_IDS[cell]);
-      }
-      renderers.a = null;
-      renderers.b = null;
-      renderers.c = null;
+      for (const slot of attached) host.detach(slot);
     };
   }, [
     quadActive,
@@ -69,10 +50,7 @@ export function useCompareQuadSlots(refs: ChromashiftRefs, store: ChromashiftSto
     canvasARef,
     canvasBRef,
     canvasCRef,
-    quadRenderersRef,
-    orchestratorRef,
-    sourceTextureRef,
-    maskTextureRef,
+    renderHostRef,
     refreshQuadCellsRef,
   ]);
 }

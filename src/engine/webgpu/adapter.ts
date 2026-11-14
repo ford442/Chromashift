@@ -14,6 +14,7 @@ import {
   resetGpuFatalForTests,
   toBootstrapRuntimeError,
 } from '../gpu/gpuErrors';
+import { publishDiagnostic } from '../diagnostics';
 
 /** WebGPU's feature levels (`requestAdapter({ featureLevel })`). */
 export type GpuFeatureLevel = 'core' | 'compatibility';
@@ -85,6 +86,9 @@ function emptyGpuDeviceGate(): GpuDeviceGate {
 }
 
 let gpuDeviceGate: GpuDeviceGate = emptyGpuDeviceGate();
+
+/** Devices this realm acquired, for `window.gpuDevicesAcquired` (Retry GPU makes a second). */
+let devicesAcquired = 0;
 
 /**
  * Adapters the compatibility-mode attempt returned. A device from one runs at
@@ -268,6 +272,8 @@ async function acquireWebGpuDevice(
 
     try {
       const device = await adapter.requestDevice(descriptor);
+      devicesAcquired += 1;
+      publishDiagnostic('gpuDevicesAcquired', devicesAcquired);
       deviceFeatureLevels.set(
         device,
         compatibilityAdapters.has(adapter) && !device.features.has('core-features-and-limits') ? 'compatibility' : 'core',

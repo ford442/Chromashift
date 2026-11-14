@@ -9,7 +9,18 @@
  *   decides when (and whether) each one is answered, or kills the worker.
  */
 
-import { exposeWorkerRpc, type RpcCallMessage, type RpcHandlers, type RpcProtocol, type RpcReplyMessage } from './rpc';
+import {
+  exposeWorkerRpc,
+  type RpcCallMessage,
+  type RpcEmitter,
+  type RpcEventMap,
+  type RpcHandlers,
+  type RpcProtocol,
+  type RpcReplyMessage,
+} from './rpc';
+
+type CallMessage = Extract<RpcCallMessage, { rpc: 'call' }>;
+type NotifyMessage = Extract<RpcCallMessage, { rpc: 'notify' }>;
 
 type Listener = (event: never) => void;
 
@@ -49,12 +60,14 @@ class FakeWorkerBase {
 }
 
 export class ScriptedWorker extends FakeWorkerBase {
-  calls: Array<{ message: RpcCallMessage; transfer: Transferable[] }> = [];
+  calls: Array<{ message: CallMessage; transfer: Transferable[] }> = [];
+  notifies: Array<{ message: NotifyMessage; transfer: Transferable[] }> = [];
   throwOnPostMessage: Error | null = null;
 
   postMessage(message: RpcCallMessage, transfer: Transferable[] = []): void {
     if (this.throwOnPostMessage) throw this.throwOnPostMessage;
-    this.calls.push({ message, transfer });
+    if (message.rpc === 'notify') this.notifies.push({ message, transfer });
+    else this.calls.push({ message, transfer });
   }
 
   reply(message: RpcReplyMessage): void {
@@ -74,15 +87,21 @@ export class ScriptedWorker extends FakeWorkerBase {
   }
 }
 
-export class LoopbackWorker<P extends RpcProtocol<P>, Progress = never> extends FakeWorkerBase {
+export class LoopbackWorker<
+  P extends RpcProtocol<P>,
+  Progress = never,
+  E extends RpcEventMap<E> = never,
+> extends FakeWorkerBase {
   private readonly channel = new MessageChannel();
+  /** The worker's event lane, for a test to emit through. */
+  readonly events: RpcEmitter<E>;
 
   constructor(handlers: RpcHandlers<P, Progress>) {
     super();
     const { port1: host, port2: inside } = this.channel;
     host.addEventListener('message', (e) => this.emit('message', { data: e.data }));
     host.start();
-    exposeWorkerRpc<P, Progress>({
+    this.events = exposeWorkerRpc<P, Progress, E>({
       addEventListener: (_type, listener) => {
         inside.addEventListener('message', listener as (e: MessageEvent) => void);
         inside.start();

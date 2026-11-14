@@ -36,7 +36,8 @@ export function readRequestedBackend(): RendererBackend | null {
     // An explicit `renderer=` wins over the bare flags, so `?renderer=webgpu`
     // is never rewritten by a leftover `webgl2` parameter.
     if (explicit === 'webgl') return 'webgl';
-    if (explicit === 'webgpu') return 'webgpu';
+    // `?renderer=main` is WebGPU on the page's thread (#253, render/transport.ts).
+    if (explicit === 'webgpu' || explicit === 'main') return 'webgpu';
     if (params.has('webgl') || webgl2QueryOptIn(params)) return 'webgl';
     if (params.has('webgpu')) return 'webgpu';
   } catch {

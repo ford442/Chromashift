@@ -53,4 +53,28 @@ export default defineConfig([
       }],
     },
   },
+  // The frame never touches the page (#253): the executors, the WebGPU
+  // renderer and the frame clock also run in the render worker, which has no
+  // `window` or `document`. Page facts (URL flags, sizes, DPR) arrive as
+  // messages; breadcrumbs go through `diagnostics.ts`, which forwards them.
+  {
+    files: [
+      'src/engine/graph/exec/**/*.{ts,tsx}',
+      'src/engine/webgpu/**/*.{ts,tsx}',
+      'src/engine/frame/**/*.{ts,tsx}',
+    ],
+    ignores: ['**/*.test.ts', '**/*.dom.test.tsx'],
+    rules: {
+      'no-restricted-globals': ['error',
+        {
+          name: 'window',
+          message: 'This code also runs in the render worker (#253), which has no window. Take the value as a parameter, or use globalThis for a realm global.',
+        },
+        {
+          name: 'document',
+          message: 'This code also runs in the render worker (#253), which has no document. Use OffscreenCanvas, or take the value as a parameter.',
+        },
+      ],
+    },
+  },
 ])

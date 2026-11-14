@@ -13,7 +13,13 @@
  *   this file).
  * - Writers go through `publishDiagnostic(key, value)` /
  *   `publishDiagnostics({ … })`, which are no-ops without a `window` (Node,
- *   workers), so callers need no guard.
+ *   a worker that forwards nothing), so callers need no guard.
+ * - A worker whose engine code publishes breadcrumbs the page must show (the
+ *   render worker) installs a sink with `forwardDiagnostics`: values are then
+ *   kept in a realm-local mirror (so `readDiagnostic` still answers there)
+ *   and batched to the sink once per task; the page applies them with
+ *   `applyForwardedDiagnostics`. A spec reads the same `window` key whichever
+ *   realm published it.
  * - The values still land on `window[key]`, so docs, devtools and any external
  *   tooling that reads them keep working unchanged.
  *
@@ -22,6 +28,7 @@
  */
 
 import type { RenderCountsApi } from '../debug/renderCounts';
+import type { RenderDebugApi, RenderTransportKind } from './render/protocol';
 import type { CompareLayoutMode } from './compareViews';
 import type { GpuComputeDiagnostics } from './compute/chores/support';
 import type { WebGLInternalFormat } from './gpu/gpuOptions';
@@ -41,6 +48,16 @@ export interface ChromashiftDiagnostics {
   /** The explicit WebGL diagnostic backend started (never an automatic fallback). */
   usingWebGL: boolean;
   rendererFallbackReason: string | null;
+  /**
+   * Where the renderer runs (#253): `worker` — an `OffscreenCanvas` render
+   * worker with its own frame clock — or `main`, the page's thread. Published
+   * once the transport is chosen, before the device boots.
+   */
+  renderTransport: RenderTransportKind;
+  /** Why that transport: the capability probe's verdict, `?renderer=main`, or the WebGL backend. */
+  renderTransportReason: string;
+  /** `GPUDevice`s the page's device gate acquired so far, in whichever realm holds it (`adapter.ts`). */
+  gpuDevicesAcquired: number;
   /** The WebGPU pre-flight: secure context → `navigator.gpu` → adapter. Stops before `requestDevice`. */
   webgpuProbe: WebGpuProbeResult;
   /** WebGL internal render-target scale (`webgl/WebGLRenderer.ts`). */
@@ -171,6 +188,13 @@ export interface ChromashiftDiagnostics {
   // ── Debug APIs ──────────────────────────────────────────────────────────────
   /** Render tallies, armed by `?debugRenders=1` (`src/debug/renderCounts.ts`). */
   __renderCounts: RenderCountsApi;
+  /**
+   * Renderer hooks for automation, on either transport — the presented frame,
+   * a simulated device loss, the render clock's tick times. Armed by
+   * `?renderDebug=1` (or `localStorage['chromashift:renderDebug'] = '1'`); see
+   * `engine/render/debug.ts`.
+   */
+  __renderDebug: RenderDebugApi;
 }
 
 export type DiagnosticKey = keyof ChromashiftDiagnostics;
@@ -187,6 +211,9 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   usingWebGPU: true,
   usingWebGL: true,
   rendererFallbackReason: true,
+  renderTransport: true,
+  renderTransportReason: true,
+  gpuDevicesAcquired: true,
   webgpuProbe: true,
   webglInternalScale: true,
   webglInternalFormat: true,
@@ -236,30 +263,117 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   passGraphExecutedPasses: true,
   passGraphSlotsExecuting: true,
   __renderCounts: true,
+  __renderDebug: true,
 };
 
 export const DIAGNOSTIC_KEYS = Object.keys(DIAGNOSTIC_KEY_SET) as readonly DiagnosticKey[];
 
-function target(): Partial<ChromashiftDiagnostics> | null {
-  return typeof window === 'undefined' ? null : window;
+/** Where a worker's breadcrumbs go (the render worker posts them to the page). */
+export type DiagnosticsSink = (values: Partial<ChromashiftDiagnostics>) => void;
+
+interface Forwarding {
+  sink: DiagnosticsSink;
+  /** This realm's breadcrumbs, so `readDiagnostic` answers in a worker too. */
+  mirror: Partial<ChromashiftDiagnostics>;
+  /** Published since the last flush. */
+  batch: Partial<ChromashiftDiagnostics> | null;
+  /** Last value forwarded per key, for primitives only. */
+  sent: Map<DiagnosticKey, unknown>;
 }
 
-/** Publish one breadcrumb. A no-op without a `window`. */
+let forwarding: Forwarding | null = null;
+
+function target(): Partial<ChromashiftDiagnostics> | null {
+  if (typeof window !== 'undefined') return window;
+  return forwarding?.mirror ?? null;
+}
+
+function isPrimitive(value: unknown): boolean {
+  return value === null || (typeof value !== 'object' && typeof value !== 'function');
+}
+
+/**
+ * Queue `values` for the sink. One message per task however many breadcrumbs
+ * the task published, and a primitive that did not change since it was last
+ * forwarded is not sent again — the render loop republishes a few per frame,
+ * and the page should not wake for an unchanged boolean sixty times a second.
+ */
+function forward(values: Partial<ChromashiftDiagnostics>): void {
+  const state = forwarding;
+  if (!state) return;
+  const changed: Partial<Record<DiagnosticKey, unknown>> = {};
+  let any = false;
+  for (const [key, value] of Object.entries(values) as [DiagnosticKey, unknown][]) {
+    if (isPrimitive(value) && state.sent.has(key) && Object.is(state.sent.get(key), value)) continue;
+    if (isPrimitive(value)) state.sent.set(key, value);
+    else state.sent.delete(key);
+    changed[key] = value;
+    any = true;
+  }
+  if (!any) return;
+  if (state.batch === null) {
+    state.batch = {};
+    queueMicrotask(() => {
+      const batch = state.batch;
+      state.batch = null;
+      if (batch && forwarding === state) state.sink(batch);
+    });
+  }
+  Object.assign(state.batch, changed);
+}
+
+/**
+ * Keep this realm's breadcrumbs in a local mirror and hand every change to
+ * `sink` (a worker that has no `window`); `null` stops forwarding. Ignored on
+ * a page, whose breadcrumbs are `window`'s own.
+ */
+export function forwardDiagnostics(sink: DiagnosticsSink | null): void {
+  if (typeof window !== 'undefined') return;
+  forwarding = sink ? { sink, mirror: {}, batch: null, sent: new Map() } : null;
+}
+
+/**
+ * Forward the next value of every key even if it matches what was last sent.
+ * The render service calls it at each boot: a page (or a spec) may have
+ * cleared a breadcrumb on its `window` since, and the boot republishes them.
+ */
+export function resendForwardedDiagnostics(): void {
+  forwarding?.sent.clear();
+}
+
+/**
+ * Page side of `forwardDiagnostics`: publish what a worker forwarded.
+ * `wasmEngineWorkers` merges, since the page and each worker report their
+ * own entries into one record.
+ */
+export function applyForwardedDiagnostics(values: Partial<ChromashiftDiagnostics>): void {
+  const w = target();
+  if (!w) return;
+  const { wasmEngineWorkers, ...rest } = values;
+  Object.assign(w, rest);
+  if (wasmEngineWorkers) w.wasmEngineWorkers = { ...w.wasmEngineWorkers, ...wasmEngineWorkers };
+}
+
+/** Publish one breadcrumb. A no-op without a `window` or a forwarding sink. */
 export function publishDiagnostic<K extends DiagnosticKey>(key: K, value: ChromashiftDiagnostics[K]): void {
   const w = target();
   if (w) w[key] = value;
+  if (forwarding) forward({ [key]: value });
 }
 
-/** Publish several breadcrumbs that describe one decision. A no-op without a `window`. */
+/** Publish several breadcrumbs that describe one decision. A no-op without a `window` or a forwarding sink. */
 export function publishDiagnostics(values: Partial<ChromashiftDiagnostics>): void {
   const w = target();
   if (w) Object.assign(w, values);
+  if (forwarding) forward(values);
 }
 
 /** Record one worker's engine status in `wasmEngineWorkers`. */
 export function publishWorkerWasmEngine(worker: 'analysis' | 'motion', status: WasmEngineStatus): void {
   const w = target();
-  if (w) w.wasmEngineWorkers = { ...w.wasmEngineWorkers, [worker]: status };
+  if (!w) return;
+  w.wasmEngineWorkers = { ...w.wasmEngineWorkers, [worker]: status };
+  if (forwarding) forward({ wasmEngineWorkers: { [worker]: status } });
 }
 
 /** Read one breadcrumb; `undefined` until something has published it. */

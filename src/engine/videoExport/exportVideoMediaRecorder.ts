@@ -1,4 +1,4 @@
-import type { ChromashiftRenderer } from '../types/RendererContracts';
+import type { ExportRenderer } from '../types/RendererContracts';
 import type { ChromashiftState } from '../../state/types';
 import { exportVideoFrameLoop } from './exportVideoFrameLoop';
 import {
@@ -26,7 +26,7 @@ function waitForRecorderStop(recorder: MediaRecorder): Promise<Blob> {
  * Offline frame-by-frame export via MediaRecorder + manual `requestFrame()`.
  */
 export async function exportVideoMediaRecorder(
-  renderer: ChromashiftRenderer,
+  renderer: ExportRenderer,
   state: ChromashiftState,
   liveAngles: number[],
   baseWidth: number,

@@ -29,7 +29,7 @@ import type { EngineMode, LayerIndex } from './overlay/types';
 /**
  * The wrappers `buildOverlayProps` takes as an argument.
  *
- * The two that reach through `rendererRef` are deliberately *not* in here: the
+ * The two that reach through `renderHostRef` are deliberately *not* in here: the
  * `react-hooks/refs` lint cannot prove a callee won't invoke a ref-reading
  * callback during render, so they are attached to the finished object below
  * instead of being handed to a function.
@@ -52,7 +52,7 @@ export function useOverlayProps(props: AppUIProps): OverlayProps {
     applyPerformanceDegrade,
     isWasmReady,
     layerOpacities,
-    rendererRef,
+    renderHostRef,
     setAntialiasEnabled,
     setDisplayColorSpace,
     setEngineMode,
@@ -82,14 +82,14 @@ export function useOverlayProps(props: AppUIProps): OverlayProps {
   }, [layerOpacities, setLayerOpacities]);
 
   const onApplyPerformanceDegrade = useCallback(() => {
-    rendererRef.current?.setAntialiasing(false);
+    renderHostRef.current.setAntialiasing(false);
     applyPerformanceDegrade();
-  }, [rendererRef, applyPerformanceDegrade]);
+  }, [renderHostRef, applyPerformanceDegrade]);
 
   const onAntialiasToggle = useCallback((enabled: boolean) => {
     setAntialiasEnabled(enabled);
-    rendererRef.current?.setAntialiasing(enabled);
-  }, [rendererRef, setAntialiasEnabled]);
+    renderHostRef.current.setAntialiasing(enabled);
+  }, [renderHostRef, setAntialiasEnabled]);
 
   const onDisplayColorSpaceChange = useCallback((space: DisplayColorSpace) => {
     setDisplayColorSpace(space);

@@ -6,7 +6,7 @@ import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
   const { state, getState, actions } = store;
-  const { rendererRef, mainCanvasRef, animAnglesRef, frameClockRef } = refs;
+  const { renderHostRef, mainCanvasRef, frameClockRef } = refs;
   const abortRef = useRef<AbortController | null>(null);
 
   const syncCodecSupport = useMemo(() => detectVideoCodecSupport(), []);
@@ -14,8 +14,9 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
 
   useEffect(() => {
     const mainCanvas = mainCanvasRef.current;
-    const baseWidth = Math.max(1, Math.round(mainCanvas?.width ?? 1024));
-    const baseHeight = Math.max(1, Math.round(mainCanvas?.height ?? 1024));
+    const size = mainCanvas ? renderHostRef.current.canvasSize(mainCanvas) : null;
+    const baseWidth = Math.max(1, Math.round(size?.width ?? 1024));
+    const baseHeight = Math.max(1, Math.round(size?.height ?? 1024));
     const scale = state.ui.videoExportSettings.resolutionScale;
     const probeWidth = Math.max(2, Math.round(baseWidth * scale));
     const probeHeight = Math.max(2, Math.round(baseHeight * scale));
@@ -31,21 +32,24 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [mainCanvasRef, state.ui.videoExportSettings.resolutionScale]);
+  }, [renderHostRef, mainCanvasRef, state.ui.videoExportSettings.resolutionScale]);
 
   const handleCancelVideoExport = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
   const handleExportVideo = useCallback(async () => {
-    const renderer = rendererRef.current;
+    const host = renderHostRef.current;
     const snapshot = getState();
-    if (!renderer || snapshot.ui.exportingVideo) return;
+    if (!snapshot.engine.gpuReady || snapshot.ui.exportingVideo) return;
 
     const settings = snapshot.ui.videoExportSettings;
     const mainCanvas = mainCanvasRef.current;
-    const baseWidth = Math.max(1, Math.round(mainCanvas?.width ?? 1024));
-    const baseHeight = Math.max(1, Math.round(mainCanvas?.height ?? 1024));
+    const size = mainCanvas ? host.canvasSize(mainCanvas) : null;
+    const baseWidth = Math.max(1, Math.round(size?.width ?? 1024));
+    const baseHeight = Math.max(1, Math.round(size?.height ?? 1024));
+    // Exact, from the renderer that holds the angle clock.
+    const liveAngles = await host.getAngles();
 
     const wasAutoPlay = snapshot.ui.isAutoPlayActive;
     const wasPaused = snapshot.engine.paused;
@@ -58,10 +62,11 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
 
     try {
       const { downloadVideoExport, exportVideo } = await import('../engine/videoExport/VideoExporter');
+      // Frames come back by readback on either transport, so the file is the same.
       const result = await exportVideo(
-        renderer,
+        host.exportRenderer(),
         snapshot,
-        animAnglesRef.current,
+        liveAngles,
         baseWidth,
         baseHeight,
         {
@@ -87,7 +92,7 @@ export function useVideoExport(refs: ChromashiftRefs, store: ChromashiftStore) {
       actions.setIsAutoPlayActive(wasAutoPlay);
       actions.setIsPaused(wasPaused);
     }
-  }, [rendererRef, mainCanvasRef, animAnglesRef, frameClockRef, getState, actions]);
+  }, [renderHostRef, mainCanvasRef, frameClockRef, getState, actions]);
 
   const patchVideoExportSettings = actions.patchVideoExportSettings;
 

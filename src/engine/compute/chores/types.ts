@@ -12,6 +12,7 @@
 
 import type { MotionFieldStats } from './motionKernel';
 import type { LayerTextures } from '../../webgpu/bindGroups';
+import type { PixelSource } from '../../wasm/imageBytes';
 
 export type { MotionFieldStats } from './motionKernel';
 
@@ -40,7 +41,8 @@ export type ChoreOp = 'image-analysis' | 'coincidence' | 'motion-field';
  * Analyze an image: 256-bin BT.709 luminance histogram + per-pixel band mask.
  *
  * A job may carry a GPU texture, a decoded CPU image, or both. Lanes advertise
- * which inputs they can consume, so a caller that only has an `HTMLImageElement`
+ * which inputs they can consume, so a caller that only has an image (an
+ * `HTMLImageElement`, or an `ImageBitmap` in the render worker)
  * transparently lands on `wasm`/`ts` without the GPU lane ever being asked.
  */
 export interface ImageAnalysisJob {
@@ -48,7 +50,7 @@ export interface ImageAnalysisJob {
   /** GPU-resident source. Required by the `webgpu` lane. */
   source?: GPUTexture | null;
   /** CPU-decodable source. Required by the `wasm` and `ts` lanes. */
-  image?: HTMLImageElement | null;
+  image?: PixelSource | null;
   width: number;
   height: number;
   /**
@@ -327,7 +329,7 @@ export interface CpuChoreHost extends Partial<CpuMotionFieldHost> {
    * needs one round trip (one bitmap transfer, one pixel readback) per image.
    */
   analyzeImage(
-    image: HTMLImageElement,
+    image: PixelSource,
     avgLumHint: number | undefined,
     useWasm: boolean,
   ): Promise<CpuImageAnalysisResult | null>;
@@ -341,7 +343,7 @@ export interface CpuChoreHost extends Partial<CpuMotionFieldHost> {
    * publish it.
    */
   computeAverageLuminance(
-    image: HTMLImageElement,
+    image: PixelSource,
     useWasm: boolean,
   ): Promise<{ avgLuminance: number; mode: 'worker' | 'inline' }>;
 }

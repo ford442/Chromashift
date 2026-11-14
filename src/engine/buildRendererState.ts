@@ -37,6 +37,22 @@ function flipYForLayer(index: number): boolean {
   return index % 2 === 1;
 }
 
+/**
+ * Write `angles` into `target.layers`, resizing the array and reusing its
+ * entries — the per-frame half of {@link buildRendererState}. The render
+ * service receives the rest of the state already built by the page and writes
+ * only this each frame.
+ */
+export function writeLayerAngles(target: RendererState, angles: readonly number[]): void {
+  resizeLayers(target, angles.length);
+  for (let i = 0; i < angles.length; i += 1) {
+    const layer = target.layers[i]!;
+    layer.angleDeg = angles[i]!;
+    layer.flipX = false;
+    layer.flipY = flipYForLayer(i);
+  }
+}
+
 /** One reused `RendererState` per renderer slot (main viewport, compare slot B, ...). */
 const rendererStateSlots = new Map<string, RendererState>();
 
@@ -78,13 +94,7 @@ export function buildRendererState(
 
   // The angle array is the authority on how many layers this frame has: it is
   // produced from `layers.angles`, which the reducer keeps at `layers.count`.
-  resizeLayers(target, angles.length);
-  for (let i = 0; i < angles.length; i += 1) {
-    const layer = target.layers[i]!;
-    layer.angleDeg = angles[i]!;
-    layer.flipX = false;
-    layer.flipY = flipYForLayer(i);
-  }
+  writeLayerAngles(target, angles);
 
   target.avgLuminance = engine.avgLuminance;
   target.layerOpacity = layers.opacity;

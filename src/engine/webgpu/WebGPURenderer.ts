@@ -474,9 +474,8 @@ export class WebGPURenderer {
     const hdrCanvas = canvasTex.format === HDR_CANVAS_FORMAT;
     if (hdrCanvas !== this.presentedHdr) {
       this.presentedHdr = hdrCanvas;
-      if (typeof window !== 'undefined') {
-        publishDiagnostic('canvasHdrNote', canvasHdrInternalNote(hdrCanvas, this.internalFormat));
-      }
+      // A no-op where nothing listens; forwarded to the page from the render worker.
+      publishDiagnostic('canvasHdrNote', canvasHdrInternalNote(hdrCanvas, this.internalFormat));
     }
 
     const enc = this.device.createCommandEncoder();

@@ -4,15 +4,13 @@ import {
   isQuadCompareLayout,
   quadLayerMainViewMode,
 } from '../engine/compareViews';
-import {
-  buildStationaryRendererState,
-  quadStationaryFingerprint,
-  warmupTracerPersistence,
-} from '../engine/stationaryPreview';
+import { buildStationaryRendererState, quadStationaryFingerprint } from '../engine/stationaryPreview';
 import type { RendererState } from '../engine/types/RendererState';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import type { ChromashiftState } from '../state/types';
+import type { RenderCellRequest } from '../engine/render/protocol';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
+import { QUAD_SLOT_IDS } from './useCompareQuadSlots';
 
 function quadRenderOverrides(state: ChromashiftState): Partial<RendererState> {
   const { scale: layerScale } = effectiveLayerScaleForMultiView(state.layers.scale, 'quad');
@@ -33,58 +31,47 @@ function quadRenderOverrides(state: ChromashiftState): Partial<RendererState> {
  */
 export function useQuadStationaryRefresh(refs: ChromashiftRefs, store: ChromashiftStore): void {
   const { state } = store;
-  const { quadRenderersRef, renderStateRef, refreshQuadCellsRef } = refs;
+  const { renderHostRef, renderStateRef, refreshQuadCellsRef } = refs;
   const lastFingerprintRef = useRef('');
-  const refreshGenRef = useRef(0);
-  const inFlightRef = useRef(false);
 
   const refreshQuadCells = useCallback(() => {
     const current = renderStateRef.current;
     if (!current.engine.gpuReady || current.ui.exportingVideo) return;
     if (!isQuadCompareLayout(current.ui.compareView.layout)) return;
 
-    const quad = quadRenderersRef.current;
-    if (!quad.a && !quad.b && !quad.c) return;
-    if (inFlightRef.current) return;
-
-    const gen = ++refreshGenRef.current;
-    inFlightRef.current = true;
-    try {
-      const fps = current.engine.fps;
-      const overrides = quadRenderOverrides(current);
-      const baseStationary = buildStationaryRendererState(current, overrides);
-
-      if (quad.a) {
-        quad.a.render(buildStationaryRendererState(current, {
+    // One message: the renderer draws each cell once with its own state; a
+    // cell whose slot is not attached is skipped there.
+    const fps = current.engine.fps;
+    const overrides = quadRenderOverrides(current);
+    const baseStationary = buildStationaryRendererState(current, overrides);
+    const cells: RenderCellRequest[] = [
+      {
+        slot: QUAD_SLOT_IDS.a,
+        fps,
+        state: buildStationaryRendererState(current, { ...overrides, mainViewMode: MAIN_VIEW_MODES.SOURCE_IMAGE }),
+      },
+      {
+        slot: QUAD_SLOT_IDS.b,
+        fps,
+        state: buildStationaryRendererState(current, {
           ...overrides,
-          mainViewMode: MAIN_VIEW_MODES.SOURCE_IMAGE,
-        }), fps);
-      }
-
-      if (quad.b) {
-        const layerMode = quadLayerMainViewMode(current.ui.compareView.quadLayerIndex);
-        quad.b.render(buildStationaryRendererState(current, {
-          ...overrides,
-          mainViewMode: layerMode,
-        }), fps);
-      }
-
-      if (quad.c) {
-        warmupTracerPersistence(quad.c, baseStationary, fps);
-        if (gen !== refreshGenRef.current) return;
-        quad.c.render({
+          mainViewMode: quadLayerMainViewMode(current.ui.compareView.quadLayerIndex),
+        }),
+      },
+      {
+        slot: QUAD_SLOT_IDS.c,
+        fps,
+        warmup: baseStationary,
+        state: {
           ...baseStationary,
           mainViewMode: MAIN_VIEW_MODES.FULL_RES_TRACER,
           showTracerView: true,
           paused: true,
-        }, fps);
-      }
-    } catch (error) {
-      console.warn('Quad stationary refresh failed:', error);
-    } finally {
-      inFlightRef.current = false;
-    }
-  }, [quadRenderersRef, renderStateRef]);
+        },
+      },
+    ];
+    renderHostRef.current.renderCells(cells);
+  }, [renderHostRef, renderStateRef]);
 
   useEffect(() => {
     refreshQuadCellsRef.current = refreshQuadCells;

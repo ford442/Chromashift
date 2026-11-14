@@ -19,7 +19,7 @@ export interface WebXrControls {
 
 export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrControls {
   const { state } = store;
-  const { renderStateRef, animAnglesRef, frameClockRef } = refs;
+  const { renderStateRef, renderHostRef, frameClockRef } = refs;
   const presenterRef = useRef<WebXrPresenter | null>(null);
 
   const [xrAvailable, setXrAvailable] = useState(false);
@@ -79,7 +79,8 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
         if (imageUrl) {
           void presenter.syncTexture(imageUrl);
         }
-        const angles = animAnglesRef.current.slice();
+        // Exact: WebXR is WebGL-only, so the renderer is in-process (#253).
+        const angles = renderHostRef.current.currentAngles().slice();
         const built = buildRendererState(live, angles);
         renderer.render({ ...built, ...xrRendererStateOverrides(built, advance) }, fps, viewport);
       }, current.engine.fps);
@@ -97,7 +98,7 @@ export function useWebXr(refs: ChromashiftRefs, store: ChromashiftStore): WebXrC
     } finally {
       setXrBusy(false);
     }
-  }, [animAnglesRef, frameClockRef, renderStateRef, xrBusy, xrEnterAllowed, xrImmersive]);
+  }, [renderHostRef, frameClockRef, renderStateRef, xrBusy, xrEnterAllowed, xrImmersive]);
 
   /** `enterXr` with the promise discarded — a stable identity for the overlay props. */
   const startXr = useCallback(() => { void enterXr(); }, [enterXr]);

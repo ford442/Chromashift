@@ -1,35 +1,26 @@
-import { useEffect } from 'react';
-import {
-  computeImageAverageLuminanceWith,
-} from '../engine/WasmEngine';
-import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
+import { useEffect, useRef } from 'react';
+import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
+import { drawOriginalPreview, previewSizeOf } from './sourcePreview';
 
 interface ImagePlaybackOptions {
   refs: ChromashiftRefs;
   store: ChromashiftStore;
   clearClassificationMask: () => void;
-  generateClassificationMaskTexture: (
-    image: HTMLImageElement,
-    avgLum: number,
-    sourceTexture?: import('../engine/types/TextureHandle').ChromashiftTextureHandle | null,
-  ) => Promise<number>;
+  analyzeSource: (url: string) => Promise<number>;
 }
 
 export function useImagePlayback({
   refs,
   store,
   clearClassificationMask,
-  generateClassificationMaskTexture,
+  analyzeSource,
 }: ImagePlaybackOptions): void {
   const { state, actions, selectSourceIndex } = store;
   const { media, engine, ui } = state;
   const {
-    textureManagerRef,
-    rendererRef,
-    quadRenderersRef,
+    renderHostRef,
     loadGenRef,
     previewOriginalRef,
-    engineModeRef,
     capturePreviewAfterRender,
   } = refs;
 
@@ -39,68 +30,47 @@ export function useImagePlayback({
     if (!activeImage) return;
     const url = activeImage.url;
     const gen = ++loadGenRef.current;
+    const host = renderHostRef.current;
     clearClassificationMask();
-    rendererRef.current?.clearPersistence();
-    quadRenderersRef.current.c?.clearPersistence();
+    host.clearPersistence(['quad-c']);
 
-    textureManagerRef.current?.loadTexture(url).then((tex) => {
-      if (gen !== loadGenRef.current) return;
-      applySourceTexture(refs, tex);
-      capturePreviewAfterRender.current = true;
-      textureManagerRef.current?.evictExcept([url, media.reference?.url].filter((u): u is string => !!u));
-
-      const previewOrig = previewOriginalRef.current;
-      if (previewOrig) {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          if (gen !== loadGenRef.current) return;
-          if (img.height > 0) actions.setImageAspect(img.width / img.height);
-
-          void (async () => {
-            let avgLum = 128;
-            try {
-              avgLum = await generateClassificationMaskTexture(
-                img,
-                128,
-                tex,
-              );
-            } catch (e) {
-              console.warn('Could not generate classification mask:', e);
-              clearClassificationMask();
-              try {
-                avgLum = computeImageAverageLuminanceWith(img, engineModeRef.current === 'wasm');
-              } catch (lumError) {
-                console.warn('Could not compute average luminance (CORS?):', lumError);
-              }
-            }
-            actions.setAvgLuminance(Math.round(avgLum));
-          })();
-
-          const ctx = previewOrig.getContext('2d');
-          if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
-        };
-        img.onerror = () => console.warn('Failed to load preview image:', url);
-        img.src = url;
+    // The renderer fetches and decodes (off the page, on the worker) and
+    // sends back the size and a thumbnail-sized bitmap for the Original preview.
+    host.loadSource({
+      url,
+      keep: [url, media.reference?.url].filter((u): u is string => !!u),
+      preview: previewSizeOf(previewOriginalRef.current),
+    }).then((loaded) => {
+      if (gen !== loadGenRef.current) {
+        loaded.preview?.close();
+        return;
       }
+      capturePreviewAfterRender.current = true;
+      if (loaded.height > 0) actions.setImageAspect(loaded.width / loaded.height);
+      drawOriginalPreview(previewOriginalRef.current, loaded.preview);
+      void analyzeSource(url).then(
+        (avgLum) => {
+          if (gen === loadGenRef.current) actions.setAvgLuminance(Math.round(avgLum));
+        },
+        (error: unknown) => {
+          console.warn('Could not analyze the source (CORS?):', url, error);
+          if (gen === loadGenRef.current) actions.setAvgLuminance(128);
+        },
+      );
     }).catch((e) => console.warn('Failed to load texture:', url, e));
   }, [
-    refs,
     engine.gpuReady,
     media.imageList,
     media.currentIndex,
     media.reference?.url,
     media.liveSource.active,
     actions,
-    textureManagerRef,
-    rendererRef,
-    quadRenderersRef,
+    renderHostRef,
     loadGenRef,
     previewOriginalRef,
-    engineModeRef,
     capturePreviewAfterRender,
     clearClassificationMask,
-    generateClassificationMaskTexture,
+    analyzeSource,
   ]);
 
   useEffect(() => {
@@ -117,35 +87,36 @@ export function useImagePlayback({
     media.imageList.length, media.liveSource.active, selectSourceIndex,
   ]);
 
+  // A luminance change re-runs the analysis for the current source (the mask
+  // follows the average). The renderer analyzes what it shows. Not the GPU
+  // becoming ready: the load above analyzes every source it uploads, and a
+  // second run alongside it only queues behind it in the analysis worker.
+  const refreshedLuminanceRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!engine.gpuReady || media.liveSource.active) return;
+    if (!engine.gpuReady || media.liveSource.active) {
+      refreshedLuminanceRef.current = null;
+      return;
+    }
+    const previous = refreshedLuminanceRef.current;
+    refreshedLuminanceRef.current = engine.avgLuminance;
+    if (previous === null || previous === engine.avgLuminance) return;
 
     const index = refs.currentImageIndexRef.current;
     const list = refs.imageListRef.current;
     if (list.length === 0) return;
     const activeImage = list[index];
     if (!activeImage) return;
-    const url = activeImage.url;
 
-    textureManagerRef.current?.loadTexture(url).then((tex) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        void generateClassificationMaskTexture(img, engine.avgLuminance, tex).catch((e) => {
-          console.warn('Could not refresh classification mask:', e);
-          clearClassificationMask();
-        });
-      };
-      img.onerror = () => clearClassificationMask();
-      img.src = url;
-    }).catch(() => clearClassificationMask());
+    void analyzeSource(activeImage.url).catch((e) => {
+      console.warn('Could not refresh classification mask:', e);
+      clearClassificationMask();
+    });
   }, [
     refs,
     engine.gpuReady,
     engine.avgLuminance,
     media.liveSource.active,
-    textureManagerRef,
     clearClassificationMask,
-    generateClassificationMaskTexture,
+    analyzeSource,
   ]);
 }
