@@ -4,40 +4,32 @@ import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { buildRendererState } from '../engine/buildRendererState';
 import { resolvePresentation } from '../engine/color/presentation';
 import { downloadBlob, encodeStillPng, stillExportSpace } from '../engine/color/stillExport';
-import {
-  computeAverageLuminanceStridedWith,
-  computeImageAverageLuminanceWith,
-} from '../engine/WasmEngine';
+import { computeAverageLuminanceStridedWith } from '../engine/WasmEngine';
 import { addLocalImage, clearLocalLibrary } from '../engine/library/LocalLibrary';
 import type { ImageEntry } from '../engine/library/imageEntry';
-import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
+import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
+import { drawOriginalPreview, previewSizeOf } from './sourcePreview';
 
 interface MediaHandlersOptions {
   refs: ChromashiftRefs;
   store: ChromashiftStore;
   clearClassificationMask: () => void;
-  generateClassificationMaskTexture: (
-    image: HTMLImageElement,
-    avgLum: number,
-    sourceTexture?: import('../engine/types/TextureHandle').ChromashiftTextureHandle | null,
-  ) => Promise<number>;
+  analyzeSource: (url: string) => Promise<number>;
 }
 
 export function useMediaHandlers({
   refs,
   store,
   clearClassificationMask,
-  generateClassificationMaskTexture,
+  analyzeSource,
 }: MediaHandlersOptions) {
   const { state, actions, selectSourceIndex, ensureReferenceImage } = store;
   const { media } = state;
   const {
-    textureManagerRef,
-    rendererRef,
+    renderHostRef,
     capturePreviewAfterRender: capturePreviewAfterRenderRef,
     imageListRef,
     currentImageIndexRef,
-    engineModeRef,
     previewOriginalRef,
     ownedObjectUrlsRef,
   } = refs;
@@ -47,15 +39,16 @@ export function useMediaHandlers({
   }, [actions]);
 
   const handleLoadSpecificImage = useCallback(async (url: string, label = 'External Image') => {
-    if (!textureManagerRef.current || !rendererRef.current) return;
+    if (!refs.renderStateRef.current.engine.gpuReady) return;
+    const host = renderHostRef.current;
     actions.setSpecificImageError(null);
     try {
-      const tex = await textureManagerRef.current.loadTexture(url);
-      applySourceTexture(refs, tex);
-      textureManagerRef.current.evictExcept(
-        [url, media.reference?.url].filter((u): u is string => !!u),
-      );
-      rendererRef.current.clearPersistence();
+      const loaded = await host.loadSource({
+        url,
+        keep: [url, media.reference?.url].filter((u): u is string => !!u),
+        preview: previewSizeOf(previewOriginalRef.current),
+      });
+      host.clearPersistence();
       clearClassificationMask();
       capturePreviewAfterRenderRef.current = true;
       const currentEntry = imageListRef.current[currentImageIndexRef.current];
@@ -73,50 +66,31 @@ export function useMediaHandlers({
         }
       }
 
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        if (img.height > 0) actions.setImageAspect(img.width / img.height);
-        void (async () => {
-          let avgLum = 128;
-          try {
-            avgLum = await generateClassificationMaskTexture(img, 128, tex);
-          } catch (e) {
-            console.warn('Could not generate classification mask:', e);
-            clearClassificationMask();
-            try {
-              avgLum = computeImageAverageLuminanceWith(img, engineModeRef.current === 'wasm');
-            } catch (lumError) {
-              console.warn('CORS?', lumError);
-            }
-          }
-          actions.setAvgLuminance(Math.round(avgLum));
-        })();
-        const previewOrig = previewOriginalRef.current;
-        if (previewOrig) {
-          const ctx = previewOrig.getContext('2d');
-          if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
-        }
-      };
-      img.src = url;
+      if (loaded.height > 0) actions.setImageAspect(loaded.width / loaded.height);
+      drawOriginalPreview(previewOriginalRef.current, loaded.preview);
+      void analyzeSource(url).then(
+        (avgLum) => actions.setAvgLuminance(Math.round(avgLum)),
+        (error: unknown) => {
+          console.warn('Could not analyze the source (CORS?):', error);
+          actions.setAvgLuminance(128);
+        },
+      );
     } catch (e) {
       console.error('Failed to load specific image:', e);
       actions.setSpecificImageError(`Failed to load: ${url}`);
     }
   }, [
     refs,
-    textureManagerRef,
-    rendererRef,
+    renderHostRef,
     capturePreviewAfterRenderRef,
     imageListRef,
     currentImageIndexRef,
-    engineModeRef,
     previewOriginalRef,
     actions,
     media.reference,
     ensureReferenceImage,
     clearClassificationMask,
-    generateClassificationMaskTexture,
+    analyzeSource,
   ]);
 
   const swapSourceAndReference = useCallback(() => {
@@ -222,8 +196,8 @@ export function useUpscalerHandlers(
   const { state, actions } = store;
   const { media, ui } = state;
   const {
-    rendererRef,
-    textureManagerRef,
+    renderHostRef,
+    renderStateRef,
     upscalerRef,
     engineModeRef,
     capturePreviewAfterRender: capturePreviewAfterRenderRef,
@@ -249,7 +223,7 @@ export function useUpscalerHandlers(
   }, []);
 
   const handleUpscaleSource = useCallback(async () => {
-    if (!rendererRef.current || !textureManagerRef.current) return;
+    if (!renderStateRef.current.engine.gpuReady) return;
     if (upscalerRef.current?.isBusy()) return;
 
     const activeImage = media.imageList[media.currentIndex];
@@ -282,22 +256,12 @@ export function useUpscalerHandlers(
         (p) => { actions.setUpscaleProgress(p.progress); actions.setUpscaleInfo(p.info); },
       );
 
-      const tex = textureManagerRef.current.uploadPixels(
-        `__upscaled__:${url}`, result.pixels, result.width, result.height,
-      );
-      applySourceTexture(refs, tex);
-      rendererRef.current.clearPersistence();
-      clearClassificationMask();
-
+      // Measured before the upload: the pixels are handed to the renderer.
       const stride = Math.max(1, Math.floor(Math.max(result.width, result.height) / 256));
       const avgLum = computeAverageLuminanceStridedWith(
         result.pixels, result.width, result.height, stride,
         engineModeRef.current === 'wasm',
       );
-      actions.setAvgLuminance(Math.round(avgLum));
-      actions.setImageAspect(result.width / result.height);
-      capturePreviewAfterRenderRef.current = true;
-
       const previewOrig = previewOriginalRef.current;
       if (previewOrig) {
         const pctx = previewOrig.getContext('2d');
@@ -311,6 +275,17 @@ export function useUpscalerHandlers(
         }
       }
 
+      const host = renderHostRef.current;
+      const pixels = new Uint8ClampedArray(result.pixels.byteLength);
+      pixels.set(result.pixels);
+      await host.uploadPixels(`__upscaled__:${url}`, pixels, result.width, result.height);
+      host.clearPersistence();
+      clearClassificationMask();
+
+      actions.setAvgLuminance(Math.round(avgLum));
+      actions.setImageAspect(result.width / result.height);
+      capturePreviewAfterRenderRef.current = true;
+
       actions.setUpscaleInfo(`Done — ${result.width}×${result.height}`);
     } catch (e) {
       console.error('Upscale failed:', e);
@@ -319,9 +294,8 @@ export function useUpscalerHandlers(
       actions.setUpscaleBusy(false);
     }
   }, [
-    refs,
-    rendererRef,
-    textureManagerRef,
+    renderHostRef,
+    renderStateRef,
     upscalerRef,
     engineModeRef,
     capturePreviewAfterRenderRef,
@@ -343,14 +317,19 @@ export function useUpscalerHandlers(
     actions.setUpscaleInfo('Capturing canvas…');
 
     try {
-      const canvas = mainCanvasRef.current;
-      const scratch = document.createElement('canvas');
-      scratch.width = canvas.width;
-      scratch.height = canvas.height;
-      const sctx = scratch.getContext('2d');
-      if (!sctx) throw new Error('2D context unavailable');
-      sctx.drawImage(canvas, 0, 0);
-      const src = sctx.getImageData(0, 0, scratch.width, scratch.height);
+      // The frame comes back by readback: the canvas may be drawn by the
+      // render worker, and the page cannot read a transferred canvas.
+      const host = renderHostRef.current;
+      const { width, height } = host.canvasSize(mainCanvasRef.current);
+      const frame = await host.exportFrame({
+        state: buildRendererState(renderStateRef.current, renderStateRef.current.layers.angles, {
+          presentationSpace: 'srgb',
+        }),
+        options: { width, height },
+        liveAngles: true,
+      });
+      if (!frame) throw new Error('The renderer returned no frame.');
+      const src = { data: frame.data, width: frame.width, height: frame.height };
 
       const result = await upscalerRef.current.upscale(
         src.data, src.width, src.height, parseUpscaleModel(ui.upscaleModel),
@@ -379,7 +358,7 @@ export function useUpscalerHandlers(
     } finally {
       actions.setUpscaleBusy(false);
     }
-  }, [mainCanvasRef, upscalerRef, ui.upscaleModel, actions, parseUpscaleModel]);
+  }, [renderHostRef, renderStateRef, mainCanvasRef, upscalerRef, ui.upscaleModel, actions, parseUpscaleModel]);
 
   return { handleUpscaleSource, handleUpscaleOutput };
 }
@@ -389,24 +368,25 @@ export function useTracerExport(
   store: ChromashiftStore,
 ) {
   const { getState, actions } = store;
-  const { rendererRef, mainCanvasRef } = refs;
+  const { renderHostRef, mainCanvasRef } = refs;
 
   const handleExportTracer = useCallback(async () => {
-    const renderer = rendererRef.current;
+    const host = renderHostRef.current;
     const snapshot = getState();
-    if (!renderer || snapshot.ui.exportingTracer) return;
+    if (!snapshot.engine.gpuReady || snapshot.ui.exportingTracer) return;
     actions.setExportingTracer(true);
     try {
       const mainCanvas = mainCanvasRef.current;
-      const baseWidth = Math.max(1, Math.round(mainCanvas?.width ?? 2048));
-      const baseHeight = Math.max(1, Math.round(mainCanvas?.height ?? 2048));
+      const size = mainCanvas ? host.canvasSize(mainCanvas) : null;
+      const baseWidth = Math.max(1, Math.round(size?.width ?? 2048));
+      const baseHeight = Math.max(1, Math.round(size?.height ?? 2048));
       const longestEdge = Math.max(baseWidth, baseHeight);
       const exportScale = Math.max(1, 3840 / longestEdge);
       const width = Math.max(1, Math.round(baseWidth * exportScale));
       const height = Math.max(1, Math.round(baseHeight * exportScale));
       const { tracers, layers, output } = snapshot;
       const inspect = output.tracerInspect;
-      const result = await renderer.exportTracerView({
+      const result = await host.exportTracer({
         width,
         height,
         tracerAboveOpacity: tracers.aboveIntensity,
@@ -436,7 +416,7 @@ export function useTracerExport(
     } finally {
       actions.setExportingTracer(false);
     }
-  }, [rendererRef, mainCanvasRef, getState, actions]);
+  }, [renderHostRef, mainCanvasRef, getState, actions]);
 
   /**
    * A PNG of the current composite, encoded for — and tagged with — the
@@ -445,24 +425,26 @@ export function useTracerExport(
    * never claims a space its bytes are not in.
    */
   const handleExportStill = useCallback(async () => {
-    const renderer = rendererRef.current;
+    const host = renderHostRef.current;
     const snapshot = getState();
-    if (!renderer || snapshot.ui.exportingTracer) return;
+    if (!snapshot.engine.gpuReady || snapshot.ui.exportingTracer) return;
     actions.setExportingTracer(true);
     try {
       const mainCanvas = mainCanvasRef.current;
-      const width = Math.max(1, Math.round(mainCanvas?.width ?? 2048));
-      const height = Math.max(1, Math.round(mainCanvas?.height ?? 2048));
+      const size = mainCanvas ? host.canvasSize(mainCanvas) : null;
+      const width = Math.max(1, Math.round(size?.width ?? 2048));
+      const height = Math.max(1, Math.round(size?.height ?? 2048));
       const requested = resolvePresentation({
         colorSpace: snapshot.output.displayColorSpace,
         presentation: snapshot.output.canvasHdr ? 'hdr-extended' : 'sdr',
       }).space;
       // WebGL converts only in its on-screen blit; its export readback is sRGB.
-      const space = renderer.backend === 'webgpu' ? stillExportSpace(requested) : 'srgb';
-      const state = buildRendererState(snapshot, refs.animAnglesRef.current, {
+      const space = snapshot.engine.backend === 'webgpu' ? stillExportSpace(requested) : 'srgb';
+      // Drawn at the live angles, which the renderer holds.
+      const state = buildRendererState(snapshot, snapshot.layers.angles, {
         presentationSpace: space,
       });
-      const result = await renderer.exportFrame(state, { width, height });
+      const result = await host.exportFrame({ state, options: { width, height }, liveAngles: true });
       if (!result) return;
       const png = await encodeStillPng(result, space);
       if (!png) return;
@@ -473,7 +455,7 @@ export function useTracerExport(
     } finally {
       actions.setExportingTracer(false);
     }
-  }, [rendererRef, mainCanvasRef, getState, actions, refs]);
+  }, [renderHostRef, mainCanvasRef, getState, actions]);
 
   return { handleExportTracer, handleExportStill };
 }

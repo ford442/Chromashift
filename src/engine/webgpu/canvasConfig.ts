@@ -16,6 +16,12 @@ export interface WebGpuCanvasOptions {
    * Falls back to `sdr` wherever the UA cannot honour it.
    */
   presentation?: CanvasPresentation;
+  /**
+   * Debug only (`__renderDebug.readPresentedFrame`): the canvas texture is
+   * also `COPY_SRC`, so a frame can be read back after it is drawn. Usage
+   * changes what may be done with the texture, not what is drawn into it.
+   */
+  readback?: boolean;
 }
 
 export function buildWebGpuCanvasConfiguration(
@@ -31,7 +37,7 @@ export function buildWebGpuCanvasConfiguration(
     // Render target only. Nothing copies out of the swap chain — previews,
     // exports and the collision-stats blit all read offscreen targets — and
     // an unused COPY_SRC can keep the compositor off its scanout path.
-    usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | (options?.readback ? GPUTextureUsage.COPY_SRC : 0),
     // The tag follows the pixel path `color/presentation.ts` decides: the
     // compositor converts into Display P3 before the canvas is tagged it,
     // and Canvas HDR stays extended sRGB.

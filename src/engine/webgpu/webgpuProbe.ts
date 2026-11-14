@@ -145,7 +145,8 @@ export async function probeWebGPU(): Promise<WebGpuProbeResult> {
 
   // WebGPU is gated on secure context; this is the single most common
   // "works locally, fails on the LAN box" cause.
-  if (typeof window !== 'undefined' && window.isSecureContext === false) {
+  // `isSecureContext` is on the worker global too.
+  if ((globalThis as { isSecureContext?: boolean }).isSecureContext === false) {
     return emptyResult(
       'secure-context',
       'WebGPU requires a secure context (https:// or localhost).',

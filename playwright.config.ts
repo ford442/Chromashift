@@ -37,7 +37,7 @@ export default defineConfig({
       // (Playwright screenshots, kiosk, presets). Distinct from chromium-webgpu.
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: /webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts/,
+      testIgnore: /webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts|render-transport\.spec\.ts|video-export-transport\.spec\.ts/,
     },
     {
       name: 'chromium-webgpu',
@@ -47,7 +47,10 @@ export default defineConfig({
           args: WEBGPU_LAUNCH_ARGS,
         },
       },
-      testMatch: /webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts/,
+      // The render transport specs (#253), and the renderer-agnostic ones that
+      // run on both WebGPU transports here and on WebGL in `chromium`
+      // (`RENDERER_SESSIONS` in e2e/helpers/renderer.ts).
+      testMatch: /webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts|render-transport\.spec\.ts|video-export-transport\.spec\.ts|frame-clock\.spec\.ts|render-churn\.spec\.ts/,
     },
     // WebGPU in Firefox and WebKit (#228): the smoke and the executor specs,
     // on each browser's default WebGPU exposure. Where the build exposes no

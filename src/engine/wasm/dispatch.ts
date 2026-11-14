@@ -14,7 +14,6 @@
  */
 
 export {
-  computeAverageLuminanceWith,
   computeAverageLuminanceStridedWith,
   computeImageAverageLuminanceWith,
   computePixelsAverageLuminanceWith,

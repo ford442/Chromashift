@@ -1,7 +1,7 @@
 import { buildRendererState } from '../buildRendererState';
 import { FrameClock } from '../frame/FrameClock';
 import { advanceAngles } from '../math/rotation';
-import type { ChromashiftRenderer, ExportFrameResult } from '../types/RendererContracts';
+import type { ExportRenderer, ExportFrameResult } from '../types/RendererContracts';
 import type { ChromashiftState } from '../../state/types';
 import type { VideoExportRequest } from './VideoExporter';
 import {
@@ -26,7 +26,7 @@ export interface ExportFrameYield {
  * phases, in the same order, as a live frame.
  */
 export async function* exportVideoFrameLoop(
-  renderer: ChromashiftRenderer,
+  renderer: ExportRenderer,
   state: ChromashiftState,
   liveAngles: number[],
   request: VideoExportRequest,

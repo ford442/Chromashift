@@ -26,14 +26,11 @@ export function useSelectSourceIndex(
   }, [dispatch, imageListRef, currentImageIndexRef]);
 }
 
-export function useHandleAngleChange(
-  dispatch: ChromashiftDispatch,
-  animAnglesRef: MutableRefObject<number[]>,
-) {
+/** A knob drag: the store's angles change, and `useChromashiftStore` resets the renderer's to them. */
+export function useHandleAngleChange(dispatch: ChromashiftDispatch) {
   return useCallback((layer: number, angle: number) => {
-    animAnglesRef.current[layer] = angle;
     dispatch({ type: 'layers/setPerLayer', field: 'angles', layer, value: angle });
-  }, [dispatch, animAnglesRef]);
+  }, [dispatch]);
 }
 
 export function useHandleExtensionChange(dispatch: ChromashiftDispatch) {

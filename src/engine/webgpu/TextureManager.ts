@@ -13,6 +13,29 @@ import { publishDiagnostic } from '../diagnostics';
 import type { ChromashiftTextureManager } from '../types/RendererContracts';
 import { TextureCache, type UploadedTexture } from '../textures/TextureCache';
 import { createWebGpuTextureHandle, type ChromashiftTextureHandle } from '../types/TextureHandle';
+import { liveFrameSize, type LiveFrameSource } from '../live/liveSourceTexture';
+
+/**
+ * Decode `url` for upload. On a page, through an `<img>` as it always has;
+ * in the render worker — no DOM — `fetch` + `createImageBitmap(blob)`, the
+ * same decoder under the same CORS rules (`mode: 'cors'` is what an `<img>`
+ * with `crossOrigin = 'anonymous'` asks for).
+ */
+async function decodeImageSource(url: string): Promise<HTMLImageElement | Blob> {
+  if (typeof Image !== 'undefined') {
+    const image = new Image();
+    image.crossOrigin = 'anonymous';
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+      image.src = url;
+    });
+    return image;
+  }
+  const response = await fetch(url, { mode: 'cors', credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`Failed to load image: ${url} (HTTP ${response.status})`);
+  return response.blob();
+}
 
 export class TextureManager implements ChromashiftTextureManager {
   private device: GPUDevice;
@@ -36,14 +59,7 @@ export class TextureManager implements ChromashiftTextureManager {
   }
 
   private async uploadFromUrl(url: string): Promise<UploadedTexture<GPUTexture>> {
-    const image = new Image();
-    image.crossOrigin = 'anonymous';
-
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error(`Failed to load image: ${url}`));
-      image.src = url;
-    });
+    const image = await decodeImageSource(url);
 
     // The band ladder is tuned on sRGB values. When the decoder says the file
     // is Display P3, convert into sRGB here; when it says nothing, upload
@@ -102,9 +118,8 @@ export class TextureManager implements ChromashiftTextureManager {
    * resolution changes. No mip chain is generated — the frame is replaced
    * every call, so trilinear filtering would be wasted GPU time.
    */
-  updateVideoTexture(cacheKey: string, source: HTMLVideoElement): ChromashiftTextureHandle | null {
-    const width = source.videoWidth;
-    const height = source.videoHeight;
+  updateVideoTexture(cacheKey: string, source: LiveFrameSource): ChromashiftTextureHandle | null {
+    const { width, height } = liveFrameSize(source);
     if (width === 0 || height === 0) return null;
 
     const texture = this.cache.video(cacheKey, width, height, () => this.device.createTexture({

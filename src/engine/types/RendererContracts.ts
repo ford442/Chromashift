@@ -16,6 +16,7 @@ import type { CollisionStats, RendererState } from './RendererState';
 import type { StationaryPreviewOptions, StationaryPreviewResult } from '../stationaryPreview';
 import type { ChromashiftTextureHandle } from './TextureHandle';
 import type { GpuRuntimeError } from '../gpu/gpuErrors';
+import type { LiveFrameSource } from '../live/liveSourceTexture';
 
 export type RendererBackend = 'webgpu' | 'webgl';
 
@@ -107,6 +108,19 @@ export interface ExportFrameOptions {
 
 export type ExportFrameResult = ExportTracerResult;
 
+/**
+ * What offline video export needs of a renderer: a `ChromashiftRenderer`
+ * (headless), or the page's `RenderHost` proxy, whose frames come back by
+ * readback from whichever thread renders (#253).
+ */
+export interface ExportRenderer {
+  /** Before the first frame: clear the tracers (and, on the render worker, take its clock offline). */
+  clearPersistence(): void;
+  exportFrame(state: RendererState, options: ExportFrameOptions): Promise<ExportFrameResult | null>;
+  /** After the last frame: back to the canvas-sized targets. */
+  restoreRenderSize(width: number, height: number): void;
+}
+
 export interface ChromashiftRenderer {
   readonly backend: RendererBackend;
   setTexture(texture: ChromashiftTextureHandle): void;
@@ -164,12 +178,13 @@ export interface ChromashiftTextureManager {
   loadTexture(url: string): Promise<ChromashiftTextureHandle>;
   uploadPixels(cacheKey: string, pixels: Uint8ClampedArray, width: number, height: number): ChromashiftTextureHandle;
   /**
-   * Upload the current frame of a playing/streaming `HTMLVideoElement` into a
-   * texture reused across calls under `cacheKey`, recreating it only when the
-   * frame resolution changes. Returns `null` when the video has no decoded
-   * frame yet (`videoWidth`/`videoHeight` are 0).
+   * Upload the current frame of a live source — the playing `HTMLVideoElement`,
+   * or a `VideoFrame` / `ImageBitmap` captured from it — into a texture reused
+   * across calls under `cacheKey`, recreating it only when the frame
+   * resolution changes. Returns `null` when there is no decoded frame yet
+   * (a 0×0 size). The caller still owns (and closes) a frame it passed.
    */
-  updateVideoTexture(cacheKey: string, source: HTMLVideoElement): ChromashiftTextureHandle | null;
+  updateVideoTexture(cacheKey: string, source: LiveFrameSource): ChromashiftTextureHandle | null;
   /** Immediately destroy a texture created by `updateVideoTexture` (or `uploadPixels`) under `cacheKey`. */
   releaseVideoTexture(cacheKey: string): void;
   destroy(): void;

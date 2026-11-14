@@ -18,6 +18,7 @@
  */
 
 import { createChromashiftCpuHost } from './chromashiftHost';
+import type { PixelSource } from '../../wasm/imageBytes';
 import type { CpuChoreHost, CpuImageAnalysisResult } from './types';
 import type { AnalysisProtocol } from '../analysis.worker';
 import { createWorkerRpc } from '../../workers/rpc';
@@ -46,7 +47,7 @@ export function createWorkerChromashiftCpuHost(
   let workerFailed = false;
 
   async function runInWorker(
-    image: HTMLImageElement,
+    image: PixelSource,
     avgLumHint: number | undefined,
     useWasm: boolean,
   ): Promise<CpuImageAnalysisResult | null> {
@@ -61,7 +62,7 @@ export function createWorkerChromashiftCpuHost(
   }
 
   async function runLuminanceInWorker(
-    image: HTMLImageElement,
+    image: PixelSource,
     useWasm: boolean,
   ): Promise<{ avgLuminance: number; mode: 'worker' }> {
     const bitmap = await createImageBitmap(image);
