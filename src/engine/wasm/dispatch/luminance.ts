@@ -16,7 +16,7 @@ import { tsComputeAverageLuminance, tsComputeAverageLuminanceStrided } from '../
  * @param useWasm  Attempt to use the C++ WASM engine.
  * @returns        Average luminance in [0, 255].
  */
-export function computeAverageLuminanceWith(
+function computeAverageLuminanceWith(
   image: PixelSource,
   useWasm: boolean,
 ): number {

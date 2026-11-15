@@ -1,7 +1,8 @@
 import type { Page } from '@playwright/test';
+import { armRenderDebug } from './renderer';
 
 /**
- * Read back what the WebGPU renderer drew into the main canvas — the swap-chain
+ * Read back what the WebGPU renderer drew into a canvas — its presentation
  * texture itself, via `copyTextureToBuffer` — rather than screenshotting it.
  *
  * Two things make a screenshot the wrong instrument for a WebGPU pixel
@@ -16,18 +17,21 @@ import type { Page } from '@playwright/test';
  *   (`Could not find SharedImageBackingFactory … WebgpuSwapChainTexture`), so
  *   every renderer — hand encoder and graph executor alike — "renders" black.
  *   With the flags the device survives, but the composited canvas can still
- *   read back empty. The swap-chain texture is what the renderer actually wrote.
+ *   read back empty. The presentation texture is what the renderer wrote.
  *
- * The copy has to happen in the same task that drew the frame: once the frame
- * is presented the texture is destroyed. So `installGpuCanvasReadback` wraps
- * `requestAnimationFrame`, and after the app's callback returns — its
- * `render()` is synchronous, so its submit has already happened — copies out
- * the main canvas's current texture if a read is waiting.
+ * The copy has to happen in the task that drew the frame: once it is presented
+ * the texture is gone. The renderer may not be on this page's thread at all
+ * (#253: it runs in the render worker unless `?renderer=main`), so patching
+ * the page's WebGPU prototypes reaches nothing. The render service does the
+ * copy itself — `window.__renderDebug.readPresentedFrame(slot)`
+ * (`src/engine/render/debug.ts`) — on whichever transport it runs, and the
+ * page hands the raw texture rows back here to decode.
  *
- * The app configures its swap chain `RENDER_ATTACHMENT` only — nothing in it
- * copies out of the canvas, and an unused `COPY_SRC` can cost the compositor
- * its scanout path — so the `configure` wrapper adds `COPY_SRC` for the copy.
- * Usage changes what may be done with the texture, not what is drawn into it.
+ * The debug hooks are armed by `localStorage['chromashift:renderDebug']`,
+ * which `installGpuCanvasReadback` sets before the app boots, so the URL stays
+ * the one under test. Armed, the service configures its canvases with
+ * `COPY_SRC` — usage changes what may be done with the texture, not what is
+ * drawn into it.
  */
 
 export interface CanvasFrame {
@@ -39,169 +43,84 @@ export interface CanvasFrame {
    * 1.0. Two frames whose halves agree therefore agree here too.
    */
   pixels: Buffer;
-  /** The swap-chain format the frame was read from. */
+  /** The presentation format the frame was read from. */
   format: string;
 }
 
 interface RawFrame {
   width: number;
   height: number;
-  rgba: string;
   format: string;
+  bytesPerRow: number;
+  /** The texture rows, base64. */
+  bytes: string;
 }
 
-declare global {
-  interface Window {
-    __readMainCanvasFrame?: () => Promise<RawFrame>;
-  }
-}
-
-/** Must run before `page.goto`: the wrappers have to be in place before the app configures its canvas. */
+/** Must run before `page.goto`: the service reads the flag when it boots. */
 export async function installGpuCanvasReadback(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    if (typeof GPUCanvasContext === 'undefined') return;
-
-    interface Waiter { resolve: (frame: RawFrame) => void; reject: (reason: string) => void }
-
-    const devices = new WeakMap<GPUCanvasContext, GPUDevice>();
-    let lost: string | null = null;
-    type Drawn = { context: GPUCanvasContext; texture: GPUTexture };
-    let drawn: Drawn | null = null;
-    const waiting: Waiter[] = [];
-
-    const proto = GPUCanvasContext.prototype;
-    const configure = proto.configure;
-    proto.configure = function (this: GPUCanvasContext, config: GPUCanvasConfiguration) {
-      devices.set(this, config.device);
-      void config.device.lost.then((info) => {
-        lost = `${info.reason}: ${info.message}`;
-      });
-      return configure.call(this, {
-        ...config,
-        usage: (config.usage ?? GPUTextureUsage.RENDER_ATTACHMENT) | GPUTextureUsage.COPY_SRC,
-      });
-    };
-
-    const getCurrentTexture = proto.getCurrentTexture;
-    proto.getCurrentTexture = function (this: GPUCanvasContext) {
-      const texture = getCurrentTexture.call(this);
-      if (this.canvas === document.querySelector('canvas')) drawn = { context: this, texture };
-      return texture;
-    };
-
-    const requestFrame = window.requestAnimationFrame.bind(window);
-    window.requestAnimationFrame = (callback) => requestFrame((time) => {
-      drawn = null;
-      try {
-        callback(time);
-      } finally {
-        // `callback` may have set `drawn`; flow analysis cannot see that.
-        const current = drawn as Drawn | null;
-        if (current && waiting.length > 0) copyOut(current.context, current.texture, waiting.splice(0));
-        drawn = null;
-      }
-    });
-
-    function copyOut(context: GPUCanvasContext, texture: GPUTexture, waiters: Waiter[]): void {
-      const fail = (reason: string) => waiters.forEach((w) => w.reject(reason));
-      const device = devices.get(context);
-      if (!device) {
-        fail('the main canvas was never configured for WebGPU');
-        return;
-      }
-      if (lost) {
-        fail(`the GPU device was lost (${lost}), so nothing it drew can be read back — `
-          + 'headless Chromium needs the SwiftShader Vulkan flags in playwright.config.ts');
-        return;
-      }
-      const { width, height, format } = texture;
-      if (format !== 'rgba8unorm' && format !== 'bgra8unorm' && format !== 'rgba16float') {
-        fail(`unsupported canvas format ${format}`);
-        return;
-      }
-      const texelBytes = format === 'rgba16float' ? 8 : 4;
-      const bytesPerRow = Math.ceil((width * texelBytes) / 256) * 256;
-      const buffer = device.createBuffer({
-        size: bytesPerRow * height,
-        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-      });
-      device.pushErrorScope('validation');
-      const encoder = device.createCommandEncoder();
-      encoder.copyTextureToBuffer({ texture }, { buffer, bytesPerRow }, [width, height, 1]);
-      device.queue.submit([encoder.finish()]);
-      const validation = device.popErrorScope();
-
-      // A failed copy still maps — as zeros. Checking the error scope is what
-      // keeps a broken readback from masquerading as a black frame.
-      Promise.all([validation, buffer.mapAsync(GPUMapMode.READ)]).then(([error]) => {
-        if (error) throw new Error(error.message);
-        const mapped = new Uint8Array(buffer.getMappedRange());
-        const rgba = new Uint8Array(width * height * 4);
-        if (format === 'rgba16float') {
-          const halves = new Uint16Array(mapped.buffer, mapped.byteOffset, mapped.byteLength / 2);
-          const half = (bits: number): number => {
-            const sign = bits & 0x8000 ? -1 : 1;
-            const exponent = (bits >> 10) & 0x1f;
-            const fraction = bits & 0x3ff;
-            if (exponent === 0) return sign * 2 ** -14 * (fraction / 1024);
-            if (exponent === 31) return fraction ? 0 : sign * Infinity;
-            return sign * 2 ** (exponent - 15) * (1 + fraction / 1024);
-          };
-          for (let y = 0; y < height; y += 1) {
-            for (let x = 0; x < width; x += 1) {
-              const s = (y * bytesPerRow) / 2 + x * 4;
-              const d = (y * width + x) * 4;
-              for (let c = 0; c < 4; c += 1) {
-                rgba[d + c] = Math.max(0, Math.min(255, Math.round(half(halves[s + c]) * 255)));
-              }
-            }
-          }
-        } else {
-          const [r, b] = format === 'bgra8unorm' ? [2, 0] : [0, 2];
-          for (let y = 0; y < height; y += 1) {
-            for (let x = 0; x < width; x += 1) {
-              const s = y * bytesPerRow + x * 4;
-              const d = (y * width + x) * 4;
-              rgba[d] = mapped[s + r];
-              rgba[d + 1] = mapped[s + 1];
-              rgba[d + 2] = mapped[s + b];
-              rgba[d + 3] = mapped[s + 3];
-            }
-          }
-        }
-        buffer.unmap();
-        buffer.destroy();
-        let binary = '';
-        for (let i = 0; i < rgba.length; i += 0x8000) {
-          binary += String.fromCharCode(...rgba.subarray(i, i + 0x8000));
-        }
-        const frame = { width, height, rgba: btoa(binary), format };
-        waiters.forEach((w) => w.resolve(frame));
-      }).catch((error: unknown) => {
-        buffer.destroy();
-        fail(`canvas readback failed: ${String(error)}`);
-      });
-    }
-
-    window.__readMainCanvasFrame = () => new Promise<RawFrame>((resolve, reject) => {
-      waiting.push({ resolve, reject: (reason) => reject(new Error(reason)) });
-    });
-  });
+  await armRenderDebug(page);
 }
 
-/** The next frame the renderer draws into the main canvas. */
-export async function readGpuCanvasFrame(page: Page): Promise<CanvasFrame> {
-  const raw = await page.evaluate(() => {
-    const read = window.__readMainCanvasFrame;
-    if (!read) throw new Error('installGpuCanvasReadback() was not called before navigation');
-    return read();
-  });
-  return {
-    width: raw.width,
-    height: raw.height,
-    pixels: Buffer.from(raw.rgba, 'base64'),
-    format: raw.format,
-  };
+function halfToFloat(bits: number): number {
+  const sign = bits & 0x8000 ? -1 : 1;
+  const exponent = (bits >> 10) & 0x1f;
+  const fraction = bits & 0x3ff;
+  if (exponent === 0) return sign * 2 ** -14 * (fraction / 1024);
+  if (exponent === 31) return fraction ? 0 : sign * Infinity;
+  return sign * 2 ** (exponent - 15) * (1 + fraction / 1024);
+}
+
+/** Texture rows in `format` → tightly packed RGBA8. */
+function decodeFrame(raw: RawFrame): CanvasFrame {
+  const { width, height, format, bytesPerRow } = raw;
+  const source = Buffer.from(raw.bytes, 'base64');
+  const pixels = Buffer.alloc(width * height * 4);
+  if (format === 'rgba16float') {
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const s = y * bytesPerRow + x * 8;
+        const d = (y * width + x) * 4;
+        for (let c = 0; c < 4; c += 1) {
+          const value = halfToFloat(source.readUInt16LE(s + c * 2));
+          pixels[d + c] = Math.max(0, Math.min(255, Math.round(value * 255)));
+        }
+      }
+    }
+  } else if (format === 'rgba8unorm' || format === 'bgra8unorm') {
+    const [r, b] = format === 'bgra8unorm' ? [2, 0] : [0, 2];
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const s = y * bytesPerRow + x * 4;
+        const d = (y * width + x) * 4;
+        pixels[d] = source[s + r];
+        pixels[d + 1] = source[s + 1];
+        pixels[d + 2] = source[s + b];
+        pixels[d + 3] = source[s + 3];
+      }
+    }
+  } else {
+    throw new Error(`unsupported canvas format ${format}`);
+  }
+  return { width, height, pixels, format };
+}
+
+/** The next frame the renderer draws into `slot`'s canvas (default the main canvas). */
+export async function readGpuCanvasFrame(page: Page, slot = 'main'): Promise<CanvasFrame> {
+  // The hooks are published once the transport is chosen, before the boot.
+  await page.waitForFunction(() => window.__renderDebug !== undefined, undefined, { timeout: 30_000 })
+    .catch(() => {
+      throw new Error('window.__renderDebug never appeared: call installGpuCanvasReadback() before navigation');
+    });
+  const raw = await page.evaluate(async (slotId) => {
+    const frame = await window.__renderDebug!.readPresentedFrame(slotId);
+    const bytes = new Uint8Array(frame.bytes);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return { width: frame.width, height: frame.height, format: frame.format, bytesPerRow: frame.bytesPerRow, bytes: btoa(binary) };
+  }, slot);
+  return decodeFrame(raw);
 }
 
 /**

@@ -1,57 +1,29 @@
-import { useEffect, useCallback, useRef, useState, type MutableRefObject } from 'react';
-import { computeAverageLuminanceWith } from '../engine/WasmEngine';
+import { useEffect, useCallback, useRef, useState, type RefObject } from 'react';
 import type { ImageEntry } from '../engine/library/imageEntry';
-import type { ChromashiftRenderer, ChromashiftTextureManager, RendererBackend } from '../engine/types/RendererContracts';
-import type { ChromashiftTextureHandle } from '../engine/types/TextureHandle';
-import { getRendererPreference, publishRendererBootFailure, publishRendererBreadcrumbs } from '../engine/rendererMode';
-import {
-  probeFailureMessage,
-  probeWebGPU,
-  publishWebGpuProbe,
-  recordProbeStageFailure,
-  recordProbeSuccess,
-} from '../engine/webgpu/webgpuProbe';
+import type { RendererBackend } from '../engine/types/RendererContracts';
+import { getRendererPreference } from '../engine/rendererMode';
 import { getGpuFatalError, toBootstrapRuntimeError, type GpuRuntimeError } from '../engine/gpu/gpuErrors';
-import { releasePageGpuDevice } from '../engine/webgpu/adapter';
-import { type WebGpuSession } from '../engine/webgpu/webgpuSession';
 import { listLocalImages } from '../engine/library/LocalLibrary';
 import { createIndexedDbManifestStore, fetchCorpusManifest } from '../engine/library/corpusManifest';
-import { PRIMARY_SLOT_ID, RendererOrchestrator } from '../engine/RendererOrchestrator';
-import { activatePassGraph, passGraphSelection, presetGraphSource } from '../engine/graph';
+import { passGraphSelection } from '../engine/graph';
+import type { RenderHost } from '../engine/render/RenderHost';
 
 export interface UseAppWebGPUInitProps {
-  mainCanvasRef: MutableRefObject<HTMLCanvasElement | null>;
+  mainCanvasRef: RefObject<HTMLCanvasElement | null>;
+  renderHostRef: RefObject<RenderHost>;
   antialiasEnabled: boolean;
   displayColorSpace: import('../engine/gpu/gpuOptions').DisplayColorSpace;
   canvasHdr: boolean;
   setGpuError: (err: GpuRuntimeError | null) => void;
-  orchestratorRef: MutableRefObject<RendererOrchestrator | null>;
-  deviceRef: MutableRefObject<GPUDevice | null>;
-  webGpuSessionRef: MutableRefObject<WebGpuSession | null>;
-  gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>;
-  rendererRef: MutableRefObject<ChromashiftRenderer | null>;
-  textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>;
   setRendererBackend: (backend: RendererBackend) => void;
   setRendererFallbackReason: (reason: string | null) => void;
   setImageList: (list: ImageEntry[]) => void;
   setReferenceImage: (img: ImageEntry | null) => void;
   ensureReferenceImage: (list: ImageEntry[], index: number) => ImageEntry | null;
   setCurrentImageIndex: (idx: number) => void;
-  setImageAspect: (aspect: number) => void;
-  setAvgLuminance: (lum: number) => void;
-  clearClassificationMask: () => void;
-  generateClassificationMaskTexture: (
-    img: HTMLImageElement,
-    avgLumValue: number,
-    sourceTexture?: ChromashiftTextureHandle | null,
-  ) => Promise<number>;
-  engineModeRef: MutableRefObject<string>;
-  previewOriginalRef: MutableRefObject<HTMLCanvasElement | null>;
   setGpuReady: (ready: boolean) => void;
   setSpecificImageError: (err: string | null) => void;
-  ownedObjectUrlsRef: MutableRefObject<string[]>;
-  /** Records the initial source texture so a late compare-slot renderer can attach it. */
-  sourceTextureRef: MutableRefObject<ChromashiftTextureHandle | null>;
+  ownedObjectUrlsRef: RefObject<string[]>;
 }
 
 export interface UseAppWebGPUInitResult {
@@ -71,111 +43,29 @@ function isCancelled(cancelToken: CancelToken, signal: AbortSignal): boolean {
   return cancelToken.cancelled || signal.aborted;
 }
 
-function clearOrchestratorRefs(
-  orchestratorRef: MutableRefObject<RendererOrchestrator | null>,
-  deviceRef: MutableRefObject<GPUDevice | null>,
-  webGpuSessionRef: MutableRefObject<WebGpuSession | null>,
-  gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>,
-  rendererRef: MutableRefObject<ChromashiftRenderer | null>,
-  textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>,
-  sourceTextureRef: MutableRefObject<ChromashiftTextureHandle | null>,
-): void {
-  orchestratorRef.current = null;
-  deviceRef.current = null;
-  webGpuSessionRef.current = null;
-  gpuImageAnalysisRef.current = null;
-  rendererRef.current = null;
-  textureManagerRef.current = null;
-  sourceTextureRef.current = null;
-}
-
-function syncOrchestratorRefs(
-  orchestrator: RendererOrchestrator,
-  primaryRenderer: ChromashiftRenderer,
-  orchestratorRef: MutableRefObject<RendererOrchestrator | null>,
-  deviceRef: MutableRefObject<GPUDevice | null>,
-  webGpuSessionRef: MutableRefObject<WebGpuSession | null>,
-  gpuImageAnalysisRef: MutableRefObject<import('../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>,
-  rendererRef: MutableRefObject<ChromashiftRenderer | null>,
-  textureManagerRef: MutableRefObject<ChromashiftTextureManager | null>,
-): void {
-  orchestratorRef.current = orchestrator;
-  deviceRef.current = orchestrator.sharedDevice();
-  webGpuSessionRef.current = orchestrator.sessionRef();
-  gpuImageAnalysisRef.current = orchestrator.gpuImageAnalysisRef();
-  rendererRef.current = primaryRenderer;
-  textureManagerRef.current = orchestrator.textureManagerRef();
-}
-
-function bootstrappedPrimaryRenderer(orchestrator: RendererOrchestrator): ChromashiftRenderer {
-  const primarySlot = orchestrator.getSlot(PRIMARY_SLOT_ID);
-  if (!primarySlot) {
-    throw new Error('Primary renderer slot was not created.');
-  }
-  return primarySlot.renderer;
-}
-
-function loadPreviewImage(url: string, signal: AbortSignal): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'));
-      return;
-    }
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-
-    const onAbort = () => {
-      img.onload = null;
-      img.onerror = null;
-      img.src = '';
-      reject(new DOMException('Aborted', 'AbortError'));
-    };
-
-    signal.addEventListener('abort', onAbort, { once: true });
-
-    img.onload = () => {
-      signal.removeEventListener('abort', onAbort);
-      resolve(img);
-    };
-    img.onerror = () => {
-      signal.removeEventListener('abort', onAbort);
-      reject(new Error(`Failed to load preview image: ${url}`));
-    };
-    img.src = url;
-  });
-}
-
+/**
+ * Page-lifetime GPU boot (#157 / #158), through the render host (#253). The
+ * probe, the device and the renderer live wherever the host's transport put
+ * them — the render worker, or this thread. This hook decides *when* to boot
+ * and what the overlay says; the host and the service do the rest.
+ */
 export function useAppWebGPUInit({
   mainCanvasRef,
+  renderHostRef,
   antialiasEnabled,
   displayColorSpace,
   canvasHdr,
   setGpuError,
-  orchestratorRef,
-  deviceRef,
-  webGpuSessionRef,
-  gpuImageAnalysisRef,
-  rendererRef,
-  textureManagerRef,
   setRendererBackend,
   setRendererFallbackReason,
   setImageList,
   setReferenceImage,
   ensureReferenceImage,
   setCurrentImageIndex,
-  setImageAspect,
-  setAvgLuminance,
-  clearClassificationMask,
-  generateClassificationMaskTexture,
-  engineModeRef,
-  previewOriginalRef,
   setGpuReady,
   setSpecificImageError,
   ownedObjectUrlsRef,
-  sourceTextureRef,
 }: UseAppWebGPUInitProps): UseAppWebGPUInitResult {
-  const activeOrchestratorRef = useRef<RendererOrchestrator | null>(null);
   const retryAbortRef = useRef<AbortController | null>(null);
   const antialiasEnabledRef = useRef(antialiasEnabled);
   const displayColorSpaceRef = useRef(displayColorSpace);
@@ -187,15 +77,11 @@ export function useAppWebGPUInit({
   /** `retryGpuBootstrap`, for the WebGL restore path that runs before it is defined. */
   const retryGpuBootstrapRef = useRef<(() => Promise<void>) | null>(null);
 
-  const destroyActiveOrchestrator = useCallback(() => {
-    activeOrchestratorRef.current?.destroy();
-    activeOrchestratorRef.current = null;
-  }, []);
-
-  /** Returns true when a renderer is live; false on a hard-failed boot. */
+  /** Returns true when a renderer is live; false on a hard-failed or overtaken boot. */
   const bootstrapGpu = useCallback(async (
     cancelToken: CancelToken,
     signal: AbortSignal,
+    retry: boolean,
   ): Promise<boolean> => {
     const fatal = getGpuFatalError();
     if (fatal) {
@@ -205,192 +91,51 @@ export function useAppWebGPUInit({
 
     const canvas = mainCanvasRef.current;
     if (!canvas) return false;
+    if (!isCancelled(cancelToken, signal)) setGpuError(null);
 
-    const preferredBackend = getRendererPreference();
-    const onRuntimeError = (error: GpuRuntimeError) => {
-      if (isCancelled(cancelToken, signal)) return;
-      // A refused pipeline: shown, but the session keeps drawing without it.
-      if (error.kind === 'pipeline') {
-        setGpuError(error);
-        return;
-      }
-      if (error.kind !== 'device-lost') return;
-      clearOrchestratorRefs(
-        orchestratorRef,
-        deviceRef,
-        webGpuSessionRef,
-        gpuImageAnalysisRef,
-        rendererRef,
-        textureManagerRef,
-        sourceTextureRef,
-      );
-      activeOrchestratorRef.current = null;
-      setGpuReady(false);
-      setGpuError(error);
-    };
-
-    let orchestrator: RendererOrchestrator | null = null;
-
-    const bailIfCancelled = (): boolean => {
-      if (!isCancelled(cancelToken, signal)) return false;
-      clearOrchestratorRefs(
-        orchestratorRef,
-        deviceRef,
-        webGpuSessionRef,
-        gpuImageAnalysisRef,
-        rendererRef,
-        textureManagerRef,
-        sourceTextureRef,
-      );
-      orchestrator?.destroy();
-      activeOrchestratorRef.current = null;
-      return true;
-    };
-
-    const finishBoot = (bootstrapped: { orchestrator: RendererOrchestrator }): boolean => {
-      if (bailIfCancelled()) return false;
-      syncOrchestratorRefs(
-        bootstrapped.orchestrator,
-        bootstrappedPrimaryRenderer(bootstrapped.orchestrator),
-        orchestratorRef,
-        deviceRef,
-        webGpuSessionRef,
-        gpuImageAnalysisRef,
-        rendererRef,
-        textureManagerRef,
-      );
-      setRendererBackend(bootstrapped.orchestrator.getBackend());
-      const fallbackReason = bootstrapped.orchestrator.getFallbackReason();
-      setRendererFallbackReason(fallbackReason);
-      publishRendererBreadcrumbs(bootstrapped.orchestrator.getBackend(), fallbackReason);
-      // Pass-graph gate: which shape the session draws (`?graph=blur`,
-      // `?graph=trails3`, …; the default graph otherwise). Compiles it for the
-      // live backend and publishes the breadcrumbs. The graph source is then
-      // handed to every slot's renderer, whose executor — WebGPU or WebGL —
-      // draws each frame; a variant the shape refuses draws the default graph.
-      // See docs/PASS_GRAPH.md.
-      activatePassGraph(bootstrapped.orchestrator.getBackend());
-      bootstrapped.orchestrator.setPassGraph(presetGraphSource(passGraphSelection().name));
-      // Apply the requested canvas colour space now: the standing effect below
-      // only re-runs when `displayColorSpace` changes, so a preset URL that
-      // selects display-p3 before boot would otherwise never reach the canvas.
-      bootstrapped.orchestrator.setCanvasColorSpace(displayColorSpaceRef.current);
-      // Same reason for Canvas HDR. A UA without extended tone mapping keeps
-      // presenting SDR (configureWebGpuCanvas never leaves a black canvas).
-      if (canvasHdrRef.current) bootstrapped.orchestrator.setCanvasPresentation('hdr-extended');
-      return true;
-    };
-
-    if (activeOrchestratorRef.current) {
-      return finishBoot({ orchestrator: activeOrchestratorRef.current });
-    }
-
-    // Explicit diagnostic / XR / screenshot session: never request a WebGPU
-    // adapter or device, so gpu-chores cannot adopt a leftover GPUDevice.
-    if (preferredBackend === 'webgl') {
-      try {
-        if (!isCancelled(cancelToken, signal)) {
-          setGpuError(null);
-        }
-        const bootstrapped = await RendererOrchestrator.bootstrap({
-          primaryCanvas: canvas,
-          antialias: antialiasEnabledRef.current,
-          backend: 'webgl',
-          onRuntimeError,
-          // The browser restored a lost context: boot again on it, exactly as
-          // Retry GPU would. Not gated on this boot's cancel token — a Retry
-          // pressed while the context was still lost aborts it, and the
-          // restore must still land. The canvas ref is null once unmounted.
-          onContextRestored: () => {
-            if (mainCanvasRef.current !== canvas) return;
-            void retryGpuBootstrapRef.current?.();
-          },
-        });
-        orchestrator = bootstrapped.orchestrator;
-        activeOrchestratorRef.current = orchestrator;
-        return finishBoot(bootstrapped);
-      } catch (webglError) {
-        if (isAbortError(webglError) || bailIfCancelled()) return false;
-        const detail = webglError instanceof Error ? webglError.message : String(webglError);
-        publishRendererBootFailure(detail);
-        throw webglError;
-      }
-    }
-
-    // Default path: WebGPU is required. Pre-flight before touching the
-    // orchestrator so an unsupported browser produces a blocking screen with
-    // adapter/browser detail rather than a silent WebGL slide.
-    const probe = await probeWebGPU();
-    publishWebGpuProbe(probe);
+    const result = await renderHostRef.current.boot(canvas, {
+      backend: getRendererPreference(),
+      antialias: antialiasEnabledRef.current,
+      // Applied at boot: the standing effects below re-run only on a change,
+      // so a preset URL that selects display-p3 or Canvas HDR before boot
+      // would otherwise never reach the canvas.
+      colorSpace: displayColorSpaceRef.current,
+      canvasHdr: canvasHdrRef.current,
+      // The gate reads the page's URL and storage; the renderer may have neither.
+      passGraph: passGraphSelection().name,
+      // Retry GPU: the service releases the page's device and adapter first.
+      retry,
+    });
     if (isCancelled(cancelToken, signal)) return false;
-
-    if (!probe.ok) {
-      const { message, detail } = probeFailureMessage(probe);
-      console.error(`[Chromashift:GPU] ${message} ${detail}`, probe);
-      publishRendererBootFailure(detail);
-      // Not recoverable by retry: the browser/device cannot run this app.
-      // The overlay may offer a *new* WebGL diagnostic navigation.
-      setGpuError({ kind: 'bootstrap', message, detail, recoverable: false });
+    if (!result.ok) {
+      if ('error' in result) setGpuError(result.error);
       return false;
     }
+    setRendererBackend(result.backend);
+    setRendererFallbackReason(result.fallbackReason);
+    return true;
+  }, [mainCanvasRef, renderHostRef, setGpuError, setRendererBackend, setRendererFallbackReason]);
 
-    try {
-      if (!isCancelled(cancelToken, signal)) {
-        setGpuError(null);
-      }
-
-      const bootstrapped = await RendererOrchestrator.bootstrap({
-        primaryCanvas: canvas,
-        antialias: antialiasEnabledRef.current,
-        backend: 'webgpu',
-        onRuntimeError,
-      });
-
-      orchestrator = bootstrapped.orchestrator;
-      activeOrchestratorRef.current = orchestrator;
-      const ok = finishBoot(bootstrapped);
-      if (ok) {
-        recordProbeSuccess(probe);
-      }
-      return ok;
-    } catch (primaryError) {
-      if (isAbortError(primaryError) || bailIfCancelled()) return false;
-      // The adapter was fine but device/context/pipeline creation failed —
-      // exactly the Chrome-vs-Edge case. Record which stage died, then
-      // hard-fail. No WebGL renderer is started in this session.
-      const reason = primaryError instanceof Error
-        ? primaryError.message
-        : String(primaryError);
-      const failed = recordProbeStageFailure(probe, 'device', reason);
-      const { message, detail } = probeFailureMessage(failed);
-      console.error(`[Chromashift:GPU] ${message} ${detail}`, failed);
-      publishRendererBootFailure(detail);
-      throw primaryError;
-    }
-  }, [
-    orchestratorRef,
-    deviceRef,
-    webGpuSessionRef,
-    gpuImageAnalysisRef,
-    rendererRef,
-    textureManagerRef,
-    setRendererBackend,
-    setRendererFallbackReason,
-    setGpuReady,
-    setGpuError,
-    mainCanvasRef,
-    sourceTextureRef,
-  ]);
-
+  /**
+   * The manifest, the local library, and the first source — uploaded before
+   * `gpuReady`, so the first frame has it. Its thumbnail, mask and luminance
+   * follow from `useImagePlayback` once the GPU is ready.
+   */
   const loadInitialCorpus = useCallback(async (
     cancelToken: CancelToken,
     signal: AbortSignal,
   ): Promise<void> => {
-    const localRenderer = rendererRef.current;
-    const localTextureManager = textureManagerRef.current;
-    if (!localRenderer || !localTextureManager) return;
-
+    const host = renderHostRef.current;
     const bailIfCancelled = (): boolean => isCancelled(cancelToken, signal);
+    const upload = async (url: string): Promise<boolean> => {
+      try {
+        await host.loadSource({ url, keep: [url] });
+        return true;
+      } catch (error) {
+        if (!bailIfCancelled()) console.warn('Failed to load source image:', url, error);
+        return false;
+      }
+    };
 
     try {
       // Revalidated against an IndexedDB copy, so a repeat visit answers 304
@@ -418,12 +163,9 @@ export function useAppWebGPUInit({
       const specificUrl = imgUrl ? decodeURIComponent(imgUrl) : null;
 
       if (specificUrl) {
-        try {
-          const tex = await localTextureManager.loadTexture(specificUrl);
-          if (bailIfCancelled()) return;
-
-          localRenderer.setTexture(tex);
-          sourceTextureRef.current = tex;
+        const loaded = await upload(specificUrl);
+        if (bailIfCancelled()) return;
+        if (loaded) {
           const existingIndex = entries.findIndex((entry) => entry.url === specificUrl);
           if (existingIndex === -1) {
             entries.push({ url: specificUrl, label: 'Query Image' });
@@ -434,55 +176,13 @@ export function useAppWebGPUInit({
             setCurrentImageIndex(existingIndex);
             setReferenceImage(ensureReferenceImage(entries, existingIndex));
           }
-
-          try {
-            const img = await loadPreviewImage(specificUrl, signal);
-            if (bailIfCancelled()) return;
-
-            if (img.height > 0) setImageAspect(img.width / img.height);
-            let avgLum = 128;
-            try {
-              avgLum = await generateClassificationMaskTexture(img, 128, tex);
-            } catch (e) {
-              console.warn('Could not generate classification mask:', e);
-              clearClassificationMask();
-              try {
-                avgLum = computeAverageLuminanceWith(img, engineModeRef.current === 'wasm');
-              } catch (lumError) {
-                console.warn('CORS?', lumError);
-              }
-            }
-            setAvgLuminance(Math.round(avgLum));
-            const previewOrig = previewOriginalRef.current;
-            if (previewOrig) {
-              const ctx = previewOrig.getContext('2d');
-              if (ctx) ctx.drawImage(img, 0, 0, previewOrig.width, previewOrig.height);
-            }
-          } catch (previewError) {
-            if (!isAbortError(previewError) && !isCancelled(cancelToken, signal)) {
-              console.warn('Failed to load preview image:', specificUrl, previewError);
-            }
-          }
-        } catch (e) {
-          if (isAbortError(e) || bailIfCancelled()) return;
-
-          console.warn('Failed to load specific image from URL:', e);
-          setSpecificImageError(`Failed to load image: ${specificUrl}`);
-          if (entries.length > 0) {
-            const tex = await localTextureManager.loadTexture(entries[0]!.url);
-            if (bailIfCancelled()) return;
-
-            localRenderer.setTexture(tex);
-            sourceTextureRef.current = tex;
-            setReferenceImage(ensureReferenceImage(entries, 0));
-          }
+          return;
         }
-      } else if (entries.length > 0) {
-        const tex = await localTextureManager.loadTexture(entries[0]!.url);
+        setSpecificImageError(`Failed to load image: ${specificUrl}`);
+      }
+      if (entries.length > 0) {
+        await upload(entries[0]!.url);
         if (bailIfCancelled()) return;
-
-        localRenderer.setTexture(tex);
-        sourceTextureRef.current = tex;
         setReferenceImage(ensureReferenceImage(entries, 0));
       }
     } catch (e) {
@@ -490,21 +190,13 @@ export function useAppWebGPUInit({
       console.warn('Could not load image list:', e);
     }
   }, [
-    clearClassificationMask,
+    renderHostRef,
     ensureReferenceImage,
-    generateClassificationMaskTexture,
-    rendererRef,
-    textureManagerRef,
     setImageList,
     setReferenceImage,
     setCurrentImageIndex,
-    setImageAspect,
-    setAvgLuminance,
-    engineModeRef,
-    previewOriginalRef,
     setSpecificImageError,
     ownedObjectUrlsRef,
-    sourceTextureRef,
   ]);
 
   const init = useCallback(async (
@@ -513,7 +205,7 @@ export function useAppWebGPUInit({
   ): Promise<void> => {
     // A hard-failed WebGPU boot must not report gpuReady: there is no renderer,
     // and WebGL is never started in-place.
-    const booted = await bootstrapGpu(cancelToken, signal);
+    const booted = await bootstrapGpu(cancelToken, signal, false);
     if (!booted || isCancelled(cancelToken, signal)) return;
     await loadInitialCorpus(cancelToken, signal);
     if (isCancelled(cancelToken, signal)) return;
@@ -532,23 +224,12 @@ export function useAppWebGPUInit({
     retryAbortRef.current = abortController;
     const cancelToken: CancelToken = { cancelled: false };
 
-    releasePageGpuDevice();
-    destroyActiveOrchestrator();
-    clearOrchestratorRefs(
-      orchestratorRef,
-      deviceRef,
-      webGpuSessionRef,
-      gpuImageAnalysisRef,
-      rendererRef,
-      textureManagerRef,
-      sourceTextureRef,
-    );
     setGpuReady(false);
     setGpuError(null);
     setIsGpuRetrying(true);
 
     try {
-      const booted = await bootstrapGpu(cancelToken, abortController.signal);
+      const booted = await bootstrapGpu(cancelToken, abortController.signal, true);
       if (!booted || isCancelled(cancelToken, abortController.signal)) return;
       setGpuReady(true);
     } catch (e) {
@@ -557,21 +238,27 @@ export function useAppWebGPUInit({
     } finally {
       setIsGpuRetrying(false);
     }
-  }, [
-    bootstrapGpu,
-    destroyActiveOrchestrator,
-    orchestratorRef,
-    deviceRef,
-    webGpuSessionRef,
-    gpuImageAnalysisRef,
-    rendererRef,
-    textureManagerRef,
-    sourceTextureRef,
-    setGpuReady,
-    setGpuError,
-  ]);
+  }, [bootstrapGpu, setGpuReady, setGpuError]);
 
   retryGpuBootstrapRef.current = retryGpuBootstrap;
+
+  // What the renderer reports unasked: a refused pipeline (shown; the session
+  // keeps drawing without it), a lost device or context (rendering stops
+  // until Retry GPU), a restored WebGL context (boot again, as Retry would).
+  useEffect(() => {
+    const host = renderHostRef.current;
+    const offError = host.on('runtime-error', (error) => {
+      if (error.kind !== 'pipeline') setGpuReady(false);
+      setGpuError(error);
+    });
+    const offRestored = host.on('context-restored', () => {
+      void retryGpuBootstrapRef.current?.();
+    });
+    return () => {
+      offError();
+      offRestored();
+    };
+  }, [renderHostRef, setGpuError, setGpuReady]);
 
   const initRef = useRef(init);
   initRef.current = init;
@@ -583,6 +270,7 @@ export function useAppWebGPUInit({
       return;
     }
 
+    const host = renderHostRef.current;
     const cancelToken: CancelToken = { cancelled: false };
     const abortController = new AbortController();
 
@@ -600,45 +288,24 @@ export function useAppWebGPUInit({
       abortController.abort();
       retryAbortRef.current?.abort();
       setGpuReady(false);
-
-      clearOrchestratorRefs(
-        orchestratorRef,
-        deviceRef,
-        webGpuSessionRef,
-        gpuImageAnalysisRef,
-        rendererRef,
-        textureManagerRef,
-        sourceTextureRef,
-      );
-
-      destroyActiveOrchestrator();
+      // Tears the renderer down and overtakes a boot in flight. The device
+      // lease and the canvas (transferred, on the worker) stay.
+      host.shutdown();
     };
     // Page-lifetime GPU boot (#157 / #158): every dependency here is stable —
-    // refs, the store's memoized actions, a `[]` callback — so this runs once.
-    // `init` is read through `initRef` because it is rebuilt every render; a
-    // re-run would reset requestDevice to attempt 1 and could OOM D3D12
-    // command queues. Resize / antialias / colour-space changes must
-    // reconfigure, not reboot.
-  }, [
-    setGpuError,
-    setGpuReady,
-    destroyActiveOrchestrator,
-    orchestratorRef,
-    deviceRef,
-    webGpuSessionRef,
-    gpuImageAnalysisRef,
-    rendererRef,
-    textureManagerRef,
-    sourceTextureRef,
-  ]);
+    // refs, the store's memoized actions — so this runs once. `init` is read
+    // through `initRef` because it is rebuilt every render; a re-run would
+    // reset requestDevice to attempt 1 and could OOM D3D12 command queues.
+    // Resize / antialias / colour-space changes reconfigure, never reboot.
+  }, [setGpuError, setGpuReady, renderHostRef]);
 
   useEffect(() => {
-    orchestratorRef.current?.setCanvasColorSpace(displayColorSpace);
-  }, [displayColorSpace, orchestratorRef]);
+    renderHostRef.current.setCanvas({ colorSpace: displayColorSpace });
+  }, [displayColorSpace, renderHostRef]);
 
   useEffect(() => {
-    orchestratorRef.current?.setCanvasPresentation(canvasHdr ? 'hdr-extended' : 'sdr');
-  }, [canvasHdr, orchestratorRef]);
+    renderHostRef.current.setCanvas({ canvasHdr });
+  }, [canvasHdr, renderHostRef]);
 
   return { retryGpuBootstrap, isGpuRetrying };
 }

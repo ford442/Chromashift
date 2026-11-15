@@ -28,6 +28,13 @@ export function createWebGlTextureHandle(
   return { backend: 'webgl', texture, width, height, cacheKey };
 }
 
+/** The texture's size: a WebGPU texture knows its own, a WebGL handle records it. */
+export function textureHandleSize(handle: ChromashiftTextureHandle): { width: number; height: number } {
+  return handle.backend === 'webgpu'
+    ? { width: handle.texture.width, height: handle.texture.height }
+    : { width: handle.width, height: handle.height };
+}
+
 export function isChromashiftTextureHandle(value: unknown): value is ChromashiftTextureHandle {
   if (typeof value !== 'object' || value === null) return false;
   const backend = (value as ChromashiftTextureHandle).backend;

@@ -164,3 +164,56 @@ export function missingCapabilityError(
     + 'which the graph needs.',
   );
 }
+
+/**
+ * Where the renderer may run (#253) — a platform capability, beside the
+ * device bits above: they say what a device can draw, this says which thread
+ * may hold it.
+ *
+ * - `render-worker`: the page can hand its canvas to a module worker
+ *   (`OffscreenCanvas`, `transferControlToOffscreen`) and that worker can
+ *   draw it with WebGPU (`navigator.gpu` there, a `webgpu` context on an
+ *   `OffscreenCanvas`, an adapter). Withheld, the renderer runs on the page's
+ *   thread exactly as before. Every half is tested, none assumed: Safari's
+ *   answer comes from Safari.
+ */
+export type PlatformCapability = 'render-worker';
+
+/** The page globals the page half of `render-worker` needs. */
+export interface RenderWorkerPageScope {
+  OffscreenCanvas?: unknown;
+  Worker?: unknown;
+  HTMLCanvasElement?: { prototype: object };
+  navigator?: { gpu?: unknown };
+}
+
+/** The page half of `render-worker`: `null` when it holds, else why not. */
+export function renderWorkerPageSupport(scope: RenderWorkerPageScope): string | null {
+  if (typeof scope.Worker !== 'function') return 'this page has no Worker';
+  if (typeof scope.OffscreenCanvas !== 'function') return 'this browser has no OffscreenCanvas';
+  if (!scope.HTMLCanvasElement || !('transferControlToOffscreen' in scope.HTMLCanvasElement.prototype)) {
+    return 'canvas.transferControlToOffscreen is unavailable';
+  }
+  if (!scope.navigator?.gpu) return 'navigator.gpu is unavailable on the page';
+  return null;
+}
+
+/** What the render worker found in its own scope (`render.worker.ts`'s `probe`). */
+export interface RenderWorkerScopeReport {
+  /** `navigator.gpu` exists in the worker. */
+  gpu: boolean;
+  /** `new OffscreenCanvas(1, 1).getContext('webgpu')` returned a context. */
+  offscreenContext: boolean;
+  /** An adapter answered there (the page's device gate in the worker's realm). */
+  adapter: boolean;
+  /** The worker's frame source: its own `requestAnimationFrame`, or the timeout pacer. */
+  scheduler: 'raf' | 'timeout';
+}
+
+/** The worker half of `render-worker`: `null` when it holds, else why not. */
+export function renderWorkerScopeSupport(report: RenderWorkerScopeReport): string | null {
+  if (!report.gpu) return 'navigator.gpu is unavailable in a worker';
+  if (!report.offscreenContext) return "an OffscreenCanvas in a worker has no 'webgpu' context";
+  if (!report.adapter) return 'no WebGPU adapter answered in a worker';
+  return null;
+}

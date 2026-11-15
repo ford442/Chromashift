@@ -94,7 +94,7 @@ export interface AppUIRefsProps {
   previewSeparatedRef: RefObject<HTMLCanvasElement | null>;
   overlaySeparatedRef: RefObject<HTMLCanvasElement | null>;
   previewTracerRef: RefObject<HTMLCanvasElement | null>;
-  rendererRef: ChromashiftRefs['rendererRef'];
+  renderHostRef: ChromashiftRefs['renderHostRef'];
 }
 
 export interface AppUIMainViewportProps {

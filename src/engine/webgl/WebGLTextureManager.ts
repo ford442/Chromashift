@@ -1,5 +1,6 @@
 import type { ChromashiftTextureManager } from '../types/RendererContracts';
 import { TextureCache, type UploadedTexture } from '../textures/TextureCache';
+import { liveFrameSize, type LiveFrameSource } from '../live/liveSourceTexture';
 import {
   createWebGlTextureHandle,
   type ChromashiftTextureHandle,
@@ -61,9 +62,8 @@ export class WebGLTextureManager implements ChromashiftTextureManager {
   }
 
   /** See `TextureManager.updateVideoTexture` — same reuse/recreate policy, no mipmaps. */
-  updateVideoTexture(cacheKey: string, source: HTMLVideoElement): ChromashiftTextureHandle | null {
-    const width = source.videoWidth;
-    const height = source.videoHeight;
+  updateVideoTexture(cacheKey: string, source: LiveFrameSource): ChromashiftTextureHandle | null {
+    const { width, height } = liveFrameSize(source);
     if (width === 0 || height === 0) return null;
 
     const gl = this.gl;

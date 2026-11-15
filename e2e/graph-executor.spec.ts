@@ -96,9 +96,18 @@ const SETTLE_MS = 2500;
  */
 function url(
   graph: string,
-  { compute = true, scene = FROZEN_SCENE }: { compute?: boolean; scene?: string } = {},
+  {
+    compute = true,
+    scene = FROZEN_SCENE,
+    renderer = 'webgpu',
+  }: {
+    compute?: boolean;
+    scene?: string;
+    /** `main` keeps the renderer on the page's thread (#253), where an init script can reach its WebGPU objects. */
+    renderer?: 'webgpu' | 'main';
+  } = {},
 ): string {
-  return `/?renderer=webgpu&graph=${graph}&preset=${scene}${compute ? '' : '&no_gpu_compute'}`;
+  return `/?renderer=${renderer}&graph=${graph}&preset=${scene}${compute ? '' : '&no_gpu_compute'}`;
 }
 
 /**
@@ -354,6 +363,8 @@ test.describe('pass-graph executor', () => {
     // way to the device and the renderer must name the refusal and stand the
     // default graph in for it — not adopt the graph and draw black.
     test.setTimeout(120_000);
+    // The patch is the page's `GPUDevice.prototype`: the render worker has its
+    // own, so this scene draws on the main transport.
     await page.addInitScript(() => {
       const create = GPUDevice.prototype.createShaderModule;
       GPUDevice.prototype.createShaderModule = function (descriptor: GPUShaderModuleDescriptor) {
@@ -363,7 +374,7 @@ test.describe('pass-graph executor', () => {
         return create.call(this, { ...descriptor, code });
       };
     });
-    const frame = await captureFrame(page, url('warp'));
+    const frame = await captureFrame(page, url('warp', { renderer: 'main' }));
 
     const crumbs = await page.evaluate(() => ({
       error: window.passGraphError,

@@ -53,3 +53,70 @@ export async function waitForWebGPU(page: Page, timeout = 45_000): Promise<void>
     );
   }
 }
+
+/**
+ * Arm `window.__renderDebug` (`src/engine/render/debug.ts`) before navigation:
+ * the frame readback, the simulated device loss and the render clock's
+ * timeline. Set in storage rather than the URL, so the URL stays the one under
+ * test. Must run before `page.goto` — the service reads it when it boots.
+ */
+export async function armRenderDebug(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    try {
+      localStorage.setItem('chromashift:renderDebug', '1');
+    } catch {
+      // An opaque origin (about:blank) has no storage; the app's page does.
+    }
+  });
+}
+
+/**
+ * The sessions a renderer-agnostic spec runs in (#253): the WebGL backend in
+ * the `chromium` project, and WebGPU on both render transports — the render
+ * worker and `?renderer=main` — in `chromium-webgpu`.
+ */
+export interface RendererSession {
+  name: string;
+  /** The `renderer=` query parameter, without the `?`. */
+  query: string;
+  project: 'chromium' | 'chromium-webgpu';
+  transport: 'main' | 'worker';
+  /** Resolves once the session's renderer is up on the expected transport. */
+  ready: (page: Page) => Promise<void>;
+}
+
+export const RENDERER_SESSIONS: readonly RendererSession[] = [
+  {
+    name: 'webgl',
+    query: 'renderer=webgl',
+    project: 'chromium',
+    transport: 'main',
+    ready: (page) => waitForWebGL(page),
+  },
+  {
+    name: 'webgpu, worker transport',
+    query: 'renderer=webgpu',
+    project: 'chromium-webgpu',
+    transport: 'worker',
+    ready: async (page) => {
+      await waitForWebGPU(page);
+      await waitForDiagnostic(page, 'renderTransport', 'worker');
+    },
+  },
+  {
+    name: 'webgpu, main transport',
+    query: 'renderer=main',
+    project: 'chromium-webgpu',
+    transport: 'main',
+    ready: async (page) => {
+      await waitForWebGPU(page);
+      await waitForDiagnostic(page, 'renderTransport', 'main');
+    },
+  },
+];
+
+/** Skip the current test unless it runs in `session`'s project. Call from `beforeEach`. */
+export function skipUnlessSessionProject(session: RendererSession): void {
+  const project = test.info().project.name;
+  test.skip(project !== session.project, `${session.name} runs in the ${session.project} project`);
+}

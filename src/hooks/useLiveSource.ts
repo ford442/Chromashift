@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { FrameTick } from '../engine/frame/FrameClock';
 import { computeVideoAverageLuminance, LiveSourceManager, type LiveSourceKind } from '../engine/live/LiveSource';
 import { publishLiveSourceBreadcrumbs } from '../engine/live/liveSourceBreadcrumbs';
-import { LIVE_SOURCE_CACHE_KEY } from '../engine/live/liveSourceTexture';
 import { createChromashiftCpuHost } from '../engine/compute/chores/chromashiftHost';
 import {
   publishMotionFieldBreadcrumbs,
@@ -11,7 +10,7 @@ import {
   publishMotionFieldHasFlow,
 } from '../engine/compute/chores';
 import { LiveMotionSampler } from '../engine/live/liveMotionField';
-import { applySourceTexture, type ChromashiftRefs, type ChromashiftStore } from './useChromashiftStore';
+import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 /** How often to resample average luminance from the live frame (ms). */
 const ANALYSIS_INTERVAL_MS = 1000;
@@ -44,18 +43,9 @@ export interface LiveSourceHandlers {
 export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): LiveSourceHandlers {
   const { state, actions } = store;
   const {
-    liveSourceManagerRef, textureManagerRef, rendererRef, engineModeRef, renderStateRef, frameClockRef,
+    liveSourceManagerRef, renderHostRef, engineModeRef, renderStateRef, frameClockRef,
   } = refs;
   const liveSource = state.media.liveSource;
-
-  // `refs` (the composed bundle) gets a new object identity every App render
-  // even though its individual ref objects are stable — mirror it into a
-  // stable ref so the tick effect below doesn't need `refs` itself in its
-  // dependency array (which would restart the rAF loop on every render, as
-  // `useAnimationLoop`/`useReactiveInput` avoid by depending on individual
-  // refs instead of the whole bundle).
-  const refsRef = useRef(refs);
-  refsRef.current = refs;
 
   const ensureManager = useCallback((): LiveSourceManager => {
     liveSourceManagerRef.current ??= new LiveSourceManager(() => {
@@ -65,7 +55,7 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
   }, [liveSourceManagerRef, actions]);
 
   const activate = useCallback((kind: LiveSourceKind, label: string) => {
-    rendererRef.current?.clearPersistence();
+    renderHostRef.current.clearPersistence();
     const size = liveSourceManagerRef.current?.frameSize;
     actions.setLiveSource({
       active: true,
@@ -75,7 +65,7 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
       width: size?.width ?? 0,
       height: size?.height ?? 0,
     });
-  }, [actions, liveSourceManagerRef, rendererRef]);
+  }, [actions, liveSourceManagerRef, renderHostRef]);
 
   const fail = useCallback((e: unknown, fallback: string) => {
     actions.setLiveSource({
@@ -114,9 +104,9 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
 
   const handleStopLiveSource = useCallback(() => {
     liveSourceManagerRef.current?.stop();
-    textureManagerRef.current?.releaseVideoTexture(LIVE_SOURCE_CACHE_KEY);
+    renderHostRef.current.releaseVideo();
     actions.setLiveSource({ active: false, kind: null, label: null, width: 0, height: 0, error: null });
-  }, [liveSourceManagerRef, textureManagerRef, actions]);
+  }, [liveSourceManagerRef, renderHostRef, actions]);
 
   // Tear down capture on unmount (route change, HMR, etc).
   useEffect(() => () => {
@@ -130,7 +120,8 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
   // WebGL has no compute lane, so the motion field is sampled here from the
   // video element and handed to the renderer. On WebGPU the renderer runs the
   // `motion-field` chore's GPU lane itself, and this sampler is constructed
-  // only when that lane declines (`?no_gpu_compute`) — `wantsCpuMotionField`.
+  // only when that lane declines (`?no_gpu_compute`) — the renderer says so
+  // in its `motion-demand` event (`host.motionDemand`).
   const motionSamplerRef = useRef<LiveMotionSampler | null>(null);
   const lastMotionAtRef = useRef(0);
   useEffect(() => {
@@ -153,27 +144,26 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
      * persistence pass keeps running the pre-motion program.
      */
     const sampleMotion = (now: number, element: HTMLVideoElement) => {
-      const renderer = rendererRef.current;
-      if (!renderer?.setMotionField) return;
-
+      const host = renderHostRef.current;
+      const demand = host.motionDemand;
       const { tracers } = renderStateRef.current;
-      if (renderer.wantsCpuMotionField && !renderer.wantsCpuMotionField()) {
+      if (!demand.wantsCpu) {
         // The renderer's GPU lane is serving the field (and its breadcrumbs).
         if (motionSamplerRef.current) {
           motionSamplerRef.current.destroy();
           motionSamplerRef.current = null;
-          renderer.setMotionField(null);
+          host.setMotionField(null);
         }
         return;
       }
       // A graph that steers by the field (`?graph=smear`'s `displace`) wants it
       // — and its flow — whatever the motion mode.
-      const graphUse = renderer.cpuMotionFieldUse?.() ?? { reads: false, needsFlow: false };
+      const graphUse = demand.use;
       if (tracers.motionMode === 'off' && !graphUse.reads) {
         if (motionSamplerRef.current) {
           motionSamplerRef.current.destroy();
           motionSamplerRef.current = null;
-          renderer.setMotionField?.(null);
+          host.setMotionField(null);
           publishMotionFieldBreadcrumbs(null, 'motionMode is off');
           publishMotionFieldEnergy(0);
           publishMotionFieldHasFlow(false);
@@ -193,18 +183,15 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
       const wantFlow = tracers.motionMode === 'direction' || graphUse.needsFlow;
       void motionSamplerRef.current.sample(element, tracers.motionThreshold, wantFlow)
         .then((output) => {
-          renderer.setMotionField?.(output);
+          host.setMotionField(output);
         });
     };
 
     // sources: upload this frame's video before `modulate` / `render` read it.
     const upload = ({ now }: FrameTick) => {
       const manager = liveSourceManagerRef.current;
-      const textureManager = textureManagerRef.current;
-      if (manager?.active && textureManager) {
-        const handle = textureManager.updateVideoTexture(LIVE_SOURCE_CACHE_KEY, manager.element);
-        if (handle) {
-          applySourceTexture(refsRef.current, handle);
+      if (manager?.active) {
+        if (renderHostRef.current.uploadVideo(manager.element)) {
           frameCountRef.current += 1;
 
           const size = manager.frameSize;
@@ -243,8 +230,8 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
       publishMotionFieldFlow(null);
     };
   }, [
-    liveSource.active, actions, liveSourceManagerRef, textureManagerRef,
-    engineModeRef, renderStateRef, rendererRef, frameClockRef,
+    liveSource.active, actions, liveSourceManagerRef, renderHostRef,
+    engineModeRef, renderStateRef, frameClockRef,
   ]);
 
   return { handleStartCamera, handleStartScreenShare, handleLoadVideoFile, handleStopLiveSource };

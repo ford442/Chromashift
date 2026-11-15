@@ -1,6 +1,5 @@
 import type { MutableRefObject, RefObject } from 'react';
 import type { ImageEntry } from '../../engine/library/imageEntry';
-import type { ChromashiftTextureHandle } from '../../engine/types/TextureHandle';
 import type { EngineKind } from '../../engine/WasmEngine';
 import type { ReactiveModulation } from '../../engine/reactive/types';
 import type { ChromashiftState } from '../../state/types';
@@ -19,13 +18,12 @@ export interface DomRefs {
 }
 
 export interface GpuRefs {
-  orchestratorRef: RefObject<import('../../engine/RendererOrchestrator').RendererOrchestrator | null>;
-  rendererRef: RefObject<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>;
-  textureManagerRef: RefObject<import('../../engine/types/RendererContracts').ChromashiftTextureManager | null>;
-  deviceRef: RefObject<GPUDevice | null>;
-  webGpuSessionRef: RefObject<import('../../engine/webgpu/webgpuSession').WebGpuSession | null>;
-  maskTextureRef: MutableRefObject<GPUTexture | null>;
-  gpuImageAnalysisRef: RefObject<import('../../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>;
+  /**
+   * The page's handle on the renderer (`engine/render/RenderHost.ts`), on
+   * whichever thread it runs (#253). The page holds no renderer, device or
+   * texture: it posts state and asks for pixels. Never reassigned.
+   */
+  renderHostRef: RefObject<import('../../engine/render/RenderHost').RenderHost>;
   upscalerRef: RefObject<import('../../engine/upscale/Upscaler').Upscaler | null>;
 }
 
@@ -36,22 +34,15 @@ export interface MediaRefs {
   loadGenRef: MutableRefObject<number>;
   engineModeRef: MutableRefObject<EngineKind>;
   renderStateRef: MutableRefObject<ChromashiftState>;
-  sourceTextureRef: MutableRefObject<ChromashiftTextureHandle | null>;
   liveSourceManagerRef: MutableRefObject<import('../../engine/live/LiveSource').LiveSourceManager | null>;
 }
 
 export interface CompareRefs {
-  /** Compare slot B (dual layout): canvas, renderer, independent angle clock. */
+  /** Compare slot B (dual / swipe layouts). Its renderer and angle clock live in the render service. */
   canvasBRef: RefObject<HTMLCanvasElement | null>;
-  rendererBRef: MutableRefObject<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>;
   /** Quad layout: Original (a) and Tracer (c) canvases. */
   canvasARef: RefObject<HTMLCanvasElement | null>;
   canvasCRef: RefObject<HTMLCanvasElement | null>;
-  quadRenderersRef: MutableRefObject<Record<'a' | 'b' | 'c', import('../../engine/types/RendererContracts').ChromashiftRenderer | null>>;
-  animAnglesRef: MutableRefObject<number[]>;
-  animAnglesBRef: MutableRefObject<number[]>;
-  lastAngleSyncRef: MutableRefObject<number>;
-  lastRenderMetricSyncRef: MutableRefObject<number>;
   /** Set by useQuadStationaryRefresh; invoked when quad GPU slots attach. */
   refreshQuadCellsRef: MutableRefObject<(() => void) | null>;
 }

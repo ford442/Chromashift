@@ -28,7 +28,7 @@ function mockAdapter(overrides: Partial<GPUAdapter> = {}): GPUAdapter {
   } as unknown as GPUAdapter;
 }
 
-/** Install window/navigator with an optional `navigator.gpu`. */
+/** Install window/navigator (and the global `isSecureContext`) with an optional `navigator.gpu`. */
 function installGlobals(options: {
   secureContext?: boolean;
   gpu?: Partial<GPU> | null;
@@ -39,6 +39,8 @@ function installGlobals(options: {
     isSecureContext: options.secureContext ?? true,
   };
   vi.stubGlobal('window', win);
+  // The probe reads the realm's own flag: it runs in the render worker too (#253).
+  vi.stubGlobal('isSecureContext', options.secureContext ?? true);
   vi.stubGlobal('navigator', {
     gpu: options.gpu === null ? undefined : options.gpu,
     userAgent: options.userAgent ?? 'Mozilla/5.0 Chrome/141.0.0.0 Safari/537.36',

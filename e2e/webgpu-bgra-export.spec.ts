@@ -54,7 +54,9 @@ async function separatedPreview(page: Page, format: GPUTextureFormat): Promise<R
   await setE2eViewport(page);
   await stubMinimalCorpus(page);
   await page.route('**/e2e-fixture.png', (route) => route.fulfill({ contentType: 'image/png', body: SWEEP_PNG }));
-  await page.goto('/?renderer=webgpu');
+  // On the page's thread (#253): the init script above patches the page's
+  // `GPU.prototype`, which the render worker's renderer never sees.
+  await page.goto('/?renderer=main');
   const hasAdapter = await page.evaluate(async () => Boolean(await navigator.gpu?.requestAdapter()));
   test.skip(!hasAdapter, 'No WebGPU adapter on this runner');
   await waitForWebGPU(page);

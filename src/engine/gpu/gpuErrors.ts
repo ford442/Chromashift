@@ -52,9 +52,16 @@ export function attachDeviceDiagnostics(
   // Without that, each Retry or React re-run added a listener that a later
   // `device.lost` fired for every orchestrator that ever existed.
   let attached = true;
-  void device.lost.then((info) => {
+  const onLost = (info: GPUDeviceLostInfo) => {
     if (attached) handlers.onLost?.(info);
-  });
+  };
+  void device.lost.then(onLost);
+  let simulated = simulatedLossListeners.get(device);
+  if (!simulated) {
+    simulated = new Set();
+    simulatedLossListeners.set(device, simulated);
+  }
+  simulated.add(onLost);
 
   const previous = device.onuncapturederror;
   device.onuncapturederror = (event: GPUUncapturedErrorEvent) => {
@@ -64,8 +71,27 @@ export function attachDeviceDiagnostics(
 
   return () => {
     attached = false;
+    simulated.delete(onLost);
     device.onuncapturederror = previous ?? null;
   };
+}
+
+/** `attachDeviceDiagnostics`' `lost` listeners per device, for `simulateDeviceLoss`. */
+const simulatedLossListeners = new WeakMap<GPUDevice, Set<(info: GPUDeviceLostInfo) => void>>();
+
+/**
+ * Lose `device` the way a driver reset looks to the app: it really is
+ * destroyed, and every attached `lost` listener hears an unexplained loss
+ * (`device.destroy()` alone reports `'destroyed'`, which the app treats as its
+ * own doing and ignores). The debug hook behind `__renderDebug.loseDevice()`
+ * (`render/debug.ts`) — it works in the render worker, where a spec cannot
+ * patch `GPUAdapter.prototype` the way it can on the page.
+ */
+export function simulateDeviceLoss(device: GPUDevice, message = 'simulated driver reset'): void {
+  const listeners = [...(simulatedLossListeners.get(device) ?? [])];
+  device.destroy();
+  const info = { reason: 'unknown', message } as GPUDeviceLostInfo;
+  for (const listener of listeners) listener(info);
 }
 
 export async function withErrorScope<T>(

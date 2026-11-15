@@ -7,6 +7,7 @@
  */
 
 import type { MotionFlowStats } from './motionKernel';
+import { pageSearchParams } from '../../pageSearch';
 import { publishDiagnostic, publishDiagnostics } from '../../diagnostics';
 
 export interface GpuComputeSupport {
@@ -38,12 +39,8 @@ export interface GpuComputeDiagnostics {
 export const NO_GPU_COMPUTE_PARAM = 'no_gpu_compute';
 
 export function isGpuComputeDisabledByFlag(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return new URLSearchParams(window.location.search).has(NO_GPU_COMPUTE_PARAM);
-  } catch {
-    return false;
-  }
+  // The page's query, also inside the render worker (`pageSearch.ts`).
+  return pageSearchParams().has(NO_GPU_COMPUTE_PARAM);
 }
 
 export function detectGpuComputeSupport(device: GPUDevice | null): GpuComputeSupport {

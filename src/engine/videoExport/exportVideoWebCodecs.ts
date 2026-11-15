@@ -1,4 +1,4 @@
-import type { ChromashiftRenderer } from '../types/RendererContracts';
+import type { ExportRenderer } from '../types/RendererContracts';
 import type { ChromashiftState } from '../../state/types';
 import { exportVideoFrameLoop } from './exportVideoFrameLoop';
 import {
@@ -30,7 +30,7 @@ function qualityBitrate(quality: VideoExportRequest['quality'], mediabunny: Medi
  * mediabunny is lazy-loaded so it stays out of the initial bundle.
  */
 export async function exportVideoWebCodecs(
-  renderer: ChromashiftRenderer,
+  renderer: ExportRenderer,
   state: ChromashiftState,
   liveAngles: number[],
   baseWidth: number,

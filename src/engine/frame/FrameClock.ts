@@ -57,6 +57,11 @@ export interface FrameScheduler {
   cancel(handle: number): void;
 }
 
+/**
+ * The realm's own `requestAnimationFrame`: the window's on a page, and in a
+ * dedicated worker that has one (Chromium, Firefox) the worker's — paced by
+ * the display of the `OffscreenCanvas` it draws, not by the page's thread.
+ */
 const windowFrameScheduler: FrameScheduler = {
   request: (callback) => requestAnimationFrame((now) => callback(now)),
   cancel: (handle) => cancelAnimationFrame(handle),

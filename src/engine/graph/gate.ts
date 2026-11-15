@@ -73,7 +73,9 @@ export function setStoredPassGraphPreference(name: GraphPresetName | null): void
 }
 
 /**
- * Compile the selected graph for `backend` and publish the breadcrumbs.
+ * Compile the selected graph for `backend` and publish the breadcrumbs. The
+ * render worker passes the page's `selection`: it has no URL or storage of
+ * its own to read.
  *
  * Returns the compiled graph, or `null` when compilation refused it — the
  * refusal is published rather than swallowed. A refused shape still draws:
@@ -82,8 +84,8 @@ export function setStoredPassGraphPreference(name: GraphPresetName | null): void
 export function activatePassGraph(
   backend: GraphBackend,
   layerCount?: number,
+  selection: PassGraphSelection = passGraphSelection(),
 ): CompiledGraph | null {
-  const selection = passGraphSelection();
   try {
     const compiled = compileGraph(buildGraphPreset(selection.name, layerCount), backend);
     publish(true, compiled, null, selection.name);

@@ -5,6 +5,7 @@ import {
   attachDeviceDiagnostics,
   toBootstrapRuntimeError,
   deviceLostRuntimeError,
+  simulateDeviceLoss,
 } from './gpuErrors';
 
 /** A device that is never lost unless the test resolves `lose`. */
@@ -60,6 +61,25 @@ describe('attachDeviceDiagnostics', () => {
 
     expect(stale).not.toHaveBeenCalled();
     expect(live).toHaveBeenCalledOnce();
+  });
+});
+
+describe('simulateDeviceLoss', () => {
+  it('destroys the device and reports an unexplained loss to its attached listeners', () => {
+    const destroy = vi.fn();
+    const device = Object.assign(liveDevice(), { onuncapturederror: null, destroy });
+    const stale = vi.fn();
+    const live = vi.fn();
+    const detach = attachDeviceDiagnostics(device, { onLost: stale });
+    attachDeviceDiagnostics(device, { onLost: live });
+    detach();
+
+    simulateDeviceLoss(device, 'e2e reset');
+
+    expect(destroy).toHaveBeenCalledOnce();
+    // Synchronously, and as `unknown`: `destroyed` is the app's own doing, which it ignores.
+    expect(live).toHaveBeenCalledWith(expect.objectContaining({ reason: 'unknown', message: 'e2e reset' }));
+    expect(stale).not.toHaveBeenCalled();
   });
 });
 

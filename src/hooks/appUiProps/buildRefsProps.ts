@@ -13,6 +13,6 @@ export function buildRefsProps(refs: ChromashiftRefs): AppUIRefsProps {
     previewSeparatedRef: refs.previewSeparatedRef,
     overlaySeparatedRef: refs.overlaySeparatedRef,
     previewTracerRef: refs.previewTracerRef,
-    rendererRef: refs.rendererRef,
+    renderHostRef: refs.renderHostRef,
   };
 }

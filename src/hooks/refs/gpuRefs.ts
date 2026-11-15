@@ -1,33 +1,21 @@
 import { useMemo, useRef } from 'react';
+import type { FrameClock } from '../../engine/frame/FrameClock';
+import { RenderHost, type RenderHostOptions } from '../../engine/render/RenderHost';
 import type { GpuRefs } from './types';
 
-export function useGpuRefs(): GpuRefs {
-  const orchestratorRef = useRef<import('../../engine/RendererOrchestrator').RendererOrchestrator | null>(null);
-  const rendererRef = useRef<import('../../engine/types/RendererContracts').ChromashiftRenderer | null>(null);
-  const textureManagerRef = useRef<import('../../engine/types/RendererContracts').ChromashiftTextureManager | null>(null);
-  const deviceRef = useRef<GPUDevice | null>(null);
-  const webGpuSessionRef = useRef<import('../../engine/webgpu/webgpuSession').WebGpuSession | null>(null);
-  const maskTextureRef = useRef<GPUTexture | null>(null);
-  const gpuImageAnalysisRef = useRef<import('../../engine/compute/GpuImageAnalysis').GpuImageAnalysis | null>(null);
+/**
+ * `clock`: the page's frame clock — an in-process renderer's loop runs on it.
+ * `hostOptions`: for tests (a forced transport, fake service deps).
+ */
+export function useGpuRefs(clock: FrameClock, hostOptions?: Omit<RenderHostOptions, 'clock'>): GpuRefs {
+  // One host for the app's lifetime: it chooses the transport once, and a
+  // canvas it handed to the render worker cannot be handed over again.
+  const renderHostRef = useRef<RenderHost | null>(null);
+  renderHostRef.current ??= new RenderHost({ ...hostOptions, clock });
   const upscalerRef = useRef<import('../../engine/upscale/Upscaler').Upscaler | null>(null);
 
   return useMemo(() => ({
-    orchestratorRef,
-    rendererRef,
-    textureManagerRef,
-    deviceRef,
-    webGpuSessionRef,
-    maskTextureRef,
-    gpuImageAnalysisRef,
+    renderHostRef: renderHostRef as GpuRefs['renderHostRef'],
     upscalerRef,
-  }), [
-    orchestratorRef,
-    rendererRef,
-    textureManagerRef,
-    deviceRef,
-    webGpuSessionRef,
-    maskTextureRef,
-    gpuImageAnalysisRef,
-    upscalerRef,
-  ]);
+  }), [renderHostRef, upscalerRef]);
 }

@@ -40,48 +40,36 @@ export default function App() {
   const { state, actions } = store;
   const { media, output, engine } = state;
 
-  const { clearClassificationMask, generateClassificationMaskTexture } = useClassificationMask(refs);
+  const { clearClassificationMask, analyzeSource } = useClassificationMask(refs);
 
   useWasmEngineLoader(actions.setWasmAvailable);
   useCanvasResize(refs, output.squareCanvas, media.aspect, state.ui.compareView.layout);
-  useCollisionStatsPoll(refs, engine.gpuReady, renderTelemetry.setCollisionStats);
+  useCollisionStatsPoll(refs, engine.gpuReady, engine.backend, renderTelemetry.setCollisionStats);
 
   const { retryGpuBootstrap, isGpuRetrying } = useAppWebGPUInit({
     mainCanvasRef: refs.mainCanvasRef,
+    renderHostRef: refs.renderHostRef,
     antialiasEnabled: output.antialiasEnabled,
     displayColorSpace: output.displayColorSpace,
     canvasHdr: output.canvasHdr,
     setGpuError: actions.setGpuError,
-    orchestratorRef: refs.orchestratorRef,
-    deviceRef: refs.deviceRef,
-    webGpuSessionRef: refs.webGpuSessionRef,
-    gpuImageAnalysisRef: refs.gpuImageAnalysisRef,
-    rendererRef: refs.rendererRef,
-    textureManagerRef: refs.textureManagerRef,
     setRendererBackend: actions.setRendererBackend,
     setRendererFallbackReason: actions.setRendererFallbackReason,
     setImageList: actions.setImageList,
     setReferenceImage: actions.setReferenceImage,
     ensureReferenceImage: store.ensureReferenceImage,
     setCurrentImageIndex: actions.setCurrentImageIndex,
-    setImageAspect: actions.setImageAspect,
-    setAvgLuminance: actions.setAvgLuminance,
-    clearClassificationMask,
-    generateClassificationMaskTexture,
-    engineModeRef: refs.engineModeRef,
-    previewOriginalRef: refs.previewOriginalRef,
     setGpuReady: actions.setGpuReady,
     setSpecificImageError: actions.setSpecificImageError,
     ownedObjectUrlsRef: refs.ownedObjectUrlsRef,
-    sourceTextureRef: refs.sourceTextureRef,
   });
 
-  // After useAppWebGPUInit so slot B cleanup runs before the shared device is destroyed.
+  // After useAppWebGPUInit, so a reboot re-attaches the compare slots once the GPU is ready.
   useCompareSlotRenderer(refs, store);
   useCompareQuadSlots(refs, store);
   useCompareSwipeInteraction(refs, store);
 
-  useImagePlayback({ refs, store, clearClassificationMask, generateClassificationMaskTexture });
+  useImagePlayback({ refs, store, clearClassificationMask, analyzeSource });
   const liveSource = useLiveSource(refs, store);
   useStationaryPreviews(refs, store);
   useQuadStationaryRefresh(refs, store);
@@ -93,7 +81,7 @@ export default function App() {
     refs,
     store,
     clearClassificationMask,
-    generateClassificationMaskTexture,
+    analyzeSource,
   });
   const { handleUpscaleSource, handleUpscaleOutput } = useUpscalerHandlers(
     refs,

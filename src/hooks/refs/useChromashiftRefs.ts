@@ -5,7 +5,13 @@ import { useFrameRefs } from './frameRefs';
 import { useGpuRefs } from './gpuRefs';
 import { useMediaRefs } from './mediaRefs';
 import { useReactiveRefs } from './reactiveRefs';
+import type { RenderHostOptions } from '../../engine/render/RenderHost';
 import type { ChromashiftRefs } from './types';
+
+export interface ChromashiftRefsOptions {
+  /** Tests only: how the page's render host is built (a forced transport, fake service deps). */
+  renderHost?: Omit<RenderHostOptions, 'clock'>;
+}
 
 /**
  * The app's ref bundle, composed from the per-area sub-bundles.
@@ -18,13 +24,13 @@ import type { ChromashiftRefs } from './types';
  * nothing to do with the change that triggered the render. Each sub-bundle is
  * memoized for the same reason.
  */
-export function useChromashiftRefs(): ChromashiftRefs {
+export function useChromashiftRefs(options: ChromashiftRefsOptions = {}): ChromashiftRefs {
   const dom = useDomRefs();
-  const gpu = useGpuRefs();
+  const frame = useFrameRefs();
+  const gpu = useGpuRefs(frame.frameClockRef.current, options.renderHost);
   const media = useMediaRefs();
   const compare = useCompareRefs();
   const reactive = useReactiveRefs();
-  const frame = useFrameRefs();
 
   return useMemo(
     () => ({ ...dom, ...gpu, ...media, ...compare, ...reactive, ...frame }),

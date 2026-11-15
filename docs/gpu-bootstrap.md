@@ -10,6 +10,7 @@ Chromashift centralizes renderer initialization in a few small modules, and docu
 | `src/engine/webgpu/presentationTarget.ts` | `PresentationTarget` — the part of `GPUCanvasContext` the renderer uses; a canvas context, or the headless renderer's offscreen `HeadlessSurface` |
 | `src/engine/gpu/gpuErrors.ts` | `GpuRuntimeError` and the mappings into it, `withErrorScope`, device diagnostics, the fatal breaker |
 | `src/engine/webgl/webgl2Context.ts` | `createWebGL2Context()` (one sticky context per canvas) and `watchWebGL2Context()` |
+| `src/engine/render/` | Where all of the above runs — the render worker or the page's thread — and the protocol between the page and it: see [Render transport](#render-transport) |
 
  Multi-canvas slot lifecycle (compare views, future quad layout) is owned by `src/engine/RendererOrchestrator.ts`.
 
@@ -52,8 +53,8 @@ RendererOrchestrator.bootstrap(primaryCanvas)
 | WebGL diagnostic | Single slot only (primary canvas); compare/multi-view is WebGPU-only. Started only when `backend: 'webgl'` / `getRendererPreference()` is webgl — never after a WebGPU catch. |
 | Primary slot | `PRIMARY_SLOT_ID` (`'primary'`) — created during bootstrap |
 | Compare slot B | `COMPARE_SLOT_B_ID` (`'compare-b'`) via `useCompareSlotRenderer` |
-| Ref wiring from React | `useAppWebGPUInit` → `orchestratorRef` + legacy `rendererRef` / `deviceRef` |
-| Canvas resize | `useCanvasResize` → `resizeAll()`, which reconfigures the session context and every secondary slot context on the **existing** device. Canvas size must not `requestDevice`. |
+| Ref wiring from React | None: the orchestrator lives in the render service ([Render transport](#render-transport)). `useAppWebGPUInit` → `RenderHost.boot`; hooks reach the renderer through `refs.renderHostRef` |
+| Canvas resize | `useCanvasResize` → `RenderHost.sizeCanvas` + `flushResize` → the service's `resize` → `resizeAll()`, which reconfigures the session context and every secondary slot context on the **existing** device. Canvas size must not `requestDevice`. |
 | Chore backend | One lease per orchestrator session (see *gpu-chores* below); slot teardown never destroys it |
 | `device.lost` | Orchestrator destroys all active slots; shared `onRuntimeError` surfaces the recoverable overlay |
 | In-app retry | **Retry GPU** (device-lost only) re-runs `RendererOrchestrator.bootstrap` without navigation. `E_OUTOFMEMORY` / exhausted strategies are **not** retryable — reload required. |
@@ -82,7 +83,132 @@ Everything else is the page's: the adapter gate, the device lease, the
 `TextureManager`, the chore lease, the slot's renderer and executor. A slot
 without a canvas is the primary slot when its target is the session's.
 
-`useAppWebGPUInit` delegates bootstrap and primary-slot creation to the orchestrator; image corpus loading stays in the hook. `useCompareSlotRenderer` calls `createSlot('compare-b')` / `destroySlot` when dual layout is active. Secondary slots must be created **after** bootstrap and destroyed **before** `orchestrator.destroy()` (the compare hook runs between init and unmount for this ordering).
+`useAppWebGPUInit` boots through the render host, which hands the orchestrator's bootstrap the canvas (transferred, on the worker transport); image corpus loading stays in the hook. `useCompareSlotRenderer` calls `RenderHost.attach('compare-b', canvas)` / `detach` when dual layout is active, and the service creates / destroys the slot. Secondary slots must be created **after** bootstrap and destroyed **before** `orchestrator.destroy()`: the service attaches only to a booted orchestrator, and the compare hooks re-attach once `gpuReady` returns after a reboot.
+
+## Render transport
+
+The renderer runs off the page's main thread (#253). `RenderService`
+(`src/engine/render/RenderService.ts`) owns everything this page used to: the
+probe, the device gate, the orchestrator and its slots, the source texture and
+mask, image analysis, the live loop and its angle clock, readbacks, export. It
+runs in one of two places, behind one protocol — **one class, two transports**:
+
+```
+page (main thread)                               render worker (render.worker.ts)
+────────────────────────────────────            ──────────────────────────────────────
+React, the store, hooks                          RenderService
+  └─ RenderHost ─── RenderProtocol (rpc.ts) ──►    ├─ FrameClock: the worker's rAF,
+       │   canvas.transferControlToOffscreen()     │   or a setTimeout pacer
+       │   boot · attach · set-loop · resize …     ├─ RendererOrchestrator → slots
+       ◄── diagnostics · telemetry · runtime-error ├─ the device gate, GpuChoreSession
+           perf-degrade · motion-demand            └─ the nested analysis worker
+  the page's FrameClock: reactive input,
+  live-source upload, reactive-forward, WebXR
+```
+
+| Module | Owns |
+|---|---|
+| `render/protocol.ts` | `RenderProtocol`: the methods, the events, `RenderLoopInput`, `RenderDebugApi` |
+| `render/RenderService.ts` | The renderer side of the protocol, on either transport |
+| `render/render.worker.ts` | The worker: a `RenderService` on the worker's own `FrameClock`, its breadcrumbs forwarded, and the capability `probe` |
+| `render/RenderHost.ts` | The page side: chooses the transport, hands canvases over, coalesces `setLoop`, applies forwarded breadcrumbs, caches the telemetry angles |
+| `render/transport.ts` | `selectRenderTransport`: the choice and its reason |
+| `render/debug.ts` | `window.__renderDebug` |
+
+### Choosing the transport
+
+Once per page, before the first boot — a canvas handed to a worker cannot come
+back, so **Retry GPU** reboots on the transport the page already has:
+
+| Session | Transport | `window.renderTransportReason` |
+|---|---|---|
+| `?renderer=webgl` (and WebXR, which needs it) | main | `the WebGL backend (and WebXR with it) draws on the page` |
+| `?renderer=main` | main, WebGPU | `forced by ?renderer=main` |
+| the `render-worker` bit withheld | main, WebGPU | `render-worker withheld: <which half, and why>` |
+| otherwise | **worker** | `render-worker: OffscreenCanvas + WebGPU in a worker, paced by the worker's requestAnimationFrame` (or `a timeout pacer`) |
+
+`render-worker` is a platform capability in `graph/capabilities.ts`, decided
+by asking, never by user agent:
+
+- **The page half** (`renderWorkerPageSupport`): `Worker`, `OffscreenCanvas`,
+  `HTMLCanvasElement.prototype.transferControlToOffscreen`, `navigator.gpu`.
+- **The worker half** (`renderWorkerScopeSupport`): a render worker is started
+  and asked (`probe`, 10 s timeout) whether its scope has `navigator.gpu`, an
+  `OffscreenCanvas` that gives a `webgpu` context, and an adapter. A worker that
+  fails to start or never answers is a "no"; the worker is then terminated.
+
+So Safari, or any browser, gets the worker only where it really answers yes;
+anything short of that is the main transport with the reason published, never
+an error. `?renderer=main` is a WebGPU session (`readRequestedBackend` reads
+it as `webgpu`) — for comparing the transports, and for a browser whose worker
+path misbehaves. The Diagnostics panel shows the live transport and its reason
+(`data-testid="render-transport"`); `window.renderTransport` is `worker` or
+`main`.
+
+### What crosses, and how
+
+| Concern | Worker transport | Main transport |
+|---|---|---|
+| Canvases | Transferred on first use (`boot` / `attach`), then named by id; the host releases an id when the element is collected | The element itself |
+| Canvas size, DPR | The page computes the backing size; `sizeCanvas` keeps it (the element is a placeholder now) and `flushResize` posts `resize` | `sizeCanvas` sizes the element |
+| Colour space, Canvas HDR, AA | `set-canvas` / `set-antialiasing` | the same call, in-process |
+| What to draw | `set-loop` with `RenderLoopInput` (`buildRenderLoopInput` in `useAnimationLoop.ts`), posted on every store change and coalesced to one message per task; the service writes the angles and the reactive and multi-view overrides each frame | `set-loop`, applied at once |
+| Reactive input | Sampled on the page (`input`), posted by `reactive-forward` (`sources`); the loop draws the latest it has | written before the service's `modulate` reads it |
+| Sources | `load-source`: the **service** decodes (`fetch` + `createImageBitmap`) and uploads; a preview bitmap comes back by transfer for the Original thumbnail | the same, in-process |
+| Live source | A `VideoFrame` of the element, transferred per frame (an `ImageBitmap` without WebCodecs); the service closes it | the element |
+| Readbacks | Previews, collision stats, tracer / still / upscale-output exports, video frames: pixels transferred back | returned |
+| Breadcrumbs | Published in the worker's realm and forwarded (`forwardDiagnostics`): batched per task, an unchanged primitive is not resent, every key is resent at each boot. The page applies them to `window`, so specs read the same keys | `window` directly |
+| Telemetry | `telemetry` events every 200 ms (angles, CPU/GPU timing, HUD history) into `renderTelemetry`; `perf-degrade` into the store | the same events, delivered synchronously |
+
+Nothing in the frame path touches the page: `no-restricted-globals` in
+`eslint.config.js` fails `npm run lint` on `window` or `document` under
+`engine/graph/exec`, `engine/webgpu` and `engine/frame`.
+
+**The clock.** The live loop's tasks (`animation-angles`, `main-render`,
+`render-telemetry`) register on the service's clock: the worker's own on the
+worker transport — its `requestAnimationFrame`, paced by the
+`OffscreenCanvas`'s display rather than the page's thread, or a `setTimeout`
+pacer where a worker has no rAF (`workerFrameScheduler`) — and the page's
+otherwise. A long task on the page therefore drops no frames on the worker
+transport (`e2e/render-transport.spec.ts`). The page keeps its own clock for
+what stays there: reactive input, the live-source upload, WebXR (main
+transport only — XR is WebGL).
+
+**Video export** runs on the page either way (`ExportRenderer`, implemented
+by `RenderHost.exportRenderer()`): the exporter steps the page's clock offline,
+and each `export-frame` on the worker steps the worker's clock offline by
+`1000 / fps` (`export-begin` / `export-end` bracket it). Frames come back by
+readback on both transports, so the file is the same
+(`e2e/video-export-transport.spec.ts`).
+
+**Chores.** One chore session per device, on the service's side:
+`GpuChoreSession` follows the device into the worker, and the CPU analysis
+lane is a nested worker of the render worker. `choreBackendOwnership.test.ts`
+is unchanged.
+
+**A crash.** If the render worker dies, the canvases die with it: the page
+shows a non-recoverable error (`The render worker stopped — reload the page to
+draw again.`) and later boots return it.
+
+### `window.__renderDebug`
+
+What automation used to get by patching WebGPU prototypes on the page, which
+cannot reach a worker. Armed by `?renderDebug=1` or
+`localStorage['chromashift:renderDebug'] = '1'` (`armRenderDebug` in
+`e2e/helpers/renderer.ts`); armed, the WebGPU canvases are also configured with
+`COPY_SRC`. Unarmed, none of it exists.
+
+| Hook | Does |
+|---|---|
+| `readPresentedFrame(slot = 'main')` | The next frame that slot presents, copied from its canvas texture in the task that drew it (`webgpu/presentedFrame.ts`): `{ width, height, format, bytesPerRow, bytes }` |
+| `loseDevice()` | `simulateDeviceLoss`: the device is destroyed and its listeners told of an `unknown` loss, so the overlay and **Retry GPU** run for real |
+| `frameTimeline()` | The render clock's last 256 tick times, epoch ms |
+| `transport` | Which transport these reach |
+
+Specs that still patch a page prototype (`GPU.prototype.getPreferredCanvasFormat`
+in `webgpu-bgra-export.spec.ts`, `GPUDevice.prototype.createShaderModule` in
+`graph-executor.spec.ts`'s refused-pipeline test) run on `?renderer=main`,
+where the patch reaches the renderer.
 
 ## Options matrix
 
@@ -286,18 +412,22 @@ WebGL2 is not a lane (no workable atomics/histogram story). See AGENTS.md § *GP
 | `device.onuncapturederror` | `attachDeviceDiagnostics` → logged; rendering continues | Console only |
 | A pipeline the device refused (inspect views, a compare slot's renderer, the collision-stats blit) | `PipelineCompileError` → `pipelineRuntimeError` | Dismissable notice with the compiler's `line:column` messages; the frame keeps drawing (that view shows the composite) |
 | Bootstrap failure | `toBootstrapRuntimeError` | Blocking overlay; **not** recoverable (no Retry GPU). Queue OOM names command-queue exhaustion. **Open WebGL diagnostic session** remains. |
+| The render worker crashed | `RenderHost` (`onCrash`) | Blocking overlay, not recoverable: the transferred canvases died with it — reload |
+
+Every row reaches the page the same way on either transport: the service
+emits `runtime-error`, and `useAppWebGPUInit` shows it.
 
 ### Recovery actions
 
 | Action | Behaviour |
 |---|---|
-| **Retry GPU** (in-app) | Device-lost only. Re-runs `RendererOrchestrator.bootstrap` on the page adapter; `gpuFatal` (OOM / exhausted strategies) refuses another `requestDevice` until reload. Preserves reducer settings and current image index. On WebGL it re-uses the canvas's context, and answers with the same overlay while that context is still lost. |
+| **Retry GPU** (in-app) | Device-lost only. Re-runs `RendererOrchestrator.bootstrap` (in the render service, on its transport) on a fresh adapter, and the compare hooks attach their slots again; `gpuFatal` (OOM / exhausted strategies) refuses another `requestDevice` until reload. Preserves reducer settings and current image index. On WebGL it re-uses the canvas's context, and answers with the same overlay while that context is still lost. |
 | **Reload page** | Full navigation |
 | **Open WebGL diagnostic session** | `openWebGlDiagnosticSession()` → persist preference and `location.assign(?renderer=webgl)`. New page load. Never an in-place silent switch. |
 
 A failed WebGPU boot still hard-fails. `publishRendererBootFailure` pins `usingWebGPU` and `usingWebGL` false and `rendererType` null. After a successful retry or an explicit WebGL navigation, `publishRendererBreadcrumbs` updates those globals. See [webgl-fallback.md](webgl-fallback.md).
 
-After canvas resize or DPR changes, `RendererOrchestrator.resizeAll()` reconfigures the primary session context and every additional slot context (replacing a direct `WebGpuSession.reconfigure()` call from React hooks).
+After canvas resize or DPR changes (posted as `resize` on the worker transport), `RendererOrchestrator.resizeAll()` reconfigures the primary session context and every additional slot context (replacing a direct `WebGpuSession.reconfigure()` call from React hooks).
 
 ## Minimum GPU / browser guidance
 
@@ -325,4 +455,6 @@ npm test
 
 Tests live beside each module (`adapter.test.ts` — including the compatibility-mode attempt and its limits —, `canvasConfig.test.ts`, `gpuErrors.test.ts`, `gpuOptions.test.ts`, `webgl2Context.test.ts`) and in `src/engine/RendererOrchestrator.test.ts` (Retry GPU on a fresh adapter, one error-scope pop, detachable device-lost listeners, refused secondary pipelines), `src/engine/webgpu/GpuReadback.test.ts` (BGRA → RGBA readback) and `src/engine/webgpu/WebGPUPipelines.test.ts` (compiler messages). `src/engine/graph/capabilities.test.ts` pins the capability bits and that no preset variant needs a bit compatibility mode withholds. On a real device, `npm run test:gpu` boots the same bootstrap in Node on
 Dawn (`src/headless/*.gpu.test.ts`, the `headless` CI job; see
-[HEADLESS.md](HEADLESS.md#goldens)). In the browser, `e2e/webgpu-device-loss.spec.ts` destroys the device and clicks **Retry GPU**, and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.
+[HEADLESS.md](HEADLESS.md#goldens)). In the browser, `e2e/webgpu-device-loss.spec.ts` loses the device (`__renderDebug.loseDevice()`) on both transports and clicks **Retry GPU** — a second device (`window.gpuDevicesAcquired === 2`) and both dual-layout slots drawing again — and `e2e/webgpu-bgra-export.spec.ts` checks readback on a forced `bgra8unorm` canvas.
+
+The render transport: `render/transport.test.ts` (the choice and every withheld reason), `render/RenderHost.test.ts` (a scripted worker: the probe, the canvas handed over once and named by id after, resize as a message, `setLoop` coalescing, replay before selection, a crash), `render/RenderService.test.ts` (an overtaken boot, the probe failure, a device loss, export stepping the owned clock), `diagnostics.test.ts` (forwarding) and `gpuErrors.test.ts` (`simulateDeviceLoss`). `src/hooks/useAnimationLoop.dom.test.tsx` drives the loop through an in-process host. In the browser, `e2e/render-transport.spec.ts` checks the choice, the Diagnostics readout and that a stalled main thread drops no worker frames (and does drop them on `?renderer=main`), `e2e/video-export-transport.spec.ts` that both transports export the same file, and `frame-clock.spec.ts` / `render-churn.spec.ts` run on WebGL and on both WebGPU transports (`RENDERER_SESSIONS` in `e2e/helpers/renderer.ts`).

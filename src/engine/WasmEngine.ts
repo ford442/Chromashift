@@ -21,7 +21,6 @@ export type { EngineKind } from './wasm/types';
 export { loadWasmEngine, isWasmReady } from './wasm/loadEngine';
 
 export {
-  computeAverageLuminanceWith,
   computeAverageLuminanceStridedWith,
   computeImageAverageLuminanceWith,
   computePixelsAverageLuminanceWith,

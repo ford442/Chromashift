@@ -23,10 +23,14 @@ import {
   type WebGpuCanvasOptions,
 } from './canvasConfig';
 import type { PresentationTarget } from './presentationTarget';
+import { webGpuContextOf } from '../gpu/renderCanvas';
 
 export interface WebGpuBootstrapOptions extends RendererCanvasOptions {
-  /** The canvas to present to. Exactly one of `canvas` and `target`. */
-  canvas?: HTMLCanvasElement;
+  /**
+   * The canvas to present to — the page's, or its `OffscreenCanvas` in the
+   * render worker. Exactly one of `canvas` and `target`.
+   */
+  canvas?: HTMLCanvasElement | OffscreenCanvas;
   /** An offscreen presentation target in place of a canvas (`HeadlessSurface`). */
   target?: PresentationTarget;
   /** The SDR present format; defaults to `navigator.gpu.getPreferredCanvasFormat()`. */
@@ -83,7 +87,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
   const device = await requestWebGpuDevice(adapter, requestedOptionalFeatures);
   const capabilities = buildWebGpuCapabilityReport(adapter, device, requestedOptionalFeatures);
   const timestampQueryAvailable = capabilities.timestampQueryAvailable;
-  const context = options.target ?? options.canvas?.getContext('webgpu') ?? null;
+  const context = options.target ?? (options.canvas ? webGpuContextOf(options.canvas) : null);
   if (!context) {
     throw new Error('Failed to get WebGPU context from canvas.');
   }

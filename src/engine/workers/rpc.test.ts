@@ -162,3 +162,80 @@ describe('createWorkerRpc', () => {
     expect(worker.terminated).toBe(true);
   });
 });
+
+type LoopProtocol = {
+  setLatest: (req: { value: number }) => void;
+  latest: (req: Record<string, never>) => { value: number };
+  explode: (req: Record<string, never>) => void;
+};
+type LoopEvents = { tick: { index: number }; buffer: { bytes: ArrayBuffer } };
+
+describe('createWorkerRpc — notify and events', () => {
+  function loopWorker() {
+    let latest = 0;
+    return new LoopbackWorker<LoopProtocol, never, LoopEvents>({
+      setLatest: (req) => { latest = req.value; },
+      latest: () => ({ value: latest }),
+      explode: () => { throw new Error('boom'); },
+    });
+  }
+
+  it('runs a notify in order with the calls around it, and answers nothing', async () => {
+    const worker = loopWorker();
+    const rpc = createWorkerRpc<LoopProtocol, never, LoopEvents>(() => worker.asWorker(), { label: 'loop' });
+    rpc.notify('setLatest', { value: 1 });
+    rpc.notify('setLatest', { value: 7 });
+    await expect(rpc.call('latest', {})).resolves.toEqual({ value: 7 });
+    expect(rpc.pending).toBe(0);
+    rpc.terminate();
+  });
+
+  it('logs a notify that throws in the worker instead of failing a call', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const worker = loopWorker();
+    const rpc = createWorkerRpc<LoopProtocol, never, LoopEvents>(() => worker.asWorker(), { label: 'loop' });
+    rpc.notify('explode', {});
+    await expect(rpc.call('latest', {})).resolves.toEqual({ value: 0 });
+    expect(error).toHaveBeenCalledWith('[rpc] notify "explode" failed:', expect.any(Error));
+    error.mockRestore();
+    rpc.terminate();
+  });
+
+  it('delivers emitted events to every listener until it unsubscribes, transferring', async () => {
+    const worker = loopWorker();
+    const rpc = createWorkerRpc<LoopProtocol, never, LoopEvents>(() => worker.asWorker(), { label: 'loop' });
+    const ticks: number[] = [];
+    const off = rpc.on('tick', (payload) => ticks.push(payload.index));
+    const received = new Promise<ArrayBuffer>((resolve) => rpc.on('buffer', (payload) => resolve(payload.bytes)));
+    await rpc.call('latest', {}); // spawns the worker
+    worker.events.emit('tick', { index: 1 });
+    const bytes = new Uint8Array([9, 9]).buffer;
+    worker.events.emit('buffer', { bytes }, [bytes]);
+    expect(bytes.byteLength).toBe(0);
+    expect((await received).byteLength).toBe(2);
+    off();
+    worker.events.emit('tick', { index: 2 });
+    await rpc.call('latest', {});
+    expect(ticks).toEqual([1]);
+    rpc.terminate();
+  });
+
+  it('tells crash listeners after rejecting the calls in flight', async () => {
+    const scripted = new ScriptedWorker();
+    const rpc = createWorkerRpc<LoopProtocol, never, LoopEvents>(() => scripted.asWorker(), { label: 'loop' });
+    const order: string[] = [];
+    const call = rpc.call('latest', {}).catch(() => order.push('rejected'));
+    rpc.onCrash((error) => order.push(`crash: ${error.message}`));
+    scripted.crash('out of memory');
+    await call;
+    expect(order).toEqual(['crash: loop worker: out of memory', 'rejected']);
+  });
+
+  it('records a notify on the scripted worker apart from the calls', () => {
+    const scripted = new ScriptedWorker();
+    const rpc = createWorkerRpc<LoopProtocol, never, LoopEvents>(() => scripted.asWorker(), { label: 'loop' });
+    rpc.notify('setLatest', { value: 3 });
+    expect(scripted.calls).toHaveLength(0);
+    expect(scripted.notifies.map((n) => n.message)).toEqual([{ rpc: 'notify', method: 'setLatest', req: { value: 3 } }]);
+  });
+});

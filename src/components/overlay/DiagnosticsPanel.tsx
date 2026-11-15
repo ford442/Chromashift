@@ -122,6 +122,25 @@ function CanvasHdrNote() {
   );
 }
 
+/**
+ * Where the renderer runs (#253): the render worker or this thread, and why —
+ * chosen once per page before the first boot (`engine/render/transport.ts`)
+ * and published as breadcrumbs. Like the HDR note, the render-timing store is
+ * only the re-render tick that picks the choice up.
+ */
+function RenderTransportReadout() {
+  useRenderCpuTiming();
+  const transport = readDiagnostic('renderTransport');
+  if (!transport) return null;
+  const reason = readDiagnostic('renderTransportReason');
+  return (
+    <div className="text-[10px] font-mono text-emerald-200/80" data-testid="render-transport">
+      Render thread: {transport === 'worker' ? 'worker (OffscreenCanvas)' : 'main'}
+      {reason && <div className="text-[9px] leading-tight text-emerald-300/60">{reason}</div>}
+    </div>
+  );
+}
+
 export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   diagnosticsMode,
   diagnosticsOpacity,
@@ -159,6 +178,7 @@ export const DiagnosticsPanel = memo(function DiagnosticsPanel({
   useRenderCount('DiagnosticsPanel');
   return (
     <div className="space-y-3">
+      <RenderTransportReadout />
       {rendererBackend === 'webgpu' && <CanvasHdrNote />}
       {readDiagnostic('presentationNote') && (
         <p className="text-[10px] text-zinc-400">{readDiagnostic('presentationNote')}</p>

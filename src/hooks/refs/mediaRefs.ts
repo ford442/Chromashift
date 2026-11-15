@@ -1,7 +1,6 @@
 import { useMemo, useRef } from 'react';
 import type { ImageEntry } from '../../engine/library/imageEntry';
 import type { LiveSourceManager } from '../../engine/live/LiveSource';
-import type { ChromashiftTextureHandle } from '../../engine/types/TextureHandle';
 import type { EngineKind } from '../../engine/WasmEngine';
 import { createInitialState } from '../../state/chromashiftReducer';
 import type { ChromashiftState } from '../../state/types';
@@ -14,7 +13,6 @@ export function useMediaRefs(): MediaRefs {
   const loadGenRef = useRef(0);
   const engineModeRef = useRef<EngineKind>('ts');
   const renderStateRef = useRef<ChromashiftState>(createInitialState());
-  const sourceTextureRef = useRef<ChromashiftTextureHandle | null>(null);
   const liveSourceManagerRef = useRef<LiveSourceManager | null>(null);
 
   return useMemo(() => ({
@@ -24,7 +22,6 @@ export function useMediaRefs(): MediaRefs {
     loadGenRef,
     engineModeRef,
     renderStateRef,
-    sourceTextureRef,
     liveSourceManagerRef,
   }), [
     imageListRef,
@@ -33,7 +30,6 @@ export function useMediaRefs(): MediaRefs {
     loadGenRef,
     engineModeRef,
     renderStateRef,
-    sourceTextureRef,
     liveSourceManagerRef,
   ]);
 }

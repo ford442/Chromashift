@@ -1,5 +1,5 @@
 import type { FrameClock } from '../frame/FrameClock';
-import type { ChromashiftRenderer, ExportPassMode } from '../types/RendererContracts';
+import type { ExportRenderer, ExportPassMode } from '../types/RendererContracts';
 import type { ChromashiftState } from '../../state/types';
 import { exportVideoMediaRecorder } from './exportVideoMediaRecorder';
 import { probeVideoExportCapabilities, type VideoExportContainer, type VideoExportQuality } from './videoCodecs';
@@ -41,7 +41,7 @@ export interface VideoExportResult {
  * otherwise falls back to MediaRecorder + manual `requestFrame()`.
  */
 export async function exportVideo(
-  renderer: ChromashiftRenderer,
+  renderer: ExportRenderer,
   state: ChromashiftState,
   liveAngles: number[],
   baseWidth: number,

@@ -25,7 +25,7 @@ function blitPreviewPixels(
 export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftStore): void {
   const { state } = store;
   const {
-    rendererRef,
+    renderHostRef,
     renderStateRef,
     previewSeparatedRef,
     previewTracerRef,
@@ -85,9 +85,6 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
   const refreshPreviews = useCallback(async (
     options: { separated?: boolean; tracer?: boolean } = {},
   ): Promise<void> => {
-    const renderer = rendererRef.current;
-    if (!renderer) return;
-
     const wantSeparated = options.separated !== false;
     const wantTracer = options.tracer !== false;
     if (!wantSeparated && !wantTracer) return;
@@ -107,10 +104,9 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     inFlightRef.current = true;
     try {
       const previewState = buildStationaryRendererState(current);
-      const result = await renderer.renderStationaryPreviews(previewState, {
-        fps: current.engine.fps,
-        separated: wantSeparated,
-        tracer: wantTracer,
+      const result = await renderHostRef.current.stationaryPreviews({
+        state: previewState,
+        options: { fps: current.engine.fps, separated: wantSeparated, tracer: wantTracer },
       });
       if (gen === refreshGenRef.current) applyPreviewResult(result.separated, result.tracer);
     } catch (error) {
@@ -121,7 +117,7 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     const queued = queuedRef.current;
     queuedRef.current = null;
     if (queued) await refreshPreviews(queued);
-  }, [rendererRef, renderStateRef, applyPreviewResult]);
+  }, [renderHostRef, renderStateRef, applyPreviewResult]);
 
   const gpuReady = state.engine.gpuReady;
   const paused = state.engine.paused;
@@ -130,12 +126,13 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
   const livePreviewEnabled = state.output.livePreviewEnabled;
   const tracerPreviewFrozen = state.output.tracerPreviewFrozen;
   const settingsFingerprint = stationaryPreviewFingerprint(state);
+  const backend = state.engine.backend;
 
   useEffect(() => {
     if (!gpuReady || exportingVideo || quadActive) return;
     // Same reason as the interval below: a WebGL thumbnail read while the live
     // loop is submitting frames drains the whole context. Refresh when paused.
-    if (rendererRef.current?.backend === 'webgl' && !paused) return;
+    if (backend === 'webgl' && !paused) return;
 
     const forced = capturePreviewAfterRender.current;
     if (forced) capturePreviewAfterRender.current = false;
@@ -152,7 +149,7 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     settingsFingerprint,
     refreshPreviews,
     capturePreviewAfterRender,
-    rendererRef,
+    backend,
   ]);
 
   useEffect(() => {
@@ -161,7 +158,7 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     // map there drains every live frame still queued, which on a deferred
     // driver freezes input. WebGPU readback does not, so only that backend
     // keeps the repeating refresh; WebGL still updates on a settings change.
-    if (rendererRef.current?.backend === 'webgl') return;
+    if (backend === 'webgl') return;
 
     const interval = window.setInterval(() => {
       void refreshPreviews({ separated: false, tracer: true });
@@ -175,6 +172,6 @@ export function useStationaryPreviews(refs: ChromashiftRefs, store: ChromashiftS
     livePreviewEnabled,
     tracerPreviewFrozen,
     refreshPreviews,
-    rendererRef,
+    backend,
   ]);
 }
