@@ -6,7 +6,10 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // coverage/ is `test:coverage` output (gitignored); *.private.config.ts are
+  // per-machine port overrides kept out of git via .git/info/exclude. Neither
+  // belongs to a tsconfig project, so the type-aware parser rejects them.
+  globalIgnores(['dist', 'coverage', '*.private.config.ts']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

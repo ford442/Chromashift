@@ -67,6 +67,10 @@ first because #226 and #228 move or reuse exactly the paths they fix.
 | P2 | Previous-frame feedback | [#223](https://github.com/ford442/Chromashift/issues/223) | Architecture | M | A `history` edge the validator accepts; starter `?graph=recurse` |
 | P2 | One ONNX Runtime WebGPU ML stack | [#206](https://github.com/ford442/Chromashift/issues/206) | Feature | L | Drop TF.js; depth + subject-matte sources for the pass graph |
 | P2 | Pass-graph node editor | [#177](https://github.com/ford442/Chromashift/issues/177) | Feature | L | `@xyflow/react` + versioned graph JSON |
+| P1 | Render off the main thread | [#253](https://github.com/ford442/Chromashift/issues/253) | Foundation | XL | ✅ Shipped — `OffscreenCanvas` render worker, `FrameClock` on the worker, one `RenderProtocol`; main-thread transport kept behind a capability bit. Before #178 and #227 |
+| P2 | Zero-copy live video | [#254](https://github.com/ford442/Chromashift/issues/254) | Feature | L | `importExternalTexture` source variant, `VideoFrame` pump, motion field samples the external texture. Gives #253 a transferable live source |
+| P2 | Audio features in C++/WASM | [#255](https://github.com/ford442/Chromashift/issues/255) | Feature | L | `AudioWorklet` + WASM STFT: onset, beat phase, tempo, band envelopes as `ParamPath` sources; deterministic file-driven export. Pairs with #227 |
+| P2 | Installable offline kiosk | [#256](https://github.com/ford442/Chromashift/issues/256) | Feature | L | PWA shell (`vite-plugin-pwa`), pinned corpus, `.chromashift` bundles (`fflate`) |
 
 **Closed, not planned:** the colour profile designer ([#143](https://github.com/ford442/Chromashift/issues/143)),
 kiosk camera attract ([#144](https://github.com/ford442/Chromashift/issues/144)) and the automation
