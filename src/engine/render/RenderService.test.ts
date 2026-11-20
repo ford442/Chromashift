@@ -37,7 +37,6 @@ function fakeOrchestrator(renderer = fakeRenderer()) {
   const slot = { id: 'main', canvas: null, renderer: renderer as unknown as ChromashiftRenderer } as RendererSlot;
   const orchestrator = {
     getBackend: () => 'webgpu',
-    getFallbackReason: () => null,
     setPassGraph: vi.fn(),
     setCanvasColorSpace: vi.fn(),
     setCanvasPresentation: vi.fn(),

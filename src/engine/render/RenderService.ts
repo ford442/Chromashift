@@ -388,7 +388,9 @@ export class RenderService {
 
     this.orchestrator = orchestrator;
     const backend = orchestrator.getBackend();
-    const fallbackReason = orchestrator.getFallbackReason();
+    // Nothing falls back on its own (WebGL is named, never slid to), so
+    // there is never a reason; the breadcrumb and the result keep the key.
+    const fallbackReason = null;
     publishRendererBreadcrumbs(backend, fallbackReason);
     // Pass-graph gate: the page chose the shape (`?graph=`, the stored
     // preference); compile it for this backend, publish the breadcrumbs, and

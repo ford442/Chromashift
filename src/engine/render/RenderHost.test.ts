@@ -202,7 +202,6 @@ describe('RenderHost on the main transport', () => {
     const slot = { id: 'main', canvas: null, renderer } as RendererSlot;
     return {
       getBackend: () => 'webgl',
-      getFallbackReason: () => null,
       setPassGraph: vi.fn(),
       setCanvasColorSpace: vi.fn(),
       setCanvasPresentation: vi.fn(),

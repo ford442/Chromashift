@@ -14,7 +14,9 @@
  * it, the dump `npm run shaders:validate` feeds to naga and glslangValidator.
  */
 
-import { acquireGpuChoreSession } from '../../compute/GpuChoreSession';
+import { GpuImageAnalysisPass } from '../../compute/chores/webgpuAnalysis';
+import { GpuCoincidencePass } from '../../compute/chores/webgpuCoincidence';
+import { GpuMotionPass } from '../../compute/chores/webgpuMotion';
 import { applyGraphVariant, compileGraph, MAX_LAYER_COUNT } from '../../graph';
 import { buildGraphPreset, GRAPH_PRESETS } from '../../graph/altGraphs';
 import { buildEncodePlan } from '../../graph/exec/plan';
@@ -107,25 +109,21 @@ export function buildShaderCorpus(): ShaderCorpus {
   }
 
   // ── gpu-chores kernels ────────────────────────────────────────────────────
-  type ChoreInternals = {
-    ensurePipelines(): void;
-    ensureMotionPipeline(): void;
-    ensureMotionFlowPipelines(): void;
-    ensureCoincidencePipeline(layerCount: number): void;
-  };
-  const lease = acquireGpuChoreSession(device);
-  const chores = lease.backend as unknown as ChoreInternals;
+  // Each pass builds its pipelines on first use (`compute/chores/webgpu*.ts`);
+  // build them here without a job.
+  const analysis = new GpuImageAnalysisPass(device) as unknown as { ensureResources(): unknown };
+  const motion = new GpuMotionPass(device) as unknown as { ensureFieldPipeline(): unknown; ensureFlowPipelines(): unknown };
+  const coincidence = new GpuCoincidencePass(device) as unknown as { ensurePipeline(layerCount: number): unknown };
   recorder.context = 'chores-analysis';
-  chores.ensurePipelines();
+  analysis.ensureResources();
   recorder.context = 'chores-motion';
-  chores.ensureMotionPipeline();
+  motion.ensureFieldPipeline();
   recorder.context = 'chores-motion-flow';
-  chores.ensureMotionFlowPipelines();
+  motion.ensureFlowPipelines();
   for (const layerCount of LAYER_COUNTS) {
     recorder.context = `chores-coincidence-${layerCount}`;
-    chores.ensureCoincidencePipeline(layerCount);
+    coincidence.ensurePipeline(layerCount);
   }
-  lease.release();
 
   // ── Texture upload mip chain ──────────────────────────────────────────────
   recorder.context = 'texture-mipmap';
