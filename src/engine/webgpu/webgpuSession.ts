@@ -3,6 +3,7 @@ import {
   attachDeviceDiagnostics,
   deviceLostRuntimeError,
   getGpuFatalError,
+  recordUncapturedGpuError,
   type GpuRuntimeError,
 } from '../gpu/gpuErrors';
 import {
@@ -37,6 +38,11 @@ export interface WebGpuBootstrapOptions extends RendererCanvasOptions {
   format?: GPUTextureFormat;
   powerPreference?: GPUPowerPreference;
   canvasOptions?: WebGpuCanvasOptions;
+  /**
+   * The display reports high dynamic range — the page's `matchMedia`, sent
+   * along because a worker has none. Read here when omitted.
+   */
+  hdrDisplay?: boolean;
   onRuntimeError?: (error: GpuRuntimeError) => void;
 }
 
@@ -94,7 +100,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
 
   const format = options.format ?? navigator.gpu.getPreferredCanvasFormat();
   let canvasOptions: WebGpuCanvasOptions = { ...options.canvasOptions };
-  const canvasHdr = probeCanvasHdr(context, device, format);
+  const canvasHdr = probeCanvasHdr(context, device, format, options.hdrDisplay);
   publishCanvasHdrBreadcrumbs(canvasHdr.available, canvasHdr.reason);
   configureWebGpuCanvas(context, device, format, canvasOptions);
 
@@ -112,6 +118,7 @@ export async function bootstrapWebGpu(options: WebGpuBootstrapOptions): Promise<
       options.onRuntimeError?.(deviceLostRuntimeError(info));
     },
     onUncapturedError: (error) => {
+      recordUncapturedGpuError(error);
       console.error('[Chromashift:GPU] Uncaptured error (rendering continues):', error);
     },
   });

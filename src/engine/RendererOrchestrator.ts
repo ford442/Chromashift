@@ -52,6 +52,8 @@ export interface RendererOrchestratorOptions {
    * presentation, and the debug `readback` usage (`render/debug.ts`).
    */
   canvasOptions?: WebGpuCanvasOptions;
+  /** WebGPU only: the page's display reports HDR (`webgpuSession.ts`). */
+  hdrDisplay?: boolean;
   /**
    * WebGL only: the browser restored a context this orchestrator lost. The
    * orchestrator tore itself down at `webglcontextlost`; bootstrap a new one
@@ -179,6 +181,7 @@ export class RendererOrchestrator {
   private webglContextLost = false;
   private resizePending = false;
   private canvasOptions: WebGpuCanvasOptions = {};
+  private hdrDisplay: boolean | undefined;
   /** The pass-graph source every slot draws, or `null` for the default graph. */
   private passGraphSource: PassGraphSource | null = null;
 
@@ -234,6 +237,7 @@ export class RendererOrchestrator {
     );
     orchestrator.onContextRestored = baseOptions.onContextRestored;
     orchestrator.canvasOptions = { ...baseOptions.canvasOptions };
+    orchestrator.hdrDisplay = baseOptions.hdrDisplay;
 
     const primarySlotId = objectStyle && primaryCanvasOrOptions.primarySlotId
       ? primaryCanvasOrOptions.primarySlotId
@@ -511,6 +515,7 @@ export class RendererOrchestrator {
       ...primary,
       antialias: this.antialias,
       canvasOptions: this.canvasOptions,
+      hdrDisplay: this.hdrDisplay,
       onRuntimeError: (error) => {
         // A destroyed orchestrator has been replaced (Retry GPU, a React
         // re-run); its successor reports for the device now.

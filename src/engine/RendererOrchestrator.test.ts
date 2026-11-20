@@ -85,6 +85,11 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
       grantedOptionalFeatures: [],
       missingRequestedFeatures: [],
       timestampQueryAvailable: false,
+      deviceLimits: {
+        maxTextureDimension2D: 8192,
+        maxStorageBuffersInFragmentStage: 8,
+        maxStorageTexturesInFragmentStage: 4,
+      },
     },
     timestampQueryAvailable: false,
     reconfigure: vi.fn(),

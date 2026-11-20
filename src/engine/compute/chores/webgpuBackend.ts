@@ -3,7 +3,8 @@
  *
  * Extracted from `GpuImageAnalysis.ts` without behavioral change: same two
  * passes, same bind group layouts, same `@workgroup_size(8, 8)`, same
- * 256-entry histogram readback, same reused mask texture.
+ * 256-entry histogram readback. Each analysis writes a mask texture of its
+ * own, which the caller owns from then on.
  *
  * Device policy: this lane **adopts** a `GPUDevice` handed to it by the
  * renderer. It must never call `requestAdapter`/`requestDevice` — a second
@@ -127,9 +128,11 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   private maskUniformBuffer: GPUBuffer | null = null;
   private histogramStagingBuffer: GPUBuffer | null = null;
 
-  private cachedMaskTexture: GPUTexture | null = null;
-  private cachedMaskWidth = 0;
-  private cachedMaskHeight = 0;
+  /**
+   * The mask the last analysis returned, for `readMaskPixels` only. The
+   * caller owns it — this lane never destroys it.
+   */
+  private lastMaskTexture: GPUTexture | null = null;
   /** Serializes overlapping analyze() calls that share staging buffers. */
   private analyzeChain: Promise<unknown> = Promise.resolve();
 
@@ -436,7 +439,7 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
 
   /** Read back mask bytes for golden / e2e validation. */
   async readMaskPixels(width: number, height: number): Promise<Uint8Array | null> {
-    if (!this.cachedMaskTexture) return null;
+    if (!this.lastMaskTexture) return null;
     const bytesPerRow = Math.ceil(width / 256) * 256;
     const staging = this.device.createBuffer({
       size: bytesPerRow * height,
@@ -444,7 +447,7 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     });
     const enc = this.device.createCommandEncoder();
     enc.copyTextureToBuffer(
-      { texture: this.cachedMaskTexture },
+      { texture: this.lastMaskTexture },
       { buffer: staging, bytesPerRow },
       [width, height, 1],
     );
@@ -467,7 +470,10 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
 
   /**
    * Build histogram (256 bins), derive average luminance, and write an r8uint mask.
-   * The returned mask texture is owned by this instance and reused across calls.
+   * The returned mask texture is a new one, and the caller's: it destroys it
+   * once nothing binds it any more. The lane keeps no mask of its own, so it
+   * never destroys one a renderer is still drawing with (the old cached mask
+   * was destroyed on a size change while the frames in flight bound it).
    */
   async analyze(
     source: GPUTexture,
@@ -498,7 +504,6 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     this.ensurePipelines();
     const isSrgb = isSrgbTextureFormat(source.format);
     const srcView = source.createView({ baseMipLevel: 0, mipLevelCount: 1 });
-    const maskTexture = this.ensureMaskTexture(width, height);
 
     this.clearHistogramBuffer();
 
@@ -550,6 +555,9 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     maskUniformF32[4] = avgLuminance;
     this.device.queue.writeBuffer(this.maskUniformBuffer!, 0, maskUniformData);
 
+    // Allocated after the readback, so a failed map leaks nothing.
+    const maskTexture = this.createMaskTexture(width, height);
+    this.lastMaskTexture = maskTexture;
     const maskBindGroup = this.device.createBindGroup({
       layout: this.classificationBGL!,
       entries: [
@@ -1018,10 +1026,8 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
   }
 
   destroy(): void {
-    this.cachedMaskTexture?.destroy();
-    this.cachedMaskTexture = null;
-    this.cachedMaskWidth = 0;
-    this.cachedMaskHeight = 0;
+    // The last mask is its caller's to destroy.
+    this.lastMaskTexture = null;
     this.histogramBuffer?.destroy();
     this.histogramUniformBuffer?.destroy();
     this.maskUniformBuffer?.destroy();
@@ -1124,30 +1130,16 @@ export class WebGpuChoreBackend implements ChoreBackendImpl {
     this.device.queue.writeBuffer(this.histogramBuffer, 0, new Uint32Array(HISTOGRAM_BINS));
   }
 
-  /**
-   * The mask texture is reused whenever the dimensions match, so repeated
-   * loads of same-sized images do not grow VRAM.
-   */
-  private ensureMaskTexture(width: number, height: number): GPUTexture {
-    if (
-      this.cachedMaskTexture
-      && this.cachedMaskWidth === width
-      && this.cachedMaskHeight === height
-    ) {
-      return this.cachedMaskTexture;
-    }
-
-    this.cachedMaskTexture?.destroy();
-    this.cachedMaskTexture = this.device.createTexture({
+  private createMaskTexture(width: number, height: number): GPUTexture {
+    return this.device.createTexture({
+      label: 'classification mask (gpu)',
       size: [width, height, 1],
       format: 'r8uint',
       usage:
         GPUTextureUsage.STORAGE_BINDING
         | GPUTextureUsage.TEXTURE_BINDING
-        | GPUTextureUsage.COPY_DST,
+        | GPUTextureUsage.COPY_DST
+        | GPUTextureUsage.COPY_SRC,
     });
-    this.cachedMaskWidth = width;
-    this.cachedMaskHeight = height;
-    return this.cachedMaskTexture;
   }
 }

@@ -92,6 +92,28 @@ test.describe('render transport', () => {
     await expect(page.getByTestId('render-transport')).toContainText('Render thread: main');
   });
 
+  test('the worker reports the same HDR display breadcrumb as the main thread', async ({ page }) => {
+    // An HDR display, as the page's `matchMedia` sees it. The worker has no
+    // `matchMedia`: before the boot request carried the answer, its
+    // breadcrumb always said "standard dynamic range".
+    await page.addInitScript(() => {
+      const real = window.matchMedia.bind(window);
+      window.matchMedia = (query: string) => (query === '(dynamic-range: high)'
+        ? { ...real(query), matches: true, media: query }
+        : real(query)) as MediaQueryList;
+    });
+    const reasons: Record<string, string | undefined> = {};
+    for (const { transport, query } of TRANSPORTS) {
+      await openSession(page, query, transport);
+      reasons[transport] = await readDiagnostic(page, 'canvasHdrReason');
+    }
+    expect(reasons.worker).toBeDefined();
+    expect(reasons.worker).toBe(reasons.main);
+    if (await readDiagnostic(page, 'canvasHdrAvailable')) {
+      expect(reasons.worker).toMatch(/display reports high dynamic range/);
+    }
+  });
+
   for (const { transport, query } of TRANSPORTS) {
     test(`a stalled main thread ${transport === 'worker' ? 'drops no' : 'drops'} render frames (${transport} transport)`, async ({ page }) => {
       // Software rendering costs per pixel: a small canvas keeps frames short

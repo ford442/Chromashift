@@ -587,13 +587,16 @@ export class WebGPURenderer {
         : {}),
     };
 
-    const enc = this.device.createCommandEncoder();
-    this.encodeFrameCore(enc, exportState, output.createView(), width, height, fps, mainView);
-    this.device.queue.submit([enc.finish()]);
-
-    const result = await this.readback.readTexturePixels(output, width, height);
-    output.destroy();
-    return result;
+    try {
+      const enc = this.device.createCommandEncoder();
+      this.encodeFrameCore(enc, exportState, output.createView(), width, height, fps, mainView);
+      this.device.queue.submit([enc.finish()]);
+      return await this.readback.readTexturePixels(output, width, height);
+    } finally {
+      // A failed encode or readback (a lost device, a map that rejects) must
+      // not leak a full-size export target per attempt.
+      output.destroy();
+    }
   }
 
   private encodeFrameCore(

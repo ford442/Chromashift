@@ -3,6 +3,7 @@
  * overlay shows, the mappings into it, error scopes, device diagnostics, and
  * the page's fatal breaker.
  */
+import { publishDiagnostics } from '../diagnostics';
 import { WebGL2ContextLostError } from '../webgl/webgl2Context';
 
 export type GpuErrorKind = 'bootstrap' | 'device-lost' | 'uncaptured' | 'pipeline';
@@ -21,6 +22,9 @@ export interface GpuRuntimeError {
  */
 let gpuFatal: GpuRuntimeError | null = null;
 
+/** Uncaptured GPU errors this realm has seen, for `window.gpuUncapturedErrors`. */
+let uncapturedErrors = 0;
+
 export function getGpuFatalError(): GpuRuntimeError | null {
   return gpuFatal;
 }
@@ -29,9 +33,10 @@ export function markGpuFatal(error: GpuRuntimeError): void {
   gpuFatal ??= error;
 }
 
-/** Test-only: clear the breaker (`resetGpuDeviceGateForTests` calls this). */
+/** Test-only: clear the breaker and the error count (`resetGpuDeviceGateForTests` calls this). */
 export function resetGpuFatalForTests(): void {
   gpuFatal = null;
+  uncapturedErrors = 0;
 }
 
 /** D3D12 queue create OOM and similar — further requestDevice attempts make it worse. */
@@ -63,18 +68,36 @@ export function attachDeviceDiagnostics(
   }
   simulated.add(onLost);
 
-  const previous = device.onuncapturederror;
-  device.onuncapturederror = (event: GPUUncapturedErrorEvent) => {
-    handlers.onUncapturedError?.(event.error);
-    previous?.call(device, event);
+  // A listener of its own, not a chain through `onuncapturederror`: the old
+  // chain restored its predecessor on detach, so detaching out of order (the
+  // shared device outlives each bootstrap) dropped a live handler.
+  const onUncaptured = (event: Event) => {
+    if (attached) handlers.onUncapturedError?.((event as GPUUncapturedErrorEvent).error);
   };
+  // Typed as always present; a test's fake device may have no EventTarget.
+  const events = typeof device.addEventListener === 'function' ? device : null;
+  events?.addEventListener('uncapturederror', onUncaptured);
 
   return () => {
     attached = false;
     simulated.delete(onLost);
-    device.onuncapturederror = previous ?? null;
+    events?.removeEventListener('uncapturederror', onUncaptured);
   };
 }
+
+/**
+ * Count an uncaptured error (a validation error nothing scoped) in the
+ * breadcrumbs, so a spec can assert there were none. Each one is a command
+ * buffer the device dropped — usually a frame drawn black.
+ */
+export function recordUncapturedGpuError(error: GPUError): void {
+  uncapturedErrors += 1;
+  publishDiagnostics({
+    gpuUncapturedErrors: uncapturedErrors,
+    gpuLastUncapturedError: error.message,
+  });
+}
+
 
 /** `attachDeviceDiagnostics`' `lost` listeners per device, for `simulateDeviceLoss`. */
 const simulatedLossListeners = new WeakMap<GPUDevice, Set<(info: GPUDeviceLostInfo) => void>>();

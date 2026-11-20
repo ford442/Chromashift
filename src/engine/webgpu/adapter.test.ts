@@ -12,6 +12,7 @@ import {
   resetGpuDeviceGateForTests,
 } from './adapter';
 import { CHROMASHIFT_OPTIONAL_FEATURES } from '../gpu/gpuOptions';
+import { webGpuDeviceCapabilities } from '../graph/capabilities';
 
 function mockAdapterLimits(overrides: Partial<GPUAdapter['limits']> = {}): GPUAdapter['limits'] {
   return {
@@ -361,18 +362,52 @@ describe('compatibility mode', () => {
     vi.restoreAllMocks();
   });
 
-  function compatibilityAdapter(options: { maxTextureDimension2D?: number; canDoCore?: boolean; failFirst?: boolean } = {}) {
+  /**
+   * A fake compatibility-mode adapter. Its devices get compatibility's
+   * defaults (4096 px, no fragment-stage storage) for every limit the
+   * request does not name, as a real one does.
+   */
+  function compatibilityAdapter(options: {
+    maxTextureDimension2D?: number;
+    canDoCore?: boolean;
+    failFirst?: boolean;
+    fragmentStorage?: { buffers: number; textures: number };
+  } = {}) {
     const calls: GPUDeviceDescriptor[] = [];
+    const storage = options.fragmentStorage
+      ? {
+          maxStorageBuffersInFragmentStage: options.fragmentStorage.buffers,
+          maxStorageTexturesInFragmentStage: options.fragmentStorage.textures,
+        }
+      : {};
     const adapter = {
       features: new Set(['timestamp-query', ...(options.canDoCore ? ['core-features-and-limits'] : [])]),
-      limits: mockAdapterLimits({ maxTextureDimension2D: options.maxTextureDimension2D ?? 16384 }),
+      limits: mockAdapterLimits({ maxTextureDimension2D: options.maxTextureDimension2D ?? 16384, ...storage }),
       requestDevice: vi.fn(async (descriptor: GPUDeviceDescriptor = {}) => {
         calls.push(descriptor);
         if (options.failFirst && calls.length === 1) throw new Error('simulated request failure');
-        return liveDevice([...(descriptor.requiredFeatures ?? [])]);
+        const device = liveDevice([...(descriptor.requiredFeatures ?? [])]);
+        Object.assign(device, {
+          limits: {
+            maxTextureDimension2D: 4096,
+            maxStorageBuffersInFragmentStage: 0,
+            maxStorageTexturesInFragmentStage: 0,
+            ...descriptor.requiredLimits,
+          },
+        });
+        return device;
       }),
     } as unknown as GPUAdapter;
     return { adapter, calls };
+  }
+
+  function grantedCapabilities(device: GPUDevice) {
+    return webGpuDeviceCapabilities({
+      featureLevel: deviceFeatureLevel(device),
+      features: device.features,
+      limits: device.limits,
+      hdrCanvas: false,
+    }).granted;
   }
 
   /** A browser over a GL ES / D3D11-class backend: a compatibility-mode adapter, never a core one. */
@@ -432,16 +467,63 @@ describe('compatibility mode', () => {
     expect(deviceFeatureLevel(device)).toBe('core');
   });
 
-  it('drops the raised limit with the optional features on the second strategy', async () => {
+  it('keeps the raised limit when the second strategy drops the optional features', async () => {
     const { adapter, calls } = compatibilityAdapter({ failFirst: true });
     offerOnlyCompatibility(adapter);
 
-    await requestWebGpuDevice((await requestWebGpuAdapter())!, ['timestamp-query']);
+    const device = await requestWebGpuDevice((await requestWebGpuAdapter())!, ['timestamp-query']);
 
     expect(calls).toEqual([
       { requiredLimits: { maxTextureDimension2D: 8192 }, requiredFeatures: ['timestamp-query'] },
-      {},
+      { requiredLimits: { maxTextureDimension2D: 8192 } },
     ]);
+    // The report shows what the device has, not what the adapter offers.
+    expect(buildWebGpuCapabilityReport(adapter, device, ['timestamp-query']).deviceLimits.maxTextureDimension2D).toBe(8192);
+  });
+
+  it('has no second strategy when there are no optional features to drop', async () => {
+    const { adapter, calls } = compatibilityAdapter({ failFirst: true });
+    offerOnlyCompatibility(adapter);
+
+    await expect(requestWebGpuDevice((await requestWebGpuAdapter())!, [])).rejects.toThrow('simulated request failure');
+    expect(calls).toHaveLength(1);
+  });
+
+  it.each([
+    ['default-limits', false],
+    ['no-optional-features', true],
+  ] as const)('asks for core fragment-stage storage where the adapter offers it (%s)', async (_strategy, failFirst) => {
+    const { adapter, calls } = compatibilityAdapter({ failFirst, fragmentStorage: { buffers: 16, textures: 2 } });
+    offerOnlyCompatibility(adapter);
+
+    const device = await requestWebGpuDevice((await requestWebGpuAdapter())!, ['timestamp-query']);
+
+    const limits = {
+      maxTextureDimension2D: 8192,
+      maxStorageBuffersPerShaderStage: 8,
+      maxStorageTexturesPerShaderStage: 4,
+      maxStorageBuffersInFragmentStage: 8,
+      maxStorageTexturesInFragmentStage: 2,
+    };
+    expect(calls.at(-1)?.requiredLimits).toEqual(limits);
+    expect(calls.every((call) => JSON.stringify(call.requiredLimits) === JSON.stringify(limits))).toBe(true);
+    expect(deviceFeatureLevel(device)).toBe('compatibility');
+    expect(grantedCapabilities(device).has('fragment-storage')).toBe(true);
+    expect(buildWebGpuCapabilityReport(adapter, device, ['timestamp-query']).deviceLimits).toEqual({
+      maxTextureDimension2D: 8192,
+      maxStorageBuffersInFragmentStage: 8,
+      maxStorageTexturesInFragmentStage: 2,
+    });
+  });
+
+  it('asks for no fragment-stage storage where the adapter has none (GL ES)', async () => {
+    const { adapter, calls } = compatibilityAdapter({ fragmentStorage: { buffers: 0, textures: 0 } });
+    offerOnlyCompatibility(adapter);
+
+    const device = await requestWebGpuDevice((await requestWebGpuAdapter())!, ['timestamp-query']);
+
+    expect(calls[0]?.requiredLimits).toEqual({ maxTextureDimension2D: 8192 });
+    expect(grantedCapabilities(device).has('fragment-storage')).toBe(false);
   });
 });
 

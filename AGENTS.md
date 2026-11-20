@@ -243,7 +243,8 @@ WebGPU path only: secure context → `navigator.gpu` → `requestAdapter`, publi
 `window.webgpuProbe` `{ ok, browser, stage, reason, adapter, features, limits }`.
 It stops before `requestDevice()` and shares the page-lifetime adapter cache
 with bootstrap. One `GPUDevice` per page: `requestDevice` walks at most two
-strategies (`default-limits` → `no-optional-features`), then stops; a lost
+strategies (`default-limits` → `no-optional-features`, which keeps the
+compatibility-mode limits and drops only the optional features), then stops; a lost
 device releases the page's adapter too, so **Retry GPU** requests a fresh one
 (an adapter that has made a device cannot make another). `E_OUTOFMEMORY` sets a fatal circuit breaker — no further
 `requestDevice` until reload. Resize reconfigures the existing device; it

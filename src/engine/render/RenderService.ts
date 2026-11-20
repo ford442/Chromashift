@@ -76,8 +76,6 @@ const TIMELINE_SIZE = 256;
 /** How often the loop sends angles and timings to the page (ms). */
 const TELEMETRY_INTERVAL_MS = 200;
 
-type MaskOwner = 'gpu-analysis' | 'wasm-upload';
-
 /** Injectable for unit tests: no WebGPU, no workers. */
 export interface RenderServiceDeps {
   probeWebGPU: () => Promise<WebGpuProbeResult>;
@@ -160,8 +158,14 @@ export class RenderService {
   private source: ChromashiftTextureHandle | null = null;
   /** What `source` was loaded from — the GPU analysis lane reads it only for that URL. */
   private sourceUrl: string | null = null;
+  /**
+   * The classification mask every slot binds. Ours, whichever lane made it:
+   * the GPU lane hands over a new texture per analysis, the CPU lanes' bytes
+   * are uploaded here.
+   */
   private mask: GPUTexture | null = null;
-  private maskOwner: MaskOwner | null = null;
+  /** Bumped by every analysis; only the latest one may bind its mask. */
+  private analysisTicket = 0;
   private analysis: { runtime: ChoresRuntime; device: GPUDevice | null } | null = null;
   private cpuHost: CpuChoreHost | null = null;
   private cpuHostWasm = false;
@@ -234,7 +238,11 @@ export class RenderService {
       'set-video-frame': ({ frame }) => this.setVideoFrame(frame),
       'release-video': () => { this.orchestrator?.textureManagerRef()?.releaseVideoTexture(LIVE_SOURCE_CACHE_KEY); },
       'analyze-source': (req) => this.analyzeSource(req.url, req.useWasm),
-      'clear-mask': () => this.clearMask(),
+      'clear-mask': () => {
+        // A pending analysis must not bind a mask over the page's clear.
+        this.analysisTicket += 1;
+        this.clearMask();
+      },
       'set-motion-field': ({ motion }) => { this.primary()?.setMotionField?.(motion); },
 
       'stationary-previews': async ({ state, options }, ctx) => {
@@ -299,7 +307,13 @@ export class RenderService {
     if (req.backend === 'webgl') {
       // Explicit diagnostic / XR / screenshot session: never request a WebGPU
       // adapter or device, so gpu-chores cannot adopt a leftover GPUDevice.
-      if (isOffscreenCanvas(canvas)) throw new Error('The WebGL backend draws a page canvas, on the main transport.');
+      if (isOffscreenCanvas(canvas)) {
+        // A transport mismatch, not a GPU failure — but the page's overlay
+        // shows it like one rather than an unhandled rejection.
+        const message = 'The WebGL backend draws a page canvas, on the main transport.';
+        publishRendererBootFailure(message);
+        return { ok: false, error: { kind: 'bootstrap', message, recoverable: false } };
+      }
       try {
         ({ orchestrator } = await this.deps.bootstrap({
           primaryCanvas: canvas,
@@ -340,6 +354,7 @@ export class RenderService {
           backend: 'webgpu',
           onRuntimeError,
           canvasOptions: { readback: req.debug },
+          hdrDisplay: req.hdrDisplay,
         }));
       } catch (error) {
         if (cancelled()) return CANCELLED;
@@ -386,9 +401,8 @@ export class RenderService {
     this.endExport();
     this.stopLoop();
     this.rejectPresentedReads('the renderer was torn down');
-    if (this.maskOwner === 'wasm-upload') this.mask?.destroy();
+    this.mask?.destroy();
     this.mask = null;
-    this.maskOwner = null;
     this.source = null;
     this.sourceUrl = null;
     this.analysis = null;
@@ -707,16 +721,16 @@ export class RenderService {
 
   private clearMask(): void {
     for (const slot of this.orchestrator?.listSlots() ?? []) slot.renderer.setClassificationMaskTexture(null);
-    if (this.maskOwner === 'wasm-upload') this.mask?.destroy();
+    this.mask?.destroy();
     this.mask = null;
-    this.maskOwner = null;
   }
 
-  private bindMask(texture: GPUTexture, owner: MaskOwner): void {
-    if (this.maskOwner === 'wasm-upload' && this.mask && this.mask !== texture) this.mask.destroy();
+  /** Swap `texture` into every slot, then destroy the mask it replaced — never before. */
+  private bindMask(texture: GPUTexture): void {
+    const previous = this.mask;
     this.mask = texture;
-    this.maskOwner = owner;
     for (const slot of this.orchestrator?.listSlots() ?? []) slot.renderer.setClassificationMaskTexture(texture);
+    if (previous && previous !== texture) previous.destroy();
   }
 
   private getCpuHost(useWasm: boolean): CpuChoreHost {
@@ -765,7 +779,7 @@ export class RenderService {
       { bytesPerRow: output.width, rowsPerImage: output.height },
       [output.width, output.height, 1],
     );
-    this.bindMask(texture, 'wasm-upload');
+    this.bindMask(texture);
   }
 
   /**
@@ -773,15 +787,25 @@ export class RenderService {
    * walks webgpu → wasm → ts, recording why each lane declined; with no lane
    * left (or no WebGPU device) the mask is cleared and only the luminance is
    * computed. The CPU lanes read a bitmap decoded here, off the page.
+   *
+   * Every await here (the WASM load, the decode, the job) can be overtaken:
+   * the page switches images, a newer analysis starts, or the renderer is
+   * torn down. The mask then belongs to an image nobody shows, or to a lost
+   * device, so a stale analysis binds nothing, clears nothing, and destroys
+   * the texture it was handed. Its luminance is still returned — the page
+   * drops a stale one itself.
    */
   private async analyzeSource(url: string, useWasm: boolean): Promise<{ avgLuminance: number }> {
+    const generation = this.generation;
+    const ticket = ++this.analysisTicket;
+    const current = () => generation === this.generation && ticket === this.analysisTicket && this.sourceUrl === url;
     // The CPU lanes run WASM in this realm only if it is loaded here too.
     if (useWasm && !isWasmReady()) await loadWasmEngine();
     return this.withDecodedSource(url, async (image) => {
       const orchestrator = this.orchestrator;
       const device = orchestrator?.getBackend() === 'webgpu' ? orchestrator.sharedDevice() : null;
       if (!device) {
-        this.clearMask();
+        if (current()) this.clearMask();
         return { avgLuminance: await this.averageLuminanceOnly(image, useWasm) };
       }
       try {
@@ -796,16 +820,22 @@ export class RenderService {
           prefer: 'auto',
         });
         if (result.ok) {
-          if (result.value.kind === 'gpu-texture') this.bindMask(result.value.maskTexture, 'gpu-analysis');
-          else this.uploadCpuMask(device, result.value);
-          return { avgLuminance: result.value.avgLuminance };
+          const output = result.value;
+          if (!current() || device !== this.orchestrator?.sharedDevice()) {
+            if (output.kind === 'gpu-texture') output.maskTexture.destroy();
+          } else if (output.kind === 'gpu-texture') {
+            this.bindMask(output.maskTexture);
+          } else {
+            this.uploadCpuMask(device, output);
+          }
+          return { avgLuminance: output.avgLuminance };
         }
         console.warn('Classification mask unavailable:', result.reason);
-        this.clearMask();
+        if (current()) this.clearMask();
         return { avgLuminance: await this.averageLuminanceOnly(image, useWasm) };
       } catch (error) {
         console.warn('Could not generate classification mask:', error);
-        this.clearMask();
+        if (current()) this.clearMask();
         return { avgLuminance: computeImageAverageLuminanceWith(image, useWasm) };
       }
     });

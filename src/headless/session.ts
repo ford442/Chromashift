@@ -162,7 +162,9 @@ export async function openHeadlessSession(options: HeadlessSessionOptions = {}):
       prefer: 'auto',
     });
     if (job.ok && job.value.kind === 'gpu-texture') {
-      renderer.setClassificationMaskTexture(job.value.maskTexture);
+      // The lane's mask is new and ours to destroy, like the CPU upload.
+      maskTexture = job.value.maskTexture;
+      renderer.setClassificationMaskTexture(maskTexture);
       return { avgLuminance: job.value.avgLuminance, lane: 'webgpu', gpuDeclined: null };
     }
 

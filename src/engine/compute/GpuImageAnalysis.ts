@@ -55,7 +55,7 @@ export class GpuImageAnalysis {
 
   /**
    * Build histogram (256 bins), derive average luminance, and write an r8uint mask.
-   * The returned mask texture is owned by this instance and reused across calls.
+   * The returned mask texture is new and the caller's to destroy.
    */
   async analyze(
     source: GPUTexture,

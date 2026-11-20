@@ -223,19 +223,28 @@ export function probeCanvasHdr(
   context: PresentationTarget,
   device: GPUDevice,
   format: GPUTextureFormat,
+  hdrDisplay: boolean = displayReportsHdr(),
 ): { available: boolean; reason: string } {
   const available = tryConfigureHdrCanvas(context, device, format, { presentation: 'hdr-extended' });
   if (!available) {
     return { available, reason: 'canvas toneMapping "extended" / rgba16float not supported by this browser' };
   }
-  const hdrDisplay = typeof matchMedia === 'function'
-    && matchMedia('(dynamic-range: high)').matches;
   return {
     available,
     reason: hdrDisplay
       ? 'extended tone mapping supported; display reports high dynamic range'
       : 'extended tone mapping supported; display reports standard dynamic range (highlights will still clip)',
   };
+}
+
+/**
+ * Whether the page's display reports high dynamic range. Only the page can
+ * ask: a worker has no `matchMedia`, so the render worker is told in its boot
+ * request (`RenderBootRequest.hdrDisplay`) and passes that to
+ * {@link probeCanvasHdr} instead.
+ */
+export function displayReportsHdr(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(dynamic-range: high)').matches;
 }
 
 export function publishCanvasHdrBreadcrumbs(available: boolean, reason: string): void {

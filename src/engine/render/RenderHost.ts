@@ -35,6 +35,7 @@ import {
   type WorkerRpc,
 } from '../workers/rpc';
 import { installRenderDebug, renderDebugArmed } from './debug';
+import { displayReportsHdr } from '../webgpu/canvasConfig';
 import { RenderService, type RenderServiceDeps } from './RenderService';
 import { selectRenderTransport, type RenderTransportChoice } from './transport';
 import type {
@@ -122,7 +123,7 @@ export interface RenderHostOptions {
 }
 
 /** Everything a boot needs that the host does not work out itself. */
-export type RenderHostBootRequest = Omit<RenderBootRequest, 'surface' | 'pageSearch' | 'debug'>;
+export type RenderHostBootRequest = Omit<RenderBootRequest, 'surface' | 'pageSearch' | 'debug' | 'hdrDisplay'>;
 
 export class RenderHost {
   private readonly clock: FrameClock;
@@ -364,7 +365,13 @@ export class RenderHost {
     if (this.crashed) return { ok: false, error: this.crashed };
     const { surface, transfer } = this.surface(canvas);
     const search = this.search();
-    return channel.call('boot', { ...req, surface, pageSearch: search, debug: renderDebugArmed(search) }, transfer);
+    return channel.call('boot', {
+      ...req,
+      surface,
+      pageSearch: search,
+      debug: renderDebugArmed(search),
+      hdrDisplay: displayReportsHdr(),
+    }, transfer);
   }
 
   /** Tear the renderer down (a React cleanup); a boot in flight is cancelled. */

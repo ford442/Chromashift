@@ -196,6 +196,27 @@ describe('configureWebGpuCanvas hdr-extended', () => {
     expect(context.configure.mock.calls.at(-1)?.[0].format).toBe('bgra8unorm');
   });
 
+  it('probeCanvasHdr reports the display the page says it has, where there is no matchMedia (a worker)', () => {
+    const context = fakeContext({
+      getConfiguration: () => ({
+        device, format: 'rgba16float', toneMapping: { mode: 'extended' },
+      }) as GPUCanvasConfiguration,
+    } as Partial<GPUCanvasContext>);
+    vi.stubGlobal('matchMedia', undefined);
+    expect(probeCanvasHdr(context, device, 'bgra8unorm').reason).toMatch(/standard dynamic range/);
+    expect(probeCanvasHdr(context, device, 'bgra8unorm', true).reason).toMatch(/display reports high dynamic range/);
+  });
+
+  it('probeCanvasHdr reads matchMedia on the page when no answer is passed', () => {
+    const context = fakeContext({
+      getConfiguration: () => ({
+        device, format: 'rgba16float', toneMapping: { mode: 'extended' },
+      }) as GPUCanvasConfiguration,
+    } as Partial<GPUCanvasContext>);
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(dynamic-range: high)' }));
+    expect(probeCanvasHdr(context, device, 'bgra8unorm').reason).toMatch(/display reports high dynamic range/);
+  });
+
   it('probeCanvasHdr reports unavailability without throwing', () => {
     const context = fakeContext();
     context.configure.mockImplementation(() => { throw new Error('nope'); });

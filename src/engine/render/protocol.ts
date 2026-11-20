@@ -72,6 +72,11 @@ export interface RenderBootRequest {
   retry: boolean;
   /** `__renderDebug` is armed: canvases also get `COPY_SRC`, for the presented-frame readback. */
   debug: boolean;
+  /**
+   * The page's `matchMedia('(dynamic-range: high)')`: a worker has no
+   * `matchMedia`, so without this its HDR breadcrumb always said "standard".
+   */
+  hdrDisplay: boolean;
 }
 
 export type RenderBootResult =
