@@ -153,6 +153,8 @@ src/
     │   └── shaders/          # GLSL sources — layers/persistence/compositor emitted from graph/templates/glsl.ts
     ├── gpu/                  # Backend-agnostic GPU setup
     │   ├── gpuOptions.ts         # Canvas/context options matrix both backends build from
+    │   ├── renderCanvas.ts       # The only getContext('webgpu' | 'webgl2'), configure() and requestDevice() calls
+    │   ├── readbackContext.ts    # The only 2D getContext: colour space + willReadFrequently per use
     │   └── gpuErrors.ts          # GpuRuntimeError + mappings, error scopes, device diagnostics, fatal breaker
     ├── textures/             # TextureCache: URL cache, LRU byte budget, in-flight dedupe — both texture managers sit on it
     ├── library/              # Where images come from

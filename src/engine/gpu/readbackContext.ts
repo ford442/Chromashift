@@ -1,7 +1,10 @@
 /**
- * The one place a 2D canvas context for *readback or export* is created, so
- * its `colorSpace` is decided next to the WebGPU configure
- * (`webgpu/canvasConfig.ts`) instead of at each call site.
+ * The one place a 2D canvas context is created — for readback, export, or a
+ * preview drawn on the page — so its `colorSpace` is decided next to the
+ * WebGPU configure (`webgpu/canvasConfig.ts`) instead of at each call site,
+ * and `willReadFrequently` is set exactly where a context is read back
+ * repeatedly (it moves the canvas to the CPU, which costs a canvas that is
+ * only drawn or encoded).
  *
  * A 2D canvas defaults to `srgb`; asking for `display-p3` both keeps P3 pixel
  * values as written (no conversion on `putImageData`) and makes `toBlob`
@@ -15,7 +18,7 @@ export interface Readback2DOptions {
 }
 
 type Readback2DCanvas = HTMLCanvasElement | OffscreenCanvas;
-type Readback2DContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+export type Readback2DContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 export function readback2DAttributes(options: Readback2DOptions = {}): CanvasRenderingContext2DSettings {
   return {
@@ -32,6 +35,10 @@ export function getReadback2DContext(
   canvas: OffscreenCanvas,
   options?: Readback2DOptions,
 ): OffscreenCanvasRenderingContext2D | null;
+export function getReadback2DContext(
+  canvas: Readback2DCanvas,
+  options?: Readback2DOptions,
+): Readback2DContext | null;
 export function getReadback2DContext(
   canvas: Readback2DCanvas,
   options?: Readback2DOptions,

@@ -228,6 +228,24 @@ describe('RenderService', () => {
     expect(decodeBitmap).toHaveBeenCalledTimes(2);
   });
 
+  it('measures a live source’s luminance itself and reports it as telemetry, not through the page', async () => {
+    const { handlers, events, orchestrator } = service();
+    const textures = { updateVideoTexture: vi.fn(() => ({ backend: 'webgpu', texture: { width: 4, height: 4 } })), releaseVideoTexture: vi.fn() };
+    Object.assign(orchestrator, { textureManagerRef: () => textures });
+    await handlers.boot(bootRequest(), CTX);
+
+    // A transferred frame, as the worker receives it (no 2D canvas under Node: the neutral 128).
+    const frame = () => ({ width: 640, height: 360, close: vi.fn() }) as unknown as ImageBitmap;
+    await handlers['set-video-frame']({ frame: frame() }, CTX);
+    await handlers['set-video-frame']({ frame: frame() }, CTX);
+    const live = () => events.filter((e) => e.event === 'telemetry' && 'liveLuminance' in (e.payload as object));
+    // Once a second, not per frame.
+    expect(live()).toEqual([{ event: 'telemetry', payload: { liveLuminance: 128 } }]);
+
+    await handlers['release-video']({}, CTX);
+    expect(live().at(-1)).toEqual({ event: 'telemetry', payload: { liveLuminance: null } });
+  });
+
   describe('the classification mask across an image switch', () => {
     /** A WebGPU session whose GPU lane answers each analysis when the test says so. */
     function gpuSession() {

@@ -181,17 +181,20 @@ export function internalColorFormatBytesPerPixel(format: GPUTextureFormat): numb
 /**
  * `requestAdapter` power-preference attempt list, in order.
  *
- * These are **adapter** attempts, not the two `requestDevice` strategies in
- * `webgpu/adapter.ts` (`default-limits` → `no-optional-features`). They are easy
- * to confuse and count separately: an adapter is requested once per device
- * (Retry GPU after a loss needs a fresh one), then at most
+ * These are **adapter** attempts, not the (at most two) `requestDevice`
+ * strategies in `webgpu/adapter.ts` (`default-limits` → `no-optional-features`).
+ * They are easy to confuse and count separately: an adapter is requested once
+ * per device (Retry GPU after a loss needs a fresh one), then at most
  * `MAX_DEVICE_REQUEST_STRATEGIES` device requests run against it.
  *
- * `high-performance` first (discrete GPU on a laptop), `low-power` second (some
- * Chrome builds return null for `high-performance` under battery saver), then a
- * preference-less call so a machine with exactly one adapter still boots, and
- * last `featureLevel: 'compatibility'` for a GL ES / D3D11-class backend that
- * offers no core adapter (`adapter.ts`).
+ * The list holds the two explicit preferences: `high-performance` first
+ * (discrete GPU on a laptop), `low-power` second (some Chrome builds return
+ * null for `high-performance` under battery saver). `requestWebGpuAdapter`
+ * follows them with two attempts that are not preferences and so are not
+ * listed — a preference-less call, so a machine with exactly one adapter
+ * still boots, and last `featureLevel: 'compatibility'` for a GL ES /
+ * D3D11-class backend that offers no core adapter — four `requestAdapter`
+ * calls at most.
  */
 export const WEBGPU_POWER_PREFERENCE_ATTEMPTS = [
   'high-performance',
@@ -215,12 +218,20 @@ export const WEBGL2_POWER_PREFERENCE_ATTEMPTS = [
   null,
 ] as const satisfies readonly (WebGLPowerPreference | null)[];
 
+/** A `GPUTextureUsage` flag, by name — the global does not exist until a WebGPU realm runs. */
+type GpuTextureUsageName = keyof typeof GPUTextureUsage;
+
 export const RENDERER_CANVAS_OPTIONS_MATRIX = {
   webgpu: {
     powerPreference: 'high-performance' as GPUPowerPreference,
     alphaMode: 'opaque' as GPUCanvasAlphaMode,
     colorSpace: 'srgb' as PredefinedColorSpace,
-    usage: 'RENDER_ATTACHMENT | COPY_SRC',
+    // Render target only. Nothing copies out of the swap chain — previews,
+    // exports and the collision-stats blit all read offscreen targets — and
+    // an unused COPY_SRC can keep the compositor off its scanout path.
+    usage: ['RENDER_ATTACHMENT'] as readonly GpuTextureUsageName[],
+    // Added only while `__renderDebug` is armed, for `readPresentedFrame`.
+    readbackUsage: ['COPY_SRC'] as readonly GpuTextureUsageName[],
     toneMapping: 'standard (when supported by configure); extended + rgba16float under Canvas HDR',
     msaa: 'layer pass sampleCount 1 or 4 (renderer toggle)',
   },
@@ -247,6 +258,16 @@ export const RENDERER_CANVAS_OPTIONS_MATRIX = {
     premultipliedAlpha: false,
   },
 } as const;
+
+/**
+ * The swap chain's `usage` for a canvas configure, from the matrix: render
+ * target only, plus `COPY_SRC` while the debug readback is armed.
+ */
+export function webGpuCanvasUsage(readback: boolean): GPUTextureUsageFlags {
+  const { usage, readbackUsage } = RENDERER_CANVAS_OPTIONS_MATRIX.webgpu;
+  return [...usage, ...(readback ? readbackUsage : [])]
+    .reduce((flags, name) => flags | GPUTextureUsage[name], 0);
+}
 
 /**
  * The attributes for one `getContext('webgl2')` attempt. `powerPreference` is

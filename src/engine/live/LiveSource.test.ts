@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeVideoAverageLuminance, LiveSourceManager } from './LiveSource';
+import { LiveSourceManager } from './LiveSource';
 
 /**
  * `LiveSourceManager` touches `document.createElement('video')`, `navigator.mediaDevices`,
@@ -191,12 +191,5 @@ describe('LiveSource', () => {
       fakeVideo.videoHeight = 720;
       expect(manager.frameSize).toEqual({ width: 1280, height: 720 });
     });
-  });
-});
-
-describe('computeVideoAverageLuminance', () => {
-  it('returns the neutral default before any frame has decoded', () => {
-    const video = { videoWidth: 0, videoHeight: 0 } as HTMLVideoElement;
-    expect(computeVideoAverageLuminance(video, false)).toBe(128);
   });
 });

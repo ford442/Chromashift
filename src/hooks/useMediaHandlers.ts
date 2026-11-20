@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { Upscaler, type UpscaleModel } from '../engine/upscale/Upscaler';
+import { drawPixelsInto, readImagePixels } from '../engine/upscale/sourcePixels';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { buildRendererState } from '../engine/buildRendererState';
 import { resolvePresentation } from '../engine/color/presentation';
@@ -236,20 +237,7 @@ export function useUpscalerHandlers(
     actions.setUpscaleInfo('Preparing…');
 
     try {
-      const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const i = new Image();
-        i.crossOrigin = 'anonymous';
-        i.onload = () => resolve(i);
-        i.onerror = () => reject(new Error('Failed to load image for upscaling'));
-        i.src = url;
-      });
-      const c = document.createElement('canvas');
-      c.width = img.naturalWidth;
-      c.height = img.naturalHeight;
-      const cx = c.getContext('2d');
-      if (!cx) throw new Error('2D context unavailable');
-      cx.drawImage(img, 0, 0);
-      const src = cx.getImageData(0, 0, c.width, c.height);
+      const src = await readImagePixels(url);
 
       const result = await upscalerRef.current.upscale(
         src.data, src.width, src.height, parseUpscaleModel(ui.upscaleModel),
@@ -263,17 +251,7 @@ export function useUpscalerHandlers(
         engineModeRef.current === 'wasm',
       );
       const previewOrig = previewOriginalRef.current;
-      if (previewOrig) {
-        const pctx = previewOrig.getContext('2d');
-        if (pctx) {
-          const tmp = document.createElement('canvas');
-          tmp.width = result.width;
-          tmp.height = result.height;
-          const buf = new Uint8ClampedArray(result.pixels.byteLength); buf.set(result.pixels);
-          tmp.getContext('2d')!.putImageData(new ImageData(buf, result.width, result.height), 0, 0);
-          pctx.drawImage(tmp, 0, 0, previewOrig.width, previewOrig.height);
-        }
-      }
+      if (previewOrig) drawPixelsInto(previewOrig, result.pixels, result.width, result.height);
 
       const host = renderHostRef.current;
       const pixels = new Uint8ClampedArray(result.pixels.byteLength);
@@ -321,10 +299,16 @@ export function useUpscalerHandlers(
       // render worker, and the page cannot read a transferred canvas.
       const host = renderHostRef.current;
       const { width, height } = host.canvasSize(mainCanvasRef.current);
+      // The same space the still export uses (`handleExportStill`): Display P3
+      // when the canvas presents it and the PNG can be tagged so.
+      const snapshot = renderStateRef.current;
+      const requested = resolvePresentation({
+        colorSpace: snapshot.output.displayColorSpace,
+        presentation: snapshot.output.canvasHdr ? 'hdr-extended' : 'sdr',
+      }).space;
+      const space = snapshot.engine.backend === 'webgpu' ? stillExportSpace(requested) : 'srgb';
       const frame = await host.exportFrame({
-        state: buildRendererState(renderStateRef.current, renderStateRef.current.layers.angles, {
-          presentationSpace: 'srgb',
-        }),
+        state: buildRendererState(snapshot, snapshot.layers.angles, { presentationSpace: space }),
         options: { width, height },
         liveAngles: true,
       });
@@ -336,20 +320,12 @@ export function useUpscalerHandlers(
         (p) => { actions.setUpscaleProgress(p.progress); actions.setUpscaleInfo(p.info); },
       );
 
-      const out = document.createElement('canvas');
-      out.width = result.width;
-      out.height = result.height;
-      const outBuf = new Uint8ClampedArray(result.pixels.byteLength); outBuf.set(result.pixels);
-      out.getContext('2d')!.putImageData(new ImageData(outBuf, result.width, result.height), 0, 0);
-      out.toBlob((blob) => {
-        if (!blob) return;
-        const dlUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = dlUrl;
-        a.download = `chromashift-upscaled-${result.width}x${result.height}.png`;
-        a.click();
-        URL.revokeObjectURL(dlUrl);
-      }, 'image/png');
+      const png = await encodeStillPng(
+        { data: new Uint8ClampedArray(result.pixels), width: result.width, height: result.height },
+        space,
+      );
+      if (!png) throw new Error('The browser could not encode the PNG.');
+      downloadBlob(png.blob, `chromashift-upscaled-${result.width}x${result.height}-${png.colorSpace}.png`);
 
       actions.setUpscaleInfo(`Saved — ${result.width}×${result.height}`);
     } catch (e) {

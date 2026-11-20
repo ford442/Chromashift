@@ -45,6 +45,8 @@ const renderGpuTimingSlice = createSlice<GpuRenderTiming>(EMPTY_GPU_RENDER_TIMIN
 const frameTimeHistorySlice = createSlice<readonly number[]>([]);
 const performanceBudgetExceededSlice = createSlice<boolean>(false);
 const collisionStatsSlice = createSlice<CollisionStats>({ ...DEFAULT_COLLISION_STATS });
+/** The live source's measured luminance (`engine/live/liveLuminance.ts`), `null` without one. */
+const liveLuminanceSlice = createSlice<number | null>(null);
 
 /** Imperative writers — called from the render loop / pollers, never from React render. */
 export const renderTelemetry = {
@@ -54,6 +56,7 @@ export const renderTelemetry = {
   setFrameTimeHistory: frameTimeHistorySlice.set,
   setPerformanceBudgetExceeded: performanceBudgetExceededSlice.set,
   setCollisionStats: collisionStatsSlice.set,
+  setLiveLuminance: liveLuminanceSlice.set,
 };
 
 /**
@@ -85,4 +88,12 @@ export function usePerformanceBudgetExceeded(): boolean {
 
 export function useCollisionStats(): CollisionStats {
   return useSyncExternalStore(collisionStatsSlice.subscribe, collisionStatsSlice.get);
+}
+
+/**
+ * The luminance the renderer measured on the live source (once a second), or
+ * `null` while there is none — then the store's `engine.avgLuminance` holds.
+ */
+export function useLiveLuminance(): number | null {
+  return useSyncExternalStore(liveLuminanceSlice.subscribe, liveLuminanceSlice.get);
 }

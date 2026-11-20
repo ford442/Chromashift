@@ -24,6 +24,8 @@ import type { FrameClock, FrameTick } from '../frame/FrameClock';
 import { getGpuFatalError, simulateDeviceLoss, toBootstrapRuntimeError, type GpuRuntimeError } from '../gpu/gpuErrors';
 import { isOffscreenCanvas, type RenderCanvas } from '../gpu/renderCanvas';
 import { activatePassGraph, presetGraphSource } from '../graph';
+import { getColorProfileLut } from '../color/colorProfile';
+import { LIVE_LUMINANCE_INTERVAL_MS, measureLiveFrameLuminance } from '../live/liveLuminance';
 import { LIVE_SOURCE_CACHE_KEY, type LiveFrameSource } from '../live/liveSourceTexture';
 import { advanceAngles } from '../math/rotation';
 import { adoptPageSearch } from '../pageSearch';
@@ -166,6 +168,13 @@ export class RenderService {
   private mask: GPUTexture | null = null;
   /** Bumped by every analysis; only the latest one may bind its mask. */
   private analysisTicket = 0;
+  /**
+   * The live source's luminance, measured here once a second — off the page's
+   * thread on the worker transport, and never through the page's reducer.
+   * `null` without a live source.
+   */
+  private liveLuminance: number | null = null;
+  private liveLuminanceAt = -Infinity;
   private analysis: { runtime: ChoresRuntime; device: GPUDevice | null } | null = null;
   private cpuHost: CpuChoreHost | null = null;
   private cpuHostWasm = false;
@@ -235,8 +244,11 @@ export class RenderService {
         if (!textures) throw new Error('The renderer is not running.');
         this.setSource(textures.uploadPixels(key, pixels, width, height));
       },
-      'set-video-frame': ({ frame }) => this.setVideoFrame(frame),
-      'release-video': () => { this.orchestrator?.textureManagerRef()?.releaseVideoTexture(LIVE_SOURCE_CACHE_KEY); },
+      'set-video-frame': ({ frame, useWasm }) => this.setVideoFrame(frame, useWasm === true),
+      'release-video': () => {
+        this.orchestrator?.textureManagerRef()?.releaseVideoTexture(LIVE_SOURCE_CACHE_KEY);
+        this.clearLiveLuminance();
+      },
       'analyze-source': (req) => this.analyzeSource(req.url, req.useWasm),
       'clear-mask': () => {
         // A pending analysis must not bind a mask over the page's clear.
@@ -405,6 +417,7 @@ export class RenderService {
     this.mask = null;
     this.source = null;
     this.sourceUrl = null;
+    this.clearLiveLuminance();
     this.analysis = null;
     this.orchestrator?.destroy();
     this.orchestrator = null;
@@ -559,10 +572,17 @@ export class RenderService {
     Object.assign(frame, loop.main);
     frame.layers = layers;
     writeLayerAngles(frame, this.angles);
+    const live = this.liveLuminance;
     if (mod) {
       frame.tracerAboveIntensity = mod.tracerAboveIntensity;
       frame.tracerBelowIntensity = mod.tracerBelowIntensity;
-      frame.avgLuminance = mod.avgLuminance;
+      // Reactive input modulates around the base: the live source's, when there is one.
+      frame.avgLuminance = live === null ? mod.avgLuminance : live + mod.avgLuminance - loop.main.avgLuminance;
+    } else if (live !== null) {
+      frame.avgLuminance = live;
+    }
+    if (live !== null && loop.colorProfile) {
+      frame.colorProfileLut = getColorProfileLut(loop.colorProfile, live, this.angles.length);
     }
     if (twoSlotActive || quadActive) {
       frame.layerScale = effectiveLayerScaleForMultiView(loop.main.layerScale ?? 1, layout).scale;
@@ -591,6 +611,7 @@ export class RenderService {
       Object.assign(frameB, b.state);
       frameB.layers = layersB;
       writeLayerAngles(frameB, anglesB);
+      if (live !== null) frameB.avgLuminance = live;
       compareB.renderer.render(frameB);
       this.afterRender(COMPARE_B_SLOT);
     }
@@ -709,14 +730,42 @@ export class RenderService {
     }
   }
 
-  private setVideoFrame(frame: LiveFrameSource): void {
+  private setVideoFrame(frame: LiveFrameSource, useWasm: boolean): void {
     try {
       const handle = this.orchestrator?.textureManagerRef()?.updateVideoTexture(LIVE_SOURCE_CACHE_KEY, frame);
-      if (handle) this.setSource(handle, LIVE_SOURCE_CACHE_KEY);
+      if (handle) {
+        this.setSource(handle, LIVE_SOURCE_CACHE_KEY);
+        this.measureLiveLuminance(frame, useWasm);
+      }
     } finally {
       // A frame posted to the worker is the service's to close; the page's own element is not.
       if ('close' in frame) frame.close();
     }
+  }
+
+  /** Once a second: the frame's luminance drives the frame from here on, and the page is told. */
+  private measureLiveLuminance(frame: LiveFrameSource, useWasm: boolean): void {
+    const now = performance.now();
+    if (now - this.liveLuminanceAt < LIVE_LUMINANCE_INTERVAL_MS) return;
+    this.liveLuminanceAt = now;
+    let measured: number;
+    try {
+      // The C++ engine only where it is loaded in this realm.
+      measured = Math.round(measureLiveFrameLuminance(frame, useWasm && isWasmReady()));
+    } catch (error) {
+      console.warn('Could not measure the live source:', error);
+      return;
+    }
+    if (measured === this.liveLuminance) return;
+    this.liveLuminance = measured;
+    this.emit('telemetry', { liveLuminance: measured });
+  }
+
+  private clearLiveLuminance(): void {
+    this.liveLuminanceAt = -Infinity;
+    if (this.liveLuminance === null) return;
+    this.liveLuminance = null;
+    this.emit('telemetry', { liveLuminance: null });
   }
 
   private clearMask(): void {

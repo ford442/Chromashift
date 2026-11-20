@@ -2,8 +2,14 @@
  * WebGPU canvas configuration: SDR / `hdr-extended` presentation, and the
  * page-lifetime tone-mapping and HDR probes that keep every reconfigure cheap.
  */
-import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../gpu/gpuOptions';
+import {
+  HDR_CANVAS_FORMAT,
+  RENDERER_CANVAS_OPTIONS_MATRIX,
+  webGpuCanvasUsage,
+  type CanvasPresentation,
+} from '../gpu/gpuOptions';
 import { publishDiagnostics } from '../diagnostics';
+import { configurePresentation } from '../gpu/renderCanvas';
 import { resolvePresentation } from '../color/presentation';
 import type { PresentationTarget } from './presentationTarget';
 
@@ -33,11 +39,9 @@ export function buildWebGpuCanvasConfiguration(
   const config: GPUCanvasConfiguration = {
     device,
     format: hdr ? HDR_CANVAS_FORMAT : format,
-    alphaMode: 'opaque',
-    // Render target only. Nothing copies out of the swap chain — previews,
-    // exports and the collision-stats blit all read offscreen targets — and
-    // an unused COPY_SRC can keep the compositor off its scanout path.
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | (options?.readback ? GPUTextureUsage.COPY_SRC : 0),
+    // Alpha mode and usage are the matrix's (`gpu/gpuOptions.ts`).
+    alphaMode: RENDERER_CANVAS_OPTIONS_MATRIX.webgpu.alphaMode,
+    usage: webGpuCanvasUsage(options?.readback === true),
     // The tag follows the pixel path `color/presentation.ts` decides: the
     // compositor converts into Display P3 before the canvas is tagged it,
     // and Canvas HDR stays extended sRGB.
@@ -129,7 +133,7 @@ function tryConfigureHdrCanvas(
 ): boolean {
   if (canvasHdrSupported === false) return false;
   try {
-    context.configure(buildWebGpuCanvasConfiguration(device, format, options));
+    configurePresentation(context, buildWebGpuCanvasConfiguration(device, format, options));
   } catch (error) {
     canvasHdrSupported = false;
     console.warn('[Chromashift:GPU] Canvas HDR configure failed; presenting SDR', error);
@@ -179,14 +183,14 @@ function configureSdrCanvas(
 
   // Known-unsupported: configure straight away, no tone mapping, no throw.
   if (canvasToneMappingSupported === false) {
-    context.configure(buildWebGpuCanvasConfiguration(device, format, options));
+    configurePresentation(context, buildWebGpuCanvasConfiguration(device, format, options));
     return;
   }
 
   // Known-supported, or not yet probed. The try/catch below can only fire on
   // the not-yet-probed pass, and its result is cached either way.
   try {
-    context.configure(buildWebGpuCanvasConfiguration(device, format, requested));
+    configurePresentation(context, buildWebGpuCanvasConfiguration(device, format, requested));
   } catch (error) {
     canvasToneMappingSupported = false;
     console.warn(
@@ -194,7 +198,7 @@ function configureSdrCanvas(
       + 'disabling it for this page and retrying without',
       error,
     );
-    context.configure(buildWebGpuCanvasConfiguration(device, format, options));
+    configurePresentation(context, buildWebGpuCanvasConfiguration(device, format, options));
     return;
   }
 

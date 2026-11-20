@@ -468,22 +468,27 @@ export class RenderHost {
    * transferred (an `ImageBitmap` where there is no `VideoFrame`), which the
    * renderer closes. Returns whether a decoded frame was there to send.
    */
-  uploadVideo(video: HTMLVideoElement): boolean {
+  /**
+   * Hand the live source's current frame to the renderer. It also measures
+   * the frame's luminance once a second (`useWasm`: through the C++ engine
+   * where it is loaded), reported as `telemetry.liveLuminance`.
+   */
+  uploadVideo(video: HTMLVideoElement, useWasm = false): boolean {
     if (!this.channel) return false;
     if (video.videoWidth === 0 || video.videoHeight === 0 || video.readyState < 2 /* HAVE_CURRENT_DATA */) {
       return false;
     }
     if (this.kind !== 'worker') {
-      this.notify('set-video-frame', { frame: video });
+      this.notify('set-video-frame', { frame: video, useWasm });
       return true;
     }
     if (typeof VideoFrame === 'function') {
       const frame = new VideoFrame(video);
-      this.notify('set-video-frame', { frame }, [frame]);
+      this.notify('set-video-frame', { frame, useWasm }, [frame]);
       return true;
     }
     void createImageBitmap(video).then((bitmap) => {
-      this.notify('set-video-frame', { frame: bitmap }, [bitmap]);
+      this.notify('set-video-frame', { frame: bitmap, useWasm }, [bitmap]);
     }, () => {});
     return true;
   }

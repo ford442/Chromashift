@@ -6,6 +6,8 @@
  * `App.tsx` reads `listLocalImages()` at startup to repopulate the image
  * strip; `useMediaHandlers` writes new entries when files are dropped.
  */
+import { getReadback2DContext } from '../gpu/readbackContext';
+
 
 export interface LocalImageMeta {
   id: string;
@@ -54,7 +56,7 @@ async function makeThumbnail(bitmap: ImageBitmap): Promise<Blob> {
   const width = Math.max(1, Math.round(bitmap.width * scale));
   const height = Math.max(1, Math.round(bitmap.height * scale));
   const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext('2d');
+  const ctx = getReadback2DContext(canvas);
   if (!ctx) throw new Error('2D context unavailable for thumbnail generation');
   ctx.drawImage(bitmap, 0, 0, width, height);
   return canvas.convertToBlob({ type: 'image/webp', quality: 0.82 });

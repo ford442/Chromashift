@@ -15,6 +15,7 @@ import {
   toBootstrapRuntimeError,
 } from '../gpu/gpuErrors';
 import { publishDiagnostic } from '../diagnostics';
+import { requestAdapterDevice } from '../gpu/renderCanvas';
 
 /** WebGPU's feature levels (`requestAdapter({ featureLevel })`). */
 export type GpuFeatureLevel = 'core' | 'compatibility';
@@ -316,7 +317,7 @@ async function acquireWebGpuDevice(
     };
 
     try {
-      const device = await adapter.requestDevice(descriptor);
+      const device = await requestAdapterDevice(adapter, descriptor);
       devicesAcquired += 1;
       publishDiagnostic('gpuDevicesAcquired', devicesAcquired);
       deviceFeatureLevels.set(

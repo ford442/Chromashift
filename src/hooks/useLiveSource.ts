@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { FrameTick } from '../engine/frame/FrameClock';
-import { computeVideoAverageLuminance, LiveSourceManager, type LiveSourceKind } from '../engine/live/LiveSource';
+import { LiveSourceManager, type LiveSourceKind } from '../engine/live/LiveSource';
 import { publishLiveSourceBreadcrumbs } from '../engine/live/liveSourceBreadcrumbs';
 import { createChromashiftCpuHost } from '../engine/compute/chores/chromashiftHost';
 import {
@@ -13,7 +13,6 @@ import { LiveMotionSampler } from '../engine/live/liveMotionField';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
 
 /** How often to resample average luminance from the live frame (ms). */
-const ANALYSIS_INTERVAL_MS = 1000;
 
 /**
  * How often the WebGL backend resamples the motion field (ms).
@@ -37,8 +36,10 @@ export interface LiveSourceHandlers {
  * Owns a `LiveSourceManager` and wires it to `media.liveSource` state plus a
  * per-frame upload task in the frame clock's `sources` phase — registered only
  * while a source is active, and independent of the render loop's tasks.
- * Texture upload is throttled to the display's refresh rate; luminance
- * analysis is throttled further to `ANALYSIS_INTERVAL_MS`.
+ * Texture upload is throttled to the display's refresh rate. The renderer
+ * measures the frames' luminance itself, once a second, and reports it as
+ * telemetry (`useLiveLuminance`) rather than through the store, which
+ * re-rendered the whole tree every second.
  */
 export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): LiveSourceHandlers {
   const { state, actions } = store;
@@ -113,8 +114,7 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
     liveSourceManagerRef.current?.stop();
   }, [liveSourceManagerRef]);
 
-  // Per-frame texture upload + throttled luminance analysis while active.
-  const lastAnalysisRef = useRef(0);
+  // Per-frame texture upload while active.
   const frameCountRef = useRef(0);
   const lastFpsSyncRef = useRef(0);
   // WebGL has no compute lane, so the motion field is sampled here from the
@@ -131,7 +131,6 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
     }
 
     const clock = frameClockRef.current;
-    lastAnalysisRef.current = 0;
     frameCountRef.current = 0;
     lastFpsSyncRef.current = performance.now();
     // Publish immediately so `window.liveSourceActive` flips the instant
@@ -191,19 +190,13 @@ export function useLiveSource(refs: ChromashiftRefs, store: ChromashiftStore): L
     const upload = ({ now }: FrameTick) => {
       const manager = liveSourceManagerRef.current;
       if (manager?.active) {
-        if (renderHostRef.current.uploadVideo(manager.element)) {
+        if (renderHostRef.current.uploadVideo(manager.element, engineModeRef.current === 'wasm')) {
           frameCountRef.current += 1;
 
           const size = manager.frameSize;
           const current = renderStateRef.current.media.liveSource;
           if (size && (current.width !== size.width || current.height !== size.height)) {
             actions.setLiveSource({ width: size.width, height: size.height });
-          }
-
-          if (now - lastAnalysisRef.current >= ANALYSIS_INTERVAL_MS) {
-            lastAnalysisRef.current = now;
-            const avgLum = computeVideoAverageLuminance(manager.element, engineModeRef.current === 'wasm');
-            actions.setAvgLuminance(Math.round(avgLum));
           }
 
           sampleMotion(now, manager.element);

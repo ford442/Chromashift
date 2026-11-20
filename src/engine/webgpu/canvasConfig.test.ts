@@ -7,6 +7,7 @@ import {
   probeCanvasHdr,
   resetCanvasToneMappingSupportForTests,
 } from './canvasConfig';
+import { RENDERER_CANVAS_OPTIONS_MATRIX, webGpuCanvasUsage } from '../gpu/gpuOptions';
 
 describe('buildWebGpuCanvasConfiguration', () => {
   const device = {} as GPUDevice;
@@ -67,6 +68,13 @@ describe('buildWebGpuCanvasConfiguration', () => {
     for (const presentation of ['sdr', 'hdr-extended'] as const) {
       expect(buildWebGpuCanvasConfiguration(device, 'bgra8unorm', { presentation }).usage).toBe(0x10);
     }
+  });
+
+  it('takes alpha mode and usage from the options matrix, COPY_SRC only for the debug readback', () => {
+    const { alphaMode } = RENDERER_CANVAS_OPTIONS_MATRIX.webgpu;
+    expect(buildWebGpuCanvasConfiguration(device, 'bgra8unorm').alphaMode).toBe(alphaMode);
+    expect(buildWebGpuCanvasConfiguration(device, 'bgra8unorm', { readback: true }).usage).toBe(0x10 | 0x01);
+    expect(webGpuCanvasUsage(false)).toBe(0x10);
   });
 });
 

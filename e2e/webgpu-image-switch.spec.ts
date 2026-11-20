@@ -17,6 +17,11 @@ import { RENDERER_SESSIONS, skipUnlessSessionProject } from './helpers/renderer'
  *
  * The breadcrumb `gpuUncapturedErrors` counts the device's uncaptured errors
  * (`gpu/gpuErrors.ts`); it stays unset while there are none.
+ *
+ * On SwiftShader the GPU lane declines (no `texture-formats-tier1`) and the
+ * masks are CPU uploads, so there this guards the upload path; the GPU lane's
+ * hand-over is covered by `RenderService.test.ts`. On a GPU with the feature
+ * both run.
  */
 
 const SIZES = [

@@ -1,6 +1,6 @@
 # GPU Bootstrap
 
-Chromashift centralizes renderer initialization in a few small modules, and documents shared canvas options in `src/engine/gpu/gpuOptions.ts`:
+Chromashift centralizes renderer initialization in a few small modules, and documents shared canvas options in `src/engine/gpu/gpuOptions.ts`. Every context is created in `src/engine/gpu/`: `eslint.config.js` rejects a bare `getContext(`, a one-argument `.configure(` or a `requestDevice(` anywhere else in `src/` (tests aside). The WebGPU canvas `alphaMode` and `usage` come from `RENDERER_CANVAS_OPTIONS_MATRIX.webgpu` (`webGpuCanvasUsage`), like the WebGL2 attributes:
 
 | Module | Owns |
 |---|---|
@@ -8,7 +8,9 @@ Chromashift centralizes renderer initialization in a few small modules, and docu
 | `src/engine/webgpu/adapter.ts` | Adapter request, the page device gate (`requestDevice` strategies), adapter / capability reports |
 | `src/engine/webgpu/canvasConfig.ts` | `configureWebGpuCanvas()` — SDR / `hdr-extended`, the tone-mapping and HDR probes |
 | `src/engine/webgpu/presentationTarget.ts` | `PresentationTarget` — the part of `GPUCanvasContext` the renderer uses; a canvas context, or the headless renderer's offscreen `HeadlessSurface` |
-| `src/engine/gpu/gpuErrors.ts` | `GpuRuntimeError` and the mappings into it, `withErrorScope`, device diagnostics, the fatal breaker |
+| `src/engine/gpu/gpuErrors.ts` | `GpuRuntimeError` and the mappings into it, `withErrorScope`, device diagnostics (`uncapturederror` listeners, the `gpuUncapturedErrors` count), the fatal breaker |
+| `src/engine/gpu/renderCanvas.ts` | The only `getContext('webgpu')` / `getContext('webgl2')`, presentation `configure()` and `requestDevice()` calls |
+| `src/engine/gpu/readbackContext.ts` | The only 2D `getContext`: its `colorSpace`, and `willReadFrequently` only where a context is read back repeatedly |
 | `src/engine/webgl/webgl2Context.ts` | `createWebGL2Context()` (one sticky context per canvas) and `watchWebGL2Context()` |
 | `src/engine/render/` | Where all of the above runs — the render worker or the page's thread — and the protocol between the page and it: see [Render transport](#render-transport) |
 

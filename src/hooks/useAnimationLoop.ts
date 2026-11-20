@@ -1,11 +1,19 @@
 import { useEffect } from 'react';
 import { buildRendererState } from '../engine/buildRendererState';
+import { isClassicProfile } from '../engine/color/colorProfile';
+import { resolveColorProfile } from '../engine/color/colorProfileLibrary';
 import { effectiveLayerScaleForMultiView, isTwoSlotCompareLayout } from '../engine/compareViews';
 import type { RenderLoopInput } from '../engine/render/protocol';
 import { renderTelemetry } from '../engine/telemetryStore';
 import { applySettingsToState } from '../state/chromashiftReducer';
 import type { ChromashiftState } from '../state/types';
 import type { ChromashiftRefs, ChromashiftStore } from './useChromashiftStore';
+
+/** The profile the main frame's LUT is baked from, or `null` for Classic (no LUT). */
+function profileLutSource(state: ChromashiftState): RenderLoopInput['colorProfile'] {
+  const { profile } = resolveColorProfile(state.layers.colorProfileId, state.layers.colorProfile);
+  return isClassicProfile(profile) ? null : profile;
+}
 
 /**
  * What the live loop draws, from the store: the main canvas's frame and
@@ -37,6 +45,7 @@ function buildRenderLoopInput(state: ChromashiftState, running: boolean): Render
     extensions: state.layers.extensions,
     reactive: state.reactive.enabled,
     main: buildRendererState(state, state.layers.angles),
+    colorProfile: profileLutSource(state),
     layout,
     compareB,
     hud: { enabled: state.output.performanceHudEnabled, autoDegrade: state.output.performanceAutoDegrade },
@@ -79,6 +88,7 @@ export function useAnimationLoop(refs: ChromashiftRefs, store: ChromashiftStore)
       if (telemetry.gpu) renderTelemetry.setRenderGpuTiming(telemetry.gpu);
       if (telemetry.frameHistory) renderTelemetry.setFrameTimeHistory(telemetry.frameHistory);
       if (telemetry.overBudget !== undefined) renderTelemetry.setPerformanceBudgetExceeded(telemetry.overBudget);
+      if (telemetry.liveLuminance !== undefined) renderTelemetry.setLiveLuminance(telemetry.liveLuminance);
     });
     const offDegrade = host.on('perf-degrade', () => actions.applyPerformanceDegrade());
     return () => {

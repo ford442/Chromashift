@@ -53,6 +53,31 @@ export default defineConfig([
       }],
     },
   },
+  // Every context goes through src/engine/gpu/ (#244): the WebGPU configure,
+  // the WebGL2 attributes and the 2D contexts' colour space and
+  // willReadFrequently are decided there, from the options matrix
+  // (gpuOptions.ts), not at each call site. `configure` with one argument is
+  // a presentation context's (the graph pools' take two or three).
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/engine/gpu/**', '**/*.test.ts', '**/*.dom.test.tsx', '**/__fixtures__/**'],
+    rules: {
+      'no-restricted-syntax': ['error',
+        {
+          selector: "CallExpression[callee.property.name='getContext']",
+          message: 'Create contexts through src/engine/gpu/: webGpuContextOf / webgl2ContextOf (renderCanvas.ts) or getReadback2DContext (readbackContext.ts).',
+        },
+        {
+          selector: "CallExpression[callee.property.name='configure'][arguments.length=1]",
+          message: 'Configure a presentation context through configurePresentation (src/engine/gpu/renderCanvas.ts), with a configuration from buildWebGpuCanvasConfiguration.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='requestDevice']",
+          message: 'Only the device gate (webgpu/adapter.ts) requests a device, through requestAdapterDevice (src/engine/gpu/renderCanvas.ts).',
+        },
+      ],
+    },
+  },
   // The frame never touches the page (#253): the executors, the WebGPU
   // renderer and the frame clock also run in the render worker, which has no
   // `window` or `document`. Page facts (URL flags, sizes, DPR) arrive as

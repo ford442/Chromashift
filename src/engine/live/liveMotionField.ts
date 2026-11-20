@@ -10,6 +10,7 @@ import {
   type CpuMotionFieldHost,
   type CpuMotionFieldOutput,
 } from '../compute/chores';
+import { getReadback2DContext } from '../gpu/readbackContext';
 import { createMotionWorkerHost } from '../compute/chores/motionWorkerHost';
 import { MOTION_FIELD_DIVISOR } from '../motionModes';
 
@@ -152,7 +153,7 @@ export class LiveMotionSampler {
       // A resize invalidates the history: cells no longer line up frame to frame.
       this.resetPending = true;
     }
-    this.context ??= this.canvas.getContext('2d', { willReadFrequently: true });
+    this.context ??= getReadback2DContext(this.canvas, { willReadFrequently: true });
     return this.context;
   }
 }
