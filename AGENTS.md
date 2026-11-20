@@ -367,7 +367,8 @@ place of a still image — same rotating layers, tracers, and audio-reactive/MID
 the current frame into a texture reused across calls (recreated only on resolution change, no
 mip chain) so memory stays stable over long sessions. `useLiveSource` (`src/hooks/useLiveSource.ts`)
 registers a `sources`-phase task on the frame clock (see "Frame clock" below) for per-frame
-upload and once-a-second luminance resampling, and publishes `window.liveSourceActive` /
+upload; the render service measures the frames' luminance once a second itself and reports it
+as telemetry (`useLiveLuminance`), never through the reducer. The hook publishes `window.liveSourceActive` /
 `window.liveSourceKind` / `window.liveSourceFps` breadcrumbs. `media.liveSource` is
 runtime-only state — never serialized into presets, so a shared preset URL never silently
 requests camera/screen access. See [LIVE_SOURCE.md](docs/LIVE_SOURCE.md).
@@ -450,7 +451,7 @@ The facade dispatches three ops: `image-analysis` (above), `coincidence` (the tr
 
 A pinned `prefer` (`'webgpu' | 'wasm' | 'ts'`) never slides to another lane — parity tests depend on that. Failures are never silent: `runJob` returns `{ ok: false, reason, attempts }` recording why every candidate declined or threw.
 
-**Device policy**: the WebGPU lane **adopts** the renderer-owned `GPUDevice` from `RendererOrchestrator`. It must never call `requestAdapter`/`requestDevice`. `useClassificationMask` registers the orchestrator's existing lane instance (`GpuImageAnalysis.backend`) rather than constructing a second one, so pipelines, staging buffers, and the reused mask texture stay shared — repeated image loads do not grow VRAM.
+**Device policy**: the WebGPU lane **adopts** the renderer-owned `GPUDevice` from `RendererOrchestrator`. It must never call `requestAdapter`/`requestDevice`. `useClassificationMask` registers the orchestrator's existing lane instance (`GpuImageAnalysis.backend`) rather than constructing a second one, so pipelines and staging buffers stay shared. Each analysis returns a **new** mask texture that the caller owns: `RenderService` destroys the mask it replaces only after every slot has swapped to the new one, and destroys a stale analysis's mask (the image changed, a newer analysis started, the renderer was torn down) without binding it. The lane is split into `webgpuAnalysis.ts`, `webgpuCoincidence.ts` and `webgpuMotion.ts` behind the `WebGpuChoreBackend` facade.
 
 **Breadcrumbs are per-op.** `window.gpuChoreBackend` / `window.gpuChoreReason` record the lane that served the last load-time analysis; `window.motionFieldBackend` / `window.motionFieldReason` do the same for `motion-field`, which runs on the render loop's cadence and would otherwise stamp over the analysis crumb dozens of times a second. `window.motionFieldEnergy` carries the field's mean magnitude — the only number that crosses back to the CPU on the WebGPU lane. `window.motionFieldHasFlow` says whether the field's `gb` channels carry a solved velocity (Stage 2) or the zero vector (Stage 1), and `window.motionFieldFlow` carries the mean velocity over moving cells on the CPU lanes.
 
