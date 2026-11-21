@@ -61,20 +61,41 @@ EXPORTED_FUNCS := \
 # that fails `make test-werror` in CI cannot be silently absent from the shipped
 # build, and the editor sees exactly what the compiler sees.
 #
+# Warning set (-Werror in test-werror and the SIMD tests; see below):
+#   -Wconversion -Wsign-conversion  an implicit narrowing or signedness change.
+#                                   Offsets are size_t, plane geometry is int;
+#                                   the conversion between them is spelled out
+#                                   (`usz` / `cellOffset` in motion_flow.cpp).
+#   -Wdouble-promotion              a float silently widened to double. float and
+#                                   double rounding differently is exactly what
+#                                   breaks bit-exact TS / WGSL / C++ parity, so a
+#                                   promotion has to be a visible static_cast.
+#   -Wshadow                        a local hiding another name in scope.
+#
 # -ffp-contract=off: never fuse a*b+c into an FMA. The kernels are written so
 # the scalar, SIMD128, TypeScript and WGSL lanes round identically, and an
 # aarch64 host (where clang contracts by default) would otherwise fuse the
 # lkSolve arithmetic and make the host tests platform-dependent. wasm32 has no
 # scalar FMA, so the shipped build is unaffected; it is pinned there anyway so
 # the guarantee does not rest on that.
-CXXFLAGS_COMMON := -std=c++17 -Wall -Wextra -ffp-contract=off -I.
+CXXFLAGS_COMMON := -std=c++20 -Wall -Wextra -Wconversion -Wsign-conversion \
+  -Wdouble-promotion -Wshadow -ffp-contract=off -I.
 
 # Code-generation flags for the wasm32 target (compile side only; the -s link
 # settings follow). -msimd128 enables the hand-written wasm_simd128.h kernels.
 # Never add -mrelaxed-simd: relaxed ops (FMA, swizzle, min/max) have
 # implementation-defined results, which would break bit-exact SIMD-vs-scalar
 # parity (tests/simd_parity.cpp) and make output differ between browsers.
-WASM_CXXFLAGS := $(CXXFLAGS_COMMON) -msimd128 -fno-exceptions -fno-rtti
+#
+# The rest of the feature floor - bulk memory (memory.fill / memory.copy instead
+# of a byte loop), nontrapping float-to-int (trunc_sat: a NaN or out-of-range
+# float converts to 0 / INT_MIN / INT_MAX instead of trapping) and sign
+# extension - is implied by SIMD128: every engine that ships v128 ships all
+# three, and emsdk 4 turns them on by default. They are spelled out so the floor
+# is explicit and the loader's probe (isWasmSimdSupported in loadEngine.ts) can
+# be kept in step with it.
+WASM_CXXFLAGS := $(CXXFLAGS_COMMON) -msimd128 -mbulk-memory -mnontrapping-fptoint \
+  -msign-ext -fno-exceptions -fno-rtti
 
 # Shared Emscripten link flags (debug vs release differ only in -O / ASSERTIONS / -flto)
 #
@@ -99,6 +120,11 @@ WASM_CXXFLAGS := $(CXXFLAGS_COMMON) -msimd128 -fno-exceptions -fno-rtti
 # large buffers — a 4K–8K RGBA image and its mask — grow the heap on first use
 # and the TypeScript pool keeps it from churning after that.
 #
+# INCOMING_MODULE_JS_API: the one option the app hands the factory is
+# `wasmBinary` (the headless renderer and the bench script pass the bytes in
+# rather than fetch). Everything else the glue would read off the Module
+# argument - locateFile, print, instantiateWasm, ... - is dropped from the glue.
+#
 # Release-only: -flto and --closure 1 (the glue is a thin C-ABI shim, so Closure
 # has nothing to break and halves it).  Both are off in debug builds so stack
 # traces and ASSERTIONS output stay readable.  Output is reproducible for a
@@ -109,7 +135,8 @@ EMFLAGS_COMMON := \
   -s EXPORT_ES6=1 \
   -s EXPORT_NAME="ChromashiftEngine" \
   -s EXPORTED_FUNCTIONS='[$(EXPORTED_FUNCS)]' \
-  -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32","HEAP32","HEAPF32"]' \
+  -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAP32","HEAPF32"]' \
+  -s INCOMING_MODULE_JS_API='["wasmBinary"]' \
   -s ENVIRONMENT=web,worker \
   -s FILESYSTEM=0 \
   -s DYNAMIC_EXECUTION=0 \
@@ -118,7 +145,11 @@ EMFLAGS_COMMON := \
   -s ALLOW_MEMORY_GROWTH=1
 
 EMFLAGS_RELEASE := -O3 -flto --closure 1 $(EMFLAGS_COMMON)
-EMFLAGS_DEBUG   := -O0 -g -s ASSERTIONS=1 $(EMFLAGS_COMMON)
+# Debug adds the runtime checks the release build cannot afford: SAFE_HEAP traps
+# a misaligned or out-of-range heap access at the access, STACK_OVERFLOW_CHECK=2
+# checks the stack canary on every function entry (not just at exit).
+EMFLAGS_DEBUG   := -O0 -g -s ASSERTIONS=1 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2 \
+  $(EMFLAGS_COMMON)
 
 # ─── Host-side unit tests (plain g++, no Emscripten) ─────────────────────────
 CXX      := g++
@@ -147,7 +178,7 @@ PARITY_HDRS   := tests/scalar_names.h
 
 # ─── Targets ─────────────────────────────────────────────────────────────────
 .PHONY: all release debug clean check check-emsdk-version test test-werror test-asan \
-        test-simd test-parity verify-exports codegen rebuild compile-commands \
+        test-sanitizer-selftest test-simd test-simd-asan test-parity verify-exports codegen rebuild compile-commands \
         ensure-mode ensure-flags _build
 
 all: release
@@ -182,9 +213,13 @@ ensure-mode:
 	  echo "$$mode" > $(MODE_STAMP); \
 	fi
 
-# Invalidate artifacts when EXPORTED_FUNCS / EMFLAGS change in this Makefile.
+# Invalidate artifacts when EXPORTED_FUNCS / EMFLAGS change in this Makefile, or
+# when the toolchain does: closure and Binaryen output differs between emsdk
+# versions even for identical flags, so an artifact from the old compiler must
+# not pass for a fresh one.
 ensure-flags:
 	@printf '%s\n' \
+	  "EMCC_VERSION=$$($(EMCC) -dumpversion 2>/dev/null || echo unavailable)" \
 	  "EXPORTED_FUNCS=$(EXPORTED_FUNCS)" \
 	  "EMFLAGS_RELEASE=$(EMFLAGS_RELEASE)" \
 	  "EMFLAGS_DEBUG=$(EMFLAGS_DEBUG)" \
@@ -238,7 +273,9 @@ $(OUT_JS) $(OUT_WASM) &: $(SRCS) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS) Makefile
 clean:
 	rm -f $(OUT_JS) $(OUT_WASM) $(TEST_BIN) $(TEST_ASAN_BIN) compile_commands.json \
 	  $(SIMD_TEST_JS) $(SIMD_TEST_JS:.cjs=.wasm) $(PARITY_JS) $(PARITY_JS:.cjs=.wasm) \
-	  $(MODE_STAMP) $(FLAGS_STAMP) $(FLAGS_STAMP).new
+	  $(SIMD_ASAN_JS) $(SIMD_ASAN_JS:.cjs=.wasm) $(PARITY_ASAN_JS) $(PARITY_ASAN_JS:.cjs=.wasm) \
+	  $(SELFTEST_ASAN_JS) $(SELFTEST_ASAN_JS:.cjs=.wasm) \
+	  $(SELFTEST_BIN) $(MODE_STAMP) $(FLAGS_STAMP) $(FLAGS_STAMP).new
 
 check:
 	@command -v $(EMCC) >/dev/null 2>&1 || \
@@ -275,15 +312,78 @@ test-werror:
 	@$(MAKE) --no-print-directory test EXTRA_TEST_CXXFLAGS="-Werror $(EXTRA_TEST_CXXFLAGS)"
 
 # Host-only sanitizers. Not part of the default PR gate (the instrumented binary
-# is several times slower) and never applied to the shipped .wasm — run it when
-# touching pointer arithmetic in the bulk/LUT kernels:
+# is several times slower) and never applied to the shipped .wasm — CI runs them
+# on every engine change (the `sanitizers` job in wasm.yml) and nightly; run it
+# yourself when touching pointer arithmetic in the bulk/LUT kernels:
 #   make -C cpp test-asan
-$(TEST_ASAN_BIN): $(SRCS) $(TEST_SRC) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS)
-	$(CXX) $(TEST_CXXFLAGS) -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+#
+# -fno-sanitize-recover=all: UBSan's default is to print a report and carry on,
+# which exits 0, so a signed overflow would "pass". With it the first finding
+# aborts the binary and fails the target. `make test-sanitizer-selftest` proves
+# that: it runs a deliberate overflow and passes only if the binary fails.
+SANITIZE_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+SELFTEST_SRC   := tests/sanitizer_selftest.cpp
+SELFTEST_BIN   := tests/sanitizer_selftest
+
+$(TEST_ASAN_BIN): $(SRCS) $(TEST_SRC) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS) Makefile
+	$(CXX) $(TEST_CXXFLAGS) -g $(SANITIZE_FLAGS) \
 	  $(SRCS) $(TEST_SRC) -o $(TEST_ASAN_BIN) -lm
 
 test-asan: $(TEST_ASAN_BIN)
 	./$(TEST_ASAN_BIN)
+
+$(SELFTEST_BIN): $(SELFTEST_SRC) Makefile
+	$(CXX) $(CXXFLAGS_COMMON) -g $(SANITIZE_FLAGS) $(SELFTEST_SRC) -o $@
+
+# Inverted on purpose: the self-test commits signed overflow (and, with `oob`, a
+# heap overflow), so "the sanitizer is armed" means the binary exits non-zero.
+test-sanitizer-selftest: $(SELFTEST_BIN)
+	@if ./$(SELFTEST_BIN) overflow >/dev/null 2>&1; then \
+	  echo "❌  UBSan did not fail the run: -fno-sanitize-recover=all is not in effect"; exit 1; \
+	fi
+	@if ./$(SELFTEST_BIN) oob >/dev/null 2>&1; then \
+	  echo "❌  ASan did not fail the run"; exit 1; \
+	fi
+	@./$(SELFTEST_BIN) clean >/dev/null 2>&1 || \
+	  { echo "❌  the sanitizer self-test failed on its clean path"; exit 1; }
+	@echo "✅  sanitizers abort on signed overflow and heap overflow, and pass clean code"
+
+# The SIMD128 paths under a sanitizer. The host builds above never compile a
+# CS_HAS_SIMD block, so an out-of-bounds v128 load - the likeliest place for one,
+# a 16-byte load at the tail of a row - is invisible to them. emcc's ASan
+# instruments the v128 loads and stores like any other, and runs under Node:
+#   make -C cpp test-simd-asan      (needs emsdk)
+# UBSan rides along for the same signed-overflow reason as above. Not -O3: the
+# instrumentation is the point, not the speed, and -O1 keeps reports readable.
+SANITIZE_FLAGS_WASM := -fsanitize=address,undefined -fno-sanitize-recover=all
+ASAN_EMFLAGS := $(WASM_CXXFLAGS) -O1 -g $(SANITIZE_FLAGS_WASM) -s ENVIRONMENT=node \
+  -s ALLOW_MEMORY_GROWTH=1 -s INITIAL_MEMORY=134217728
+SIMD_ASAN_JS   := tests/test_engine_simd_asan.cjs
+PARITY_ASAN_JS := tests/simd_parity_asan.cjs
+
+$(SIMD_ASAN_JS): $(SRCS) $(TEST_SRC) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS) Makefile
+	$(EMXX) $(ASAN_EMFLAGS) -Werror $(SRCS) $(TEST_SRC) -o $@
+
+$(PARITY_ASAN_JS): $(SRCS) $(PARITY_SRCS) $(PARITY_HDRS) $(HEADER) $(INTERNAL_HDRS) $(GEN_HDRS) Makefile
+	$(EMXX) $(ASAN_EMFLAGS) -Werror $(SRCS) $(PARITY_SRCS) -o $@
+
+# The same self-test as the host one, for the instrumented wasm build: an
+# out-of-bounds 16-byte v128 load must abort the run, or a green test-simd-asan
+# would prove nothing about the SIMD paths.
+SELFTEST_ASAN_JS := tests/sanitizer_selftest_asan.cjs
+
+$(SELFTEST_ASAN_JS): $(SELFTEST_SRC) Makefile
+	$(EMXX) $(ASAN_EMFLAGS) $(SELFTEST_SRC) -o $@
+
+test-simd-asan: $(SIMD_ASAN_JS) $(PARITY_ASAN_JS) $(SELFTEST_ASAN_JS)
+	@if $(NODE) $(SELFTEST_ASAN_JS) simd-oob >/dev/null 2>&1; then \
+	  echo "❌  ASan did not fail on an out-of-bounds v128 load: test-simd-asan would be vacuous"; exit 1; \
+	fi
+	@$(NODE) $(SELFTEST_ASAN_JS) clean >/dev/null 2>&1 || \
+	  { echo "❌  the wasm sanitizer self-test failed on its clean path"; exit 1; }
+	@echo "✅  wasm ASan aborts on an out-of-bounds v128 load"
+	$(NODE) $(SIMD_ASAN_JS)
+	$(NODE) $(PARITY_ASAN_JS)
 
 # -Werror always: these only run where emsdk is installed (CI's `wasm` job and
 # local runs), and a SIMD-only warning has nowhere else to fail.
@@ -311,7 +411,7 @@ compile-commands:
 	fi
 	@$(NODE) ../scripts/gen-compile-commands.mjs \
 	  --host-cxx='$(CXX)' --host-flags='$(TEST_CXXFLAGS)' --wasm-flags='$(WASM_CXXFLAGS)' \
-	  --engine='$(SRCS)' --host-only='$(TEST_SRC)' --wasm-only='$(PARITY_SRCS)'
+	  --engine='$(SRCS)' --host-only='$(TEST_SRC) $(SELFTEST_SRC)' --wasm-only='$(PARITY_SRCS)'
 
 # Ensure EXPORTED_FUNCS and the header's prototypes match exactly, both ways.
 # Prototypes are `<return type> <name>(` lines at column 0. An empty parse is a

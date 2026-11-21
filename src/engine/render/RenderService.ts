@@ -660,7 +660,7 @@ export class RenderService {
   private publishMotionDemand(): void {
     const renderer = this.primary();
     if (!renderer) return;
-    const wantsCpu = Boolean(renderer.setMotionField) && (renderer.wantsCpuMotionField?.() ?? true);
+    const wantsCpu = renderer.setMotionField !== undefined && (renderer.wantsCpuMotionField?.() ?? true);
     const use = renderer.cpuMotionFieldUse?.() ?? { reads: false, needsFlow: false };
     const previous = this.motionDemand;
     if (previous && previous.wantsCpu === wantsCpu

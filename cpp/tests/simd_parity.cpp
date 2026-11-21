@@ -255,13 +255,13 @@ float ridge(int v, int centre)
 void buildPlanes(Planes kind, int w, int h, uint32_t seed,
                  std::vector<float>& current, std::vector<float>& previous)
 {
-    const std::size_t cells = static_cast<std::size_t>(w) * h;
+    const std::size_t cells = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
     current.assign(cells, 0.0f);
     previous.assign(cells, 0.0f);
     Rng rng{ seed | 1u };
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
-            const std::size_t i = static_cast<std::size_t>(y) * w + x;
+            const std::size_t i = static_cast<std::size_t>(y * w + x);
             switch (kind) {
                 case Planes::Random:
                     current[i] = rng.unit();
@@ -307,7 +307,7 @@ void checkMotionFlow()
     std::vector<float> current, previous;
     for (int w : widths) {
         for (int h : heights) {
-            const std::size_t outputs = static_cast<std::size_t>(w) * h * 2u;
+            const std::size_t outputs = static_cast<std::size_t>(w * h) * 2u;
             std::vector<float> simd(outputs), scalar(outputs);
             for (std::size_t k = 0; k < sizeof kPlanes / sizeof kPlanes[0]; ++k) {
                 buildPlanes(kPlanes[k], w, h, seed++, current, previous);

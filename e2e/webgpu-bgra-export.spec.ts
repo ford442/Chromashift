@@ -35,11 +35,11 @@ const SWEEP_PNG = (() => {
       const f = hue - Math.floor(hue);
       const sector = [
         [1, f, 0], [1 - f, 1, 0], [0, 1, f], [0, 1 - f, 1], [f, 0, 1], [1, 0, 1 - f],
-      ][Math.floor(hue) % 6];
+      ][Math.floor(hue) % 6]!;
       const i = (y * size + x) * 4;
-      pixels[i] = Math.round(sector[0] * value * 255);
-      pixels[i + 1] = Math.round(sector[1] * value * 255);
-      pixels[i + 2] = Math.round(sector[2] * value * 255);
+      pixels[i] = Math.round(sector[0]! * value * 255);
+      pixels[i + 1] = Math.round(sector[1]! * value * 255);
+      pixels[i + 2] = Math.round(sector[2]! * value * 255);
       pixels[i + 3] = 255;
     }
   }
@@ -71,8 +71,8 @@ async function separatedPreview(page: Page, format: GPUTextureFormat): Promise<R
     let colour = 0;
     let hash = 0;
     for (let i = 0; i < data.length; i += 1) {
-      if (i % 4 !== 3) colour += data[i];
-      hash = (Math.imul(hash, 31) + data[i]) | 0;
+      if (i % 4 !== 3) colour += data[i]!;
+      hash = (Math.imul(hash, 31) + data[i]!) | 0;
     }
     return colour === 0 ? null : hash;
   });
@@ -115,13 +115,13 @@ test.describe('WebGPU readback on a bgra8unorm canvas', () => {
     // differ sharply between R and B for a swap to show.
     let unbalanced = 0;
     for (let i = 0; i < rgba.length; i += 4) {
-      if (Math.abs(rgba[i] - rgba[i + 2]) >= 32) unbalanced += 1;
+      if (Math.abs(rgba[i]! - rgba[i + 2]!) >= 32) unbalanced += 1;
     }
     console.log(`[bgra-export] ${unbalanced} of ${rgba.length / 4} preview pixels have |R - B| >= 32`);
     expect(unbalanced).toBeGreaterThanOrEqual(64);
 
     let worst = 0;
-    for (let i = 0; i < rgba.length; i += 1) worst = Math.max(worst, Math.abs(bgra[i] - rgba[i]));
+    for (let i = 0; i < rgba.length; i += 1) worst = Math.max(worst, Math.abs(bgra[i]! - rgba[i]!));
     expect(worst).toBeLessThanOrEqual(1);
   });
 });

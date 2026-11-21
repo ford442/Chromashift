@@ -581,7 +581,7 @@ export class WebGpuGraphExecutor {
       }],
     });
     pass.setPipeline(node.pipeline);
-    pass.setBindGroup(0, node.bindGroup!);
+    pass.setBindGroup(0, node.bindGroup);
     pass.draw(6);
     pass.end();
   }
@@ -631,7 +631,7 @@ export class WebGpuGraphExecutor {
       ],
     });
     pass.setPipeline(node.pipeline);
-    pass.setBindGroup(0, node.bindGroup!);
+    pass.setBindGroup(0, node.bindGroup);
     pass.draw(6);
     pass.end();
   }
@@ -678,7 +678,7 @@ export class WebGpuGraphExecutor {
       }],
     });
     pass.setPipeline(node.pipeline);
-    pass.setBindGroup(0, node.bindGroup!);
+    pass.setBindGroup(0, node.bindGroup);
     pass.draw(6);
     pass.end();
   }
@@ -712,7 +712,7 @@ export class WebGpuGraphExecutor {
         colorAttachments: [clearAttachment(ring.textures[ring.head]!.createView())],
       });
       pass.setPipeline(write.pipeline);
-      pass.setBindGroup(0, write.bindGroup!);
+      pass.setBindGroup(0, write.bindGroup);
       pass.draw(6);
       pass.end();
     }
@@ -738,7 +738,7 @@ export class WebGpuGraphExecutor {
       colorAttachments: [clearAttachment(this.pool.transient(step.nodeId).createView())],
     });
     pass.setPipeline(node.pipeline);
-    pass.setBindGroup(0, node.bindGroup!);
+    pass.setBindGroup(0, node.bindGroup);
     pass.draw(6);
     pass.end();
   }
@@ -797,7 +797,7 @@ export class WebGpuGraphExecutor {
       colorAttachments: [clearAttachment(target.createView())],
     });
     pass.setPipeline(node.pipeline);
-    pass.setBindGroup(0, node.bindGroup!);
+    pass.setBindGroup(0, node.bindGroup);
     pass.draw(6);
     pass.end();
   }

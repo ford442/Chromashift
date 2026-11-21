@@ -28,11 +28,14 @@ function createSlice<T>(initial: T) {
   const listeners = new Set<Listener>();
   return {
     get: () => value,
-    set(next: T) {
+    // Arrow properties, not method shorthand: they are handed out unbound
+    // (`setAngles: anglesSlice.set`, `useSyncExternalStore(slice.subscribe, ...)`)
+    // and use no `this`, which is exactly what `unbound-method` guards.
+    set: (next: T) => {
       value = next;
       listeners.forEach((listener) => listener());
     },
-    subscribe(listener: Listener) {
+    subscribe: (listener: Listener) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },

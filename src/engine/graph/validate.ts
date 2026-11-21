@@ -37,7 +37,7 @@ export function validateGraph(graph: PassGraph): ValidationResult {
     if (!isKnownNodeKind(node.kind)) {
       throw new PassGraphError(
         'unsupported-node',
-        `Unknown node kind '${node.kind}' (node '${node.id}').`,
+        `Unknown node kind '${String((node as { kind: unknown }).kind)}' (node '${node.id}').`,
         node.id,
       );
     }

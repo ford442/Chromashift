@@ -45,6 +45,11 @@ constexpr float kLkEpsilon = 1e-6f;
 constexpr float kLkMaxStep = 2.0f;
 /** Clamp on the accumulated flow, in cells per frame. */
 constexpr float kLkMaxFlow = 4.0f;
+/**
+ * Largest field, in cells, whose output (two floats = 8 bytes a cell) still has
+ * 32-bit byte offsets. Same reasoning as chromashift::kMaxRgbaPixels.
+ */
+constexpr uint64_t kMaxFlowCells = UINT32_MAX / 8u;
 
 inline float clampf(float value, float low, float high)
 {
@@ -58,6 +63,30 @@ inline int clampi(int value, int low, int high)
 
 inline int mini(int a, int b) { return a < b ? a : b; }
 
+/** An index known to be non-negative, as the unsigned type every offset uses. */
+inline std::size_t usz(int value) { return static_cast<std::size_t>(value); }
+
+/** Row-major offset of (x, y) in a plane `width` cells wide. */
+inline std::size_t cellOffset(int y, int width, int x)
+{
+    return usz(y) * usz(width) + usz(x);
+}
+
+/**
+ * NaN and +/-inf become 0; every finite value passes through.
+ *
+ * `clampf` lets a NaN through (both comparisons are false), and the bilinear
+ * fetch turns its coordinate into an array index with `floor` and a float->int
+ * cast, which is undefined for NaN. On wasm32 without the nontrapping
+ * conversions that cast traps or yields INT_MIN, and `row0Base + x0` then reads
+ * far outside the plane. A non-finite coordinate can only come from a
+ * non-finite flow guess, which can only come from non-finite input, so what it
+ * samples is immaterial - the result is NaN either way - but where it reads
+ * must still be inside the plane. Mirrored by `finiteOrZero` in
+ * motionKernel.ts and `finite_or_zero` in the WGSL pass.
+ */
+inline float finiteOrZero(float value) { return std::isfinite(value) ? value : 0.0f; }
+
 /** A luminance plane: one float per cell, row-major, no padding. */
 struct Plane {
     const float* lum;
@@ -68,8 +97,8 @@ struct Plane {
 /** Clamped nearest fetch - the plane is treated as extending by its border. */
 inline float planeAt(const Plane& p, int x, int y)
 {
-    return p.lum[static_cast<std::size_t>(clampi(y, 0, p.height - 1)) * p.width
-               + clampi(x, 0, p.width - 1)];
+    return p.lum[cellOffset(clampi(y, 0, p.height - 1), p.width,
+                            clampi(x, 0, p.width - 1))];
 }
 
 /**
@@ -80,20 +109,18 @@ inline float planeAt(const Plane& p, int x, int y)
  */
 inline float samplePlaneBilinear(const Plane& p, float x, float y)
 {
-    const float fx = clampf(x, 0.0f, static_cast<float>(p.width - 1));
-    const float fy = clampf(y, 0.0f, static_cast<float>(p.height - 1));
+    const float fx = clampf(finiteOrZero(x), 0.0f, static_cast<float>(p.width - 1));
+    const float fy = clampf(finiteOrZero(y), 0.0f, static_cast<float>(p.height - 1));
     const int x0 = static_cast<int>(std::floor(fx));
     const int y0 = static_cast<int>(std::floor(fy));
     const int x1 = mini(x0 + 1, p.width - 1);
     const int y1 = mini(y0 + 1, p.height - 1);
     const float tx = fx - std::floor(fx);
     const float ty = fy - std::floor(fy);
-    const std::size_t row0Base = static_cast<std::size_t>(y0) * p.width;
-    const std::size_t row1Base = static_cast<std::size_t>(y1) * p.width;
-    const float a = p.lum[row0Base + x0];
-    const float b = p.lum[row0Base + x1];
-    const float c = p.lum[row1Base + x0];
-    const float d = p.lum[row1Base + x1];
+    const float a = p.lum[cellOffset(y0, p.width, x0)];
+    const float b = p.lum[cellOffset(y0, p.width, x1)];
+    const float c = p.lum[cellOffset(y1, p.width, x0)];
+    const float d = p.lum[cellOffset(y1, p.width, x1)];
     const float row0 = a + (b - a) * tx;
     const float row1 = c + (d - c) * tx;
     return row0 + (row1 - row0) * ty;
@@ -171,7 +198,7 @@ void halvePlane(const Plane& src, float* dst, int dstWidth, int dstHeight)
         // Full 2x2 blocks only: a clipped trailing block has a different
         // divisor and falls to the scalar tail below.
         if (y1 == cy * 2 + 2) {
-            const float* row0 = src.lum + static_cast<std::size_t>(cy * 2) * src.width;
+            const float* row0 = src.lum + cellOffset(cy * 2, src.width, 0);
             const float* row1 = row0 + src.width;
             const v128_t quarter = wasm_f32x4_splat(0.25f);
             for (; (cx + 4) * 2 <= src.width; cx += 4) {
@@ -191,7 +218,7 @@ void halvePlane(const Plane& src, float* dst, int dstWidth, int dstHeight)
                 // differently on most cells.
                 const v128_t sum = wasm_f32x4_add(
                     wasm_f32x4_add(wasm_f32x4_add(aEven, aOdd), bEven), bOdd);
-                wasm_v128_store(dst + static_cast<std::size_t>(cy) * dstWidth + cx,
+                wasm_v128_store(dst + cellOffset(cy, dstWidth, cx),
                                 wasm_f32x4_mul(sum, quarter));
             }
         }
@@ -203,11 +230,11 @@ void halvePlane(const Plane& src, float* dst, int dstWidth, int dstHeight)
             float count = 0.0f;
             for (int y = cy * 2; y < y1; ++y) {
                 for (int x = cx * 2; x < x1; ++x) {
-                    sum += src.lum[static_cast<std::size_t>(y) * src.width + x];
+                    sum += src.lum[cellOffset(y, src.width, x)];
                     count += 1.0f;
                 }
             }
-            dst[static_cast<std::size_t>(cy) * dstWidth + cx] = count == 0.0f ? 0.0f : sum / count;
+            dst[cellOffset(cy, dstWidth, cx)] = count == 0.0f ? 0.0f : sum / count;
         }
     }
 }
@@ -243,8 +270,7 @@ void solveCoarseLevel(const Plane& current, const Plane& previous, float* flow)
                 v128_t ixt = ixx;
                 v128_t iyt = ixx;
                 for (int dy = -kLkWindowRadius; dy <= kLkWindowRadius; ++dy) {
-                    const std::size_t rowBase =
-                        static_cast<std::size_t>(cy + dy) * w + cx;
+                    const std::size_t rowBase = cellOffset(cy + dy, w, cx);
                     const float* cur = current.lum + rowBase;
                     const float* prev = previous.lum + rowBase;
                     for (int dx = -kLkWindowRadius; dx <= kLkWindowRadius; ++dx) {
@@ -284,7 +310,7 @@ void solveCoarseLevel(const Plane& current, const Plane& previous, float* flow)
                 vy = clampQuad(vy, lo, hi);
 
                 // The coarse step *is* the coarse flow: its guess was zero.
-                float* out = flow + (static_cast<std::size_t>(cy) * w + cx) * 2u;
+                float* out = flow + cellOffset(cy, w, cx) * 2u;
                 wasm_v128_store(out,     wasm_i32x4_shuffle(vx, vy, 0, 4, 1, 5));
                 wasm_v128_store(out + 4, wasm_i32x4_shuffle(vx, vy, 2, 6, 3, 7));
             }
@@ -295,7 +321,7 @@ void solveCoarseLevel(const Plane& current, const Plane& previous, float* flow)
             float stepX;
             float stepY;
             lkStep(current, previous, border, cy, 0.0f, 0.0f, stepX, stepY);
-            const std::size_t i = (static_cast<std::size_t>(cy) * w + border) * 2u;
+            const std::size_t i = cellOffset(cy, w, border) * 2u;
             flow[i]      = clampf(stepX, -kLkMaxFlow, kLkMaxFlow);
             flow[i + 1u] = clampf(stepY, -kLkMaxFlow, kLkMaxFlow);
         }
@@ -305,7 +331,7 @@ void solveCoarseLevel(const Plane& current, const Plane& previous, float* flow)
             float stepX;
             float stepY;
             lkStep(current, previous, cx, cy, 0.0f, 0.0f, stepX, stepY);
-            const std::size_t i = (static_cast<std::size_t>(cy) * w + cx) * 2u;
+            const std::size_t i = cellOffset(cy, w, cx) * 2u;
             flow[i]      = clampf(stepX, -kLkMaxFlow, kLkMaxFlow);
             flow[i + 1u] = clampf(stepY, -kLkMaxFlow, kLkMaxFlow);
         }
@@ -340,15 +366,17 @@ extern "C" EMSCRIPTEN_KEEPALIVE
 void computeMotionFlow(const float* current, const float* previous,
                        uint32_t width, uint32_t height, float* out)
 {
+    // `out` is left untouched for an empty or oversize field (the 32-bit
+    // offsets below would wrap); the int casts need width and height <= INT_MAX.
+    if (width == 0u || height == 0u || width > INT32_MAX || height > INT32_MAX) return;
+    if (static_cast<uint64_t>(width) * height > kMaxFlowCells) return;
     const int w = static_cast<int>(width);
     const int h = static_cast<int>(height);
-    if (w <= 0 || h <= 0) return;
 
     const int coarseW = (w + 1) / 2;
     const int coarseH = (h + 1) / 2;
-    const std::size_t coarseCells =
-        static_cast<std::size_t>(coarseW) * static_cast<std::size_t>(coarseH);
-    const std::size_t cells = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    const std::size_t coarseCells = usz(coarseW) * usz(coarseH);
+    const std::size_t cells = usz(w) * usz(h);
 
     // Both half-resolution planes and the coarse flow, back to back.
     float* scratch = scratchFloats(coarseCells * 4u);
@@ -375,7 +403,7 @@ void computeMotionFlow(const float* current, const float* previous,
             // ones, so its displacement is worth twice as much here.
             const int sx = mini(cx >> 1, coarseW - 1);
             const int sy = mini(cy >> 1, coarseH - 1);
-            const std::size_t si = (static_cast<std::size_t>(sy) * coarseW + sx) * 2u;
+            const std::size_t si = cellOffset(sy, coarseW, sx) * 2u;
             const float guessX = 2.0f * coarseFlow[si];
             const float guessY = 2.0f * coarseFlow[si + 1u];
 
@@ -383,7 +411,7 @@ void computeMotionFlow(const float* current, const float* previous,
             float stepY;
             lkStep(fineCurrent, finePrevious, cx, cy, guessX, guessY, stepX, stepY);
 
-            const std::size_t i = (static_cast<std::size_t>(cy) * w + cx) * 2u;
+            const std::size_t i = cellOffset(cy, w, cx) * 2u;
             out[i]      = clampf(guessX + stepX, -kLkMaxFlow, kLkMaxFlow);
             out[i + 1u] = clampf(guessY + stepY, -kLkMaxFlow, kLkMaxFlow);
         }

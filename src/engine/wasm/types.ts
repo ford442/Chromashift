@@ -53,8 +53,6 @@ export interface ChromashiftWasmModule {
   _free(ptr: number): void;
   /** Direct byte view of the WASM linear memory. */
   HEAPU8: Uint8Array;
-  /** Uint32 view of the WASM linear memory. */
-  HEAPU32: Uint32Array;
   /** Int32 view of the WASM linear memory. */
   HEAP32: Int32Array;
   /** Float32 view of the WASM linear memory. */

@@ -105,7 +105,7 @@ test.describe('gpu-chores CPU lane — worker/inline mask parity', () => {
       for (let i = 0; i < shared; i++) {
         if (inlineMask[i] !== workerMask[i]) {
           mismatchCount++;
-          firstMismatch ??= [i, inlineMask[i], workerMask[i]];
+          firstMismatch ??= [i, inlineMask[i]!, workerMask[i]!];
         }
       }
 

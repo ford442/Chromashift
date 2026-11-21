@@ -291,6 +291,26 @@ live in `simd_util.h`:
 | `computeColorBandCounts` | Vectorised ladder, scalar tally |
 | `computeMotionFlow` (`cpp/motion_flow.cpp`) | 2×2 `halvePlane` deinterleaves even/odd lanes with `wasm_i32x4_shuffle` and sums them `((a + b) + c) + d`, the scalar order; the coarse LK level solves 4 interior cells per lane (`clampQuad` passes a NaN through, as the scalar clamp does). The fine level stays scalar: its warped bilinear fetch is a per-cell gather |
 
+**Non-finite input and size limits.** A NaN or ±inf luminance cell poisons its neighbourhood's
+flow with NaN (the solve and the `clampf` ladder pass it through). That used to reach the fine
+level's bilinear fetch as a NaN *coordinate*, where `static_cast<int>(floor(NaN))` is undefined
+behaviour — `INT_MIN` on wasm32 without the nontrapping conversions, so `row0Base + x0` read far
+outside the plane. `samplePlaneBilinear` now maps a non-finite coordinate to 0 before the clamp
+and the floor; `finiteOrZero` in `motion_flow.cpp`, `finiteOrZero` in `motionKernel.ts` and
+`finite_or_zero` in the WGSL refine pass are the same function, so all three lanes sample the
+same in-bounds cell (WGSL has no `isnan`, so it is a comparison and best effort on a driver that
+assumes no NaNs). The output is NaN either way; what changed is that the read is in bounds. The
+fixture — a NaN in the current plane, an Inf and a NaN in the previous one — is pinned
+by `motionKernel.test.ts` (TypeScript), `test_engine.cpp` (scalar under `test-asan`, SIMD128 under
+`test-simd-asan`) and `bench:wasm` (the shipped build), as the exact NaN pattern plus a few finite
+cells. Separately, every export that indexes by `width * height` refuses an image whose RGBA byte
+offsets would not fit in 32 bits (`chromashift::kMaxRgbaPixels`, `UINT32_MAX / 4`; the flow field's
+two floats a cell give `UINT32_MAX / 8`): it returns without touching memory, so raising
+`MAXIMUM_MEMORY` to 4 GB cannot turn a wrapped offset into a silent overrun. The TypeScript
+dispatchers throw a `RangeError` for the same inputs, and for a buffer shorter than
+`width × height × 4` (`classifyPixelsMaskWith`) or a plane whose `lum` is not `width × height`
+(`computeMotionFlowWith`), instead of letting the kernel read past the heap copy.
+
 Output is bit-identical to the scalar path, for every kernel. The luminance step issues its
 three multiplies and two adds in the same order as the scalar code and f32 lanes round
 exactly like scalar f32, and the ladder is the same comparison set. The average-luminance
@@ -448,19 +468,22 @@ npm run compile-commands && npm run check:compile-commands  # clangd database co
 npm run test:cpp            # host-side g++ unit tests (band ladder, bulk kernels, durationToDecay)
 npm run test:cpp:werror     # same tests, -Werror — what wasm.yml's host-tests job runs
 npm run test:cpp:simd       # same tests on em++ -msimd128 + bit-exact SIMD/scalar parity (needs emsdk)
+npm run test:cpp:simd:asan  # the SIMD128 build under ASan + UBSan (needs emsdk)
 npm run bench:wasm -- --assert  # kernel throughput floors (the CI perf gate)
 ```
 
 ### Warnings and sanitizers
 
-Every compile — host tests, SIMD tests, the shipped `emcc` build and the clangd database — starts from `CXXFLAGS_COMMON` in `cpp/Makefile` (`-std=c++17 -Wall -Wextra -ffp-contract=off -I.`), so a warning cannot be present in the shipped `.wasm` while being invisible to the test gate.
+Every compile — host tests, SIMD tests, the shipped `emcc` build and the clangd database — starts from `CXXFLAGS_COMMON` in `cpp/Makefile` (`-std=c++20 -Wall -Wextra -Wconversion -Wsign-conversion -Wdouble-promotion -Wshadow -ffp-contract=off -I.`), so a warning cannot be present in the shipped `.wasm` while being invisible to the test gate.
 
 | Command | What it does |
 |---|---|
 | `npm run test:cpp` | Host tests, warnings printed |
-| `npm run test:cpp:werror` | Host tests with `-Werror` — **the CI gate** (`wasm.yml` `host-tests`); a new implicit conversion or unused parameter fails it |
+| `npm run test:cpp:werror` | Host tests with `-Werror` — **the CI gate** (`wasm.yml` `host-tests`); a new implicit conversion, float→double promotion, shadowed name or unused parameter fails it |
 | `npm run test:cpp:simd` | The host suite built with `em++ -msimd128 -Werror` and run under Node, then the SIMD/scalar parity harness — `wasm.yml`'s `wasm` job. Needs emsdk on `PATH` |
-| `npm run test:cpp:asan` | Host tests under `-fsanitize=address,undefined`. Optional: the instrumented binary is several times slower, so it is **not** part of the per-PR gate. Run it when touching pointer arithmetic in the bulk/LUT kernels. Host-only — sanitizers are never applied to the shipped `.wasm`. |
+| `npm run test:cpp:asan` | Host tests under `-fsanitize=address,undefined -fno-sanitize-recover=all`: the first finding aborts the binary (UBSan's default is report-and-continue, exit 0). The instrumented binary is several times slower, so it is **not** part of the per-PR gate — `wasm.yml`'s `sanitizers` job runs it on engine changes and nightly. Sanitizers are never applied to the shipped `.wasm`. |
+| `npm run test:cpp:simd:asan` | The SIMD128 build (`em++ -fsanitize=address,undefined`) under Node: the whole suite plus the SIMD/scalar parity harness. The host build only ever compiles the scalar paths, so this is the only place an out-of-bounds `v128` load is visible. Needs emsdk |
+| `make -C cpp test-sanitizer-selftest` | Proves the sanitizers are armed to fail: a deliberate signed overflow and heap overflow must make the binary exit non-zero (`tests/sanitizer_selftest.cpp`). `test-simd-asan` runs the same check for an out-of-bounds `v128` load before it runs the suites |
 
 ### Editor setup (clangd)
 
@@ -475,7 +498,7 @@ With emsdk active (`$EMSDK` set, e.g. after `source emsdk_env.sh`), the engine T
 `npm run check:compile-commands` (`scripts/check-compile-commands.mjs`) verifies the database, with the file lists and flag sets read from `cpp/Makefile` through `make` rather than copied:
 
 - every `cpp/**/*.cpp` on disk is an entry — a TU added to a test target but to none of `SRCS`, `TEST_SRC` or `PARITY_SRCS` is invisible to clangd, and fails here;
-- every entry carries the tokens of `CXXFLAGS_COMMON` (`-std=c++17 -Wall -Wextra -ffp-contract=off -I.`) and none carries `-mrelaxed-simd`;
+- every entry carries the tokens of `CXXFLAGS_COMMON` (`-std=c++20 -Wall -Wextra -Wconversion -Wsign-conversion -Wdouble-promotion -Wshadow -ffp-contract=off -I.`) and none carries `-mrelaxed-simd`;
 - with `$EMSDK` set, the engine and parity entries are `wasm32` with `WASM_CXXFLAGS` (`-msimd128`, `-fno-exceptions`, `-fno-rtti`), not host fallbacks.
 
 Without emsdk the engine entries are host entries and the parity TUs are absent by design, so the check passes on a laptop. `wasm.yml`'s `wasm` job has the pinned emsdk and passes `--require-wasm`, so a wasm32 entry that cannot be emitted fails there. The database itself stays gitignored.
@@ -527,12 +550,15 @@ earns an export, a per-frame scalar does not (see [Where code runs](#where-code-
 | Flag | Verdict | Reasoning |
 |---|---|---|
 | `--bind` (embind) | **Removed** | Every binding was a `reinterpret_cast` passthrough over the C ABI the module already exported. The TS bridge now calls `mod._name(...)` directly — see "Export strategy" above. Dropping it also dropped `-DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0`, which existed only to make embind compile. |
-| `CXXFLAGS_COMMON` (`-std=c++17 -Wall -Wextra -ffp-contract=off -I.`) | **Added** | The one compile-flag set every build shares — host tests (CI runs them at `-Werror`), SIMD tests, this build and the clangd database — so a warning that fails the test gate cannot be silently absent from the shipped build. `-ffp-contract=off` keeps every target from fusing `a*b + c`, which bit-exact parity depends on (see "SIMD128 kernels"). |
+| `CXXFLAGS_COMMON` (`-std=c++20 -Wall -Wextra -Wconversion -Wsign-conversion -Wdouble-promotion -Wshadow -ffp-contract=off -I.`) | **Added** | The one compile-flag set every build shares — host tests (CI runs them at `-Werror`), SIMD tests, this build and the clangd database — so a warning that fails the test gate cannot be silently absent from the shipped build. `-Wdouble-promotion` is the one parity leans on: float and double round differently, so a promotion must be a visible `static_cast`. `-ffp-contract=off` keeps every target from fusing `a*b + c`, which bit-exact parity depends on (see "SIMD128 kernels"). |
 | `-mrelaxed-simd` | **Never** | Relaxed ops (FMA, swizzle, min/max) have implementation-defined results: output would differ between browsers and from the scalar path. |
 | `-fno-rtti` | **Added** | Nothing uses `typeid` / `dynamic_cast`; with embind gone there is nothing that needs type info. |
 | `-msse2` | **Removed** | Nothing includes `<emmintrin.h>`; the SIMD kernels use `<wasm_simd128.h>` directly, which needs only `-msimd128`. |
 | `-s EXPORTED_FUNCTIONS=[...]` | **Keep — now the only ABI** | Produces `_malloc` / `_free` and every engine entry point. Guarded by `verify-exports`. |
 | `-msimd128` | **Keep — load-bearing** | Enables the hand-written `wasm_simd128.h` kernels (`__wasm_simd128__`). See "SIMD status" below. |
+| `-mbulk-memory -mnontrapping-fptoint -msign-ext` | **Added** | The rest of the feature floor, spelled out (emsdk 4 turns them on by default; every SIMD128 browser ships them). Bulk memory is native `memory.fill` / `memory.copy`; nontrapping float-to-int makes `static_cast<int>(NaN)` convert instead of trap. They make the loader's probe (`missingWasmFeatures()`) a checklist: keep it in step with this flag set. |
+| `-s INCOMING_MODULE_JS_API=["wasmBinary"]` | **Added** | `wasmBinary` is the one option anything passes to the factory (headless renderer, bench script); everything else the glue would read off the argument is dropped. |
+| `-s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2` (debug) | **Added** | Debug-only runtime checks: a misaligned or out-of-range heap access traps at the access; the stack canary is checked on every function entry. |
 | `-flto` (release) | **Added** | Whole-program optimisation across the engine's TUs (`chromashift_engine.cpp`, `motion_flow.cpp`) and libc; part of the drop from 47.2 kB to 33.4 kB of `.wasm`. |
 | `--closure 1` (release) | **Added** | The glue is a thin C-ABI shim, so Closure has nothing to break: 10.7 kB → 4.9 kB. Off in debug builds. Output is reproducible for a pinned emsdk version, which `wasm.yml`'s freshness check relies on. |
 | `-s ENVIRONMENT=web,worker` | **Added** | The engine only ever runs in a browser window or a Web Worker (the analysis worker included); this drops the Node/shell detection branches from the glue. Node callers such as `scripts/bench-wasm.mjs` pass `wasmBinary` instead of relying on a file loader. |
@@ -546,7 +572,7 @@ earns an export, a per-frame scalar does not (see [Where code runs](#where-code-
 
 **Net result:** artifact sizes dropped from 33.9 kB glue + 47.2 kB wasm to 4.9 kB glue +
 33.4 kB wasm; adding `motion_flow.cpp` took the wasm to 39.0 kB, and emmalloc brought it back
-to **34.2 kB** (emsdk 3.1.64).
+to **34.2 kB** (emsdk 3.1.64). On emsdk 4.0.23 with the feature floor and `INCOMING_MODULE_JS_API` the pair is **3.0 kB glue + 30.9 kB wasm**.
 
 ---
 
@@ -564,10 +590,12 @@ therefore a **hard requirement** of the binary, not an opportunistic optimisatio
 | Safari 16.4+ | ✅ Full SIMD128 |
 | Safari < 16.4 | ❌ WASM engine unavailable — TypeScript engine used |
 
-**Feature detection:** `loadEngine.ts` exports `isWasmSimdSupported()`, which probes the
-browser using `WebAssembly.validate` on a minimal module containing a `v128.const`
-instruction. `loadWasmEngine()` calls it *before* fetching the module: on a browser without
-SIMD128 it skips the load entirely (instantiating a `v128` binary there would just throw)
+**Feature detection:** `loadEngine.ts` exports `missingWasmFeatures()` / `isWasmFeatureFloorSupported()`, which probe the
+browser with `WebAssembly.validate` on one minimal module per feature of the build's floor —
+`simd128` (`v128.const`), `bulk-memory` (`memory.fill`), `nontrapping-fptoint`
+(`i32.trunc_sat_f32_s`) and `sign-ext` (`i32.extend8_s`) — so a failure names the feature.
+`loadWasmEngine()` calls it *before* fetching the module: on a browser missing any of them
+it skips the load entirely (instantiating the binary there would just throw)
 and leaves every dispatcher on its TypeScript implementation.
 
 ```
@@ -577,14 +605,18 @@ and leaves every dispatcher on its TypeScript implementation.
 or, on older browsers:
 
 ```
-[WasmEngine] WebAssembly SIMD128 unsupported — using the TypeScript engine.
+[WasmEngine] WebAssembly simd128 not supported by this runtime — using the TypeScript engine.
 ```
 
 The probe module is built from its sections (`wasmSection` + `leb128` in `loadEngine.ts`),
 so every size field is computed rather than typed in. The hand-written bytes it replaced
 had two section sizes short (`0x0f`/`0x0d` for 22/20-byte bodies): `WebAssembly.validate`
 rejected the module on every browser, and the engine silently never loaded.
-`loadEngine.test.ts` pins `isWasmSimdSupported() === true` under Node 22, which has SIMD128.
+`loadEngine.test.ts` pins the whole floor as supported under Node 22.
+
+**One retry.** A failed load is terminal for the session (`error`), so `loadWasmEngine()` makes two attempts, 250 ms apart: a dropped request on a flaky connection no longer costs every CPU kernel its acceleration for the life of the tab. A failed `import()` is retried against a cache-busted URL (a document's module map may remember the failure); a glue that imported but failed to fetch or instantiate its `.wasm` keeps the glue and calls the factory again.
+
+**Where the glue is.** `loadEngine.ts` builds the URL as `new URL('/chromashift_engine.js', import.meta.url)`, which Vite rewrites to the path from the current chunk to the file in `public/` for whatever `base` is. It was `new URL(BASE_URL, location.href)`, and `location` is the *worker script* inside a worker: under the build's `base: './'` both workers asked for `/assets/chromashift_engine.js`, got a 404 and ran the TypeScript fallback in production, invisible to the dev server's `/` base. `e2e/wasm-engine.spec.ts` against `vite preview` (`e2e-preview` in CI) is the guard.
 
 **Load status breadcrumbs.** The main thread publishes `window.wasmEngineState`
 (`'idle' | 'loading' | 'ready' | 'unavailable' | 'error'`) and `window.wasmEngineError`
@@ -736,7 +768,6 @@ In addition to `HEAPU8` (byte-level access), the build now exports:
 | View | Type | Use |
 |---|---|---|
 | `HEAPU8` | `Uint8Array` | Read/write raw bytes (pixel input buffers) |
-| `HEAPU32` | `Uint32Array` | Read histogram / band-count output (uint32 arrays) |
 | `HEAP32` | `Int32Array` | Read bulk classification output (int32 arrays) |
 | `HEAPF32` | `Float32Array` | Read/write float angle and tracer buffers |
 

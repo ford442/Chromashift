@@ -147,6 +147,53 @@ export function buildFlowFixture() {
   return { previous: build(6, 6), current: build(8, 7) };
 }
 
+/**
+ * The same 16×16 fixture with non-finite cells planted in it: a NaN in the
+ * current plane, an Infinity and a NaN in the previous one. A NaN flow guess
+ * used to reach the bilinear fetch as an array index, which is undefined
+ * behaviour in C++ (see `finiteOrZero` in cpp/motion_flow.cpp).
+ *
+ * `FLOW_NONFINITE_NAN_ROWS` is where the output is NaN ('N') and where it is
+ * finite ('.'), one string per row; `FLOW_NONFINITE_GOLDEN` pins two finite
+ * cells with real structure and two still ones. Pinned identically by
+ * `motionKernel.test.ts` (the TypeScript lane) and `cpp/tests/test_engine.cpp`
+ * (the scalar and SIMD128 builds), and here on the shipped build.
+ */
+export const FLOW_NONFINITE_NAN_ROWS = [
+  '......NNNNNNNNNN',
+  '......NNNNNNNNNN',
+  '....NNNNNNNNNNNN',
+  '....NNNNNNNNNNNN',
+  '....NNNNNNNNNNNN',
+  '....NNNNNNNNNNNN',
+  'NNNNNNNNNNNNNN..',
+  'NNNNNNNNNNNNNN..',
+  'NNNNNNNNNNNN....',
+  'NNNNNNNNNNNN....',
+  'NNNNNNNN........',
+  'NNNNNNNN........',
+  'NNNNNNNN........',
+  'NNNNNNNN........',
+  '................',
+  '................',
+];
+export const FLOW_NONFINITE_GOLDEN = [
+  { x: 10, y: 10, vx: 1.638885, vy: 1.397043 },
+  { x: 13, y: 8, vx: 1.352106, vy: 0.192026 },
+  { x: 3, y: 14, vx: 0, vy: 0 },
+  { x: 0, y: 0, vx: 0, vy: 0 },
+];
+
+/** The pinned fixture's planes with the non-finite cells planted. */
+export function buildNonFiniteFlowFixture() {
+  const { previous, current } = buildFlowFixture();
+  const size = FLOW_FIXTURE_SIZE;
+  current[5 * size + 9] = NaN;
+  previous[10 * size + 4] = Infinity;
+  previous[2 * size + 12] = NaN;
+  return { previous, current };
+}
+
 /** Median wall-clock ms over `iters` runs, after `warmup` untimed runs. */
 export function timeMedian(fn, { warmup = 2, iters = 7 } = {}) {
   for (let i = 0; i < warmup; i += 1) fn();
@@ -250,6 +297,27 @@ export function runBenchmark(mod, { pixels = buildGoldenImage() } = {}) {
       if (Math.abs(flow[i] - cell.vx) > FLOW_FIXTURE_TOLERANCE) flowMismatches += 1;
       if (Math.abs(flow[i + 1] - cell.vy) > FLOW_FIXTURE_TOLERANCE) flowMismatches += 1;
     }
+
+    // And the non-finite one: NaN-ness exact, the finite cells to tolerance.
+    const hostile = buildNonFiniteFlowFixture();
+    mod.HEAPF32.set(hostile.current, flowCurPtr >> 2);
+    mod.HEAPF32.set(hostile.previous, flowPrevPtr >> 2);
+    mod._computeMotionFlow(flowCurPtr, flowPrevPtr, size, size, flowOutPtr);
+    const hostileFlow = mod.HEAPF32.subarray(flowOutPtr >> 2, (flowOutPtr >> 2) + size * size * 2);
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const i = (y * size + x) * 2;
+        const wantNaN = FLOW_NONFINITE_NAN_ROWS[y][x] === 'N';
+        if (Number.isNaN(hostileFlow[i]) !== wantNaN) flowMismatches += 1;
+        if (Number.isNaN(hostileFlow[i + 1]) !== wantNaN) flowMismatches += 1;
+      }
+    }
+    for (const cell of FLOW_NONFINITE_GOLDEN) {
+      const i = (cell.y * size + cell.x) * 2;
+      if (!(Math.abs(hostileFlow[i] - cell.vx) <= FLOW_FIXTURE_TOLERANCE)) flowMismatches += 1;
+      if (!(Math.abs(hostileFlow[i + 1] - cell.vy) <= FLOW_FIXTURE_TOLERANCE)) flowMismatches += 1;
+    }
+
     mod._free(flowCurPtr);
     mod._free(flowPrevPtr);
     mod._free(flowOutPtr);

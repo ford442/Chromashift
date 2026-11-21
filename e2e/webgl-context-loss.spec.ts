@@ -34,7 +34,7 @@ async function canvasDistinctColours(page: Page): Promise<number> {
     const { data } = context.getImageData(0, 0, copy.width, copy.height);
     const seen = new Set<number>();
     for (let i = 0; i < data.length; i += 4 * 7) {
-      seen.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+      seen.add((data[i]! << 16) | (data[i + 1]! << 8) | data[i + 2]!);
     }
     return seen.size;
   });

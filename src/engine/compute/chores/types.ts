@@ -325,7 +325,7 @@ export interface CpuMotionFieldResult {
  */
 export interface CpuChoreHost extends Partial<CpuMotionFieldHost> {
   /** True when the WASM module is loaded and callable. */
-  isWasmReady(): boolean;
+  isWasmReady: () => boolean;
   /**
    * Compute average luminance (unless `avgLumHint` is given) and the
    * classification mask for `image` in one call, so a worker-backed host only

@@ -53,7 +53,7 @@ import type {
   RenderWorkerProtocol,
 } from './protocol';
 
-type Method = keyof RenderWorkerProtocol & string;
+type Method = keyof RenderWorkerProtocol;
 type Req<M extends Method> = RpcRequest<RenderWorkerProtocol, M>;
 type Res<M extends Method> = RpcResponse<RenderWorkerProtocol, M>;
 

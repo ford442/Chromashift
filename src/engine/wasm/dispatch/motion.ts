@@ -11,6 +11,24 @@ import { canUseWasmFn, getPersistentBuf, getWasmModule } from '../loadEngine';
 import { lucasKanadeFlow, type LuminancePlane } from '../../compute/chores/motionKernel';
 
 /**
+ * The most cells the C++ kernel takes: its output is two floats a cell, so
+ * `UINT32_MAX / 8` keeps every byte offset in 32 bits (`kMaxFlowCells` in
+ * cpp/motion_flow.cpp). Above it the export returns without writing.
+ */
+const MAX_FLOW_CELLS = Math.floor(0xffffffff / 8);
+
+/** A plane must hold exactly `width × height` floats: the kernel reads that many and no fewer. */
+function assertPlaneLength(plane: LuminancePlane, label: string): void {
+  const cells = plane.width * plane.height;
+  if (plane.lum.length !== cells) {
+    throw new RangeError(
+      `computeMotionFlowWith: ${label} plane holds ${plane.lum.length} floats, `
+      + `${plane.width}×${plane.height} needs ${cells}`,
+    );
+  }
+}
+
+/**
  * Coarse-to-fine Lucas–Kanade flow for one frame pair.
  *
  * When `useWasm` is `true` **and** the WASM module is loaded the solve runs in
@@ -29,6 +47,7 @@ export function computeMotionFlowWith(
   previous: LuminancePlane | null,
   useWasm: boolean,
 ): Float32Array {
+  assertPlaneLength(current, 'current');
   const cells = current.width * current.height;
   if (
     !previous
@@ -36,6 +55,11 @@ export function computeMotionFlowWith(
     || previous.height !== current.height
   ) {
     return new Float32Array(cells * 2);
+  }
+
+  assertPlaneLength(previous, 'previous');
+  if (cells > MAX_FLOW_CELLS) {
+    throw new RangeError(`computeMotionFlowWith: ${cells} cells exceeds the ${MAX_FLOW_CELLS}-cell limit`);
   }
 
   if (canUseWasmFn('_computeMotionFlow', useWasm)) {

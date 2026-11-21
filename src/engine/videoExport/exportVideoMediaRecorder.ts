@@ -80,9 +80,9 @@ export async function exportVideoMediaRecorder(
         0,
       );
 
-      if ('requestFrame' in videoTrack && typeof videoTrack.requestFrame === 'function') {
-        videoTrack.requestFrame();
-      }
+      // Only a `CanvasCaptureMediaStreamTrack` has it; absent, the recorder
+      // samples the canvas on its own clock.
+      (videoTrack as MediaStreamTrack & { requestFrame?: () => void }).requestFrame?.();
     }
   } finally {
     recorder.stop();

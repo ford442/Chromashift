@@ -109,6 +109,8 @@ function probeToneMappingFromConfiguration(
   format?: GPUTextureFormat,
 ): boolean | null {
   // Absent on a canvas context before Chrome 131.
+  // Only probed for here; it is invoked below with `.call(context)`.
+  // eslint-disable-next-line @typescript-eslint/unbound-method
   const readConfiguration = context.getConfiguration;
   if (typeof readConfiguration !== 'function') return null;
   try {

@@ -39,6 +39,7 @@ export class MidiController {
     };
   }
 
+  // eslint-disable-next-line @typescript-eslint/require-await -- the contract is a Promise; teardown has nothing to await
   async stop(): Promise<void> {
     if (this.access) {
       this.access.onstatechange = null;

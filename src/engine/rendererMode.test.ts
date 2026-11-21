@@ -120,7 +120,7 @@ describe('switchRendererPreference', () => {
   it('openWebGlDiagnosticSession is a named navigation, not an in-place switch', () => {
     const win = installBrowserGlobals('?renderer=webgpu');
     openWebGlDiagnosticSession();
-    expect(String((win.location.assign as ReturnType<typeof vi.fn>).mock.calls[0]?.[0])).toContain('renderer=webgl');
+    expect(String((win.location.assign).mock.calls[0]?.[0])).toContain('renderer=webgl');
   });
 });
 

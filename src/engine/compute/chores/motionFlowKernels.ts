@@ -184,13 +184,23 @@ fn lum_at(tex: texture_2d<f32>, x: i32, y: i32) -> f32 {
 }
 
 /**
+ * NaN and +/-inf become 0, every finite value passes through — \`finiteOrZero\`.
+ * Written as a comparison because WGSL has no isnan / isinf: NaN fails
+ * \`<= f32::MAX\`, so it takes the 0.0 arm like an infinity does. Best effort on
+ * a driver that assumes no NaNs; the CPU lanes are where it is load-bearing.
+ */
+fn finite_or_zero(v: f32) -> f32 {
+  return select(0.0, v, abs(v) <= 3.4028234e38);
+}
+
+/**
  * Clamped bilinear fetch — \`samplePlaneBilinear\`. Two lerps along x, then one
  * along y, in that order: the CPU mirrors repeat it verbatim so all three lanes
- * round the same way.
+ * round the same way. A non-finite coordinate reads at 0 first, as they do.
  */
 fn lum_bilinear(tex: texture_2d<f32>, x: f32, y: f32) -> f32 {
-  let fx = clamp(x, 0.0, f32(fp.field_width) - 1.0);
-  let fy = clamp(y, 0.0, f32(fp.field_height) - 1.0);
+  let fx = clamp(finite_or_zero(x), 0.0, f32(fp.field_width) - 1.0);
+  let fy = clamp(finite_or_zero(y), 0.0, f32(fp.field_height) - 1.0);
   let x0 = i32(floor(fx));
   let y0 = i32(floor(fy));
   let x1 = min(x0 + 1, i32(fp.field_width) - 1);

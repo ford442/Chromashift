@@ -83,7 +83,7 @@ export interface EncodePlan {
 }
 
 const intParam = (node: GraphNode, name: string, fallback: number): number =>
-  typeof node.params[name] === 'number' ? (node.params[name] as number) : fallback;
+  typeof node.params[name] === 'number' ? (node.params[name]) : fallback;
 
 /**
  * Turn a `CompiledGraph` into encodable steps.

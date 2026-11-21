@@ -103,14 +103,16 @@ function setIn(container: unknown, keys: readonly string[], value: number): unkn
   const [key, ...rest] = keys;
   if (key === undefined) return container;
   if (Array.isArray(container)) {
+    // `Array.isArray` narrows `unknown` to `any[]`; keep the elements `unknown`.
+    const items: unknown[] = container;
     const index = Number(key);
     // Writes past the end are dropped rather than growing the array behind
     // `layers.count`'s back — a binding for layer 7 in a 3-layer session must
     // not resize the session.
-    if (!Number.isInteger(index) || index < 0 || index >= container.length) return container;
-    const next = rest.length ? setIn(container[index], rest, value) : value;
-    if (Object.is(next, container[index])) return container;
-    const copy = [...container];
+    if (!Number.isInteger(index) || index < 0 || index >= items.length) return container;
+    const next = rest.length ? setIn(items[index], rest, value) : value;
+    if (Object.is(next, items[index])) return container;
+    const copy = [...items];
     copy[index] = next;
     return copy;
   }

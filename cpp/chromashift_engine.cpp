@@ -208,7 +208,8 @@ float computeAverageLuminanceStrided(const uint8_t* pixels,
                                      uint32_t height,
                                      uint32_t stride)
 {
-    if (width == 0u || height == 0u) return 128.0f;
+    const uint32_t pixelCount = chromashift::checkedPixelCount(width, height);
+    if (pixelCount == 0u) return 128.0f;
     if (stride < 1u) stride = 1u;
 
     double sumR = 0.0, sumG = 0.0, sumB = 0.0;
@@ -216,7 +217,7 @@ float computeAverageLuminanceStrided(const uint8_t* pixels,
 
     if (stride == 1u) {
         // Every pixel is visited in order — one contiguous (vectorised) run.
-        n = width * height;
+        n = pixelCount;
         accumulateChannelSums(pixels, n, sumR, sumG, sumB);
     } else {
         // Sparse gather: no useful vector form, but integer row sums still beat
@@ -381,7 +382,7 @@ void computeClassificationMask(const uint8_t* pixels,
                                float avgLum,
                                uint8_t* outMask)
 {
-    const uint32_t pixelCount = width * height;
+    const uint32_t pixelCount = chromashift::checkedPixelCount(width, height);
     const int roundedAvgLum = roundAvgLum(avgLum);
     const float offset = lightDarkOffset(roundedAvgLum);
     uint32_t i = 0u;
@@ -404,7 +405,7 @@ void computeClassificationMaskLut(const uint8_t* pixels,
                                 float avgLum,
                                 uint8_t* outMask)
 {
-    const uint32_t pixelCount = width * height;
+    const uint32_t pixelCount = chromashift::checkedPixelCount(width, height);
     const int roundedAvgLum = roundAvgLum(avgLum);
     uint8_t lut[256];
     buildBandLut(roundedAvgLum, lut);

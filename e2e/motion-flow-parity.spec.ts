@@ -189,7 +189,7 @@ test.describe('Motion flow WGSL parity', () => {
         for (let x = 0; x < size; x += 1) {
           const base = y * wordsPerRow + x * 4;
           // r = magnitude, gb = velocity.
-          flow.push(fromHalf(words[base + 1]), fromHalf(words[base + 2]));
+          flow.push(fromHalf(words[base + 1]!), fromHalf(words[base + 2]!));
         }
       }
       return flow;
@@ -205,9 +205,9 @@ test.describe('Motion flow WGSL parity', () => {
 
     for (const [x, y] of CELLS) {
       const i = (y * SIZE + x) * 2;
-      expect(actual![i], `vx at (${x}, ${y})`).toBeCloseTo(expected.flow[i], 2);
-      expect(Math.abs(actual![i] - expected.flow[i])).toBeLessThan(TOLERANCE);
-      expect(Math.abs(actual![i + 1] - expected.flow[i + 1])).toBeLessThan(TOLERANCE);
+      expect(actual![i], `vx at (${x}, ${y})`).toBeCloseTo(expected.flow[i]!, 2);
+      expect(Math.abs(actual![i]! - expected.flow[i]!)).toBeLessThan(TOLERANCE);
+      expect(Math.abs(actual![i + 1]! - expected.flow[i + 1]!)).toBeLessThan(TOLERANCE);
       // The sign is the feature: a bar moving down-right must never read as
       // moving up-left, whichever lane solved it.
       expect(actual![i]).toBeGreaterThan(0);

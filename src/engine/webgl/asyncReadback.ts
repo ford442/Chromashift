@@ -63,7 +63,7 @@ export class PixelPackRead {
     const gl = this.gl;
     // clientWaitSync(timeout=0) still blocks on some software GL drivers until
     // the whole queued pipeline finishes. SYNC_STATUS does not wait.
-    const status = gl.getSyncParameter(this.fence, gl.SYNC_STATUS);
+    const status = gl.getSyncParameter(this.fence, gl.SYNC_STATUS) as number;
     if (status !== gl.SIGNALED) return null;
     gl.deleteSync(this.fence);
     this.fence = null;

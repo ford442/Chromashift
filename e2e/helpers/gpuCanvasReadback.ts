@@ -92,10 +92,10 @@ function decodeFrame(raw: RawFrame): CanvasFrame {
       for (let x = 0; x < width; x += 1) {
         const s = y * bytesPerRow + x * 4;
         const d = (y * width + x) * 4;
-        pixels[d] = source[s + r];
-        pixels[d + 1] = source[s + 1];
-        pixels[d + 2] = source[s + b];
-        pixels[d + 3] = source[s + 3];
+        pixels[d] = source[s + r]!;
+        pixels[d + 1] = source[s + 1]!;
+        pixels[d + 2] = source[s + b]!;
+        pixels[d + 3] = source[s + 3]!;
       }
     }
   } else {
@@ -155,7 +155,7 @@ export function frameDistinctColours(frame: CanvasFrame): number {
   const seen = new Set<number>();
   const { pixels } = frame;
   for (let p = 0; p < pixels.length; p += 4) {
-    seen.add((pixels[p] << 16) | (pixels[p + 1] << 8) | pixels[p + 2]);
+    seen.add((pixels[p]! << 16) | (pixels[p + 1]! << 8) | pixels[p + 2]!);
   }
   return seen.size;
 }
@@ -173,7 +173,7 @@ export function frameDifference(a: CanvasFrame, b: CanvasFrame): {
   for (let p = 0; p < a.pixels.length; p += 4) {
     let pixelDiffers = false;
     for (let c = 0; c < 4; c += 1) {
-      const delta = Math.abs(a.pixels[p + c] - b.pixels[p + c]);
+      const delta = Math.abs(a.pixels[p + c]! - b.pixels[p + c]!);
       if (delta > 0) pixelDiffers = true;
       if (delta > maxChannelDelta) maxChannelDelta = delta;
     }

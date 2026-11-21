@@ -66,10 +66,10 @@ export function encodeFramePng(frame: Pick<CanvasFrame, 'width' | 'height' | 'pi
     for (let filter = 0; filter <= 4; filter += 1) {
       let cost = 0;
       for (let x = 0; x < stride; x += 1) {
-        const a = x >= 4 ? pixels[y * stride + x - 4] : 0;
-        const b = y > 0 ? pixels[(y - 1) * stride + x] : 0;
-        const c = x >= 4 && y > 0 ? pixels[(y - 1) * stride + x - 4] : 0;
-        const residual = (pixels[y * stride + x] - predict(filter, a, b, c)) & 0xff;
+        const a = x >= 4 ? pixels[y * stride + x - 4]! : 0;
+        const b = y > 0 ? pixels[(y - 1) * stride + x]! : 0;
+        const c = x >= 4 && y > 0 ? pixels[(y - 1) * stride + x - 4]! : 0;
+        const residual = (pixels[y * stride + x]! - predict(filter, a, b, c)) & 0xff;
         candidate[x] = residual;
         cost += residual < 128 ? residual : 256 - residual;
       }
@@ -120,14 +120,14 @@ function decodeFramePng(png: Buffer): { width: number; height: number; pixels: B
   const stride = width * 4;
   const pixels = Buffer.alloc(stride * height);
   for (let y = 0; y < height; y += 1) {
-    const filter = raw[y * (stride + 1)];
+    const filter = raw[y * (stride + 1)]!;
     const row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
     for (let x = 0; x < stride; x += 1) {
-      const a = x >= 4 ? pixels[y * stride + x - 4] : 0;
-      const b = y > 0 ? pixels[(y - 1) * stride + x] : 0;
-      const c = x >= 4 && y > 0 ? pixels[(y - 1) * stride + x - 4] : 0;
+      const a = x >= 4 ? pixels[y * stride + x - 4]! : 0;
+      const b = y > 0 ? pixels[(y - 1) * stride + x]! : 0;
+      const c = x >= 4 && y > 0 ? pixels[(y - 1) * stride + x - 4]! : 0;
       const predictor = predict(filter, a, b, c);
-      pixels[y * stride + x] = (row[x] + predictor) & 0xff;
+      pixels[y * stride + x] = (row[x]! + predictor) & 0xff;
     }
   }
   return { width, height, pixels };

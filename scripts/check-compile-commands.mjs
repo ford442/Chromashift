@@ -11,7 +11,7 @@
  *     `-ffp-contract=off` from the Makefile fails here rather than passing
  *     because the Makefile and the database agree on the wrong thing.
  *  3. With `$EMSDK` set, the engine and the wasm-only TUs are wasm32 entries
- *     carrying `WASM_CXXFLAGS` (`-msimd128`, `-fno-exceptions`, `-fno-rtti`),
+ *     carrying `WASM_CXXFLAGS` (`-msimd128` and the rest of the feature floor, `-fno-exceptions`, `-fno-rtti`),
  *     not host fallbacks that grey out every `#if CS_HAS_SIMD` block.
  *
  * File lists and flag sets come from cpp/Makefile (`make --eval`), never from a
@@ -34,8 +34,15 @@ const cppDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'cpp');
 const requireWasm = process.argv.includes('--require-wasm');
 
 /** Tokens the issue pins regardless of what the Makefile currently says. */
-const COMMON_FLOOR = ['-std=c++17', '-Wall', '-Wextra', '-ffp-contract=off'];
-const WASM_FLOOR = ['--target=wasm32-unknown-emscripten', '-msimd128'];
+const COMMON_FLOOR = [
+  '-std=c++20', '-Wall', '-Wextra', '-Wconversion', '-Wsign-conversion', '-Wdouble-promotion',
+  '-Wshadow', '-ffp-contract=off',
+];
+// The wasm feature floor: loadEngine.ts's probe (missingWasmFeatures) checks the same four.
+const WASM_FLOOR = [
+  '--target=wasm32-unknown-emscripten', '-msimd128', '-mbulk-memory', '-mnontrapping-fptoint',
+  '-msign-ext',
+];
 /** Relaxed SIMD ops are implementation-defined: they break bit-exact parity. */
 const FORBIDDEN = ['-mrelaxed-simd'];
 
@@ -45,7 +52,7 @@ const words = (list) => list.split(/\s+/).filter(Boolean);
 
 // ─── Makefile variables ──────────────────────────────────────────────────────
 
-const VARS = ['SRCS', 'TEST_SRC', 'PARITY_SRCS', 'CXXFLAGS_COMMON', 'WASM_CXXFLAGS'];
+const VARS = ['SRCS', 'TEST_SRC', 'SELFTEST_SRC', 'PARITY_SRCS', 'CXXFLAGS_COMMON', 'WASM_CXXFLAGS'];
 
 function makeVariables() {
   const out = execFileSync(
@@ -90,7 +97,7 @@ const entries = new Map(
 
 const vars = makeVariables();
 const engine = new Set(vars.SRCS);
-const hostOnly = new Set(vars.TEST_SRC);
+const hostOnly = new Set([...vars.TEST_SRC, ...vars.SELFTEST_SRC]);
 const wasmOnly = new Set(vars.PARITY_SRCS);
 
 const emsdk = process.env.EMSDK;
@@ -110,7 +117,7 @@ for (const file of onDisk) {
   if (entries.has(file)) continue;
   fail(engine.has(file) || hostOnly.has(file) || wasmOnly.has(file)
     ? `${file} is listed in cpp/Makefile but missing from compile_commands.json — regenerate it with: make -C cpp compile-commands`
-    : `${file} is in no list the compile-commands recipe passes (SRCS, TEST_SRC, PARITY_SRCS) — `
+    : `${file} is in no list the compile-commands recipe passes (SRCS, TEST_SRC, SELFTEST_SRC, PARITY_SRCS) — `
       + 'clangd cannot see it; add it to one of them in cpp/Makefile');
 }
 

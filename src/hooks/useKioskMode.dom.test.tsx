@@ -70,7 +70,7 @@ describe('useKioskMode — keyboard', () => {
     const container = document.createElement('div');
     const requestFullscreen = vi.fn(() => Promise.resolve());
     container.requestFullscreen = requestFullscreen;
-    result.current.refs.containerRef.current = container as HTMLDivElement;
+    result.current.refs.containerRef.current = container;
     press('f');
     expect(requestFullscreen).toHaveBeenCalledTimes(1);
   });
@@ -83,7 +83,7 @@ describe('useKioskMode — fullscreen and wake lock', () => {
     Object.defineProperty(navigator, 'wakeLock', { value: { request }, configurable: true });
     const { result } = render();
     const container = document.createElement('div');
-    result.current.refs.containerRef.current = container as HTMLDivElement;
+    result.current.refs.containerRef.current = container;
 
     fullscreenElement = container;
     await act(async () => { document.dispatchEvent(new Event('fullscreenchange')); });

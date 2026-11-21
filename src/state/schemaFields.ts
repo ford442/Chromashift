@@ -155,7 +155,7 @@ function describe(value: unknown): string {
   if (Array.isArray(value)) return 'an array';
   if (typeof value === 'string') return JSON.stringify(value.length > 24 ? `${value.slice(0, 24)}…` : value);
   if (typeof value === 'object') return 'an object';
-  return String(value);
+  return String(value as number | boolean | bigint | symbol | undefined);
 }
 
 function report(ctx: DecodeContext, path: string, message: string): void {

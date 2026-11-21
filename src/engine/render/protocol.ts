@@ -266,7 +266,7 @@ export type RenderEvents = {
   'motion-demand': MotionDemand;
 };
 
-export type RenderEmit = <K extends keyof RenderEvents & string>(
+export type RenderEmit = <K extends keyof RenderEvents>(
   event: K,
   payload: RenderEvents[K],
   transfer?: Transferable[],

@@ -34,6 +34,29 @@
 
 namespace chromashift {
 
+/**
+ * Largest pixel count whose RGBA byte offsets (`i * 4`) still fit in a uint32_t.
+ *
+ * Every pixel kernel indexes with 32-bit arithmetic, which is exact only below
+ * this bound. wasm32 cannot reach it today (MAXIMUM_MEMORY is 2 GiB), but a
+ * 4 GiB heap or a wasm64 build would, and a wrapped offset is a silent
+ * out-of-bounds access rather than an error.
+ */
+constexpr uint32_t kMaxRgbaPixels = UINT32_MAX / 4u;
+
+/**
+ * `width * height`, or 0 when the product exceeds kMaxRgbaPixels.
+ *
+ * The exports take it as "nothing to do": a mask kernel leaves its output
+ * untouched and the luminance kernels return their no-data value, the same as
+ * for an empty image.
+ */
+constexpr uint32_t checkedPixelCount(uint32_t width, uint32_t height)
+{
+    const uint64_t count = static_cast<uint64_t>(width) * static_cast<uint64_t>(height);
+    return count > kMaxRgbaPixels ? 0u : static_cast<uint32_t>(count);
+}
+
 constexpr float kBt709R = 0.2126f;
 constexpr float kBt709G = 0.7152f;
 constexpr float kBt709B = 0.0722f;

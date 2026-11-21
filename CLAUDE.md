@@ -16,9 +16,9 @@ npm run knip      # Unused files, exports and dependencies (knip.json)
 npm test          # Vitest: node project (*.test.ts) + happy-dom project (*.dom.test.tsx)
 npm run test:coverage  # The same with v8 coverage (coverage/, gitignored)
 npm run shaders:validate  # naga + glslangValidator over every shader variant (needs naga-cli, glslang)
-npm run test:e2e  # Playwright smoke (WebGL)
+npm run test:e2e  # Playwright smoke (WebGL). PW_PORT=<port> picks the port (strictPort); PW_SERVER=preview tests the production build
 npm run test:gpu  # Vitest `gpu` project: Dawn in Node, pixel goldens (needs a Vulkan driver; docs/HEADLESS.md)
-npm run test:cpp  # C++ host tests (:werror is the CI gate, :asan is opt-in, :simd needs emsdk)
+npm run test:cpp  # C++ host tests (:werror is the CI gate; :asan = ASan+UBSan, :simd needs emsdk, :simd:asan = SIMD128 under ASan)
 npm run compile-commands  # cpp/compile_commands.json for clangd (gitignored)
 npm run preview   # Preview the production build locally
 ```

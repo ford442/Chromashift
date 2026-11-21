@@ -175,14 +175,14 @@ export async function requestWebGpuAdapter(
       : [powerPreference, ...WEBGPU_POWER_PREFERENCE_ATTEMPTS];
 
     for (const preference of attempts) {
-      const adapter = await navigator.gpu!.requestAdapter({ powerPreference: preference });
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: preference });
       if (adapter) {
         gpuDeviceGate.adapter = adapter;
         return adapter;
       }
     }
 
-    const fallback = await navigator.gpu!.requestAdapter();
+    const fallback = await navigator.gpu.requestAdapter();
     if (fallback) {
       gpuDeviceGate.adapter = fallback;
       return fallback;
@@ -191,7 +191,7 @@ export async function requestWebGpuAdapter(
     // Last, compatibility mode: what a GL ES / D3D11-class backend offers when
     // it has no core adapter. A browser without compatibility mode ignores
     // the member, so there this is the request above again.
-    const compatibility = await navigator.gpu!.requestAdapter({ featureLevel: 'compatibility' });
+    const compatibility = await navigator.gpu.requestAdapter({ featureLevel: 'compatibility' });
     if (compatibility) {
       compatibilityAdapters.add(compatibility);
       gpuDeviceGate.adapter = compatibility;
@@ -342,7 +342,7 @@ async function acquireWebGpuDevice(
 
   const fatal = toBootstrapRuntimeError(lastError ?? new Error('WebGPU device request failed.'));
   markGpuFatal(fatal);
-  throw lastError ?? new Error(fatal.message);
+  throw lastError instanceof Error ? lastError : new Error(fatal.message);
 }
 
 export async function requestWebGpuDevice(

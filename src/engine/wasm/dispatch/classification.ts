@@ -8,6 +8,45 @@ import { canUseWasmFn, getPersistentBuf, getWasmModule, withWasmScratch } from '
 import { getImageDataAtNaturalSize, type PixelSource } from '../imageBytes';
 
 /**
+ * The most pixels the C++ kernels index: `UINT32_MAX / 4` (`kMaxRgbaPixels` in
+ * cpp/simd_util.h), where `pixel * 4` still fits in 32 bits. The exports refuse
+ * more and leave the output untouched, which would read back as an all-zero
+ * mask — so it is an error here, not a result.
+ */
+const MAX_RGBA_PIXELS = Math.floor(0xffffffff / 4);
+
+/**
+ * The RGBA byte length of a `width × height` image, after checking `data` holds
+ * it. The kernels read exactly `width × height × 4` bytes from the heap copy of
+ * `data`, so a short buffer is not a short read — it is a read past the copy,
+ * into whatever follows it in the heap (the mask's own half of the allocation,
+ * or another pooled buffer). Same contract and error as
+ * `computeAverageLuminanceStridedWith`, and checked once for both lanes so the
+ * TypeScript fallback never accepts an input the WASM lane would reject.
+ */
+function rgbaByteLength(
+  data: Uint8Array | Uint8ClampedArray,
+  width: number,
+  height: number,
+  caller: string,
+): number {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 0 || height < 0) {
+    throw new RangeError(`${caller}: ${width}×${height} is not a valid image size`);
+  }
+  const pixelCount = width * height;
+  if (pixelCount > MAX_RGBA_PIXELS) {
+    throw new RangeError(`${caller}: ${width}×${height} exceeds the ${MAX_RGBA_PIXELS}-pixel limit`);
+  }
+  const byteLength = pixelCount * 4;
+  if (data.length < byteLength) {
+    throw new RangeError(
+      `${caller}: ${data.length} bytes is short of ${width}×${height} RGBA (${byteLength})`,
+    );
+  }
+  return byteLength;
+}
+
+/**
  * Classify every pixel in an `ImageData` object into colour band indices (0–10).
  *
  * One C++ call (`classifyPixelsBulk`) for the whole buffer avoids repeated
@@ -81,6 +120,7 @@ export function classifyPixelsMaskWith(
   avgLum: number,
   useWasm: boolean,
 ): { mask: Uint8Array; width: number; height: number } {
+  const byteLength = rgbaByteLength(data, width, height, 'classifyPixelsMaskWith');
   const pixelCount = width * height;
 
   // `_computeClassificationMask` (no LUT) is the benchmark/parity twin: every
@@ -90,16 +130,18 @@ export function classifyPixelsMaskWith(
     // One persistent allocation holds the RGBA input and the mask after it, so
     // an image the size of the last one costs no allocation at all — a full
     // 8K frame is a quarter-gigabyte, and each malloc of it could grow the heap.
-    const inPtr = getPersistentBuf(data.length + pixelCount);
-    const outPtr = inPtr + data.length;
-    mod.HEAPU8.set(data, inPtr);
+    // Only the `byteLength` the kernel reads is copied (and reserved), however
+    // much longer `data` is.
+    const inPtr = getPersistentBuf(byteLength + pixelCount);
+    const outPtr = inPtr + byteLength;
+    mod.HEAPU8.set(byteLength === data.length ? data : data.subarray(0, byteLength), inPtr);
     mod._computeClassificationMaskLut(inPtr, width, height, avgLum, outPtr);
     // Copied out: the next call reuses this very allocation.
     const mask = mod.HEAPU8.slice(outPtr, outPtr + pixelCount);
     return { mask, width, height };
   }
 
-  const bands = classifyPixelsBulkWith({ data }, avgLum, false);
+  const bands = classifyPixelsBulkWith({ data: data.subarray(0, byteLength) }, avgLum, false);
   const mask = new Uint8Array(pixelCount);
   mask.set(bands);
   return { mask, width, height };

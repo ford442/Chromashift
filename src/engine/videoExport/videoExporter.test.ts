@@ -185,7 +185,7 @@ function makeFakeRenderer(): FakeRenderer {
     restoreRenderSize,
     exportFrame: async (state: RendererState, options: ExportFrameOptions) => {
       frameAngles.push(
-        state.layers.map((layer) => layer.angleDeg) as number[],
+        state.layers.map((layer) => layer.angleDeg),
       );
       frameOptions.push(options);
       frameStates.push(state);

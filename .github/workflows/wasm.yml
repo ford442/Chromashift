@@ -26,6 +26,12 @@ on:
       - 'public/chromashift_engine.*'
       - 'public/wasm-benchmark-core.mjs'
       - '.github/workflows/wasm.yml'
+  # Nightly, whatever changed: the sanitizer job below is the slow, thorough one,
+  # and a runner-image or emsdk-cache change can break the build with no commit
+  # to blame. Scheduled runs go through every job here, freshness check included.
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -42,6 +48,37 @@ jobs:
       - name: Host-side C++ unit tests (-Werror)
         run: npm run test:cpp:werror
 
+  # ASan + UBSan over the scalar engine (host g++) and over the SIMD128 engine
+  # (em++ -fsanitize, under Node). UBSan is built with -fno-sanitize-recover=all,
+  # so the first finding fails the job instead of printing and exiting 0, and the
+  # self-tests below prove that — plus that ASan sees an out-of-bounds v128 load —
+  # before the real suites are trusted. See "Host-only sanitizers" in cpp/Makefile.
+  sanitizers:
+    name: ASan + UBSan (scalar and SIMD128)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sanitizers abort on a signed overflow and a heap overflow
+        run: make -C cpp test-sanitizer-selftest
+
+      - name: Scalar engine under ASan + UBSan
+        run: npm run test:cpp:asan
+
+      - name: Read pinned emsdk version
+        id: emsdk
+        run: echo "version=$(cat cpp/emsdk.version)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+        with:
+          version: ${{ steps.emsdk.outputs.version }}
+          cache: true
+
+      - name: SIMD128 engine under ASan + UBSan
+        run: npm run test:cpp:simd:asan
+
   wasm:
     name: WASM build, SIMD tests, freshness
     runs-on: ubuntu-latest
@@ -57,7 +94,9 @@ jobs:
         run: echo "version=$(cat cpp/emsdk.version)" >> "$GITHUB_OUTPUT"
 
       - name: Install Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+        # Pinned by commit, not by the movable `v14` tag: this action runs with the
+        # job's token and installs the compiler whose output is committed here.
+        uses: mymindstorm/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
         with:
           version: ${{ steps.emsdk.outputs.version }}
           cache: true

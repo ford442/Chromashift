@@ -48,7 +48,7 @@ function stallPlan(baselineWorst: number): { stallMs: number; budgetMs: number }
 }
 
 function deltas(ticks: number[]): number[] {
-  return ticks.slice(1).map((t, i) => t - ticks[i]);
+  return ticks.slice(1).map((t, i) => t - ticks[i]!);
 }
 
 async function openSession(page: Page, query: string, transport: 'worker' | 'main'): Promise<void> {
@@ -100,7 +100,7 @@ test.describe('render transport', () => {
       const real = window.matchMedia.bind(window);
       window.matchMedia = (query: string) => (query === '(dynamic-range: high)'
         ? { ...real(query), matches: true, media: query }
-        : real(query)) as MediaQueryList;
+        : real(query));
     });
     const reasons: Record<string, string | undefined> = {};
     for (const { transport, query } of TRANSPORTS) {
@@ -150,7 +150,7 @@ test.describe('render transport', () => {
 
       const stall = (await page.evaluate(() => window.__e2eStall))!;
       const ticks = await timeline();
-      const pairs = ticks.slice(1).map((t, i) => [ticks[i], t] as const);
+      const pairs = ticks.slice(1).map((t, i) => [ticks[i]!, t] as const);
       // Every frame interval that overlaps the stall.
       const spanning = pairs.filter(([a, b]) => b >= stall.start && a <= stall.end).map(([a, b]) => b - a);
       const worst = Math.max(...spanning);

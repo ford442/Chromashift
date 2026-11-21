@@ -11,7 +11,10 @@ export default defineConfig([
     files: ['**/*.{ts,tsx}'],
     extends: [
       js.configs.recommended,
-      tseslint.configs.recommended,
+      // The type-checked set: `projectService` below already pays for type
+      // information, so the rules that need it (no-unsafe-*, no-unnecessary-
+      // type-assertion, restrict-template-expressions, ...) cost nothing extra.
+      tseslint.configs.recommendedTypeChecked,
       reactHooks.configs.flat.recommended,
       reactRefresh.configs.vite,
     ],
@@ -36,6 +39,41 @@ export default defineConfig([
       '@typescript-eslint/switch-exhaustiveness-check': ['error', {
         considerDefaultExhaustiveForUnions: true,
       }],
+    },
+  },
+  // Tests and E2E specs. The type-checked rules that guard shipped code fight the
+  // grain of test code rather than find bugs in it: `vi.fn()` mocks and
+  // `page.evaluate` results are `any` by construction (`no-unsafe-*`), `expect(obj.method)`
+  // reads a method to assert on it (`unbound-method`), and a spec's `async`
+  // callbacks routinely have nothing to await (`require-await`). Floating and
+  // misused promises stay on: those catch real, silent test bugs.
+  {
+    files: ['**/*.test.{ts,tsx}', '**/*.dom.test.tsx', '**/__fixtures__/**', 'e2e/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/unbound-method': 'off',
+      '@typescript-eslint/require-await': 'off',
+    },
+  },
+  // Plain ES modules that run outside the app's TypeScript projects: the Node
+  // scripts (codegen, bench, dist checks) and the page-served benchmark core.
+  // They match none of the blocks above, so they were linted by nothing at all -
+  // an unused variable or an undefined name in `scripts/bench-wasm.mjs` only
+  // surfaced when someone ran it. No type information (there is no project to
+  // draw it from); `js.configs.recommended` catches the real mistakes.
+  {
+    files: ['scripts/**/*.mjs', 'public/*.mjs'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      // `public/*.mjs` is imported by the browser benchmark page as well as by
+      // Node, so both sets of globals are in scope.
+      globals: { ...globals.node, ...globals.browser },
     },
   },
   // UI imports engine; engine does not import UI. Panels, hooks and App call the
