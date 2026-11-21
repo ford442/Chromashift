@@ -78,8 +78,13 @@ describe('withMotionTerm', () => {
       const compiled = compileGraph(presetGraphSource(name).build(MOVING), 'webgpu');
       const plan = buildEncodePlan(compiled);
       const decays = plan.steps.filter((step) => step.kind === 'decay');
-      expect(decays.length, name).toBe(name === 'trails3' ? 3 : 2);
-      for (const decay of decays) expect(decay.motionField, name).not.toBeNull();
+      expect(decays.length, name).toBe(name === 'trails3' || name === 'particles' ? 3 : 2);
+      // A particle trail is left alone: the particles move with the field already.
+      for (const decay of decays) {
+        if (decay.trail) expect(decay.motionField, `${name} ${decay.nodeId}`).toBeNull();
+        else expect(decay.motionField, `${name} ${decay.nodeId}`).not.toBeNull();
+      }
+      expect(decays.filter((decay) => decay.trail).length, name).toBe(name === 'particles' ? 1 : 0);
     }
   });
 });

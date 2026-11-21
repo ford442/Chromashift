@@ -147,7 +147,15 @@ describe('WebGLGraphExecutor', () => {
     expect(executor.encodedPasses()).toContain(TRAILS3_ECHO_ID);
   });
 
-  it.each(GRAPH_PRESETS)('draws ?graph=%s with every pass its plan encodes', (name) => {
+  // Every preset but the compute chain, which the WebGL backend refuses by name.
+  const WEBGL_PRESETS = GRAPH_PRESETS.filter((name) => name !== 'particles');
+
+  it('refuses ?graph=particles at compile time, naming the compute node', () => {
+    expect(() => compileGraph(buildGraphPreset('particles'), 'webgl'))
+      .toThrow(/no compute stage: node kind 'emit' \(node 'particles-emit'\)/);
+  });
+
+  it.each(WEBGL_PRESETS)('draws ?graph=%s with every pass its plan encodes', (name) => {
     const compiled = adopt(buildGraphPreset(name));
     executor.encode(inputs, params());
     const plan = buildEncodePlan(compiled);

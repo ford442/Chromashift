@@ -1,3 +1,4 @@
+import { nodeKindSpec } from './nodeKinds';
 import type { GraphBackend, NodeKind } from './types';
 
 /**
@@ -41,9 +42,15 @@ export function unsupportedNodeError(
   kind: NodeKind,
   nodeId: string,
 ): PassGraphError {
+  const spec = nodeKindSpec(kind);
+  const message = spec.stage === 'compute'
+    ? `The ${backend} backend has no compute stage: node kind '${kind}' (node '${nodeId}') is a compute node.`
+    : spec.inputType === 'buffer'
+      ? `The ${backend} backend has no buffer resources: node kind '${kind}' (node '${nodeId}') reads a buffer.`
+      : `The ${backend} backend has no template for node kind '${kind}' (node '${nodeId}').`;
   return new PassGraphError(
     'unsupported-node',
-    `The ${backend} backend has no template for node kind '${kind}' (node '${nodeId}').`,
+    message,
     nodeId,
   );
 }

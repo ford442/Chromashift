@@ -1,7 +1,8 @@
-import { nodeKindSpec } from './nodeKinds';
+import { APPEND_CONTROL_BYTES, nodeKindSpec } from './nodeKinds';
 import type { Schedule } from './schedule';
 import type {
   AllocationPlan,
+  BufferResource,
   HistoryRing,
   PoolSlot,
   ResolutionClass,
@@ -72,6 +73,8 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
       assignment[pass.nodeId] = EXTERNAL_SLOT;
       continue;
     }
+    // A buffer producer's output is a buffer resource, not a texture slot.
+    if (spec.outputType === 'buffer') continue;
     if (spec.outputType === null) {
       assignment[pass.nodeId] = SWAPCHAIN_SLOT;
       continue;
@@ -130,7 +133,125 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
     ]),
   ) as Record<ResolutionClass, number>;
 
-  return { slots, rings, assignment, lifetimes: schedule.lifetimes, slotsByResolution };
+  const buffers = allocateBuffers(schedule, assignment);
+
+  return { slots, rings, buffers, assignment, lifetimes: schedule.lifetimes, slotsByResolution };
+}
+
+/**
+ * The buffer half of the transient pool: one resource per owning node, and the
+ * same linear scan as the textures for the ones that do not outlive the frame.
+ *
+ * - A **persistent** buffer (the particle ring) holds state some later frame
+ *   reads, exactly as a ping-pong pair does, so it is never pooled.
+ * - A **transient** one is handed a free resource of the same shape (layout,
+ *   stride, element count) once every reader of the previous holder has run.
+ * - An **in-place** writer (`advect`) is assigned its input's resource and
+ *   keeps it live until its own last reader.
+ *
+ * Writes each node's resource id into `assignment`.
+ */
+export function allocateBuffers(schedule: Schedule, assignment: Record<string, string>): BufferResource[] {
+  const lifetimeOf = new Map(schedule.bufferLifetimes.map((lifetime) => [lifetime.nodeId, lifetime]));
+  const resources: BufferResource[] = [];
+  const byId = new Map<string, BufferResource>();
+  const free = new Map<string, BufferResource[]>();
+  const expiry = new Map<string, number>();
+  const shapeKey = (resource: Pick<BufferResource, 'layout' | 'stride' | 'elements'>): string =>
+    `${resource.layout}:${resource.stride}:${JSON.stringify(resource.elements)}`;
+
+  for (const pass of schedule.passes) {
+    for (const resource of resources) {
+      const releaseAt = expiry.get(resource.id);
+      if (releaseAt !== undefined && releaseAt < pass.order) {
+        expiry.delete(resource.id);
+        const key = shapeKey(resource);
+        free.set(key, [...(free.get(key) ?? []), resource]);
+      }
+    }
+
+    const scheduled = schedule.buffers[pass.nodeId];
+    const lifetime = lifetimeOf.get(pass.nodeId);
+    if (!scheduled || !lifetime) continue;
+
+    if (!scheduled.owns) {
+      const resource = byId.get(assignment[scheduled.input] ?? '');
+      if (!resource) {
+        throw new Error(`Node '${pass.nodeId}' writes its input's buffer in place, but '${scheduled.input}' has none.`);
+      }
+      resource.nodes.push(pass.nodeId);
+      assignment[pass.nodeId] = resource.id;
+      if (!resource.persistent) {
+        expiry.set(resource.id, Math.max(expiry.get(resource.id) ?? -1, lifetime.lastUse));
+      }
+      continue;
+    }
+
+    const shape = {
+      layout: scheduled.layout,
+      stride: scheduled.stride,
+      elements: scheduled.elements,
+    };
+    if (scheduled.persistent) {
+      const resource: BufferResource = {
+        id: `persist-buffer:${pass.nodeId}`,
+        owner: pass.nodeId,
+        nodes: [pass.nodeId],
+        ...shape,
+        persistent: true,
+        controlBytes: scheduled.layout === 'append' ? APPEND_CONTROL_BYTES : 0,
+      };
+      resources.push(resource);
+      byId.set(resource.id, resource);
+      assignment[pass.nodeId] = resource.id;
+      continue;
+    }
+
+    let resource = free.get(shapeKey(shape))?.pop();
+    if (!resource) {
+      resource = {
+        id: `buffer:${resources.filter((r) => !r.persistent).length}`,
+        owner: pass.nodeId,
+        nodes: [],
+        ...shape,
+        persistent: false,
+        controlBytes: scheduled.layout === 'append' ? APPEND_CONTROL_BYTES : 0,
+      };
+      resources.push(resource);
+      byId.set(resource.id, resource);
+    }
+    resource.nodes.push(pass.nodeId);
+    assignment[pass.nodeId] = resource.id;
+    expiry.set(resource.id, lifetime.lastUse);
+  }
+  return resources;
+}
+
+/** Element count of a buffer at the frame's sizes (a per-pixel count needs them). */
+export function bufferElementCount(
+  resource: Pick<BufferResource, 'elements'>,
+  sizes?: Partial<Record<ResolutionClass, { width: number; height: number }>>,
+): number {
+  if (typeof resource.elements === 'number') return resource.elements;
+  const size = sizes?.[resource.elements.perPixel];
+  if (!size) throw new Error(`No size for the '${resource.elements.perPixel}' resolution class.`);
+  return Math.max(1, size.width) * Math.max(1, size.height);
+}
+
+/** Bytes one buffer resource occupies on the device: its elements and its control block. */
+export function bufferResourceBytes(
+  resource: Pick<BufferResource, 'elements' | 'stride' | 'controlBytes'>,
+  sizes?: Partial<Record<ResolutionClass, { width: number; height: number }>>,
+): number {
+  return bufferElementCount(resource, sizes) * resource.stride + resource.controlBytes;
+}
+
+/** Bytes every buffer resource in `plan` occupies — the buffer half of the VRAM bound. */
+export function planBufferBytes(
+  plan: Pick<AllocationPlan, 'buffers'>,
+  sizes?: Partial<Record<ResolutionClass, { width: number; height: number }>>,
+): number {
+  return plan.buffers.reduce((total, resource) => total + bufferResourceBytes(resource, sizes), 0);
 }
 
 /** Ring textures per resolution class — `history`'s VRAM, beside `slotsByResolution`. */
@@ -147,8 +268,9 @@ export function ringTexturesByResolution(plan: AllocationPlan): Record<Resolutio
 
 /**
  * VRAM proxy for a plan: bytes for every pool slot at the given resolutions.
- * Ping-pong slots count twice — they own a read and a write texture — and each
- * `history` ring counts `frames` times.
+ * Ping-pong slots count twice — they own a read and a write texture — each
+ * `history` ring counts `frames` times, and every buffer resource adds its
+ * bytes ({@link planBufferBytes}).
  */
 export function estimateVram(
   plan: AllocationPlan,
@@ -162,7 +284,8 @@ export function estimateVram(
     (total, slot) => total + bytes(slot.resolution, slot.id.startsWith('persist:') ? 2 : 1),
     0,
   );
-  return plan.rings.reduce((total, ring) => total + bytes(ring.resolution, ring.frames), pooled);
+  const ringed = plan.rings.reduce((total, ring) => total + bytes(ring.resolution, ring.frames), pooled);
+  return ringed + planBufferBytes(plan, sizes);
 }
 
 /** Nodes that share a pool slot — the reuse the budget test asserts on. */

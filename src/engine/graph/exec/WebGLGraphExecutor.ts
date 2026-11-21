@@ -410,6 +410,12 @@ export class WebGLGraphExecutor {
       case 'displace':
         this.encodeSingleInput(step, inputs, params);
         break;
+      case 'emit':
+      case 'advect':
+      case 'splat':
+        // Unreachable: the compiler refuses the buffer chain for this backend
+        // (`capabilities.ts`), so no WebGL plan has these steps.
+        throw new Error(`The WebGL executor has no '${step.kind}' step (node '${step.nodeId}').`);
     }
   }
 

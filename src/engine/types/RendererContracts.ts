@@ -43,6 +43,10 @@ export interface GpuPassTimings {
   motionMs: number;
   /** Lucas–Kanade flow dispatches; 0 outside `motionMode: 'direction'`. */
   motionFlowMs: number;
+  /** The particle chain's `emit` / `advect` / `splat` passes; 0 for a graph without one. */
+  particleEmitMs: number;
+  particleAdvectMs: number;
+  particleSplatMs: number;
   persistenceMs: number;
   compositorMs: number;
   readbackMs: number;

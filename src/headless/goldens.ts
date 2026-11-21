@@ -26,7 +26,7 @@ export interface GoldenCase {
   readonly layerCount: number;
 }
 
-const STARTER_SHAPES: readonly GraphPresetName[] = ['smear', 'feedback', 'trails3', 'blur', 'warp'];
+const STARTER_SHAPES: readonly GraphPresetName[] = ['smear', 'feedback', 'trails3', 'blur', 'warp', 'particles'];
 
 export const GOLDEN_CASES: readonly GoldenCase[] = [
   ...[1, 3, 7, MAX_LAYER_COUNT].map((layerCount) => ({

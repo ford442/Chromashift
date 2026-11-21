@@ -38,6 +38,38 @@ export type EncodeStep =
      * pre-motion pass.
      */
     motionField: string | null;
+    /**
+     * True for a particle trail: `stampInputs` is the one `splat` it holds,
+     * not a stamp's band layers (`emitTrailDecayWgsl`).
+     */
+    trail: boolean;
+  }
+  | {
+    /** Compute: append particles where the mask fires. */
+    kind: 'emit';
+    nodeId: string;
+    /**
+     * Textures the kernel loads. When a `coincidence` node is absorbed (as
+     * into a `decay`) these are its band layers; otherwise the one mask.
+     */
+    maskInputs: string[];
+    /** True when `maskInputs` are a fused coincidence's layers. */
+    fused: boolean;
+  }
+  | {
+    /** Compute, dispatched indirect: move, age and kill the particles in place. */
+    kind: 'advect';
+    nodeId: string;
+    /** The buffer producer whose particles it moves. */
+    particles: string;
+    /** The motion-field `source`. */
+    field: string;
+  }
+  | {
+    /** Render, drawn indirect: one instanced quad per filled ring slot. */
+    kind: 'splat';
+    nodeId: string;
+    particles: string;
   }
   | {
     kind: 'blend';
@@ -130,10 +162,15 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
       fused.add(pass.nodeId);
     }
   }
+  // `emit` absorbs a coincidence the way a decay does: its kernel runs the
+  // overlap test (`coincidenceParts`) over the same band layers, so a
+  // particle is born exactly where the stamp paints.
   for (const pass of compiled.passes) {
     if (pass.kind !== 'coincidence') continue;
     const absorbs = (reader: ScheduledPass) =>
-      reader.kind === 'decay' || (reader.kind === 'motion' && fused.has(reader.nodeId));
+      reader.kind === 'decay'
+      || reader.kind === 'emit'
+      || (reader.kind === 'motion' && fused.has(reader.nodeId));
     if (readOnlyBy(pass.nodeId, absorbs)) fused.add(pass.nodeId);
   }
 
@@ -214,6 +251,29 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
           motionField = producer.inputs[1]!;
           producerId = producer.inputs[0]!;
         }
+        const role = roleOf(pass.nodeId, decayNodes.findIndex((d) => d.nodeId === pass.nodeId));
+        if (byId.get(producerId)!.kind === 'splat') {
+          // A particle trail. The temporal term weights a coincidence stamp;
+          // particles already move with the field, and the trail pass has no
+          // motion variant — refused by name rather than bound wrong.
+          if (motionField !== null) {
+            throw new PassGraphError(
+              'unsupported-node',
+              `Node '${producer.id}' (motion) weights a particle splat ('${producerId}'); `
+              + 'the temporal term applies to coincidence stamps only.',
+              producer.id,
+            );
+          }
+          steps.push({
+            kind: 'decay',
+            nodeId: pass.nodeId,
+            stampInputs: [producerId],
+            role,
+            motionField: null,
+            trail: true,
+          });
+          break;
+        }
         const stampInputs = fused.has(producerId)
           ? byId.get(producerId)!.inputs
           : [producerId];
@@ -233,11 +293,37 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
           kind: 'decay',
           nodeId: pass.nodeId,
           stampInputs: [...stampInputs],
-          role: roleOf(pass.nodeId, decayNodes.findIndex((d) => d.nodeId === pass.nodeId)),
+          role,
           motionField,
+          trail: false,
         });
         break;
       }
+
+      case 'emit': {
+        const maskId = nodeInputs[0]!;
+        const absorbed = fused.has(maskId);
+        steps.push({
+          kind: 'emit',
+          nodeId: pass.nodeId,
+          maskInputs: absorbed ? [...byId.get(maskId)!.inputs] : [maskId],
+          fused: absorbed,
+        });
+        break;
+      }
+
+      case 'advect':
+        steps.push({
+          kind: 'advect',
+          nodeId: pass.nodeId,
+          particles: nodeInputs[0]!,
+          field: nodeInputs[1]!,
+        });
+        break;
+
+      case 'splat':
+        steps.push({ kind: 'splat', nodeId: pass.nodeId, particles: nodeInputs[0]! });
+        break;
 
       case 'blend': {
         const layerInputs = intParam(node, 'layerInputs', compiled.layerCount);
@@ -291,7 +377,10 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
 export interface MotionFieldUse {
   /** A scheduled `source` binds the field, so the renderer runs the chore. */
   reads: boolean;
-  /** A `displace` reads its velocity, so the chore solves flow whatever the motion mode. */
+  /**
+   * A `displace` (or an `advect`) reads its velocity, so the chore solves flow
+   * whatever the motion mode.
+   */
   needsFlow: boolean;
 }
 
@@ -310,7 +399,7 @@ export function motionFieldUse(compiled: CompiledGraph): MotionFieldUse {
   return {
     reads: sources.size > 0,
     needsFlow: compiled.passes.some(
-      (pass) => pass.kind === 'displace' && pass.inputs.some((id) => sources.has(id)),
+      (pass) => (pass.kind === 'displace' || pass.kind === 'advect') && pass.inputs.some((id) => sources.has(id)),
     ),
   };
 }

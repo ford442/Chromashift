@@ -1,7 +1,7 @@
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from './defaultGraph';
 import { PassGraphError } from './errors';
 import { CANONICAL_LAYER_COUNT } from './layerSpecs';
-import { isKnownNodeKind } from './nodeKinds';
+import { isKnownNodeKind, PARTICLE_CAPACITY_DEFAULT } from './nodeKinds';
 import bodySmearStarter from './starters/body-smear.json';
 import feedbackWarpStarter from './starters/feedback-warp.json';
 import type { GraphNode, ParamValue, PassGraph } from './types';
@@ -14,7 +14,7 @@ import type { GraphNode, ParamValue, PassGraph } from './types';
  * different pool — and every one of them draws without a line changing in the
  * renderer or the executor.
  */
-export const GRAPH_PRESETS = ['default', 'blur', 'warp', 'smear', 'feedback', 'trails3'] as const;
+export const GRAPH_PRESETS = ['default', 'blur', 'warp', 'smear', 'feedback', 'trails3', 'particles'] as const;
 export type GraphPresetName = (typeof GRAPH_PRESETS)[number];
 
 export function isGraphPresetName(value: string): value is GraphPresetName {
@@ -151,6 +151,92 @@ export function buildTrails3Graph(
   };
 }
 
+/** Node ids `buildParticlesGraph` adds. */
+export const PARTICLE_GRAPH_IDS = {
+  field: 'motion-field',
+  emit: 'particles-emit',
+  advect: 'particles-advect',
+  splat: 'particles-splat',
+  trail: 'particles-trail',
+} as const;
+
+/**
+ * The particle chain: a living tracer.
+ *
+ * The default graph, plus a compute stage over the same coincidence the
+ * tracers stamp. `emit` appends a particle where the layers overlap (the
+ * stamp's own test, fused as into the decays), coloured by the layer it was
+ * born on, into a fixed-capacity ring; `advect` carries it along the
+ * optical-flow field with a little curl noise and ages it out; `splat` draws
+ * every live one additively at tracer resolution; and a `decay` turns those
+ * dots into trails, which the compositor blends over everything
+ * (`overlayInputs`: born where layers overlap, they would otherwise sit
+ * under them).
+ *
+ * `emit` is listed before `splat`, so a backend without compute (WebGL)
+ * refuses the graph naming the compute node.
+ */
+export function buildParticlesGraph(
+  layerCount: number = CANONICAL_LAYER_COUNT,
+  options: { capacity?: number; trailMs?: number } = {},
+): PassGraph {
+  const base = buildDefaultGraph(layerCount);
+  const composite = requireNode(base, DEFAULT_GRAPH_IDS.composite);
+  const ids = PARTICLE_GRAPH_IDS;
+  const chain: GraphNode[] = [
+    { id: ids.field, kind: 'source', inputs: [], params: { role: 'motion-field' } },
+    {
+      id: ids.emit,
+      kind: 'emit',
+      inputs: [DEFAULT_GRAPH_IDS.coincidence],
+      // ≈ cells² × (coincident fraction) × spawnRate × lifetimeSec live
+      // particles: about 10k on a typical frame, under the capacity.
+      params: {
+        capacity: options.capacity ?? PARTICLE_CAPACITY_DEFAULT,
+        cells: 128,
+        spawnRate: 0.6,
+        lifetimeSec: 2.5,
+        boost: 1.6,
+        speed: 0.02,
+      },
+    },
+    {
+      id: ids.advect,
+      kind: 'advect',
+      inputs: [ids.emit, ids.field],
+      params: { flowGain: 1, curl: 0.06, noiseScale: 6, inertia: 0.9 },
+    },
+    {
+      id: ids.splat,
+      kind: 'splat',
+      inputs: [ids.advect],
+      params: { radius: 0.004, intensity: 0.9 },
+    },
+    {
+      id: ids.trail,
+      kind: 'decay',
+      inputs: [ids.splat],
+      params: { durationMs: options.trailMs ?? 450, intensity: 0.85 },
+    },
+  ];
+  return {
+    nodes: [
+      ...withoutId(base.nodes, composite.id),
+      ...chain,
+      {
+        ...composite,
+        inputs: [...composite.inputs, ids.trail],
+        params: {
+          ...composite.params,
+          tracerInputs: composite.inputs.length - layerCount + 1,
+          overlayInputs: 1,
+        },
+      },
+    ],
+    output: base.output,
+  };
+}
+
 /**
  * Starter graphs shipped as JSON (`starters/*.json`), the format a pasted graph
  * or the node editor will use. They are authored for the canonical three bands;
@@ -238,6 +324,8 @@ export function buildGraphPreset(
       return buildStarterGraph(name, layerCount);
     case 'trails3':
       return buildTrails3Graph(layerCount);
+    case 'particles':
+      return buildParticlesGraph(layerCount);
     case 'default':
       return buildDefaultGraph(layerCount);
   }

@@ -164,6 +164,8 @@ export class WebGPURenderer {
   private adoptedGraph: CompiledGraph | null = null;
   /** What the last frame drew (`null`: a cleared frame), `undefined` until published. */
   private drawnGraph: CompiledGraph | null | undefined = undefined;
+  /** `passGraphBufferBytes` as last published; `-1` before the first frame. */
+  private publishedBufferBytes = -1;
   /** The orchestrator slot this renderer draws, and whether it is the primary canvas. */
   private graphSlot = 'main';
   private graphPrimary = true;
@@ -391,6 +393,15 @@ export class WebGPURenderer {
         origin?.key ?? null,
       );
     }
+  }
+
+  /** The executor's buffer bytes, on the primary canvas, when they change. */
+  private publishBufferBytes(): void {
+    if (!this.graphPrimary) return;
+    const bytes = this.graphExecutor.bufferBytes();
+    if (bytes === this.publishedBufferBytes) return;
+    this.publishedBufferBytes = bytes;
+    publishDiagnostic('passGraphBufferBytes', bytes);
   }
 
   /** Name of the graph shape this renderer draws. */
@@ -658,6 +669,9 @@ export class WebGPURenderer {
       profiler?.markLayersEnd(enc);
       profiler?.markMotionEnd(enc);
       profiler?.markMotionFlowEnd(enc);
+      profiler?.markEmitEnd(enc);
+      profiler?.markAdvectEnd(enc);
+      profiler?.markSplatEnd(enc);
       profiler?.markPersistenceEnd(enc);
       profiler?.markCompositorEnd(enc);
       return;
@@ -698,6 +712,9 @@ export class WebGPURenderer {
             profiler?.markMotionEnd(enc);
             profiler?.markMotionFlowEnd(enc);
           },
+          emitEnd: () => profiler?.markEmitEnd(enc),
+          advectEnd: () => profiler?.markAdvectEnd(enc),
+          splatEnd: () => profiler?.markSplatEnd(enc),
           stampEnd: () => profiler?.markPersistenceEnd(enc),
           // An inspect view is the frame's compositor; it is marked below.
           compositorEnd: inspectView ? undefined : () => profiler?.markCompositorEnd(enc),
@@ -705,6 +722,7 @@ export class WebGPURenderer {
       },
       frame,
     );
+    this.publishBufferBytes();
     if (inspectPass) {
       const textures = this.graphExecutor.outputTextures()!;
       this.encodeInspectView(inspectPass, enc, state, mainView, outputView, width, height, {

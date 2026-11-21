@@ -19,19 +19,26 @@ export interface GpuPassTimings {
    * "Motion" jumping when the mode changes is otherwise unattributable.
    */
   motionFlowMs: number;
+  /**
+   * The particle chain's three stages (`emit`, `advect`, `splat`) — 0 for a
+   * graph without one, whose markers all land on the same point.
+   */
+  particleEmitMs: number;
+  particleAdvectMs: number;
+  particleSplatMs: number;
   persistenceMs: number;
   compositorMs: number;
   readbackMs: number;
   totalGpuMs: number;
 }
 
-export const GPU_TIMESTAMP_MARKERS = 7;
+export const GPU_TIMESTAMP_MARKERS = 10;
 export const GPU_TIMING_HISTORY_SIZE = 120;
 
 const QUERIES_PER_FRAME = GPU_TIMESTAMP_MARKERS;
 const BYTES_PER_QUERY = 8;
 const RESOLVE_SLOTS = 2;
-/** Bytes a frame's markers actually occupy (7 × 8 = 56). */
+/** Bytes a frame's markers actually occupy (10 × 8 = 80). */
 const SLOT_PAYLOAD_BYTES = QUERIES_PER_FRAME * BYTES_PER_QUERY;
 /**
  * `resolveQuerySet`'s destination offset must be a multiple of 256, so the
@@ -117,10 +124,13 @@ export function parseTimestampMarkers(
     layersMs: toMs(0, 1),
     motionMs: toMs(1, 2),
     motionFlowMs: toMs(2, 3),
-    persistenceMs: toMs(3, 4),
-    compositorMs: toMs(4, 5),
-    readbackMs: toMs(5, 6),
-    totalGpuMs: toMs(0, 6),
+    particleEmitMs: toMs(3, 4),
+    particleAdvectMs: toMs(4, 5),
+    particleSplatMs: toMs(5, 6),
+    persistenceMs: toMs(6, 7),
+    compositorMs: toMs(7, 8),
+    readbackMs: toMs(8, 9),
+    totalGpuMs: toMs(0, 9),
   };
 }
 
@@ -269,19 +279,41 @@ export class GpuTimestampProfiler {
     this.mark(enc, 3);
   }
 
-  markPersistenceEnd(enc: GPUCommandEncoder): void {
+  /**
+   * End of the particle chain's `emit` compute pass. Like the motion markers,
+   * written whether or not the graph has one — with no chain the three
+   * particle markers collapse onto the layers' end and their rows read 0.
+   */
+  markEmitEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     this.mark(enc, 4);
   }
 
-  markCompositorEnd(enc: GPUCommandEncoder): void {
+  /** End of `advect`'s indirect dispatch. See {@link markEmitEnd}. */
+  markAdvectEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     this.mark(enc, 5);
   }
 
-  finishFrame(enc: GPUCommandEncoder): void {
+  /** End of `splat`'s indirect draw. See {@link markEmitEnd}. */
+  markSplatEnd(enc: GPUCommandEncoder): void {
     if (!this.enabled) return;
     this.mark(enc, 6);
+  }
+
+  markPersistenceEnd(enc: GPUCommandEncoder): void {
+    if (!this.enabled) return;
+    this.mark(enc, 7);
+  }
+
+  markCompositorEnd(enc: GPUCommandEncoder): void {
+    if (!this.enabled) return;
+    this.mark(enc, 8);
+  }
+
+  finishFrame(enc: GPUCommandEncoder): void {
+    if (!this.enabled) return;
+    this.mark(enc, 9);
     const slot = this.writeSlot;
     const offset = slot * SLOT_STRIDE_BYTES;
     enc.resolveQuerySet(

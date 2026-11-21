@@ -2,7 +2,9 @@ import { fullscreenVertexSource, vertexShaderSource } from '../../shaders';
 import { layoutFromReflection } from '../../shaders/bindingReflection';
 import { BAND_LAYER_UNIFORMS, emitHistoryWriteWgsl } from '../templates/wgsl';
 import { HDR_CANVAS_FORMAT, type CanvasPresentation } from '../../gpu/gpuOptions';
+import { PARTICLE_ATTRIBUTES } from '../templates/particles';
 import { createUniformData, type UniformData, type UniformLayout } from '../templates/uniformLayout';
+import { PARTICLE_STRIDE } from '../nodeKinds';
 import type { EmittedPass, NodeKind } from '../types';
 
 /**
@@ -15,7 +17,10 @@ import type { EmittedPass, NodeKind } from '../types';
  */
 export interface NodeProgram {
   readonly kind: NodeKind;
-  readonly pipeline: GPURenderPipeline;
+  /** The render pipeline; `null` for a compute node. */
+  readonly pipeline: GPURenderPipeline | null;
+  /** A compute node's kernels, one per entry point in dispatch order; empty for a render node. */
+  readonly computePipelines: readonly GPUComputePipeline[];
   readonly bindGroupLayout: GPUBindGroupLayout;
   /** `history` only: the blit that writes this frame's input into the ring. */
   readonly ringWrite: { readonly pipeline: GPURenderPipeline; readonly bindGroupLayout: GPUBindGroupLayout } | null;
@@ -32,7 +37,8 @@ export interface BandLayerBuffers {
 /** One executor's instance of a node's program: its uniform storage and bind groups. */
 export interface NodePipeline {
   readonly kind: NodeKind;
-  readonly pipeline: GPURenderPipeline;
+  readonly pipeline: GPURenderPipeline | null;
+  readonly computePipelines: readonly GPUComputePipeline[];
   readonly bindGroupLayout: GPUBindGroupLayout;
   /** Single uniform block for every kind but `band-layer` (which has two). */
   readonly uniformBuffer: GPUBuffer | null;
@@ -70,9 +76,15 @@ function uniformLayoutFor(emitted: EmittedPass): UniformLayout | null {
   return emitted.uniformLayout;
 }
 
-/** The vertex stage a pass of `kind` runs: the rotating layer quad, or the fullscreen triangle. */
-function vertexSourceFor(kind: NodeKind): string {
-  return kind === 'band-layer' ? vertexShaderSource : fullscreenVertexSource;
+/** The vertex stage a pass runs: its own (`splat`), the rotating layer quad, or the fullscreen triangle. */
+function vertexSourceFor(emitted: EmittedPass): string {
+  if (emitted.vertex !== undefined) return emitted.vertex;
+  return emitted.kind === 'band-layer' ? vertexShaderSource : fullscreenVertexSource;
+}
+
+/** True when an emitted pass has a program to build: a fragment shader or compute kernels. */
+export function emittedHasProgram(emitted: EmittedPass): boolean {
+  return emitted.fragment !== '' || emitted.compute !== undefined;
 }
 
 /**
@@ -87,8 +99,11 @@ function vertexSourceFor(kind: NodeKind): string {
  * longer a hand-written exception.
  */
 export function nodeLayoutEntries(emitted: EmittedPass): GPUBindGroupLayoutEntry[] {
+  if (emitted.compute) {
+    return layoutFromReflection([{ code: emitted.compute.module, visibility: GPUShaderStage.COMPUTE }]);
+  }
   return layoutFromReflection([
-    { code: vertexSourceFor(emitted.kind), visibility: GPUShaderStage.VERTEX },
+    { code: vertexSourceFor(emitted), visibility: GPUShaderStage.VERTEX },
     { code: emitted.fragment, visibility: GPUShaderStage.FRAGMENT },
   ]);
 }
@@ -120,6 +135,29 @@ function targetFormats(
 /** Compile one emitted pass's program. */
 export function createNodeProgram(ctx: NodeProgramContext, emitted: EmittedPass): NodeProgram {
   const bindGroupLayout = ctx.device.createBindGroupLayout({ entries: nodeLayoutEntries(emitted) });
+  if (emitted.compute) {
+    // One module, one layout, one pipeline per kernel: every kernel of a node
+    // binds the same group, so one bind group serves all its dispatches.
+    const layout = ctx.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+    const module = ctx.device.createShaderModule({ code: emitted.compute.module });
+    return {
+      kind: emitted.kind,
+      pipeline: null,
+      computePipelines: emitted.compute.entryPoints.map((entryPoint) =>
+        ctx.device.createComputePipeline({ layout, compute: { module, entryPoint } })),
+      bindGroupLayout,
+      ringWrite: null,
+    };
+  }
+  if (emitted.kind === 'splat') {
+    return {
+      kind: emitted.kind,
+      pipeline: createSplatPipeline(ctx, bindGroupLayout, emitted),
+      computePipelines: [],
+      bindGroupLayout,
+      ringWrite: null,
+    };
+  }
   if (emitted.kind === 'band-layer') {
     // The shipped layer pipeline: the rotating vertex stage, MSAA at the
     // session's sample count. Only the fragment source is the graph's, and for
@@ -135,7 +173,7 @@ export function createNodeProgram(ctx: NodeProgramContext, emitted: EmittedPass)
       primitive: { topology: 'triangle-list' },
       multisample: { count: ctx.sampleCount },
     });
-    return { kind: emitted.kind, pipeline, bindGroupLayout, ringWrite: null };
+    return { kind: emitted.kind, pipeline, computePipelines: [], bindGroupLayout, ringWrite: null };
   }
 
   const pipeline = fullscreenPipeline(
@@ -147,9 +185,47 @@ export function createNodeProgram(ctx: NodeProgramContext, emitted: EmittedPass)
   return {
     kind: emitted.kind,
     pipeline,
+    computePipelines: [],
     bindGroupLayout,
     ringWrite: emitted.kind === 'history' ? createRingWriteProgram(ctx) : null,
   };
+}
+
+/**
+ * `splat`: the particles as instance-stepped vertex attributes (no storage
+ * binding in a render stage), six vertices each, blended additively into the
+ * tracer-resolution target.
+ */
+function createSplatPipeline(
+  ctx: NodeProgramContext,
+  bindGroupLayout: GPUBindGroupLayout,
+  emitted: EmittedPass,
+): GPURenderPipeline {
+  const additive: GPUBlendComponent = { srcFactor: 'one', dstFactor: 'one', operation: 'add' };
+  return ctx.device.createRenderPipeline({
+    layout: ctx.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+    vertex: {
+      module: ctx.device.createShaderModule({ code: emitted.vertex! }),
+      entryPoint: 'main',
+      buffers: [{
+        arrayStride: PARTICLE_STRIDE,
+        stepMode: 'instance',
+        attributes: [
+          { shaderLocation: 0, offset: PARTICLE_ATTRIBUTES.pos, format: 'float32x2' },
+          { shaderLocation: 1, offset: PARTICLE_ATTRIBUTES.color, format: 'unorm8x4' },
+          { shaderLocation: 2, offset: PARTICLE_ATTRIBUTES.age, format: 'float32' },
+          { shaderLocation: 3, offset: PARTICLE_ATTRIBUTES.life, format: 'float32' },
+        ],
+      }],
+    },
+    fragment: {
+      module: ctx.device.createShaderModule({ code: emitted.fragment }),
+      entryPoint: 'main',
+      targets: [{ format: ctx.internalFormat, blend: { color: additive, alpha: additive } }],
+    },
+    primitive: { topology: 'triangle-list' },
+    multisample: { count: 1 },
+  });
 }
 
 /** One executor's buffers and bind-group slots for a program. */
@@ -161,11 +237,14 @@ export function instantiateNodePipeline(
   const base = {
     kind: program.kind,
     pipeline: program.pipeline,
+    computePipelines: program.computePipelines,
     bindGroupLayout: program.bindGroupLayout,
     bindGroup: null,
     bindGroupKey: '',
   };
-  const uniformBuffer = (size: number) => device.createBuffer({
+  // Labelled by node, so a device error names the pass it came from.
+  const uniformBuffer = (size: number, label = `${emitted.nodeId}:uniforms`) => device.createBuffer({
+    label,
     size,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
@@ -176,7 +255,7 @@ export function instantiateNodePipeline(
       uniformBuffer: null,
       uniforms: null,
       layer: {
-        rotationBuffer: uniformBuffer(16),
+        rotationBuffer: uniformBuffer(16, `${emitted.nodeId}:rotation`),
         fragUniformBuffer: uniformBuffer(BAND_LAYER_UNIFORMS.bytes),
         rotationData: new Float32Array(4),
         fragUniforms: createUniformData(BAND_LAYER_UNIFORMS),

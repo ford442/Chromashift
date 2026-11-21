@@ -20,7 +20,7 @@ import { GpuMotionPass } from '../../compute/chores/webgpuMotion';
 import { applyGraphVariant, compileGraph, MAX_LAYER_COUNT } from '../../graph';
 import { buildGraphPreset, GRAPH_PRESETS } from '../../graph/altGraphs';
 import { buildEncodePlan } from '../../graph/exec/plan';
-import { createNodeProgram, type NodeProgramContext } from '../../graph/exec/nodePipelines';
+import { createNodeProgram, emittedHasProgram, type NodeProgramContext } from '../../graph/exec/nodePipelines';
 import type { CanvasPresentation } from '../../gpu/gpuOptions';
 import { TextureManager } from '../../webgpu/TextureManager';
 import * as webglShaders from '../../webgl/shaders';
@@ -76,7 +76,7 @@ export function buildShaderCorpus(): ShaderCorpus {
           const emittedById = new Map(compiled.emitted.map((pass) => [pass.nodeId, pass]));
           for (const step of buildEncodePlan(compiled).steps) {
             const emitted = emittedById.get(step.nodeId);
-            if (!emitted || emitted.fragment === '') continue;
+            if (!emitted || !emittedHasProgram(emitted)) continue;
             recorder.context = `graph-${name}-${layerCount}-${motion ? 'motion' : 'still'}-${presentation}-${emitted.nodeId}`;
             createNodeProgram(ctx, emitted);
           }

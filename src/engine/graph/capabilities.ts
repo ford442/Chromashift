@@ -1,5 +1,6 @@
 import { PassGraphError } from './errors';
 import type { GraphBackend, GraphNode, NodeKind } from './types';
+import { bufferEdgeNeeds } from './validate';
 
 /**
  * What each backend can emit.
@@ -23,14 +24,20 @@ const SUPPORTED: Record<GraphBackend, ReadonlySet<NodeKind>> = {
     'blur',
     'history',
     'displace',
+    'emit',
+    'advect',
+    'splat',
     'output',
   ]),
-  // Every kind, now that each has a GLSL template and the WebGL executor runs
+  // Every kind but the buffer chain, now that each has a GLSL template and the WebGL executor runs
   // them (`templates/glsl.ts`, `exec/WebGLGraphExecutor.ts`). A kind added
   // without its GLSL emitter stays off this list, and a graph reaching it is
   // an `unsupported-node` refusal naming it. `motion` is fused into `decay`,
-  // whose GLSL template has the motion variant. What the backend still
-  // refuses by name is a *param*, not a kind: an `hdr-extended` output.
+  // whose GLSL template has the motion variant. WebGL2 has no compute stage
+  // and no storage buffers, so `emit` and `advect` are refused by name, and
+  // `splat` with them (it draws what they wrote); transform-feedback
+  // emulation is out of scope. The renderer then draws the default graph.
+  // The other refusal is a *param*, not a kind: an `hdr-extended` output.
   webgl: new Set<NodeKind>([
     'source',
     'band-layer',
@@ -99,6 +106,13 @@ const WEBGPU_NEEDS: Record<NodeKind, readonly DeviceCapability[]> = {
   blur: [],
   history: [],
   displace: [],
+  // Storage buffers in a compute stage, and vertex buffers in a render one:
+  // compatibility mode's baseline. A render node binding a buffer as
+  // fragment storage would need `fragment-storage` — that is an *edge's*
+  // need, checked per graph (`bufferEdgeNeeds` in validate.ts).
+  emit: [],
+  advect: [],
+  splat: [],
   output: [],
 };
 
@@ -135,8 +149,9 @@ export function webGpuDeviceCapabilities(device: {
 }
 
 /**
- * The capabilities `graph`'s WebGPU passes need: each node kind's, plus
- * `hdr-canvas` for an `hdr-extended` output.
+ * The capabilities `graph`'s WebGPU passes need: each node kind's,
+ * `hdr-canvas` for an `hdr-extended` output, and `fragment-storage` for a
+ * buffer edge into a render node that binds it as storage.
  */
 export function graphCapabilityNeeds(graph: { nodes: readonly GraphNode[] }): DeviceCapability[] {
   const needs = new Set<DeviceCapability>();
@@ -144,6 +159,7 @@ export function graphCapabilityNeeds(graph: { nodes: readonly GraphNode[] }): De
     for (const need of WEBGPU_NEEDS[node.kind]) needs.add(need);
     if (node.kind === 'output' && node.params.presentation === 'hdr-extended') needs.add('hdr-canvas');
   }
+  for (const { need } of bufferEdgeNeeds(graph)) needs.add(need);
   return [...needs];
 }
 

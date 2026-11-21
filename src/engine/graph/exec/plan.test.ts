@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { TRAILS3_ECHO_ID, buildBlurGraph, buildGraphPreset, buildTrails3Graph, buildWarpGraph } from '../altGraphs';
+import {
+  PARTICLE_GRAPH_IDS,
+  TRAILS3_ECHO_ID,
+  buildBlurGraph,
+  buildGraphPreset,
+  buildParticlesGraph,
+  buildTrails3Graph,
+  buildWarpGraph,
+} from '../altGraphs';
 import { compileGraph, resetGraphCompileCache } from '../compile';
 import { buildDefaultGraph, DEFAULT_GRAPH_IDS } from '../defaultGraph';
 import { PassGraphError } from '../errors';
@@ -295,6 +303,78 @@ describe('encode plan — body smear', () => {
     const outputs = compile(buildGraphPreset('smear')).outputs;
     expect(outputs.layers).toEqual(['layer0', 'layer1', 'layer2']);
     expect(outputs.tracers[1]).toBe('tracer-above');
+  });
+});
+
+describe('encode plan — the particle chain', () => {
+  const ids = PARTICLE_GRAPH_IDS;
+  const plan = buildEncodePlan(compile(buildParticlesGraph()));
+
+  it('encodes emit, advect and splat between the layers and the accumulators', () => {
+    expect(encodedPassOrder(plan)).toEqual([
+      'layer0', 'layer1', 'layer2',
+      ids.emit, ids.advect, ids.splat,
+      DEFAULT_GRAPH_IDS.tracerBelow, DEFAULT_GRAPH_IDS.tracerAbove, ids.trail,
+      DEFAULT_GRAPH_IDS.composite,
+    ]);
+  });
+
+  it('fuses the coincidence into emit as into the decays: the kernel loads its band layers', () => {
+    expect(plan.fused.has(DEFAULT_GRAPH_IDS.coincidence)).toBe(true);
+    expect(plan.steps.find((step) => step.kind === 'emit')).toEqual({
+      kind: 'emit',
+      nodeId: ids.emit,
+      maskInputs: ['layer0', 'layer1', 'layer2'],
+      fused: true,
+    });
+  });
+
+  it('hands advect the ring and the field, and splat the ring', () => {
+    expect(plan.steps.find((step) => step.kind === 'advect')).toEqual({
+      kind: 'advect', nodeId: ids.advect, particles: ids.emit, field: ids.field,
+    });
+    expect(plan.steps.find((step) => step.kind === 'splat')).toEqual({
+      kind: 'splat', nodeId: ids.splat, particles: ids.advect,
+    });
+  });
+
+  it('accumulates the splat as a trail, the compositor’s third (extra) timescale', () => {
+    expect(plan.steps.find((step) => step.nodeId === ids.trail)).toEqual({
+      kind: 'decay',
+      nodeId: ids.trail,
+      stampInputs: [ids.splat],
+      role: 'extra',
+      motionField: null,
+      trail: true,
+    });
+  });
+
+  it('asks the chore for flow: advect reads the field’s velocity', () => {
+    expect(plan.wantsMotionField).toBe(true);
+    expect(plan.motionFieldNeedsFlow).toBe(true);
+  });
+
+  it('spawns from any texture as a mask when it reads no coincidence', () => {
+    const graph = buildParticlesGraph();
+    const masked = {
+      ...graph,
+      nodes: graph.nodes.map((node) => (node.id === ids.emit ? { ...node, inputs: ['layer1'] } : node)),
+    };
+    const step = buildEncodePlan(compile(masked)).steps.find((s) => s.kind === 'emit');
+    expect(step).toEqual({ kind: 'emit', nodeId: ids.emit, maskInputs: ['layer1'], fused: false });
+  });
+
+  it('refuses the temporal term over a particle splat, by name', () => {
+    const graph = buildParticlesGraph();
+    const term = { id: 'splat-motion', kind: 'motion' as const, inputs: [ids.splat, ids.field], params: {} };
+    const moved: PassGraph = {
+      ...graph,
+      nodes: [
+        ...graph.nodes.map((node) => (node.id === ids.trail ? { ...node, inputs: [term.id] } : node)),
+        term,
+      ],
+    };
+    expect(() => buildEncodePlan(compile(moved))).toThrow(/weights a particle splat/);
   });
 });
 

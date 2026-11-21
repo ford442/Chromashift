@@ -38,8 +38,10 @@ function selectionFor(value: string): PassGraphSelection {
  * Every session compiles a graph and draws it with its backend's executor
  * (`WebGpuGraphExecutor`, `WebGLGraphExecutor`) — the default graph unless
  * `?graph=blur` / `?graph=warp`, the starter graphs `?graph=smear` /
- * `?graph=feedback` or `?graph=trails3` (or a stored `chromashift.passGraph`
- * preference) select another.
+ * `?graph=feedback` or `?graph=trails3`, or the particle chain
+ * `?graph=particles` (WebGPU only: WebGL refuses its compute nodes and draws
+ * the default graph) — or a stored `chromashift.passGraph` preference —
+ * select another.
  *
  * The URL wins over the stored preference, and storage a hardened browser
  * blocks reads as "no preference".

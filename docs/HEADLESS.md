@@ -49,7 +49,7 @@ clamped or dropped is printed. Without one, the session defaults.
 | Option | |
 |---|---|
 | `-i, --image <path>` | Source image or folder (`.png .jpg .jpeg .webp .avif .gif .tif .tiff`) |
-| `-g, --graph <name>` | `default`, `blur`, `warp`, `smear`, `feedback`, `trails3` (the `?graph=` presets) |
+| `-g, --graph <name>` | `default`, `blur`, `warp`, `smear`, `feedback`, `trails3`, `particles` (the `?graph=` presets) |
 | `-n, --frames <n>` | `render`: per image (default 90). `still`: frames rendered (default 30) |
 | `--fps <n>` | Default: the settings' export fps |
 | `--size <WxH>` | Default: the first image's size, rounded to even |
@@ -179,7 +179,7 @@ the `trails3` echo never reaches a pixel.
 | Case | Graph | Layers |
 |---|---|---|
 | `default-1`, `default-3`, `default-7`, `default-10` | default | 1, 3, 7, 10 |
-| `smear`, `feedback`, `trails3`, `blur`, `warp` | the starter and shape presets | 3 |
+| `smear`, `feedback`, `trails3`, `blur`, `warp`, `particles` | the starter and shape presets | 3 |
 
 They are compared with pixelmatch (threshold 0) plus a per-channel delta, at
 the E2E tolerance: max channel delta ≤ 1 and ≤ 0.05% of pixels differing.
