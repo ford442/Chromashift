@@ -264,6 +264,30 @@ test.describe('pass graph', () => {
     });
   }
 
+  test('refuses ?graph=particles by name and draws the default graph, not black', async ({ page }) => {
+    // WebGL2 has no compute stage: the chain's compute nodes are refused at
+    // compile time, naming the first, and the frame is the default graph's.
+    await openWebglScene(page, '&graph=particles');
+    await page.waitForFunction(() => window.passGraphExecuting === 'default');
+
+    const crumbs = await page.evaluate(() => ({
+      name: window.passGraphName,
+      error: window.passGraphError,
+      slots: window.passGraphSlotsExecuting,
+      executed: window.passGraphExecutedPasses,
+      bufferBytes: window.passGraphBufferBytes ?? 0,
+    }));
+    expect(crumbs.name).toBe('particles');
+    expect(crumbs.error).toMatch(
+      /^unsupported-node: The webgl backend has no compute stage: node kind 'emit' \(node 'particles-emit'\) is a compute node\.$/,
+    );
+    expect(crumbs.slots).toEqual({ main: 'default' });
+    expect(crumbs.executed).toEqual(['layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite']);
+    expect(crumbs.bufferBytes).toBe(0);
+
+    await expect.poll(() => canvasDistinctColours(page), { timeout: 15_000 }).toBeGreaterThan(8);
+  });
+
   test('a different shape draws different pixels: ?graph=feedback is not the default graph', async ({ page }) => {
     await openWebglScene(page, '&graph=feedback');
     await page.waitForFunction(() => window.passGraphExecuting === 'feedback');

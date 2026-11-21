@@ -13,8 +13,66 @@ import type { UniformLayout } from './templates/uniformLayout';
 /** Backends a graph can be compiled for. */
 export type GraphBackend = 'webgpu' | 'webgl';
 
-/** What flows along an edge. Only textures are schedulable render-pass inputs. */
-export type EdgeType = 'texture' | 'scalar';
+/**
+ * What flows along an edge: a texture (every render pass's input and output),
+ * a GPU buffer (what a compute stage writes and the passes after it read), or
+ * a scalar.
+ */
+export type EdgeType = 'texture' | 'scalar' | 'buffer';
+
+/**
+ * Where a node's work runs. Every kind before the particle chain is `render`:
+ * a fullscreen fragment pass that reads textures and writes one. A `compute`
+ * node is encoded as a compute pass in the same command encoder as the render
+ * passes around it, so it costs no extra submit.
+ */
+export type NodeStage = 'render' | 'compute';
+
+/**
+ * How a node reads a buffer input. `vertex`: as instance-stepped vertex
+ * attributes, which every device can do. `storage`: bound as a storage buffer
+ * in the pass's shaders — in a *render* node that means fragment-stage storage,
+ * which a compatibility-mode device may withhold (`fragment-storage`).
+ */
+export type BufferAccess = 'vertex' | 'storage';
+
+/**
+ * How many elements a buffer holds: a structural param of the node that owns
+ * it (resolved at compile time, so it is part of the structural hash), or one
+ * per pixel of a resolution class (resolved when the pool knows the frame's
+ * size).
+ */
+export type BufferElements =
+  | { readonly param: string; readonly fallback: number; readonly min: number; readonly max: number }
+  | { readonly perPixel: ResolutionClass };
+
+/**
+ * `plain`: an array of elements. `append`: an array plus a control block — an
+ * `atomic<u32>` head a compute stage appends at, and the indirect dispatch and
+ * draw arguments derived from it — so the passes after it run over the live
+ * count without the CPU ever reading it back.
+ */
+export type BufferLayout = 'plain' | 'append';
+
+/** The buffer a buffer-producing node kind writes. */
+export type BufferOutputSpec =
+  | {
+    /** The node allocates the buffer. */
+    readonly owns: true;
+    readonly layout: BufferLayout;
+    /** Bytes per element. */
+    readonly stride: number;
+    readonly elements: BufferElements;
+    /** True when the contents outlive the frame (particles do); never pooled then. */
+    readonly persistent: boolean;
+  }
+  | {
+    /**
+     * The node updates its first input's buffer in place, and its output *is*
+     * that buffer: `advect` moves the particles `emit` appended.
+     */
+    readonly owns: false;
+  };
 
 /**
  * Resolution classes. The renderer allocates layer-scaled and tracer-scaled
@@ -35,6 +93,9 @@ export type NodeKind =
   | 'blur'          // separable gaussian
   | 'history'       // N-frame delay line: a ring of textures that outlives the frame
   | 'displace'      // warp UVs by a field texture (motion field or colour-as-flow)
+  | 'emit'          // compute: append particles where layers coincide, into a fixed-capacity ring
+  | 'advect'        // compute: move particles along the motion field + curl noise, age and kill them
+  | 'splat'         // render: one instanced quad per particle, additive, into a tracer-res target
   | 'output';       // swapchain
 
 export type ParamValue = number | boolean | string | readonly number[];
@@ -58,8 +119,14 @@ export interface NodeKindSpec {
   /** Inclusive input-count bounds. `Infinity` for variadic kinds. */
   minInputs: number;
   maxInputs: number;
-  /** Edge type every input must carry. */
+  /** Edge type every input must carry, unless {@link inputTypes} names it per position. */
   inputType: EdgeType;
+  /**
+   * Edge type per input position, for kinds whose inputs differ (`advect`
+   * reads `[particles, motion field]`). Positions past the end use
+   * {@link inputType}.
+   */
+  inputTypes?: readonly EdgeType[];
   /** Edge type this node produces; `null` for terminal nodes (`output`). */
   outputType: EdgeType | null;
   /** Resolution class of this node's render target. */
@@ -71,12 +138,21 @@ export interface NodeKindSpec {
    * hash covers these and nothing else, so a parameter tweak never recompiles.
    */
   structuralParams: readonly string[];
+  /** Render pass or compute pass. */
+  stage: NodeStage;
+  /** `@workgroup_size` of a compute node's kernels; absent for render nodes. */
+  workgroup?: readonly [number, number, number];
+  /** The buffer a node whose `outputType` is `buffer` writes. */
+  buffer?: BufferOutputSpec;
+  /** How the node reads its buffer inputs, when it has any. */
+  bufferAccess?: BufferAccess;
 }
 
-/** One scheduled render pass, in execution order. */
+/** One scheduled pass — render or compute — in execution order. */
 export interface ScheduledPass {
   nodeId: string;
   kind: NodeKind;
+  stage: NodeStage;
   /** Position in the topological order. */
   order: number;
   /** Input node ids, excluding feedback edges (those read the ping-pong history). */
@@ -118,23 +194,70 @@ export interface HistoryRing {
   frames: number;
 }
 
+/** Half-open [def, lastUse] interval of one buffer-producing node's output. */
+export interface BufferLifetime {
+  nodeId: string;
+  def: number;
+  lastUse: number;
+}
+
+/**
+ * One GPU buffer resource: the element array, plus — for an `append` buffer —
+ * its control block. Created lazily by the executor's buffer pool, so a plan
+ * with no buffers allocates none.
+ */
+export interface BufferResource {
+  id: string;
+  /** The node that owns (allocates) it. */
+  owner: string;
+  /** Every node whose output is this buffer: the owner, then in-place writers, in schedule order. */
+  nodes: string[];
+  layout: BufferLayout;
+  stride: number;
+  /** Element count, or one per pixel of a resolution class. */
+  elements: number | { perPixel: ResolutionClass };
+  /** Survives the frame (and is never pooled). */
+  persistent: boolean;
+  /** Bytes of the control block: 0 for `plain`. */
+  controlBytes: number;
+}
+
 export interface AllocationPlan {
   slots: PoolSlot[];
   /** `history` rings, one per node. Their textures are counted here, not in `slots`. */
   rings: HistoryRing[];
-  /** node id → pool slot id (or a dedicated persistent/ external slot id). */
+  /**
+   * Buffer resources. Empty for every graph without a buffer-producing node,
+   * the default graph included.
+   */
+  buffers: BufferResource[];
+  /** node id → pool slot id (or a dedicated persistent/ external slot id, or a buffer resource id). */
   assignment: Record<string, string>;
   lifetimes: TextureLifetime[];
   /** Slot count per resolution class — the VRAM proxy the budget test asserts on. */
   slotsByResolution: Record<ResolutionClass, number>;
 }
 
+/** A compute node's module and the kernels it dispatches, in order. */
+export interface EmittedCompute {
+  module: string;
+  entryPoints: readonly string[];
+  workgroup: readonly [number, number, number];
+}
+
 /** Shader source emitted for one pass. */
 export interface EmittedPass {
   nodeId: string;
   kind: NodeKind;
-  /** Fragment shader source for the compile target backend. */
+  /** Fragment shader source for the compile target backend; `''` for a compute node. */
   fragment: string;
+  /** A compute node's kernels. Absent for every render pass. */
+  compute?: EmittedCompute;
+  /**
+   * A render pass that draws its own geometry (`splat`): its vertex module.
+   * Absent for the fullscreen passes, which share the fullscreen vertex stage.
+   */
+  vertex?: string;
   /** Texture binding names in binding order, for the renderer to wire up. */
   textureBindings: string[];
   /**

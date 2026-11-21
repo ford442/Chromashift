@@ -20,6 +20,10 @@ pipeline they hard-code.
 > on Dawn: the same renderer and executor over an offscreen surface, whose
 > frames are the browser's byte for byte on SwiftShader and are pinned as the
 > canonical pixel goldens (see [Headless](#headless)).
+> The graph is no longer render-only: **buffers are graph resources** and
+> nodes run in a **compute stage**, encoded into the frame's own command
+> encoder — which is what `?graph=particles` draws (see
+> [Buffers and compute stages](#buffers-and-compute-stages)).
 > See [Phase 2](#phase-2--shipped) and [Phase 3](#phase-3--shipped) for what
 > landed and [what is left](#not-done-yet).
 
@@ -57,15 +61,22 @@ type NodeKind =
   | 'blur'          // separable gaussian
   | 'history'       // N-frame delay line: a ring of textures that outlives the frame
   | 'displace'      // warp UVs by a field texture (motion field or colour-as-flow)
+  | 'emit'          // compute: append particles where layers coincide, into a fixed-capacity ring
+  | 'advect'        // compute: move particles along the motion field + curl noise, age and kill them
+  | 'splat'         // render: one instanced quad per particle, additive, into a tracer-res target
   | 'output';       // swapchain
+
+type EdgeType = 'texture' | 'scalar' | 'buffer';
 
 interface GraphNode { id: string; kind: NodeKind; inputs: string[]; params: Record<string, ParamValue>; }
 interface PassGraph { nodes: GraphNode[]; output: string; }
 ```
 
-Each kind is described once in `nodeKinds.ts` — arity, edge type, resolution
-class, whether it ping-pongs, and which params are *structural* (they change
-emitted code) rather than *value* params (they change a uniform).
+Each kind is described once in `nodeKinds.ts` — arity, edge type (per input
+position where they differ), resolution class, whether it ping-pongs, which
+params are *structural* (they change emitted code) rather than *value* params
+(they change a uniform), its `stage` (`render` or `compute`, with a `workgroup`
+size), and for a buffer producer the buffer it writes.
 
 | Kind | Inputs | Resolution | Structural params | Value params | WebGL |
 |---|---|---|---|---|---|
@@ -75,16 +86,20 @@ emitted code) rather than *value* params (they change a uniform).
 | `coincidence` | 1–∞ | tracer | `minOverlap`, `emitDiagnostic` | thresholds | ✓ |
 | `motion` | 2: `[stamp, field]` | tracer | — | mode, gain, decay bias (from `RendererState`) | ✓ (fused into `decay`) |
 | `decay` | 1 | tracer (ping-pong) | — | duration | ✓ |
-| `blend` | layers + ≥ 2 tracers | output | `layerInputs`, `tracerInputs` | opacities, modes; an extra tracer's `intensity` | ✓ |
+| `blend` | layers + ≥ 2 tracers | output | `layerInputs`, `tracerInputs`, `overlayInputs` | opacities, modes; an extra tracer's `intensity` | ✓ (no `overlayInputs`) |
 | `warp` | 1 | layer | `mode` (`affine` \| `feedback`) | `angleDeg`, `scale`, `displace` | ✓ |
 | `blur` | 1 | layer | `radius` | `axis` | ✓ |
 | `history` | 1 | layer, or tracer | `frames` (2–8), `resolution` | `mode` (`trail` \| `tap`), `delay`, `falloff` | ✓ |
 | `displace` | 2: `[source, field]` | layer | `field` (`motion` \| `color`) | `gain`, `mode` (`inverse` \| `forward`) | ✓ |
+| `emit` *(compute)* | 1: a `coincidence` (fused) or any mask texture | layer | `capacity` (64–262 144) | `cells`, `spawnRate`, `lifetimeSec`, `boost`, `speed` | ✗ |
+| `advect` *(compute)* | 2: `[particles, field]` | layer | — | `flowGain`, `curl`, `noiseScale`, `inertia` | ✗ |
+| `splat` | 1: particles (buffer) | tracer | — | `radius`, `intensity` | ✗ |
 | `output` | 1 | output | `presentation` (`sdr` \| `hdr-extended`) | — | ✓ (`sdr` only) |
 
 A structural param that selects code or a binding is checked by `validate.ts`:
-an unknown `role`, `field` or `resolution`, or a `frames` outside 2–8, is an
-`invalid-param` error naming the node, never a fallback to a default.
+an unknown `role`, `field` or `resolution`, a `frames` outside 2–8, or an
+`emit` `capacity` outside 64–262 144, is an `invalid-param` error naming the
+node, never a fallback to a default.
 
 ## The default graph
 
@@ -111,8 +126,11 @@ guarantee in `bandTable.test.ts` is untouched.
    makes that read return the previous frame rather than a half-written target.
    A cycle without one is an `illegal-cycle` error naming the node.
 2. **Schedule** (`schedule.ts`) — topological sort into pass order plus texture
-   lifetimes. Feedback edges are dropped from the ordering (they impose no
-   intra-frame dependency) but keep their producer live for the whole frame.
+   (and buffer) lifetimes, compute and render nodes in one pass. Feedback
+   edges are dropped from the ordering (they impose no intra-frame dependency)
+   but keep their producer live for the whole frame. A graph with a buffer
+   chain has that chain hoisted as early as its inputs allow; a graph without
+   one keeps exactly its depth-first order.
 3. **Allocate** (`allocate.ts`) — a transient texture pool that reuses render
    targets across non-overlapping lifetimes, keyed by resolution class (`layer`
    targets and `tracer` targets are different sizes and never share). Sources
@@ -120,6 +138,8 @@ guarantee in `bandTable.test.ts` is untouched.
    to the swapchain; ping-pong nodes hold two textures and are never pooled.
    The pool is load-bearing, not an optimisation: it is what makes a 12-node
    graph affordable when every intermediate used to be permanently allocated.
+   It allocates **buffers** the same way (see
+   [Buffers and compute stages](#buffers-and-compute-stages)).
 4. **Emit** (`templates/`) — per node kind, a WGSL snippet and, where one exists,
    a matching GLSL ES 3.00 snippet. **The existing shader modules are the
    template bodies**: `shaders/layers.ts`, `shaders/persistence.ts`,
@@ -138,8 +158,12 @@ draws it — today every kind: `warp`, `blur`, `history` and `displace` arrived
 with the WebGL executor, each emitter in the same change as its name in the
 `webgl` set. Compiling a graph that reaches an unsupported node throws a
 `PassGraphError` with `code: 'unsupported-node'` naming the node and the kind,
-and the canvas keeps the default graph. It never silently approximates. What
-WebGL still refuses by name is a param, not a kind: an `hdr-extended` output.
+and the canvas keeps the default graph. It never silently approximates. WebGL2
+has no compute stage, so the buffer chain (`emit`, `advect`, `splat`) is
+refused by name — `?renderer=webgl&graph=particles` draws the default graph
+with `window.passGraphError` saying `no compute stage: node kind 'emit'`; a
+transform-feedback emulation is out of scope. What else WebGL refuses is a
+param, not a kind: an `hdr-extended` output, and `blend`'s `overlayInputs`.
 
 Adding WebGL support for a new kind means adding its emitter to
 `templates/glsl.ts`, its name to the `webgl` set and its encode step to
@@ -217,6 +241,7 @@ exactly.
 | `window.passGraphPasses` | scheduled pass order, as node ids — of the variant being drawn (the temporal term adds `motion-field` and a `…-motion` node) |
 | `window.passGraphSlots` | pool slot count per resolution class |
 | `window.passGraphRingFrames` | `history` ring textures per resolution class — VRAM that outlives the frame, so it is not in `passGraphSlots` |
+| `window.passGraphBufferBytes` | bytes the primary canvas's executor holds in graph buffers (the particle ring and its control block) — the pool's byte accounting; `0` for a graph without a buffer |
 | `window.passGraphError` | a refusal, or `null`: `unsupported-node: …` names a node the backend has no template for; `invalid-pipeline: …` carries the device's own error for an emitted shader it rejected |
 | `window.passGraphName` | which named shape the gate selected |
 | `window.passGraphVariant` | the variant of it a renderer last compiled for a frame: `layers:term:presentation`, e.g. `3:motion:sdr` |
@@ -420,6 +445,7 @@ the executor is not a second hand-written encoder:
 | `smear` | **body smear** starter: source → `history(4)` → `displace` by the motion field → the three band layers (see below) |
 | `feedback` | **self-feedback warp** starter: layer 0 through `warp` in `feedback` mode before coincidence |
 | `trails3` | a **third tracer timescale**: a third `decay` over the same stamp, a slow faint echo the compositor blends under the shipped pair (see [Tracer timescales](#tracer-timescales)) |
+| `particles` | the **particle chain**: `emit` → `advect` → `splat` → a trail `decay`, screened over the frame (WebGPU only; see [The particle chain](#the-particle-chain)) |
 | `0` | retired: was the hand encoder; now the default graph |
 
 `blur` is the case the transient pool was built for: each layer's horizontal
@@ -624,6 +650,142 @@ layers and `persistAbove` over them, timed by the session's tracer settings.
 `?graph=trails3` (`buildTrails3Graph`) is the starter: the default graph plus a
 6-second echo at 0.45, drawn under everything — the trail a slow-moving subject
 leaves long after the shipped tracers have faded.
+
+## Buffers and compute stages
+
+Until this, every node was a fullscreen fragment pass that read textures and
+wrote one texture, and compute existed only outside the graph, as `gpu-chores`
+jobs whose results were bound back in by hand. A graph could not express
+anything that is not "one pixel in, one pixel out". Now it can:
+
+- **A buffer is a graph resource.** `EdgeType` has `buffer` beside `texture`.
+  A kind whose `outputType` is `buffer` declares the buffer it writes in its
+  spec (`BufferOutputSpec`): either it *owns* one — a layout (`plain`, or
+  `append`: an element array plus a control block holding an `atomic<u32>`
+  head and the indirect arguments derived from it), a stride, an element
+  count, and whether it persists across frames — or it writes its first
+  input's buffer *in place* (`advect`). The element count is a structural
+  param of the owner (resolved at compile time, so it is in the structural
+  hash) or one per pixel of a resolution class (resolved when the pool knows
+  the frame size). Edge types are checked per input position
+  (`NodeKindSpec.inputTypes`): `advect` reads `[buffer, texture]`.
+- **The pool learns buffers.** `allocate.ts` gives every owning node a
+  `BufferResource` in `AllocationPlan.buffers`: a persistent one (the particle
+  ring) is never pooled, a transient one is handed a free resource of the same
+  shape once its last reader has run — the textures' linear scan — and an
+  in-place writer is assigned its input's resource. `estimateVram` counts
+  them; the executor's `GraphBufferPool` creates them lazily, so the default
+  graph allocates **no** buffer, and its byte accounting
+  (`WebGpuGraphExecutor.bufferBytes()`, `window.passGraphBufferBytes`) is what
+  a VRAM bound is asserted on.
+- **Node specs gain a stage.** `stage: 'render' | 'compute'`, and a compute
+  kind's `workgroup` size. `schedule.ts` orders compute and render nodes in one
+  topological pass, tagging each `ScheduledPass` with its stage. A buffer
+  chain is hoisted as early as its inputs allow, so its passes are contiguous
+  and ahead of the accumulators — any topological order draws the same frame,
+  this one lets the Perf HUD's markers bracket each stage. A graph with no
+  chain keeps exactly its depth-first order, so the default graph's schedule
+  and hash are unchanged (`buffers.test.ts` pins its hashes at 1, 3, 7 and 10
+  layers).
+- **Compute passes in the frame's encoder.** `WebGpuGraphExecutor` encodes a
+  compute node as a compute pass in the same command encoder as the render
+  passes around it: no extra submit. A compute node's `EmittedPass` carries
+  `compute: { module, entryPoints, workgroup }`; one module, one pipeline per
+  entry point, one bind group for all of them.
+- **Layouts from reflection.** A compute module's bind-group layout is
+  reflected off its WGSL (`layoutFromReflection`, compute visibility), as every
+  render pass's is; `shaders/shaderBindings.test.ts` holds the chain's
+  pipelines to `wgsl_reflect`, and `npm run shaders:validate` runs `naga` over
+  them at every layer count.
+- **Which edges need what.** A compute stage binds storage buffers, which
+  every WebGPU device — compatibility mode included — allows. A *render* node
+  that binds a buffer input as storage (`bufferAccess: 'storage'`) would put
+  it in a fragment stage, which a compatibility-mode device may withhold:
+  `validate.ts`'s `bufferEdgeNeeds` names it `fragment-storage`,
+  `graphCapabilityNeeds` adds it, and a device without it refuses the graph
+  by name (`unsupported-capability`). `splat` reads its buffer as
+  instance-stepped vertex attributes instead (`bufferAccess: 'vertex'`), so it
+  needs nothing, and a GL ES-class device draws the particle chain.
+
+## The particle chain
+
+`?graph=particles` (`buildParticlesGraph`, scales with the layer count): the
+default graph, plus a compute stage over the same coincidence the tracers
+stamp. Tracers are the app's signature — where layers coincide, leave a
+decaying trail — and this turns a still-photo tracer into a living one.
+
+```
+            ┌─ band-layer × N ─┐
+ source ────┤                  ├─► coincidence ─┬─► decay (below) ─┐
+            └──────────────────┘                ├─► decay (above) ─┤
+                                                └─► emit ─► advect ─► splat ─► decay (trail) ─┤
+ motion-field ─────────────────────────────────────────┘                                      ├─► blend ─► output
+ band layers ─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **`emit`** (compute): reads the coincidence — fused into it as into the
+  decays, so the kernel runs the overlap test (`coincidenceParts`, shared with
+  the fragment pass and the chore kernel) over the band layers — and, on a
+  fixed emitter grid (`cells` across the mask, whatever its size), appends a
+  particle where the stamp would paint and a hashed roll clears
+  `spawnRate × dt`. Its colour is the layer it was born on (the dominant,
+  brightest overlapping one). The append is `atomicAdd` on the head, modulo the
+  `capacity` — a ring: once full, the oldest slots are overwritten, so the
+  chain's VRAM is the capacity and nothing else (at the maximum, 262 144 ×
+  32 B = 8 MiB). A second kernel, one invocation, then writes the indirect
+  arguments from `min(head, capacity)`, and folds a head past twice the
+  capacity back (same slot, same count) so a long installation never wraps
+  a `u32`. Fed any other texture, `emit` spawns where its alpha clears the
+  threshold.
+- **`advect`** (compute, `dispatchWorkgroupsIndirect`): position +=
+  (flow × gain + curl noise) × dt. The flow is the motion field's `.gb`
+  (optical flow from the motion chore, which the plan asks to solve flow for);
+  the curl is of an analytic stream function, divergence-free and
+  deterministic in time. It ages each particle and kills it past its life or
+  out of the frame.
+- **`splat`** (render, `drawIndirect`): six vertices per filled ring slot,
+  the particle as instance attributes, a soft round dot, additive, into a
+  tracer-resolution target. A dead slot collapses outside the clip volume.
+- **The trail `decay`** accumulates the splat: the component-wise brighter of
+  the decayed history and the fresh splat (`emitTrailDecayWgsl`). It is the
+  compositor's third tracer timescale (`role: 'extra'`, timed by its own
+  `durationMs`), and `blend`'s `overlayInputs: 1` screens it on top of
+  everything, in RGB. It holds premultiplied light and nothing reads its
+  alpha: the accumulators are in the internal format, which under
+  `rg11b10ufloat` has no alpha channel, so an alpha blend would cover the
+  frame. The temporal term is never added to it (`withMotionTerm` skips a
+  decay of a `splat`; a hand-built one is refused) — the particles already
+  move with the field.
+
+The CPU never reads the count back: `emit`'s args kernel writes `advect`'s
+workgroup count and `splat`'s instance count into the control block, at
+`APPEND_DISPATCH_ARGS_OFFSET` (4, just past the head) and
+`APPEND_DRAW_ARGS_OFFSET` (16).
+
+**Time and determinism.** `dt` is `1 / fps` — in an export, exactly the
+offline `FrameClock`'s step. The spawn roll and every per-particle random are
+PCG hashed from `(frameIndex, pixel)`, never `Math.random`, and `frameIndex`
+counts frames since the last clear, which "Reset trails" and every export do —
+so two exports with the same settings spawn the same particles, and their
+first frames agree within the golden tolerance (`particles.gpu.test.ts`).
+The order particles land in slots is the order the GPU ran the invocations,
+which is not deterministic on real GPUs; nothing a particle does depends on
+its slot, only on its own state and seed. Additive blending follows instance
+order, so the golden (`__golden__/particles.png`, an accumulated splat over
+12 frames, below the capacity) is compared within the headless tolerance; on
+SwiftShader it is byte-identical run to run.
+
+**Pausing and clearing.** A paused frame encodes neither `emit` nor `advect`
+— the particles freeze with the tracers — and `splat` still draws them.
+`clearAccumulators()` zeroes the ring and its control block with the trails.
+
+**Perf HUD.** The timestamp profiler has three more markers: `Emit`, `Advect`
+and `Splat` rows sit between the layers and persistence, and read 0 for a
+graph without a chain (its markers land together).
+
+**Breadcrumbs.** `window.passGraphPasses` and `passGraphExecutedPasses` list
+the chain's nodes; `window.passGraphBufferBytes` is the ring's bytes
+(16 384 × 32 + 32 for the starter) and stays there frame after frame.
 
 ## Phase 2 — shipped
 
@@ -838,7 +1000,7 @@ frames:
 
 - **The canonical pixel goldens** (`src/headless/__golden__/`) are the default
   graph at 1, 3, 7 and 10 layers and every shape and starter preset (`blur`,
-  `warp`, `smear`, `feedback`, `trails3`). They are compared with pixelmatch at
+  `warp`, `smear`, `feedback`, `trails3`, `particles`). They are compared with pixelmatch at
   the E2E tolerance and run on every push in the `headless` CI job, with no
   browser involved.
 - **The browser check.** On the SwiftShader Vulkan that `chromium-webgpu`
@@ -860,6 +1022,11 @@ The CLI, the rasterizer choice and the encoder decision are in
   with a named preset and a JSON text field, which is why it is still not here.
   The same work lets `chromashift render --graph` take a graph document, not
   only a preset name: `PassGraphSource` names a `GraphPresetName` today.
+- **Other compute consumers.** The buffer resource exists now; a GPU
+  histogram node, and moving the `gpu-chores` jobs (the motion field, the
+  image analysis) into the graph as compute nodes, are follow-ups of their
+  own. So is a `splat` that reads a storage buffer (it would need
+  `fragment-storage`) and a WebGL path for the chain (transform feedback).
 
 ## Files
 
@@ -869,20 +1036,21 @@ src/engine/graph/
 ├── nodeKinds.ts      # per-kind arity, edge types, resolution class, structural params
 ├── validate.ts       # DAG + type check, fixed-point detection
 ├── schedule.ts       # topological sort, texture lifetimes
-├── allocate.ts       # transient texture pool, VRAM estimate
+├── allocate.ts       # transient texture + buffer pool, VRAM estimate
 ├── hash.ts           # structural hash (the cache key)
 ├── capabilities.ts   # which node kinds each backend can emit
 ├── compile.ts        # validate → schedule → allocate → emit → cache
 ├── defaultGraph.ts   # today's pipeline as a graph, for any layer count
 ├── layerSpecs.ts     # the band table the band-layer templates read
-├── gate.ts           # ?graph=blur|warp|smear|feedback|trails3 + window.passGraph* breadcrumbs
+├── gate.ts           # ?graph=blur|warp|smear|feedback|trails3|particles + window.passGraph* breadcrumbs
 ├── variants.ts       # GraphVariant, PassGraphSource, withMotionTerm (the temporal term)
-├── altGraphs.ts      # the named graph shapes the gate can select, JSON starter parsing
+├── altGraphs.ts      # the named graph shapes the gate can select (particles included), JSON starter parsing
 ├── starters/         # body-smear.json, feedback-warp.json
 ├── shaderText.ts     # shader normalisation used by the parity test
 ├── exec/
 │   ├── plan.ts                  # CompiledGraph → encodable steps (no WebGPU)
 │   ├── pool.ts                  # AllocationPlan → textures, lazily
+│   ├── bufferPool.ts            # AllocationPlan.buffers → GPU buffers, lazily, with byte accounting
 │   ├── nodePipelines.ts         # one emitted pass → shared program + per-executor uniforms
 │   ├── programCache.ts          # the device's programs, shared by every slot's executor
 │   ├── uniforms.ts              # RendererState → uniform values, for every encode path
@@ -892,6 +1060,7 @@ src/engine/graph/
 ├── templates/
 │   ├── uniformLayout.ts  # typed uniform-block layouts; the WGSL structs are emitted from them
 │   ├── wgsl.ts       # band-layer, coincidence+decay, blend, lut, warp, blur, history, displace
+│   ├── particles.ts  # emit + args kernels, advect, splat (vertex + fragment), the trail decay
 │   ├── canonicalWgsl.ts  # the default graph's three-layer sources by name (shaders/*.ts re-export them)
 │   └── glsl.ts       # the GLSL twins of every kind
 └── __golden__/       # pre-refactor shader sources — the pixel-identity baseline

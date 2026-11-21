@@ -310,7 +310,12 @@ describe('backend capabilities', () => {
     for (const backend of ['webgpu', 'webgl'] as const) {
       expect(supportedNodeKinds(backend)).toEqual(expect.arrayContaining([...kinds]));
     }
-    expect(new Set(supportedNodeKinds('webgl'))).toEqual(new Set(supportedNodeKinds('webgpu')));
+    // Every kind but the buffer chain: WebGL2 has no compute stage.
+    const chain = new Set(['emit', 'advect', 'splat']);
+    expect(new Set(supportedNodeKinds('webgl'))).toEqual(
+      new Set(supportedNodeKinds('webgpu').filter((kind) => !chain.has(kind))),
+    );
+    for (const kind of chain) expect(supportedNodeKinds('webgpu')).toContain(kind);
   });
 
   it('emits GLSL for every pass a WebGL graph draws', () => {

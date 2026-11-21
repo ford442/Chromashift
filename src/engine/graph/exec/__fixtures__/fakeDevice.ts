@@ -8,11 +8,32 @@
  */
 
 export interface RecordedPass {
+  /** `render` for every pass but a compute pass. */
+  kind: 'render' | 'compute';
   /** One entry per colour attachment, as `texture label @ loadOp`. */
   attachments: string[];
+  /** The last pipeline set. */
   pipeline: string;
+  /** Every pipeline set, in order — a compute pass sets one per kernel. */
+  pipelines: string[];
   bindGroup: string;
   draws: number[];
+  /** `drawIndirect` / `dispatchWorkgroupsIndirect` calls, as `buffer label @ offset`. */
+  indirect: string[];
+  /** `dispatchWorkgroups` calls, as `x×y×z`. */
+  dispatches: string[];
+  /** Vertex buffers bound, as `slot:buffer label`. */
+  vertexBuffers: string[];
+}
+
+/** A created buffer. */
+export interface RecordedBuffer {
+  label: string;
+  /** The descriptor's own label, when it gave one. */
+  name: string;
+  size: number;
+  usage: number;
+  destroyed: boolean;
 }
 
 export interface RecordedTexture {
@@ -38,6 +59,12 @@ export interface FakeGpu {
   pipelineCount: number;
   bindGroupCount: number;
   bufferWrites: { buffer: string; bytes: number }[];
+  /** Every buffer created, in creation order. */
+  buffers: RecordedBuffer[];
+  /** `clearBuffer` calls, as buffer labels, in order. */
+  bufferClears: string[];
+  /** Compute pipelines created, as entry point names. */
+  computeEntryPoints: string[];
   /** Each buffer's size at creation, by label. */
   bufferSizes: Map<string, number>;
   /** A copy of the bytes last written to each buffer, by label — what the GPU would read. */
@@ -61,7 +88,10 @@ export function installWebGpuConstants(): void {
   globals.GPUTextureUsage ??= {
     COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16,
   };
-  globals.GPUBufferUsage ??= { COPY_DST: 8, UNIFORM: 64 };
+  globals.GPUBufferUsage = {
+    MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128, INDIRECT: 256, QUERY_RESOLVE: 512,
+    ...(globals.GPUBufferUsage as object | undefined),
+  };
   globals.GPUShaderStage ??= { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
 }
 
@@ -74,6 +104,9 @@ export function createFakeGpu(): FakeGpu {
     pipelineCount: 0,
     bindGroupCount: 0,
     bufferWrites: [] as { buffer: string; bytes: number }[],
+    buffers: [] as RecordedBuffer[],
+    bufferClears: [] as string[],
+    computeEntryPoints: [] as string[],
     bufferSizes: new Map<string, number>(),
     bufferContents: new Map<string, Uint8Array>(),
     fragments: [] as string[],
@@ -119,7 +152,15 @@ export function createFakeGpu(): FakeGpu {
     createBuffer(descriptor: GPUBufferDescriptor) {
       const label = nextId('buf');
       state.bufferSizes.set(label, descriptor.size);
-      return { label, size: descriptor.size, destroy: () => {} } as unknown as GPUBuffer;
+      const record: RecordedBuffer = {
+        label,
+        name: descriptor.label ?? '',
+        size: descriptor.size,
+        usage: descriptor.usage,
+        destroyed: false,
+      };
+      state.buffers.push(record);
+      return { label, size: descriptor.size, destroy: () => { record.destroyed = true; } } as unknown as GPUBuffer;
     },
     createSampler: () => ({ __sampler: nextId('smp') }) as unknown as GPUSampler,
     createShaderModule(descriptor: GPUShaderModuleDescriptor) {
@@ -148,7 +189,10 @@ export function createFakeGpu(): FakeGpu {
       );
       return { label: nextId('pipe'), __targets: descriptor.fragment?.targets } as unknown as GPURenderPipeline;
     },
-    createComputePipeline: () => ({}) as unknown as GPUComputePipeline,
+    createComputePipeline(descriptor: GPUComputePipelineDescriptor) {
+      state.computeEntryPoints.push(descriptor.compute.entryPoint ?? '');
+      return { label: nextId(`cpipe:${descriptor.compute.entryPoint ?? ''}`) } as unknown as GPUComputePipeline;
+    },
     createBindGroup(descriptor: GPUBindGroupDescriptor) {
       state.bindGroupCount += 1;
       const label = nextId('bg');
@@ -172,14 +216,30 @@ export function createFakeGpu(): FakeGpu {
                 ? `${view.__texture}->${resolve.__texture}@${attachment.loadOp}`
                 : `${view.__texture}@${attachment.loadOp}`;
             });
-          const pass: RecordedPass = { attachments, pipeline: '', bindGroup: '', draws: [] };
+          const pass = recordedPass('render', attachments);
           state.passes.push(pass);
           return {
-            setPipeline: (pipeline: GPURenderPipeline) => { pass.pipeline = pipeline.label; },
+            setPipeline: (pipeline: GPURenderPipeline) => { pass.pipeline = pipeline.label; pass.pipelines.push(pipeline.label); },
             setBindGroup: (_index: number, group: GPUBindGroup) => { pass.bindGroup = group.label; },
+            setVertexBuffer: (slot: number, buffer: GPUBuffer) => { pass.vertexBuffers.push(`${slot}:${buffer.label}`); },
             draw: (count: number) => { pass.draws.push(count); },
+            drawIndirect: (buffer: GPUBuffer, offset: number) => { pass.indirect.push(`${buffer.label}@${offset}`); },
             end: () => {},
           } as unknown as GPURenderPassEncoder;
+        },
+        beginComputePass() {
+          const pass = recordedPass('compute', []);
+          state.passes.push(pass);
+          return {
+            setPipeline: (pipeline: GPUComputePipeline) => { pass.pipeline = pipeline.label; pass.pipelines.push(pipeline.label); },
+            setBindGroup: (_index: number, group: GPUBindGroup) => { pass.bindGroup = group.label; },
+            dispatchWorkgroups: (x: number, y = 1, z = 1) => { pass.dispatches.push(`${x}×${y}×${z}`); },
+            dispatchWorkgroupsIndirect: (buffer: GPUBuffer, offset: number) => { pass.indirect.push(`${buffer.label}@${offset}`); },
+            end: () => {},
+          } as unknown as GPUComputePassEncoder;
+        },
+        clearBuffer(buffer: GPUBuffer) {
+          state.bufferClears.push(buffer.label);
         },
         finish: () => ({}) as GPUCommandBuffer,
       } as unknown as GPUCommandEncoder;
@@ -221,6 +281,9 @@ export function createFakeGpu(): FakeGpu {
     get pipelineCount() { return state.pipelineCount; },
     get bindGroupCount() { return state.bindGroupCount; },
     get bufferWrites() { return state.bufferWrites; },
+    get buffers() { return state.buffers; },
+    get bufferClears() { return state.bufferClears; },
+    get computeEntryPoints() { return state.computeEntryPoints; },
     get bufferSizes() { return state.bufferSizes; },
     get bufferContents() { return state.bufferContents; },
     get fragments() { return state.fragments; },
@@ -231,9 +294,24 @@ export function createFakeGpu(): FakeGpu {
     reset() {
       state.passes.length = 0;
       state.bufferWrites.length = 0;
+      state.bufferClears.length = 0;
       state.bindGroups.length = 0;
       state.bindGroupCount = 0;
     },
+  };
+}
+
+function recordedPass(kind: RecordedPass['kind'], attachments: string[]): RecordedPass {
+  return {
+    kind,
+    attachments,
+    pipeline: '',
+    pipelines: [],
+    bindGroup: '',
+    draws: [],
+    indirect: [],
+    dispatches: [],
+    vertexBuffers: [],
   };
 }
 

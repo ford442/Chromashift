@@ -1,7 +1,11 @@
+import type { DeviceCapability } from './capabilities';
 import { PassGraphError } from './errors';
 import {
   HISTORY_MAX_FRAMES,
   HISTORY_MIN_FRAMES,
+  PARTICLE_CAPACITY_MAX,
+  PARTICLE_CAPACITY_MIN,
+  inputEdgeType,
   isKnownNodeKind,
   nodeKindSpec,
 } from './nodeKinds';
@@ -22,13 +26,24 @@ export interface ValidationResult {
   byId: Map<string, GraphNode>;
 }
 
+export interface ValidateOptions {
+  /**
+   * What the device grants. When given, a graph that needs anything else — a
+   * buffer edge into a render node that binds it as fragment storage, say —
+   * is an `unsupported-capability` refusal naming the node. Omitted (the
+   * compiler's own call), only the structure is checked: the compiled graph
+   * is cached per topology, not per device.
+   */
+  granted?: ReadonlySet<DeviceCapability>;
+}
+
 /**
  * Validate a graph: unique ids, resolvable edges, arity, edge types, and
  * fixed-point detection. Cycles are legal, but only when the edge that closes
  * them reads a ping-pong node's output — the ping-pong pair is what makes that
  * read return the previous frame instead of a half-written target.
  */
-export function validateGraph(graph: PassGraph): ValidationResult {
+export function validateGraph(graph: PassGraph, options: ValidateOptions = {}): ValidationResult {
   const byId = new Map<string, GraphNode>();
   for (const node of graph.nodes) {
     if (byId.has(node.id)) {
@@ -66,7 +81,7 @@ export function validateGraph(graph: PassGraph): ValidationResult {
         node.id,
       );
     }
-    for (const inputId of node.inputs) {
+    for (const [position, inputId] of node.inputs.entries()) {
       const producer = byId.get(inputId);
       if (!producer) {
         throw new PassGraphError(
@@ -90,20 +105,58 @@ export function validateGraph(graph: PassGraph): ValidationResult {
           node.id,
         );
       }
-      if (producerType !== spec.inputType) {
+      const expected = inputEdgeType(spec, position);
+      if (producerType !== expected) {
         throw new PassGraphError(
           'edge-type',
-          `Node '${node.id}' expects ${spec.inputType} inputs but '${inputId}' produces ${producerType}.`,
+          spec.inputTypes
+            ? `Node '${node.id}' (${node.kind}) expects a ${expected} at input ${position} but '${inputId}' produces ${producerType}.`
+            : `Node '${node.id}' expects ${expected} inputs but '${inputId}' produces ${producerType}.`,
           node.id,
         );
       }
     }
     validateParams(node);
-    if (node.kind === 'motion') validateMotionField(node, byId);
+    if (node.kind === 'motion' || node.kind === 'advect') validateMotionField(node, byId);
   }
 
   const { reachable, feedbackEdges } = walk(graph, byId);
+  if (options.granted) {
+    const missing = bufferEdgeNeeds(graph).find(({ need }) => !options.granted!.has(need));
+    if (missing) {
+      throw new PassGraphError(
+        'unsupported-capability',
+        `Node '${missing.nodeId}' reads a buffer as fragment-stage storage, which this device does not grant ('${missing.need}').`,
+        missing.nodeId,
+      );
+    }
+  }
   return { reachable, feedbackEdges, byId };
+}
+
+/**
+ * What a graph's buffer edges need from the device, per consuming node.
+ *
+ * A compute node binds storage buffers in a compute stage, which every
+ * WebGPU device — compatibility mode included — allows. A *render* node that
+ * binds a buffer input as storage puts it in a fragment (or vertex) stage,
+ * which a compatibility-mode device may withhold: that edge needs
+ * `fragment-storage`. One that reads it as instance attributes (`splat`)
+ * needs nothing.
+ */
+export function bufferEdgeNeeds(graph: { nodes: readonly GraphNode[] }): { nodeId: string; need: DeviceCapability }[] {
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const needs: { nodeId: string; need: DeviceCapability }[] = [];
+  for (const node of graph.nodes) {
+    const spec = nodeKindSpec(node.kind);
+    if (spec.stage !== 'render' || spec.bufferAccess !== 'storage') continue;
+    const readsBuffer = node.inputs.some((id) => {
+      const producer = byId.get(id);
+      return producer !== undefined && nodeKindSpec(producer.kind).outputType === 'buffer';
+    });
+    if (readsBuffer) needs.push({ nodeId: node.id, need: 'fragment-storage' });
+  }
+  return needs;
 }
 
 /**
@@ -151,22 +204,42 @@ function validateParams(node: GraphNode): void {
     case 'output':
       oneOf('presentation', ['sdr', 'hdr-extended'], 'sdr');
       break;
+    case 'emit': {
+      // The ring's size is the chain's VRAM; an unbounded one is refused.
+      const capacity = node.params.capacity;
+      if (
+        capacity !== undefined
+        && (typeof capacity !== 'number'
+          || !Number.isInteger(capacity)
+          || capacity < PARTICLE_CAPACITY_MIN
+          || capacity > PARTICLE_CAPACITY_MAX)
+      ) {
+        throw new PassGraphError(
+          'invalid-param',
+          `Node '${node.id}' (emit) has capacity ${JSON.stringify(capacity)}; `
+          + `expected an integer from ${PARTICLE_CAPACITY_MIN} to ${PARTICLE_CAPACITY_MAX}.`,
+          node.id,
+        );
+      }
+      break;
+    }
     default:
       break;
   }
 }
 
 /**
- * A `motion` node's second input is the field it weights the stamp by, and the
- * executor binds that by the producer's `role`. Anything else in that slot
- * would bind an arbitrary texture as velocities, so it is refused by name.
+ * A `motion` (or `advect`) node's second input is the field it weights the
+ * stamp by (or moves the particles along), and the executor binds that by the
+ * producer's `role`. Anything else in that slot would bind an arbitrary
+ * texture as velocities, so it is refused by name.
  */
 function validateMotionField(node: GraphNode, byId: Map<string, GraphNode>): void {
   const field = byId.get(node.inputs[1]!)!;
   if (field.kind !== 'source' || field.params.role !== 'motion-field') {
     throw new PassGraphError(
       'edge-type',
-      `Node '${node.id}' (motion) reads '${field.id}' (${field.kind}) as its field; `
+      `Node '${node.id}' (${node.kind}) reads '${field.id}' (${field.kind}) as its field; `
       + "it must read a 'source' node with role 'motion-field'.",
       node.id,
     );

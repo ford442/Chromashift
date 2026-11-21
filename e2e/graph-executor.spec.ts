@@ -320,6 +320,17 @@ test.describe('pass-graph executor', () => {
         rings: 4,
         differs: false,
       },
+      // The particle chain: compute passes in the frame's encoder. Particles
+      // keep spawning and drifting along the curl noise, so the frame never
+      // holds still; one settled frame is read, as for trails3.
+      {
+        name: 'particles',
+        marker: 'particles-splat',
+        scheduled: ['particles-emit', 'particles-advect', 'particles-splat', 'particles-trail', 'motion-field'],
+        rings: 0,
+        differs: true,
+        settles: false,
+      },
     ] as const) {
       test(`?graph=${name} compiles, schedules, allocates and draws`, async ({ page }) => {
         test.setTimeout(180_000);
@@ -355,6 +366,34 @@ test.describe('pass-graph executor', () => {
         }
       });
     }
+  });
+
+  test('?graph=particles runs the chain between the layers and the accumulators, its VRAM bounded', async ({ page }) => {
+    test.setTimeout(180_000);
+    const gpuErrors = collectGpuErrors(page);
+    await openScene(page, url('particles'));
+    await waitForDrawnVariant(page, /^3:(still|motion):sdr$/);
+    // The ring is created on the first frame that binds it; the pool's byte
+    // accounting is then exactly its capacity (16 384 × 32 B) and control block.
+    await expect.poll(() => page.evaluate(() => window.passGraphBufferBytes ?? 0), { timeout: 30_000 })
+      .toBe(16_384 * 32 + 32);
+    const executed = await page.evaluate(() => window.passGraphExecutedPasses ?? []);
+    const at = (id: string) => executed.indexOf(id);
+    expect(at('particles-advect')).toBe(at('particles-emit') + 1);
+    expect(at('particles-splat')).toBe(at('particles-advect') + 1);
+    expect(at('particles-emit')).toBeGreaterThan(at('layer2'));
+    expect(at('particles-splat')).toBeLessThan(at('tracer-below'));
+    // Frames later, still exactly the ring: nothing grows per frame.
+    await page.waitForTimeout(1_000);
+    expect(await page.evaluate(() => window.passGraphBufferBytes)).toBe(16_384 * 32 + 32);
+    expect(gpuErrors).toEqual([]);
+  });
+
+  test('the default graph holds no buffer', async ({ page }) => {
+    test.setTimeout(90_000);
+    await openScene(page, url('1'));
+    await waitForDrawnVariant(page, /^3:still:sdr$/);
+    await expect.poll(() => page.evaluate(() => window.passGraphBufferBytes)).toBe(0);
   });
 
   test('refuses a graph whose pipelines the device rejects, and keeps drawing', async ({ page }) => {

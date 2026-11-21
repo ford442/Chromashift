@@ -158,6 +158,13 @@ export interface ChromashiftDiagnostics {
    * frame and so is not in `passGraphSlots`. Empty when no graph compiled.
    */
   passGraphRingFrames: Record<string, number>;
+  /**
+   * Bytes the primary canvas's executor holds in graph buffer resources (the
+   * particle ring and its control block) — the pool's byte accounting, so a
+   * VRAM bound can be asserted on. 0 for a graph without a buffer; absent on
+   * the WebGL backend, which has none.
+   */
+  passGraphBufferBytes: number;
   /** Set when compilation refused the graph, naming the node. */
   passGraphError: string | null;
   /** Which named graph shape the gate selected. */
@@ -265,6 +272,7 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   passGraphPasses: true,
   passGraphSlots: true,
   passGraphRingFrames: true,
+  passGraphBufferBytes: true,
   passGraphError: true,
   passGraphName: true,
   passGraphVariant: true,

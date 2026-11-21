@@ -92,8 +92,14 @@ export function withMotionTerm(graph: PassGraph): PassGraph {
   // Only a decay with its one stamp input is rewritten: one of the wrong arity
   // is left for validation to refuse, rather than becoming a motion node that
   // reads `undefined` or losing its extra inputs to the rewrite.
+  // A particle trail (a decay of a `splat`) is left alone: the particles
+  // already move with the field, and the term weights coincidence stamps.
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
   const decays = graph.nodes.filter(
-    (node) => node.kind === 'decay' && node.inputs.length === 1 && node.inputs[0] !== node.id,
+    (node) => node.kind === 'decay'
+      && node.inputs.length === 1
+      && node.inputs[0] !== node.id
+      && byId.get(node.inputs[0]!)?.kind !== 'splat',
   );
   if (decays.length === 0) return graph;
 

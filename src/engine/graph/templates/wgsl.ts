@@ -465,7 +465,8 @@ fn motionDecayScale(magnitude: f32, bias: f32, enabled: bool) -> f32 {
 /**
  * The layer-dependent halves of the overlap test, shared by the fragment
  * (`emitCoincidenceDecayWgsl`) and compute (`emitCoincidenceComputeWgsl`)
- * emitters.
+ * emitters — and by the particle `emit` kernel (`templates/particles.ts`),
+ * which spawns exactly where the stamp would paint.
  *
  * Both passes compute the same thing from the same `c0..cN` locals — the only
  * difference between them is how those locals are read (sampled vs. loaded) and
@@ -480,7 +481,7 @@ fn motionDecayScale(magnitude: f32, bias: f32, enabled: bool) -> f32 {
  * them camelCase and the compute kernel snake_case, and a golden that has to be
  * read as "what shipped" is worth more than one naming convention.
  */
-interface CoincidenceNames {
+export interface CoincidenceNames {
   count: string;
   maxLum: string;
   dominant: string;
@@ -498,7 +499,7 @@ const SNAKE_NAMES: CoincidenceNames = {
   dominant: 'dominant_layer',
 };
 
-function coincidenceParts(layerCount: number, indent: string, names: CoincidenceNames): {
+export function coincidenceParts(layerCount: number, indent: string, names: CoincidenceNames): {
   counts: string;
   sums: string;
   variances: string;
@@ -887,18 +888,34 @@ const extraTracers = (tracerCount: number): number[] =>
  * shipped pair — `persistBelow` under the layers, `persistAbove` over them —
  * and two emits exactly the shipped compositor. Every one after them (a third
  * timescale, `tracer2`, …) is an extra accumulator, blended deepest first in
- * input order, beneath the `below` tracer.
+ * input order, beneath the `below` tracer — except the last `overlayCount`,
+ * which are screened on top of everything, after the `above` tracer (the
+ * particle trail: born where layers overlap, it would otherwise be hidden
+ * under them). An overlay is light — premultiplied colour — and is screened
+ * in RGB only, never alpha-blended: the accumulators live in the internal
+ * format, which under `rg11b10ufloat` has no alpha, so an alpha blend would
+ * cover the frame. `overlayCount` 0 emits exactly what it did before it
+ * existed.
  */
 export function emitCompositorWgsl(
   layerCount: number,
   blendHelpers: string,
   tracerCount: number = SHIPPED_TRACER_COUNT,
+  overlayCount = 0,
 ): string {
   if (!Number.isInteger(tracerCount) || tracerCount < SHIPPED_TRACER_COUNT) {
     throw new RangeError(`A compositor blends at least ${SHIPPED_TRACER_COUNT} tracers, got ${tracerCount}.`);
   }
+  const allExtras = extraTracers(tracerCount);
+  if (!Number.isInteger(overlayCount) || overlayCount < 0 || overlayCount > allExtras.length) {
+    throw new RangeError(
+      `A compositor with ${allExtras.length} extra tracer(s) cannot overlay ${overlayCount} of them.`,
+    );
+  }
   const layers = layerList(layerCount);
-  const extras = extraTracers(tracerCount);
+  const extras = allExtras;
+  const deepExtras = allExtras.slice(0, allExtras.length - overlayCount);
+  const topExtras = allExtras.slice(allExtras.length - overlayCount);
   const bindings = layers
     .map((i) => `@group(0) @binding(${i + 1}) var layer${i}         : texture_2d<f32>;`)
     .join('\n');
@@ -914,9 +931,14 @@ export function emitCompositorWgsl(
   const extraScaled = extras
     .map((j) => `  let pTracer${j}Scaled = scale_premultiplied(pTracer${j}, cu.tracerOpacity${j});`)
     .join('\n');
-  const extraBlend = extras
+  const extraBlend = deepExtras
     .map((j) => `    finalCol = blend(finalCol, pTracer${j}Scaled, cu.tracerBlendMode);`)
     .join('\n');
+  // Appended to the line that blends the `above` tracer, so with no overlay
+  // the emitted text is exactly the shipped compositor's.
+  const overlayBlend = topExtras
+    .map((j) => `\n    finalCol = vec4<f32>(1.0 - (1.0 - finalCol.rgb) * (1.0 - min(pTracer${j}.rgb * cu.tracerOpacity${j}, vec3<f32>(1.0))), finalCol.a);`)
+    .join('');
   const samples = layers
     .map((i) => `  let c${i}      = textureSample(layer${i},       cSampler, sampleUV);`)
     .join('\n');
@@ -1025,12 +1047,12 @@ ${variances}
     finalCol = alpha_blend(finalCol, layerCol);
 ${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
-    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);${overlayBlend}
   } else if (cu.outputMode == 2u) {
     // Tracer Only: suppress live layers.
 ${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
-    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);${overlayBlend}
   } else if (cu.outputMode == 3u) {
     finalCol = stamp;
   } else {
@@ -1038,7 +1060,7 @@ ${extraBlend}
 ${extraBlend}
     finalCol = blend(finalCol, pBelowScaled, cu.tracerBlendMode);
     finalCol = alpha_blend(finalCol, layerCol);
-    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);
+    finalCol = blend(finalCol, pAboveScaled, cu.tracerBlendMode);${overlayBlend}
   }
 
   // Force opaque output. Without this, no-layer / no-tracer regions produce

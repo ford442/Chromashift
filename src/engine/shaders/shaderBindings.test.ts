@@ -185,9 +185,13 @@ describe('the shader corpus', () => {
     const contexts = new Set(corpus.pipelines.map((pipeline) => pipeline.context.split('-')[0]));
     expect([...contexts].sort()).toEqual(['chores', 'graph', 'inspect', 'texture']);
     // Every preset at least once, both terms, both presentations.
-    for (const marker of ['graph-default-', 'graph-blur-', 'graph-warp-', 'graph-smear-', 'graph-feedback-', 'graph-trails3-', '-motion-', '-still-', '-hdr-extended-']) {
+    for (const marker of ['graph-default-', 'graph-blur-', 'graph-warp-', 'graph-smear-', 'graph-feedback-', 'graph-trails3-', 'graph-particles-', '-motion-', '-still-', '-hdr-extended-']) {
       expect(corpus.pipelines.some((pipeline) => pipeline.context.includes(marker)), marker).toBe(true);
     }
+    // The particle chain: both of emit's kernels, advect's, and splat's own vertex stage.
+    const particles = corpus.pipelines.filter((pipeline) => pipeline.context.startsWith('graph-particles-3-still-sdr-'));
+    expect(particles.flatMap((pipeline) => pipeline.stages.map((stage) => `${stage.stage}:${stage.entryPoint}`)))
+      .toEqual(expect.arrayContaining(['compute:emit_main', 'compute:emit_args', 'compute:advect_main', 'vertex:main']));
     expect(corpus.glsl.length).toBeGreaterThan(0);
   });
 });

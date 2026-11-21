@@ -54,6 +54,21 @@ function PerfHudTelemetry({ frameRate, rendererBackend }: { frameRate: number; r
             <span className="text-right tabular-nums" data-testid="perf-hud-motion-flow-ms">
               {formatPassMs(gpuPasses?.motionFlowMs)} ms
             </span>
+            {/* The particle chain (`?graph=particles`): its three passes sit
+                between the layers and the accumulators, and read 0 in a graph
+                without one. */}
+            <span>Emit</span>
+            <span className="text-right tabular-nums" data-testid="perf-hud-emit-ms">
+              {formatPassMs(gpuPasses?.particleEmitMs)} ms
+            </span>
+            <span>Advect</span>
+            <span className="text-right tabular-nums" data-testid="perf-hud-advect-ms">
+              {formatPassMs(gpuPasses?.particleAdvectMs)} ms
+            </span>
+            <span>Splat</span>
+            <span className="text-right tabular-nums" data-testid="perf-hud-splat-ms">
+              {formatPassMs(gpuPasses?.particleSplatMs)} ms
+            </span>
             <span>Persistence</span>
             <span className="text-right tabular-nums">{formatPassMs(gpuPasses?.persistenceMs)} ms</span>
             <span>Compositor</span>

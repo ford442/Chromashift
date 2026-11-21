@@ -11,6 +11,8 @@ import {
   persistUniformLayout,
 } from '../templates/wgsl';
 import { packUniforms, type UniformLayout, type UniformValues } from '../templates/uniformLayout';
+import { ADVECT_UNIFORMS, EMIT_UNIFORMS, SPLAT_UNIFORMS } from '../templates/particles';
+import { APPEND_DISPATCH_ARGS_OFFSET, APPEND_DRAW_ARGS_OFFSET, EMIT_WORKGROUP } from '../nodeKinds';
 import {
   EXTRA_TRACER_DURATION_MS,
   EXTRA_TRACER_INTENSITY,
@@ -29,6 +31,7 @@ import {
 } from './plan';
 import {
   createNodeProgram,
+  emittedHasProgram,
   instantiateNodePipeline,
   destroyNodePipeline,
   type NodePipeline,
@@ -37,6 +40,7 @@ import {
 } from './nodePipelines';
 import { resourceKey } from '../../webgpu/bindGroups';
 import { GraphTexturePool, type PoolSizes } from './pool';
+import { GraphBufferPool } from './bufferPool';
 import { GraphProgramCache, type ProgramSet } from './programCache';
 import type { CompiledGraph, EmittedPass } from '../types';
 import type { CanvasPresentation } from '../../gpu/gpuOptions';
@@ -82,10 +86,17 @@ export interface GraphOutputTextures {
 /**
  * Timestamp markers, fired at the stage boundaries the Perf HUD already knows.
  * The executor encodes one flat list of passes; these keep the HUD's
- * layers / persistence / compositor buckets meaningful anyway.
+ * layers / particles (emit, advect, splat) / persistence / compositor buckets
+ * meaningful anyway. The scheduler keeps a buffer chain contiguous and ahead
+ * of the accumulators (`schedule.ts`), which is what lets each marker bracket
+ * one stage. A graph with no chain fires the three particle markers together,
+ * so those rows read 0.
  */
 export interface GraphEncodeMarks {
   layersEnd?: () => void;
+  emitEnd?: () => void;
+  advectEnd?: () => void;
+  splatEnd?: () => void;
   stampEnd?: () => void;
   compositorEnd?: () => void;
 }
@@ -106,7 +117,47 @@ export interface GraphEncodeParams {
   composite?: boolean;
 }
 
-const MARK_ORDER = ['layersEnd', 'stampEnd', 'compositorEnd'] as const;
+const MARK_ORDER = ['layersEnd', 'emitEnd', 'advectEnd', 'splatEnd', 'stampEnd', 'compositorEnd'] as const;
+
+/**
+ * The marker a step crosses on its way in (the end of the stage before it):
+ * every marker up to it fires first. A chain step also fires the next one —
+ * its own stage's end — once it is encoded.
+ */
+const STEP_MARK: Partial<Record<EncodeStep['kind'], number>> = {
+  emit: 0,
+  advect: 1,
+  splat: 2,
+  decay: 3,
+  blend: 4,
+};
+
+/** A node's program, known to be a render pass. */
+type RenderNodePipeline = NodePipeline & { readonly pipeline: GPURenderPipeline };
+
+/**
+ * Defaults for the particle chain's value params — what an `emit` / `advect` /
+ * `splat` node does not say. Every one is resolution- and frame-rate-free: the
+ * emitter grid is `cells` across whatever the mask's size, births are a rate
+ * per cell per second, and the dot radius is a fraction of the target height —
+ * so a 1080p canvas and a 192-px golden hold the same particles.
+ */
+const PARTICLE_DEFAULTS = {
+  /** Emitter cells across the mask's width. */
+  cells: 128,
+  /** Births per cell per second, where the mask fires. */
+  spawnRate: 0.6,
+  lifetimeSec: 2.5,
+  boost: 1.6,
+  speed: 0.02,
+  flowGain: 1,
+  curl: 0.06,
+  noiseScale: 6,
+  inertia: 0.9,
+  /** Dot radius as a fraction of the target height (never under a pixel). */
+  radius: 0.004,
+  intensity: 0.9,
+} as const;
 
 /**
  * One drawable configuration: a compiled graph at a sample count, with this
@@ -153,7 +204,15 @@ export class WebGpuGraphExecutor {
   private readonly layerSampler: GPUSampler;
   private readonly passSampler: GPUSampler;
   private readonly pool: GraphTexturePool;
+  private readonly buffers: GraphBufferPool;
   private readonly programs: GraphProgramCache;
+  /**
+   * Frames encoded since the last clear — the particle chain's clock. `emit`
+   * hashes it into its spawn roll and `advect` derives its curl phase from
+   * it, so it restarts with the trails: two exports of the same settings
+   * spawn the same particles.
+   */
+  private particleFrame = 0;
   private zeroField: GPUTexture | null = null;
 
   /** The target graph: what `setGraph()` adopted. */
@@ -190,6 +249,7 @@ export class WebGpuGraphExecutor {
     this.layerSampler = layerSampler;
     this.passSampler = passSampler;
     this.pool = new GraphTexturePool(device, internalFormat);
+    this.buffers = new GraphBufferPool(device);
     this.programs = GraphProgramCache.for(device);
   }
 
@@ -363,6 +423,7 @@ export class WebGpuGraphExecutor {
     };
 
     this.pool.configure(compiled.allocation, sizes, drawn.sampleCount);
+    this.buffers.configure(compiled.allocation, sizes);
 
     // Stage markers are fired by crossing a boundary, and flushed in order at
     // the end, so a graph that skips a stage (a paused frame encodes no
@@ -378,16 +439,22 @@ export class WebGpuGraphExecutor {
     const paused = state.paused === true;
     const composite = params.composite !== false;
     for (const step of plan.steps) {
-      if (step.kind === 'decay') fireThrough(0);
-      if (step.kind === 'blend') fireThrough(1);
+      const mark = STEP_MARK[step.kind];
+      if (mark !== undefined) fireThrough(mark);
       // A paused session freezes the tracers exactly as the hand encoder did:
       // the accumulator passes are not encoded and the ping-pong never flips.
-      if (paused && step.kind === 'decay') continue;
-      if (!composite && step.kind === 'blend') continue;
-      this.encodeStep(enc, step, inputs, params);
+      // The particles freeze with them — no spawn, no step — and `splat` still
+      // draws where they stopped.
+      const frozen = paused && (step.kind === 'decay' || step.kind === 'emit' || step.kind === 'advect');
+      const skipped = frozen || (!composite && step.kind === 'blend');
+      if (!skipped) this.encodeStep(enc, step, inputs, params);
+      if (step.kind === 'emit' || step.kind === 'advect' || step.kind === 'splat') fireThrough(mark! + 1);
     }
     fireThrough(MARK_ORDER.length - 1);
-    if (!paused) this.pool.flip();
+    if (!paused) {
+      this.pool.flip();
+      this.particleFrame += 1;
+    }
   }
 
   /**
@@ -397,14 +464,21 @@ export class WebGpuGraphExecutor {
    */
   clearAccumulators(): void {
     const textures = this.pool.accumulatorTextures();
+    const buffers = this.buffers.liveBuffers();
     this.pool.resetRings();
-    if (textures.length === 0) return;
+    // The particle ring is trail state too: emptied, and its clock restarted.
+    this.particleFrame = 0;
+    if (textures.length === 0 && buffers.length === 0) return;
 
     const enc = this.device.createCommandEncoder();
     for (const texture of textures) {
       enc.beginRenderPass({
         colorAttachments: [clearAttachment(texture.createView())],
       }).end();
+    }
+    for (const pooled of buffers) {
+      enc.clearBuffer(pooled.items);
+      if (pooled.control) enc.clearBuffer(pooled.control);
     }
     this.device.queue.submit([enc.finish()]);
   }
@@ -416,6 +490,7 @@ export class WebGpuGraphExecutor {
     this.frame = null;
     this.plans.clear();
     this.pool.release();
+    this.buffers.release();
     this.zeroField?.destroy();
     this.zeroField = null;
   }
@@ -423,6 +498,32 @@ export class WebGpuGraphExecutor {
   /** Ring textures the pool holds right now — `history`'s live VRAM, for tests. */
   ringTextureCount(): number {
     return this.pool.ringTextureCount();
+  }
+
+  /**
+   * Bytes of every buffer the pool holds right now — the buffer half of the
+   * VRAM bound. 0 for a graph without a buffer resource (the default graph).
+   */
+  bufferBytes(): number {
+    return this.buffers.allocatedBytes();
+  }
+
+  /**
+   * The particle ring `nodeId` (an `emit`, `advect` or `splat`) reads or
+   * writes: its element and control buffers, for a readback that checks the
+   * live count stays within capacity. `null` before a frame has created it.
+   */
+  particleBuffers(nodeId: string): { items: GPUBuffer; control: GPUBuffer | null; capacity: number } | null {
+    const resourceOf = (id: string): string | undefined => this.frame?.compiled.allocation.assignment[id];
+    const graph = this.frame?.compiled.graph;
+    const node = graph?.nodes.find((n) => n.id === nodeId);
+    // `splat` reads its producer's resource; the others hold their own.
+    const holder = node?.kind === 'splat' ? node.inputs[0]! : nodeId;
+    if (!resourceOf(holder)) return null;
+    const pooled = this.buffers.liveBuffers().find((b) => b.resource.id === resourceOf(holder));
+    if (!pooled) return null;
+    const { elements } = pooled.resource;
+    return { items: pooled.items, control: pooled.control, capacity: typeof elements === 'number' ? elements : 0 };
   }
 
   // ─── pipelines ────────────────────────────────────────────────────────────
@@ -467,7 +568,7 @@ export class WebGpuGraphExecutor {
         const compiledPrograms = new Map<string, NodeProgram>();
         for (const step of this.plan!.steps) {
           const emitted = emittedById.get(step.nodeId);
-          if (!emitted || emitted.fragment === '') continue;
+          if (!emitted || !emittedHasProgram(emitted)) continue;
           compiledPrograms.set(step.nodeId, createNodeProgram(ctx, emitted));
         }
         return compiledPrograms;
@@ -497,9 +598,15 @@ export class WebGpuGraphExecutor {
     }
   }
 
-  private nodePipeline(nodeId: string): NodePipeline {
+  private nodePipeline(nodeId: string): RenderNodePipeline {
     const node = this.frame?.set.nodes.get(nodeId);
-    if (!node) throw new Error(`Graph node '${nodeId}' has no pipeline.`);
+    if (!node?.pipeline) throw new Error(`Graph node '${nodeId}' has no render pipeline.`);
+    return node as RenderNodePipeline;
+  }
+
+  private computeNode(nodeId: string): NodePipeline {
+    const node = this.frame?.set.nodes.get(nodeId);
+    if (!node || node.computePipelines.length === 0) throw new Error(`Graph node '${nodeId}' has no compute pipelines.`);
     return node;
   }
 
@@ -530,7 +637,128 @@ export class WebGpuGraphExecutor {
       case 'displace':
         this.encodeSingleInput(enc, step, inputs, params);
         break;
+      case 'emit':
+        this.encodeEmit(enc, step, inputs, params);
+        break;
+      case 'advect':
+        this.encodeAdvect(enc, step, inputs, params);
+        break;
+      case 'splat':
+        this.encodeSplat(enc, step);
+        break;
     }
+  }
+
+  /**
+   * `emit`: a compute pass of two dispatches over one bind group — the append
+   * over the mask's emitter grid, then the one-invocation kernel that turns
+   * the head into `advect`'s and `splat`'s indirect arguments. Same command
+   * encoder as the render passes around it: no extra submit.
+   */
+  private encodeEmit(
+    enc: GPUCommandEncoder,
+    step: Extract<EncodeStep, { kind: 'emit' }>,
+    inputs: GraphExternalInputs,
+    params: GraphEncodeParams,
+  ): void {
+    const node = this.computeNode(step.nodeId);
+    const ring = this.buffers.buffersFor(step.nodeId);
+    const masks = step.maskInputs.map((id) => this.textureFor(id, inputs));
+    const graphNode = this.graphNode(step.nodeId);
+    const mask = masks[0]!;
+    const cells = Math.max(1, numberParam(graphNode.params.cells, PARTICLE_DEFAULTS.cells));
+    const spacing = Math.max(1, Math.round(mask.width / cells));
+    const dt = 1 / Math.max(1, params.fps);
+    this.writeUniforms(node, EMIT_UNIFORMS, {
+      frameIndex: this.particleFrame,
+      spacing,
+      spawnChance: Math.min(1, numberParam(graphNode.params.spawnRate, PARTICLE_DEFAULTS.spawnRate) * dt),
+      lifetime: numberParam(graphNode.params.lifetimeSec, PARTICLE_DEFAULTS.lifetimeSec),
+      colorThresh: rendererStateValue(params.state, 'tracerThreshold'),
+      boost: numberParam(graphNode.params.boost, PARTICLE_DEFAULTS.boost),
+      speed: numberParam(graphNode.params.speed, PARTICLE_DEFAULTS.speed),
+    });
+    this.bindIfChanged(node, [...masks, ring.control!, ring.items], () => [
+      ...masks.map((texture, i) => ({ binding: i, resource: texture.createView() })),
+      { binding: masks.length, resource: { buffer: ring.control! } },
+      { binding: masks.length + 1, resource: { buffer: ring.items } },
+      { binding: masks.length + 2, resource: { buffer: node.uniformBuffer! } },
+    ]);
+
+    const [append, args] = node.computePipelines;
+    const groups = (extent: number, workgroup: number) =>
+      Math.max(1, Math.ceil(Math.ceil(extent / spacing) / workgroup));
+    const pass = enc.beginComputePass();
+    pass.setBindGroup(0, node.bindGroup);
+    pass.setPipeline(append!);
+    pass.dispatchWorkgroups(groups(mask.width, EMIT_WORKGROUP[0]), groups(mask.height, EMIT_WORKGROUP[1]));
+    pass.setPipeline(args!);
+    pass.dispatchWorkgroups(1);
+    pass.end();
+  }
+
+  /** `advect`: one compute dispatch, sized by the live count on the GPU (`dispatchWorkgroupsIndirect`). */
+  private encodeAdvect(
+    enc: GPUCommandEncoder,
+    step: Extract<EncodeStep, { kind: 'advect' }>,
+    inputs: GraphExternalInputs,
+    params: GraphEncodeParams,
+  ): void {
+    const node = this.computeNode(step.nodeId);
+    const ring = this.buffers.buffersFor(step.nodeId);
+    const field = this.textureFor(step.field, inputs);
+    const graphNode = this.graphNode(step.nodeId);
+    // The export loop's FrameClock steps 1000 / fps ms, so this is its dt.
+    const fps = Math.max(1, params.fps);
+    const dt = 1 / fps;
+    const inertia = Math.min(Math.max(numberParam(graphNode.params.inertia, PARTICLE_DEFAULTS.inertia), 0), 0.999);
+    this.writeUniforms(node, ADVECT_UNIFORMS, {
+      dt,
+      time: this.particleFrame * dt,
+      fps,
+      flowGain: numberParam(graphNode.params.flowGain, PARTICLE_DEFAULTS.flowGain),
+      curl: numberParam(graphNode.params.curl, PARTICLE_DEFAULTS.curl),
+      noiseScale: numberParam(graphNode.params.noiseScale, PARTICLE_DEFAULTS.noiseScale),
+      keep: inertia ** (dt * 60),
+    });
+    this.bindIfChanged(node, [field, ring.control!, ring.items], () => [
+      { binding: 0, resource: field.createView() },
+      { binding: 1, resource: { buffer: ring.control! } },
+      { binding: 2, resource: { buffer: ring.items } },
+      { binding: 3, resource: { buffer: node.uniformBuffer! } },
+    ]);
+
+    const pass = enc.beginComputePass();
+    pass.setPipeline(node.computePipelines[0]!);
+    pass.setBindGroup(0, node.bindGroup);
+    pass.dispatchWorkgroupsIndirect(ring.control!, APPEND_DISPATCH_ARGS_OFFSET);
+    pass.end();
+  }
+
+  /** `splat`: the ring as instance attributes, `drawIndirect` over the live count, additive. */
+  private encodeSplat(enc: GPUCommandEncoder, step: Extract<EncodeStep, { kind: 'splat' }>): void {
+    const node = this.nodePipeline(step.nodeId);
+    const ring = this.buffers.buffersFor(step.particles);
+    const target = this.pool.transient(step.nodeId);
+    const graphNode = this.graphNode(step.nodeId);
+    const radius = Math.max(1, numberParam(graphNode.params.radius, PARTICLE_DEFAULTS.radius) * target.height);
+    this.writeUniforms(node, SPLAT_UNIFORMS, {
+      radiusX: (radius * 2) / Math.max(1, target.width),
+      radiusY: (radius * 2) / Math.max(1, target.height),
+      intensity: numberParam(graphNode.params.intensity, PARTICLE_DEFAULTS.intensity),
+    });
+    this.bindIfChanged(node, [], () => [
+      { binding: 0, resource: { buffer: node.uniformBuffer! } },
+    ]);
+
+    const pass = enc.beginRenderPass({
+      colorAttachments: [clearAttachment(target.createView())],
+    });
+    pass.setPipeline(node.pipeline);
+    pass.setBindGroup(0, node.bindGroup);
+    pass.setVertexBuffer(0, ring.items);
+    pass.drawIndirect(ring.control!, APPEND_DRAW_ARGS_OFFSET);
+    pass.end();
   }
 
   private encodeBandLayer(
@@ -858,7 +1086,7 @@ export class WebGpuGraphExecutor {
    */
   private bindIfChanged(
     node: Pick<NodePipeline, 'bindGroupLayout' | 'bindGroup' | 'bindGroupKey'>,
-    textures: GPUTexture[],
+    textures: readonly object[],
     entries: () => GPUBindGroupEntry[],
   ): void {
     const key = textures.map(resourceKey).join('|');

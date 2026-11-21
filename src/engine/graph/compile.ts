@@ -35,7 +35,20 @@ import {
   persistUniformLayout,
   toHdrPresentWgsl,
 } from './templates/wgsl';
+import {
+  ADVECT_ENTRY_POINTS,
+  ADVECT_UNIFORMS,
+  EMIT_ENTRY_POINTS,
+  EMIT_UNIFORMS,
+  SPLAT_UNIFORMS,
+  emitParticleAdvectWgsl,
+  emitParticleEmitWgsl,
+  emitSplatFragmentWgsl,
+  emitSplatVertexWgsl,
+  emitTrailDecayWgsl,
+} from './templates/particles';
 import type { UniformLayout } from './templates/uniformLayout';
+import { nodeKindSpec } from './nodeKinds';
 import type { CanvasPresentation } from '../gpu/gpuOptions';
 import { WGSL_BLEND_HELPERS } from '../shaders/common';
 import type {
@@ -124,8 +137,20 @@ function emitPass(
       return { ...base, fragment, textureBindings: ['source', 'lut'], uniformLayout: block(LUT_UNIFORMS) };
     }
 
-    case 'coincidence':
-    case 'decay': {
+    case 'decay':
+    case 'coincidence': {
+      // A decay of a particle splat is a plain trail accumulator: there is no
+      // stamp to compute, only a texture to hold. WebGPU only: the WebGL
+      // backend refuses the chain before this. (The temporal term is never
+      // added to one — `withMotionTerm` — and the plan refuses it by hand.)
+      if (node.kind === 'decay' && byId.get(node.inputs[0]!)?.kind === 'splat') {
+        return {
+          ...base,
+          fragment: emitTrailDecayWgsl(),
+          textureBindings: ['trail', 'previous'],
+          uniformLayout: block(persistUniformLayout(false)),
+        };
+      }
       // The default graph fuses coincidence into decay (one pass stamps and
       // decays), so both kinds emit the same fused source; a coincidence node
       // feeding several decays emits it once and the decays reuse it. A decay
@@ -145,6 +170,49 @@ function emitPass(
       };
     }
 
+    case 'emit': {
+      // A `coincidence` mask is fused, as into a `decay`: the kernel runs the
+      // overlap test over its band layers. Any other texture is a plain mask.
+      const mask = byId.get(node.inputs[0]!);
+      const fused = mask?.kind === 'coincidence';
+      const inputs = fused ? mask.inputs.length : 1;
+      return {
+        ...base,
+        fragment: '',
+        compute: {
+          module: emitParticleEmitWgsl({ mask: fused ? 'coincidence' : 'mask', inputs }),
+          entryPoints: EMIT_ENTRY_POINTS,
+          workgroup: nodeKindSpec('emit').workgroup!,
+        },
+        textureBindings: fused
+          ? Array.from({ length: inputs }, (_, i) => `layer${i}`)
+          : ['mask'],
+        uniformLayout: block(EMIT_UNIFORMS),
+      };
+    }
+
+    case 'advect':
+      return {
+        ...base,
+        fragment: '',
+        compute: {
+          module: emitParticleAdvectWgsl(),
+          entryPoints: ADVECT_ENTRY_POINTS,
+          workgroup: nodeKindSpec('advect').workgroup!,
+        },
+        textureBindings: ['field'],
+        uniformLayout: block(ADVECT_UNIFORMS),
+      };
+
+    case 'splat':
+      return {
+        ...base,
+        fragment: emitSplatFragmentWgsl(),
+        vertex: emitSplatVertexWgsl(),
+        textureBindings: [],
+        uniformLayout: block(SPLAT_UNIFORMS),
+      };
+
     case 'blend': {
       const layerInputs = intParam(node, 'layerInputs', layerCount);
       // Every input past the layers is a tracer timescale: the shipped below /
@@ -158,8 +226,24 @@ function emitPass(
           node.id,
         );
       }
+      const overlayInputs = intParam(node, 'overlayInputs', 0);
+      if (overlayInputs !== 0 && !webgpu) {
+        throw new PassGraphError(
+          'unsupported-node',
+          `The webgl backend has no overlay tracers for node '${node.id}' (overlayInputs ${overlayInputs}).`,
+          node.id,
+        );
+      }
+      if (!Number.isInteger(overlayInputs) || overlayInputs < 0 || overlayInputs > tracerCount - SHIPPED_TRACER_COUNT) {
+        throw new PassGraphError(
+          'input-arity',
+          `Node '${node.id}' (blend) overlays ${overlayInputs} tracer(s), but has `
+          + `${tracerCount - SHIPPED_TRACER_COUNT} past the shipped pair.`,
+          node.id,
+        );
+      }
       let fragment = webgpu
-        ? emitCompositorWgsl(layerInputs, WGSL_BLEND_HELPERS, tracerCount)
+        ? emitCompositorWgsl(layerInputs, WGSL_BLEND_HELPERS, tracerCount, overlayInputs)
         : emitCompositorGlsl(layerInputs, tracerCount);
       // Presenting to an `hdr-extended` canvas swaps the clamping OETF for the
       // extended one, text for text (`toHdrPresentWgsl`, which the inspect

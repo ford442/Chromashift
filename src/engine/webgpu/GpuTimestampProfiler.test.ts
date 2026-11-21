@@ -54,18 +54,37 @@ describe('parseTimestampMarkers', () => {
     stamps[1] = 1_000_000n;
     stamps[2] = 1_200_000n;
     stamps[3] = 1_500_000n;
-    stamps[4] = 3_000_000n;
-    stamps[5] = 4_500_000n;
-    stamps[6] = 5_000_000n;
+    stamps[4] = 1_600_000n;
+    stamps[5] = 1_800_000n;
+    stamps[6] = 2_100_000n;
+    stamps[7] = 3_600_000n;
+    stamps[8] = 5_100_000n;
+    stamps[9] = 5_600_000n;
 
     const timings = parseTimestampMarkers(stamps, periodNs);
     expect(timings.layersMs).toBeCloseTo(1);
     expect(timings.motionMs).toBeCloseTo(0.2);
     expect(timings.motionFlowMs).toBeCloseTo(0.3);
+    expect(timings.particleEmitMs).toBeCloseTo(0.1);
+    expect(timings.particleAdvectMs).toBeCloseTo(0.2);
+    expect(timings.particleSplatMs).toBeCloseTo(0.3);
     expect(timings.persistenceMs).toBeCloseTo(1.5);
     expect(timings.compositorMs).toBeCloseTo(1.5);
     expect(timings.readbackMs).toBeCloseTo(0.5);
-    expect(timings.totalGpuMs).toBeCloseTo(5);
+    expect(timings.totalGpuMs).toBeCloseTo(5.6);
+  });
+
+  it('reads 0 for the particle rows when their markers collapse onto the layers end', () => {
+    const stamps = new BigUint64Array(GPU_TIMESTAMP_MARKERS);
+    // A graph without a particle chain: emit / advect / splat ends all land
+    // where the motion markers did.
+    [0n, 1_000_000n, 1_000_000n, 1_000_000n, 1_000_000n, 1_000_000n, 1_000_000n, 2_000_000n, 3_000_000n, 3_500_000n]
+      .forEach((value, i) => { stamps[i] = value; });
+    const timings = parseTimestampMarkers(stamps, 1);
+    expect(timings.particleEmitMs).toBe(0);
+    expect(timings.particleAdvectMs).toBe(0);
+    expect(timings.particleSplatMs).toBe(0);
+    expect(timings.persistenceMs).toBeCloseTo(1);
   });
 });
 
@@ -83,6 +102,9 @@ describe('estimatePassBandwidthMBps', () => {
       layersMs: 1,
       motionMs: 0.2,
       motionFlowMs: 0,
+      particleEmitMs: 0,
+      particleAdvectMs: 0,
+      particleSplatMs: 0,
       persistenceMs: 1,
       compositorMs: 1,
       readbackMs: 0,
@@ -107,6 +129,9 @@ describe('estimatePassBandwidthMBps', () => {
       layersMs: 1,
       motionMs: 0.2,
       motionFlowMs: 0.4,
+      particleEmitMs: 0,
+      particleAdvectMs: 0,
+      particleSplatMs: 0,
       persistenceMs: 1,
       compositorMs: 1,
       readbackMs: 0,
@@ -131,6 +156,9 @@ describe('estimatePassBandwidthMBps', () => {
         layersMs: 2,
         motionMs: 0.2,
         motionFlowMs: 0,
+        particleEmitMs: 0,
+        particleAdvectMs: 0,
+        particleSplatMs: 0,
         persistenceMs: 1,
         compositorMs: 1,
         readbackMs: 0.5,
@@ -154,6 +182,9 @@ describe('estimatePassBandwidthMBps', () => {
         layersMs: 1,
         motionMs: 0,
         motionFlowMs: 0,
+        particleEmitMs: 0,
+        particleAdvectMs: 0,
+        particleSplatMs: 0,
         persistenceMs: 1,
         compositorMs: 1,
         readbackMs: 0,
@@ -173,6 +204,9 @@ describe('estimatePassBandwidthMBps', () => {
         layersMs: 1,
         motionMs: 0,
         motionFlowMs: 0,
+        particleEmitMs: 0,
+        particleAdvectMs: 0,
+        particleSplatMs: 0,
         persistenceMs: 1,
         compositorMs: 1,
         readbackMs: 0,
