@@ -213,6 +213,23 @@ function clampf(value: number, low: number, high: number): number {
 }
 
 /**
+ * NaN and ±Infinity become 0; every finite value passes through.
+ *
+ * `clampf` lets a NaN through, and `Math.floor(NaN)` is NaN, so without this a
+ * NaN flow guess indexes the plane with NaN — `undefined`, which this lane
+ * reads as NaN by accident. The C++ kernel does the same index arithmetic in
+ * integers, where a float→int cast of NaN is undefined behaviour and, on wasm32
+ * without the nontrapping conversions, an out-of-bounds read. All three lanes
+ * therefore sample at 0 instead (`finiteOrZero` in `cpp/motion_flow.cpp`,
+ * `finite_or_zero` in the WGSL pass) so none of them depends on what an
+ * invalid index happens to do. The result is NaN either way — a NaN guess
+ * poisons the cell's flow — but only this way is the read in bounds.
+ */
+function finiteOrZero(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
  * Box-average a luminance plane down by two, clipping a trailing odd row or
  * column exactly the way {@link downsampleLuminance} clips a partial block.
  */
@@ -254,8 +271,8 @@ export function planeAt(plane: LuminancePlane, x: number, y: number): number {
  * which is why the coarse level, whose guess is always zero, can skip it.
  */
 export function samplePlaneBilinear(plane: LuminancePlane, x: number, y: number): number {
-  const fx = clampf(x, 0, plane.width - 1);
-  const fy = clampf(y, 0, plane.height - 1);
+  const fx = clampf(finiteOrZero(x), 0, plane.width - 1);
+  const fy = clampf(finiteOrZero(y), 0, plane.height - 1);
   const x0 = Math.floor(fx);
   const y0 = Math.floor(fy);
   const x1 = Math.min(x0 + 1, plane.width - 1);

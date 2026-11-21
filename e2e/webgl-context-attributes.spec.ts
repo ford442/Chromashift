@@ -14,7 +14,7 @@ import { expect, test } from '@playwright/test';
 async function contextAttributes(page: import('@playwright/test').Page) {
   await page.waitForFunction(() => (window as unknown as { usingWebGL?: boolean }).usingWebGL === true);
   return page.evaluate(() => {
-    const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
+    const canvas = document.querySelector('canvas');
     return canvas?.getContext('webgl2')?.getContextAttributes() ?? null;
   });
 }

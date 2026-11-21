@@ -195,11 +195,11 @@ describe('gpu-chores runtime', () => {
     });
     const backend = new CpuChoreBackend('wasm', workerBackedHost);
     // Before any successful run, breadcrumbLabel falls back to the plain lane name.
-    expect(backend.breadcrumbLabel!()).toBe('wasm');
+    expect(backend.breadcrumbLabel()).toBe('wasm');
 
     const runtime = createChoresRuntime([backend]);
     await runtime.runJob(job({ image: IMAGE }));
-    expect(backend.breadcrumbLabel!()).toBe('wasm-worker');
+    expect(backend.breadcrumbLabel()).toBe('wasm-worker');
   });
 
   it('publishes the wasm-worker/ts-inline breadcrumb label, not the plain backend name, to window.gpuChoreBackend', async () => {

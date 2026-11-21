@@ -231,6 +231,17 @@ describe('samplePlaneBilinear', () => {
     expect(samplePlaneBilinear(plane, -5, -5)).toBe(0);
     expect(samplePlaneBilinear(plane, 99, 99)).toBe(3);
   });
+
+  it('reads a non-finite coordinate at 0, not at an invalid index', () => {
+    // NaN and ±Infinity map to 0 before the floor (`finiteOrZero`), the same
+    // as the C++ and WGSL lanes — so an Infinity is *not* clamped to the far
+    // edge the way a large finite coordinate is.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(samplePlaneBilinear(plane, bad, bad)).toBe(planeAt(plane, 0, 0));
+      expect(samplePlaneBilinear(plane, bad, 1)).toBe(planeAt(plane, 0, 1));
+      expect(samplePlaneBilinear(plane, 1, bad)).toBe(planeAt(plane, 1, 0));
+    }
+  });
 });
 
 describe('lucasKanadeFlow', () => {
@@ -288,6 +299,63 @@ describe('lucasKanadeFlow', () => {
       expect(vx).toBeCloseTo(golden[index * 2]!, 5);
       expect(vy).toBeCloseTo(golden[index * 2 + 1]!, 5);
     });
+  });
+
+  it('keeps every lane in bounds on non-finite input, with the pinned NaN pattern', () => {
+    // The same fixture `cpp/tests/test_engine.cpp` and
+    // `FLOW_NONFINITE_*` in `public/wasm-benchmark-core.mjs` pin: a NaN in the
+    // current plane, an Infinity and a NaN in the previous one. 'N' marks where
+    // the flow is NaN, '.' where it is finite. NaN-ness is exact across lanes;
+    // the finite cells are compared to tolerance (this lane accumulates in
+    // doubles, the C++ and WGSL lanes in float32).
+    const nanRows = [
+      '......NNNNNNNNNN',
+      '......NNNNNNNNNN',
+      '....NNNNNNNNNNNN',
+      '....NNNNNNNNNNNN',
+      '....NNNNNNNNNNNN',
+      '....NNNNNNNNNNNN',
+      'NNNNNNNNNNNNNN..',
+      'NNNNNNNNNNNNNN..',
+      'NNNNNNNNNNNN....',
+      'NNNNNNNNNNNN....',
+      'NNNNNNNN........',
+      'NNNNNNNN........',
+      'NNNNNNNN........',
+      'NNNNNNNN........',
+      '................',
+      '................',
+    ];
+    const current = ridgePlane(8, 7);
+    const previous = ridgePlane(6, 6);
+    current.lum[5 * FIXTURE_SIZE + 9] = Number.NaN;
+    previous.lum[10 * FIXTURE_SIZE + 4] = Number.POSITIVE_INFINITY;
+    previous.lum[2 * FIXTURE_SIZE + 12] = Number.NaN;
+
+    const field = lucasKanadeFlow(current, previous);
+
+    for (let y = 0; y < FIXTURE_SIZE; y += 1) {
+      const row = Array.from({ length: FIXTURE_SIZE }, (_, x) => {
+        const { vx, vy } = flowAt(field, x, y);
+        expect(Number.isNaN(vx)).toBe(Number.isNaN(vy));
+        return Number.isNaN(vx) ? 'N' : '.';
+      }).join('');
+      expect(row).toBe(nanRows[y]);
+    }
+    // Nothing escapes the clamp except NaN itself: never an Infinity.
+    for (const v of field.flow) expect(Number.isNaN(v) || Math.abs(v) <= LK_MAX_FLOW).toBe(true);
+
+    const golden = [
+      { x: 10, y: 10, vx: 1.638885, vy: 1.397043 },
+      { x: 13, y: 8, vx: 1.352106, vy: 0.192026 },
+      { x: 3, y: 14, vx: 0, vy: 0 },
+      { x: 0, y: 0, vx: 0, vy: 0 },
+    ];
+    for (const cell of golden) {
+      const { vx, vy } = flowAt(field, cell.x, cell.y);
+      expect(vx).toBeCloseTo(cell.vx, 5);
+      expect(vy).toBeCloseTo(cell.vy, 5);
+    }
   });
 
   it('recovers roughly the true displacement on a well-conditioned cell', () => {

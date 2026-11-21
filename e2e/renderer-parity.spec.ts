@@ -48,7 +48,7 @@ const recordScreenshots = Boolean(process.env.RECORD_SCREENSHOTS);
         await debugSelect.selectOption({ label: WEBGL_DEBUG_MODES[i] });
         await page.waitForTimeout(1500);
         await mainCanvas.screenshot({
-          path: path.join(screenshotsDir, `webgl-debug-${i}-${WEBGL_DEBUG_MODES[i].replace(/\s+/g, '-').toLowerCase()}.png`),
+          path: path.join(screenshotsDir, `webgl-debug-${i}-${WEBGL_DEBUG_MODES[i]!.replace(/\s+/g, '-').toLowerCase()}.png`),
         });
       }
     });

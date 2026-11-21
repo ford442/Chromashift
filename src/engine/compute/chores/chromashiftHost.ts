@@ -29,6 +29,10 @@ import type { CpuChoreHost, CpuImageAnalysisResult } from './types';
 export function createChromashiftCpuHost(wasmEnabled: () => boolean): CpuChoreHost {
   return {
     isWasmReady: () => wasmEnabled() && isWasmReady(),
+    // `async` with no `await`, on purpose: the contract is a Promise, and a throw
+    // from the kernel (a RangeError on a short buffer) must reject it rather
+    // than escape synchronously from the call.
+    // eslint-disable-next-line @typescript-eslint/require-await
     async analyzeImage(image, avgLumHint, useWasm): Promise<CpuImageAnalysisResult | null> {
       const avgLuminance = avgLumHint ?? computeImageAverageLuminanceWith(image, useWasm);
       const result = classifyImageMaskWith(image, avgLuminance, useWasm);
@@ -41,6 +45,7 @@ export function createChromashiftCpuHost(wasmEnabled: () => boolean): CpuChoreHo
         mode: 'inline',
       };
     },
+    // eslint-disable-next-line @typescript-eslint/require-await -- as above
     async computeAverageLuminance(image, useWasm) {
       return { avgLuminance: computeImageAverageLuminanceWith(image, useWasm), mode: 'inline' };
     },

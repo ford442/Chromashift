@@ -41,6 +41,7 @@ npx chromashift render <settings.json> --image <img> --out clip.mp4  # Headless 
 npm run test:e2e:browsers  # WebGPU smoke + executor specs in Firefox and WebKit (skip without navigator.gpu)
 npm run test:cpp  # C++ host tests (g++, no Emscripten); :werror / :asan variants exist
 npm run test:cpp:simd # the same suite on the em++ -msimd128 build + bit-exact SIMD/scalar parity (needs emsdk)
+npm run test:cpp:simd:asan # the SIMD128 build under ASan + UBSan (emcc -fsanitize; needs emsdk); :asan is the scalar build
 npm run bench:wasm # WASM kernel throughput (add -- --assert to enforce the CI floors)
 npm run preview   # Preview the production build locally
 ```
@@ -616,6 +617,7 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | **Vitest (GPU)** | `npm run test:gpu` | `src/**/*.gpu.test.ts` (vitest project `gpu`, opt-in via `CHROMASHIFT_GPU_TESTS=1`, so `npm test` needs no Vulkan): the real renderer in Node on Dawn's `webgpu` package. The **canonical pixel goldens** (`src/headless/__golden__/`: the default graph at 1/3/7/10 layers and every starter / shape preset, pixelmatch at the E2E tolerance) and the browser's `e2e/__golden__` frames reproduced byte-for-byte, both on Playwright Chromium's SwiftShader Vulkan; a boot-and-draw check on the system driver (lavapipe on CI). See `docs/HEADLESS.md` |
 | **C++ host** | `npm run test:cpp` | `cpp/tests/test_engine.cpp` via `g++` — band ladder vs the original linear scan, bulk-kernel/single-pixel parity, luminance, decay and motion-flow math against the engine's scalar path; no Emscripten required |
 | **C++ SIMD128** | `npm run test:cpp:simd` | The same suite built with `em++ -msimd128` and run under Node — the code the browser runs — then `cpp/tests/simd_parity.cpp`: the SIMD engine and a `CS_FORCE_SCALAR` copy linked into one module and compared **bit for bit** on every kernel, at odd sizes and on NaN/denormal/extreme inputs. Needs emsdk |
+| **C++ sanitizers** | `npm run test:cpp:asan`, `npm run test:cpp:simd:asan` | The suite under ASan + UBSan, scalar (host g++) and SIMD128 (`em++ -fsanitize`, under Node — the host build never compiles a `CS_HAS_SIMD` block). Built with `-fno-sanitize-recover=all`, so the first finding fails the run (UBSan's default is to print and exit 0). `make -C cpp test-sanitizer-selftest` and the self-test inside `test-simd-asan` prove each sanitizer aborts on a deliberate signed overflow / heap overflow / out-of-bounds `v128` load. CI: `wasm.yml`'s `sanitizers` job, on engine changes and nightly |
 | **WASM perf gate** | `npm run bench:wasm -- --assert` | Runs every bulk kernel of the committed `public/chromashift_engine.wasm` over a deterministic 3841×2161 golden image (odd on purpose, so the scalar tails run) and fails below the throughput floors in `public/wasm-benchmark-core.mjs` — catches a silent loss of the SIMD128 path — and checks both mask kernels against the scalar `classifyPixel` export. Same image and floors as `/wasm-benchmark.html` |
 
 ### CI job matrix
@@ -627,6 +629,7 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | `unit` | `npm run test:coverage` (Vitest + v8 coverage): the totals go to the job summary (`scripts/coverage-summary.mjs`) and the HTML report is the `coverage-html` artifact. Reported, not gated — no threshold yet |
 | `shaders` | `node scripts/validate-shaders.mjs --require-glslang`: dumps every WGSL/GLSL variant (`shaderBindings.test.ts`), then `naga` + `glslangValidator` (naga-cli pinned and cached) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
+| `e2e-preview` | `npm run build`, then `PW_SERVER=preview npx playwright test --project=chromium-preview`: the WebGL smoke and the WASM engine spec against `vite preview`, so the minified bundles, the closure-compiled glue, the ES-module worker chunks and `base: './'` are loaded by a browser (the other E2E jobs use the dev server) |
 | `e2e-webgpu` | `npx playwright test --project=chromium-webgpu` (`--enable-unsafe-webgpu` + SwiftShader Vulkan) |
 | `headless` | Mesa lavapipe + ffmpeg + Playwright Chromium (for its SwiftShader ICD), `npm run test:gpu`, then the CLI smoke: a 90-frame `examples/cr0p.json` `.mp4` (frame count checked with ffprobe) and a still, uploaded as the `headless-out` artifact |
 | `e2e-webgpu-browsers` | **Non-blocking** (`continue-on-error`, until green twice): `npx playwright test --project=firefox` on `windows-latest`, `--project=webkit` on `macos-latest`, each where the browser ships WebGPU |
@@ -636,12 +639,15 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | Job (`wasm.yml`) | What it runs |
 |-----|----------------|
 | `host-tests` | `npm run test:cpp:werror` (g++, no emsdk) |
+| `sanitizers` | `make -C cpp test-sanitizer-selftest`, `npm run test:cpp:asan`, then (with the pinned emsdk) `npm run test:cpp:simd:asan`. Also runs nightly (`schedule`), as does the whole workflow |
 | `wasm` | installs the emsdk pinned in `cpp/emsdk.version` + `make -C cpp check` (pin) + `make -C cpp verify-exports` + `npm run test:cpp:simd` (`-Werror`) + `make -C cpp compile-commands` and `npm run check:compile-commands -- --require-wasm` (every `cpp/**/*.cpp` is a database entry; engine entries are wasm32 + `-msimd128` + `-ffp-contract=off`) + `npm run build:wasm:force` + `npm run bench:wasm -- --assert` + fails if `public/chromashift_engine.{js,wasm}` or `cpp/*_table.h` differ from the clean rebuild |
 
 WebGPU E2E runs in the `chromium-webgpu` Playwright project with
 `--enable-unsafe-webgpu` plus the SwiftShader Vulkan flags (see
 `playwright.config.ts`): without them headless Chromium cannot allocate the canvas
 swap chain on a GPU-less runner and destroys the device, so every frame is black.
+`playwright.config.ts` takes the app's port from `PW_PORT` (default 5173) and starts the server with `--strictPort`, so a port another app holds is an error, not the app under test; reusing an already-running server is opt-in (`PW_REUSE_SERVER=1`). `PW_SERVER=preview` serves `dist/` with `vite preview` (after `npm run build`) and runs only the `chromium-preview` project.
+
 Compare WebGPU frames with `e2e/helpers/gpuCanvasReadback.ts`, which reads the
 presented canvas texture back through `window.__renderDebug.readPresentedFrame` —
 on either render transport — not with a page screenshot. For local WebGPU validation,

@@ -34,7 +34,7 @@ describe('WebGLGraphExecutor', () => {
     source = fake.gl.createTexture() as unknown as FakeTexture;
     inputs = {
       source: { texture: source as unknown as WebGLTexture, width: 640, height: 480 },
-      profileLut: fake.gl.createTexture()!,
+      profileLut: fake.gl.createTexture(),
       motionField: null,
     };
   });
@@ -158,7 +158,7 @@ describe('WebGLGraphExecutor', () => {
 
   it('draws the temporal term with the field bound after the previous frame', () => {
     adopt(withMotionTerm(buildDefaultGraph()));
-    const field = fake.gl.createTexture()!;
+    const field = fake.gl.createTexture();
     executor.encode({ ...inputs, motionField: field }, params({ ...STATE, motionMode: 1 }));
     const accumulators = fake.draws.filter((draw) => draw.fragment.includes('u_previous'));
     expect(accumulators).toHaveLength(2);
@@ -209,7 +209,7 @@ describe('WebGLGraphExecutor', () => {
     executor.encode(inputs, params());
     const tracers = executor.outputTargets()!.tracers;
     fake.draws.length = 0;
-    const target = { texture: fake.gl.createTexture()!, framebuffer: fake.gl.createFramebuffer()!, width: 64, height: 64 };
+    const target = { texture: fake.gl.createTexture(), framebuffer: fake.gl.createFramebuffer(), width: 64, height: 64 };
     expect(executor.composite(inputs, { ...STATE, mainViewMode: 6 }, {
       target,
       viewport: { x: 0, y: 0, width: 64, height: 64 },

@@ -99,7 +99,7 @@ export class LoopbackWorker<
   constructor(handlers: RpcHandlers<P, Progress>) {
     super();
     const { port1: host, port2: inside } = this.channel;
-    host.addEventListener('message', (e) => this.emit('message', { data: e.data }));
+    host.addEventListener('message', (e: MessageEvent<unknown>) => this.emit('message', { data: e.data }));
     host.start();
     this.events = exposeWorkerRpc<P, Progress, E>({
       addEventListener: (_type, listener) => {

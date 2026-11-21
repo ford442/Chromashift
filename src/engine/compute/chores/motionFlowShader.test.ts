@@ -75,4 +75,16 @@ describe('motion flow WGSL', () => {
     expect(MOTION_FLOW_REFINE_COMPUTE_SHADER)
       .toContain('lum_bilinear(prev_lum_tex, f32(x) - guess.x, f32(y) - guess.y)');
   });
+
+  it('maps a non-finite warp coordinate to 0 before the clamp, like the CPU lanes', () => {
+    // `finiteOrZero` in motionKernel.ts / cpp/motion_flow.cpp. WGSL has no
+    // isnan, so it is a comparison: NaN fails `<= f32::MAX` and takes the 0.0 arm.
+    expect(MOTION_FLOW_REFINE_COMPUTE_SHADER).toContain('fn finite_or_zero(v: f32) -> f32');
+    expect(MOTION_FLOW_REFINE_COMPUTE_SHADER)
+      .toContain('return select(0.0, v, abs(v) <= 3.4028234e38);');
+    expect(MOTION_FLOW_REFINE_COMPUTE_SHADER)
+      .toContain('let fx = clamp(finite_or_zero(x), 0.0, f32(fp.field_width) - 1.0);');
+    expect(MOTION_FLOW_REFINE_COMPUTE_SHADER)
+      .toContain('let fy = clamp(finite_or_zero(y), 0.0, f32(fp.field_height) - 1.0);');
+  });
 });

@@ -3,8 +3,10 @@
  *
  * At runtime this module attempts to load the Emscripten-compiled module at
  * /chromashift_engine.js (which fetches /chromashift_engine.wasm). If the
- * runtime lacks SIMD128, or the module fails to load, `loadWasmEngine` resolves
- * `false` and every dispatcher in `./dispatch.ts` falls back to its TypeScript
+ * runtime lacks the WebAssembly feature floor (SIMD128, bulk memory, nontrapping
+ * float-to-int, sign extension), or the module fails to load twice running,
+ * `loadWasmEngine` resolves `false` and every dispatcher in `./dispatch.ts`
+ * falls back to its TypeScript
  * implementation. Which of the two happened is never silent: it is logged and
  * published as `window.wasmEngineState` / `wasmEngineError` (a worker's own
  * instance reaches `window.wasmEngineWorkers` through its host).
@@ -127,28 +129,6 @@ function logStaleWasmExports(): void {
   );
 }
 
-/**
- * Probe the browser for WebAssembly SIMD (v128) support.
- *
- * Uses `WebAssembly.validate` on a minimal module containing a `v128.const`
- * instruction.  This is the standard technique recommended by the
- * WebAssembly/feature-detection working group.
- *
- * The engine is built with `-msimd128` and its pixel kernels contain real
- * `v128` instructions, so a browser without SIMD128 cannot instantiate the
- * module at all — `loadWasmEngine()` treats a failed probe as "unavailable"
- * and every dispatcher falls back to its TypeScript implementation.
- *
- * @returns `true` when the browser supports WASM SIMD128.
- */
-export function isWasmSimdSupported(): boolean {
-  try {
-    return WebAssembly.validate(SIMD_PROBE_MODULE);
-  } catch {
-    return false;
-  }
-}
-
 /** Unsigned LEB128, the encoding of every size and count in a WASM binary. */
 export function leb128(value: number): number[] {
   const bytes: number[] = [];
@@ -167,26 +147,103 @@ function wasmSection(id: number, contents: readonly number[]): number[] {
 }
 
 /**
- * The probe module: one function `() -> v128` whose body is `v128.const 0`.
- * Every length is computed, not written by hand — the hand-counted sizes once
- * read 0x0f / 0x0d instead of 22 / 20, which made the module malformed, so
- * `validate()` returned false in every browser and the engine never loaded.
+ * The WebAssembly features the binary needs beyond MVP. `cpp/Makefile` compiles
+ * with `-msimd128 -mbulk-memory -mnontrapping-fptoint -msign-ext` (`WASM_CXXFLAGS`),
+ * so a runtime missing any one cannot instantiate the module — keep this list
+ * and that flag set in step.
  */
-const SIMD_PROBE_MODULE: Uint8Array<ArrayBuffer> = (() => {
-  const V128 = 0x7b;
+export type WasmFeature = 'simd128' | 'bulk-memory' | 'nontrapping-fptoint' | 'sign-ext';
+
+/**
+ * One probe per feature: the smallest function body that uses one of its
+ * instructions, with everything it needs on the stack. `memory` is whether the
+ * module has to declare a linear memory for the instruction to validate.
+ */
+const FEATURE_PROBES: ReadonlyArray<{ feature: WasmFeature; body: readonly number[]; memory: boolean }> = [
+  {
+    feature: 'simd128',
+    // v128.const 0; drop
+    body: [0xfd, 0x0c, ...new Array<number>(16).fill(0), 0x1a],
+    memory: false,
+  },
+  {
+    feature: 'bulk-memory',
+    // i32.const 0 (dest); i32.const 0 (value); i32.const 0 (length); memory.fill 0
+    body: [0x41, 0x00, 0x41, 0x00, 0x41, 0x00, 0xfc, 0x0b, 0x00],
+    memory: true,
+  },
+  {
+    feature: 'nontrapping-fptoint',
+    // f32.const 0; i32.trunc_sat_f32_s; drop
+    body: [0x43, 0x00, 0x00, 0x00, 0x00, 0xfc, 0x00, 0x1a],
+    memory: false,
+  },
+  {
+    feature: 'sign-ext',
+    // i32.const 0; i32.extend8_s; drop
+    body: [0x41, 0x00, 0xc0, 0x1a],
+    memory: false,
+  },
+];
+
+/**
+ * A module with one `() -> ()` function whose body is `instructions`.
+ * Every length is computed, not written by hand — the hand-counted sizes of the
+ * first SIMD probe once read 0x0f / 0x0d instead of 22 / 20, which made the
+ * module malformed, so `validate()` returned false in every browser and the
+ * engine never loaded.
+ */
+function probeModule(instructions: readonly number[], memory: boolean): Uint8Array<ArrayBuffer> {
   const body = [
     0x00,                          // no locals
-    0xfd, 0x0c, ...new Array<number>(16).fill(0), // v128.const 0
+    ...instructions,
     0x0b,                          // end
   ];
   return new Uint8Array([
     0x00, 0x61, 0x73, 0x6d,        // magic
     0x01, 0x00, 0x00, 0x00,        // version
-    ...wasmSection(0x01, [0x01, 0x60, 0x00, 0x01, V128]),     // type: () -> v128
+    ...wasmSection(0x01, [0x01, 0x60, 0x00, 0x00]),           // type: () -> ()
     ...wasmSection(0x03, [0x01, 0x00]),                       // function: type 0
+    ...(memory ? wasmSection(0x05, [0x01, 0x00, 0x00]) : []), // memory: one, no maximum, min 0
     ...wasmSection(0x0a, [0x01, ...leb128(body.length), ...body]), // code: one body
   ]);
-})();
+}
+
+/**
+ * Probe the runtime for the engine's WebAssembly feature floor and return the
+ * features it lacks (empty when the binary can run here).
+ *
+ * Uses `WebAssembly.validate` on a minimal module per feature — the standard
+ * technique recommended by the WebAssembly/feature-detection working group.
+ * Probing each separately is what lets the failure say *which* feature is
+ * missing instead of "unsupported".
+ */
+export function missingWasmFeatures(): WasmFeature[] {
+  return FEATURE_PROBES
+    .filter(({ body, memory }) => {
+      try {
+        return !WebAssembly.validate(probeModule(body, memory));
+      } catch {
+        return true;
+      }
+    })
+    .map(({ feature }) => feature);
+}
+
+/**
+ * `true` when the runtime has every feature the binary was compiled with
+ * (SIMD128 plus bulk memory, nontrapping float-to-int and sign extension).
+ *
+ * Each of the other three reached every major engine before SIMD128 did (Chrome
+ * 91, Firefox 89, Safari 16.4), so adding them to the floor drops no browser the
+ * SIMD requirement had not already dropped. A browser below it
+ * cannot instantiate the module at all, so `loadWasmEngine()` treats a failed
+ * probe as "unavailable" and every dispatcher falls back to its TypeScript
+ * implementation.
+ */
+export function isWasmFeatureFloorSupported(): boolean {
+  return missingWasmFeatures().length === 0;
+}
 
 /**
  * Where the engine is outside a page — Node, for the headless renderer
@@ -197,6 +254,57 @@ const SIMD_PROBE_MODULE: Uint8Array<ArrayBuffer> = (() => {
 export interface WasmEngineSource {
   glueUrl: string;
   wasmBinary: Uint8Array;
+}
+
+/** Attempts at fetching, importing and instantiating the engine before giving up. */
+const LOAD_ATTEMPTS = 2;
+
+/** Pause before the retry, so a flaky connection has a moment to recover. */
+const LOAD_RETRY_DELAY_MS = 250;
+
+/**
+ * The engine's glue and binary, loaded once and retried once.
+ *
+ * A failed load disables WASM for the rest of the session — `settle('error')` is
+ * terminal — so one dropped request on a flaky connection used to cost every CPU
+ * kernel its 2.6–7× for as long as the tab lived. A second attempt costs nothing
+ * when the first succeeded, and nothing the user can see when it did not.
+ *
+ * Which half failed decides what the retry repeats. A failed `import()` is
+ * retried against a cache-busted URL, because a document's module map may hold on
+ * to the failure; a glue that imported but whose `.wasm` fetch or instantiation
+ * failed is kept and only its factory is called again.
+ */
+async function instantiateWithRetry(source: WasmEngineSource | undefined): Promise<ChromashiftWasmModule> {
+  let glue: GlueModule | null = null;
+  let engineUrl: string | null = null;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      if (glue === null) {
+        // `/chromashift_engine.js` is a file in `public/`, served as a static asset
+        // and not part of the Vite module graph, so the `import()` below is
+        // `@vite-ignore`d. The URL is still written as `new URL(path,
+        // import.meta.url)` on purpose: Vite rewrites that in a build to the
+        // path from *this chunk* to the public file, whatever `base` is, and
+        // leaves it an origin-absolute path in dev.
+        //
+        // It used to be `new URL(BASE_URL, location.href)`. `location` is the
+        // *page* on the main thread but the *worker script* in a worker, so with
+        // the build's `base: './'` the two workers looked for
+        // `/assets/chromashift_engine.js`, got a 404, and ran the TypeScript
+        // fallback in production while the dev server (whose base is `/`) hid it
+        // - the `wasm-engine` spec against `vite preview` is what caught it.
+        engineUrl ??= source?.glueUrl ?? new URL('/chromashift_engine.js', import.meta.url).href;
+        const url = attempt === 1 ? engineUrl : `${engineUrl}${engineUrl.includes('?') ? '&' : '?'}retry=${attempt}`;
+        glue = await import(/* @vite-ignore */ url) as GlueModule;
+      }
+      return await glue.default(source ? { wasmBinary: source.wasmBinary } : undefined);
+    } catch (error) {
+      if (attempt >= LOAD_ATTEMPTS) throw error;
+      console.warn(`[WasmEngine] load attempt ${attempt} of ${LOAD_ATTEMPTS} failed — retrying:`, error);
+      await new Promise<void>((resolve) => setTimeout(resolve, LOAD_RETRY_DELAY_MS));
+    }
+  }
 }
 
 /**
@@ -216,39 +324,26 @@ export async function loadWasmEngine(source?: WasmEngineSource): Promise<boolean
     });
   }
 
-  if (!isWasmSimdSupported()) {
-    // The binary is SIMD128-only — instantiating it here would just throw.
-    console.info(
-      '[WasmEngine] WebAssembly SIMD128 unsupported — using the TypeScript engine.',
-    );
-    settle('unavailable', 'WebAssembly SIMD128 is not supported by this runtime');
+  const missing = missingWasmFeatures();
+  if (missing.length > 0) {
+    // The binary is built for the whole floor — instantiating it here would just throw.
+    const reason = `WebAssembly ${missing.join(', ')} not supported by this runtime`;
+    console.info(`[WasmEngine] ${reason} — using the TypeScript engine.`);
+    settle('unavailable', reason);
     return false;
   }
 
   loadState = 'loading';
 
   try {
-    // Build the URL at runtime so Rollup does not attempt to resolve or bundle it.
-    // The Emscripten glue lives in /public/ and is served as a static asset; it is
-    // not part of the Vite module graph.
-    // `globalThis.location`, not `window.location`: this loader runs inside
-    // `analysis.worker.ts` and `motion.worker.ts` too, and a worker realm has
-    // no `window` — the ReferenceError used to be swallowed by the catch below
-    // and reported as "WASM assets not built", so both workers silently ran the
-    // TypeScript fallback forever.
-    const engineUrl = source?.glueUrl ?? new URL(
-      'chromashift_engine.js',
-      new URL(import.meta.env.BASE_URL || './', globalThis.location.href),
-    ).href;
-    const glue = await import(/* @vite-ignore */ engineUrl) as GlueModule;
-    wasmModule = await glue.default(source ? { wasmBinary: source.wasmBinary } : undefined);
+    wasmModule = await instantiateWithRetry(source);
     settle('ready', null);
     logStaleWasmExports();
 
     console.info('[WasmEngine] C++ WASM engine loaded (SIMD128 kernels active).');
   } catch (error) {
     // The artifacts are committed, so this is a real failure — a fetch, an
-    // import or an instantiation — not "not built yet". Say which.
+    // import or an instantiation, twice running — not "not built yet". Say which.
     console.warn('[WasmEngine] C++ WASM engine failed to load — using the TypeScript engine:', error);
     settle('error', error instanceof Error ? error.message : String(error));
   }

@@ -90,7 +90,7 @@ test.describe('video export across render transports', () => {
       files[transport] = file!;
     }
     console.log(`[video-export] ${JSON.stringify(files)}`);
-    expect(files.worker.bytes).toBeGreaterThan(0);
+    expect(files.worker!.bytes).toBeGreaterThan(0);
     expect(files.worker).toEqual(files.main);
   });
 });

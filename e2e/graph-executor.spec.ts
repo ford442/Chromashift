@@ -519,7 +519,7 @@ test.describe('pass-graph executor', () => {
       if (!canvas || !context) return 0;
       const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
       const seen = new Set<number>();
-      for (let i = 0; i < data.length; i += 4) seen.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+      for (let i = 0; i < data.length; i += 4) seen.add((data[i]! << 16) | (data[i + 1]! << 8) | data[i + 2]!);
       return seen.size;
     }, label);
 

@@ -228,7 +228,7 @@ export interface RpcWorkerScope {
 }
 
 export interface RpcHandlerContext<Progress> {
-  progress(value: Progress): void;
+  progress: (value: Progress) => void;
   /** Moves these with the reply instead of copying them. */
   transfer(...objects: Transferable[]): void;
 }

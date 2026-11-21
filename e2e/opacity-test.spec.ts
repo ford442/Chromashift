@@ -33,7 +33,7 @@ const recordScreenshots = Boolean(process.env.RECORD_SCREENSHOTS);
     }
 
     // Navigate to the app (WebGL for CI-friendly rendering)
-    await page.goto('http://localhost:5173/?renderer=webgl');
+    await page.goto('/?renderer=webgl');
     
     // Wait for WebGPU to initialize
     await page.waitForTimeout(3000);

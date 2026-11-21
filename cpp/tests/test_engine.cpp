@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <vector>
 
 #define TEST(name) static void name(); struct name##_runner { name##_runner() { name(); } } name##_instance; static void name()
 
@@ -106,7 +108,7 @@ TEST(classification_mask_lut_matches_branchy_on_golden_image)
         if (mismatches != 0) {
             std::fprintf(stderr,
                 "FAIL %s:%d: LUT mask mismatches branchy %d/%u at avgLum=%.1f\n",
-                __FILE__, __LINE__, mismatches, pixelCount, avgLum);
+                __FILE__, __LINE__, mismatches, pixelCount, static_cast<double>(avgLum));
             ++failures;
         }
     }
@@ -516,7 +518,7 @@ TEST(motion_flow_recovers_the_translation_of_a_soft_bar)
         // bar moving down-right must never read as moving up-left.
         if (!(flow[i] > 0.0f && flow[i + 1] > 0.0f)) {
             std::fprintf(stderr, "FAIL %s:%d: cell (%d,%d) flow (%.6f, %.6f) is not down-right\n",
-                         __FILE__, __LINE__, cell.x, cell.y, flow[i], flow[i + 1]);
+                         __FILE__, __LINE__, cell.x, cell.y, static_cast<double>(flow[i]), static_cast<double>(flow[i + 1]));
             ++failures;
         }
     }
@@ -540,7 +542,7 @@ TEST(motion_flow_reverses_sign_when_the_frames_swap)
     const int i = (7 * kFlowSize + 8) * 2;
     if (!(forward[i] > 0.0f && backward[i] < 0.0f)) {
         std::fprintf(stderr, "FAIL %s:%d: forward vx %.6f / backward vx %.6f did not flip\n",
-                     __FILE__, __LINE__, forward[i], backward[i]);
+                     __FILE__, __LINE__, static_cast<double>(forward[i]), static_cast<double>(backward[i]));
         ++failures;
     }
 }
@@ -566,9 +568,132 @@ TEST(motion_flow_handles_an_odd_sized_plane)
     const int i = (7 * size + 8) * 2;
     if (!(flow[i] > 0.0f && flow[i + 1] > 0.0f)) {
         std::fprintf(stderr, "FAIL %s:%d: odd-sized plane flow (%.6f, %.6f) is not down-right\n",
-                     __FILE__, __LINE__, flow[i], flow[i + 1]);
+                     __FILE__, __LINE__, static_cast<double>(flow[i]), static_cast<double>(flow[i + 1]));
         ++failures;
     }
+}
+
+// ─── Non-finite input ────────────────────────────────────────────────────────
+//
+// A NaN or Inf luminance cell poisons its neighbourhood's flow with NaN, and a
+// NaN flow guess used to reach the bilinear fetch as a NaN coordinate: floor(NaN)
+// cast to int is undefined behaviour (INT_MIN on wasm32 without the nontrapping
+// conversions), and `row0Base + x0` then indexed far outside the plane. Planes
+// are heap vectors of exactly their size so ASan (`make test-asan`, and
+// `test-simd-asan` for the SIMD128 build) sees any read past either end.
+//
+// The expected NaN pattern and the two finite cells are the TypeScript lane's
+// output on the same fixture (`lucasKanadeFlow` in motionKernel.test.ts, "keeps
+// every lane in bounds on non-finite input"): NaN-ness has to match exactly, the
+// values to kMotionFlowEpsilon. Change one side and change the other.
+
+TEST(motion_flow_non_finite_input_matches_the_typescript_lane_and_stays_in_bounds)
+{
+    const std::size_t cells = static_cast<std::size_t>(kFlowSize * kFlowSize);
+    std::vector<float> previous(cells);
+    std::vector<float> current(cells);
+    std::vector<float> flow(cells * 2u);
+    buildMotionPlane(previous.data(), 6, 6);
+    buildMotionPlane(current.data(), 8, 7);
+    current[5 * kFlowSize + 9] = std::numeric_limits<float>::quiet_NaN();
+    previous[10 * kFlowSize + 4] = std::numeric_limits<float>::infinity();
+    previous[2 * kFlowSize + 12] = std::numeric_limits<float>::quiet_NaN();
+
+    computeMotionFlow(current.data(), previous.data(), kFlowSize, kFlowSize, flow.data());
+
+    // 'N' = both components NaN, '.' = both finite. vx only is printed by the
+    // TypeScript side, but the two components are poisoned together (the guess
+    // adds a NaN step), so a row of vx is the row of vy.
+    static const char* const expectedNaN[kFlowSize] = {
+        "......NNNNNNNNNN",
+        "......NNNNNNNNNN",
+        "....NNNNNNNNNNNN",
+        "....NNNNNNNNNNNN",
+        "....NNNNNNNNNNNN",
+        "....NNNNNNNNNNNN",
+        "NNNNNNNNNNNNNN..",
+        "NNNNNNNNNNNNNN..",
+        "NNNNNNNNNNNN....",
+        "NNNNNNNNNNNN....",
+        "NNNNNNNN........",
+        "NNNNNNNN........",
+        "NNNNNNNN........",
+        "NNNNNNNN........",
+        "................",
+        "................",
+    };
+    for (int y = 0; y < kFlowSize; ++y) {
+        for (int x = 0; x < kFlowSize; ++x) {
+            const std::size_t i = static_cast<std::size_t>(y * kFlowSize + x) * 2u;
+            const bool wantNaN = expectedNaN[y][x] == 'N';
+            if (std::isnan(flow[i]) != wantNaN || std::isnan(flow[i + 1]) != wantNaN) {
+                std::fprintf(stderr, "FAIL %s:%d: cell (%d,%d) flow (%f, %f), expected %s\n",
+                             __FILE__, __LINE__, x, y, static_cast<double>(flow[i]),
+                             static_cast<double>(flow[i + 1]), wantNaN ? "NaN" : "finite");
+                ++failures;
+            }
+            // Whatever the cell, the flow is bounded: NaN or inside the clamp.
+            if (!std::isnan(flow[i]) && std::fabs(flow[i]) > 4.0f) ++failures;
+            if (!std::isnan(flow[i + 1]) && std::fabs(flow[i + 1]) > 4.0f) ++failures;
+        }
+    }
+
+    struct FiniteCell { int x; int y; float vx; float vy; };
+    static const FiniteCell finite[] = {
+        { 10, 10, 1.638885f, 1.397043f },
+        { 13, 8, 1.352106f, 0.192026f },
+        { 3, 14, 0.0f, 0.0f },
+        { 0, 0, 0.0f, 0.0f },
+    };
+    for (const FiniteCell& cell : finite) {
+        const std::size_t i = static_cast<std::size_t>(cell.y * kFlowSize + cell.x) * 2u;
+        EXPECT_NEAR(flow[i], cell.vx, kMotionFlowEpsilon);
+        EXPECT_NEAR(flow[i + 1], cell.vy, kMotionFlowEpsilon);
+    }
+}
+
+TEST(motion_flow_an_all_nan_plane_yields_all_nan_without_reading_out_of_bounds)
+{
+    // Odd sizes too: the clipped trailing block takes the scalar tail.
+    static const int sizes[] = { 1, 2, 5, 15, 16 };
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    for (int size : sizes) {
+        const std::size_t n = static_cast<std::size_t>(size * size);
+        std::vector<float> current(n, nan);
+        std::vector<float> previous(n, nan);
+        std::vector<float> flow(n * 2u, 0.0f);
+        computeMotionFlow(current.data(), previous.data(),
+                          static_cast<uint32_t>(size), static_cast<uint32_t>(size), flow.data());
+        for (float v : flow) {
+            if (!std::isnan(v)) {
+                std::fprintf(stderr, "FAIL %s:%d: %dx%d all-NaN input produced %f\n",
+                             __FILE__, __LINE__, size, size, static_cast<double>(v));
+                ++failures;
+                break;
+            }
+        }
+    }
+}
+
+// ─── Oversize images ─────────────────────────────────────────────────────────
+//
+// width * height above UINT32_MAX / 4 (RGBA) or / 8 (the flow field's two
+// floats a cell) would wrap the 32-bit offsets. The exports refuse it before
+// touching any pointer, so these pass null buffers: a kernel that did read or
+// write would fault.
+
+TEST(oversize_images_are_refused_without_touching_memory)
+{
+    // 65536 * 65536 = 2^32 pixels: the product itself overflows uint32_t.
+    EXPECT_NEAR(computeAverageLuminanceStrided(nullptr, 65536u, 65536u, 1u), 128.0, 0.0);
+    EXPECT_NEAR(computeAverageLuminanceStrided(nullptr, 65536u, 65536u, 7u), 128.0, 0.0);
+    computeClassificationMask(nullptr, 65536u, 65536u, 128.0f, nullptr);
+    computeClassificationMaskLut(nullptr, 65536u, 65536u, 128.0f, nullptr);
+    // Just over UINT32_MAX / 4, where the product still fits in 32 bits.
+    computeClassificationMask(nullptr, 1u << 15, (1u << 15) + 1u, 128.0f, nullptr);
+    computeMotionFlow(nullptr, nullptr, 65536u, 65536u, nullptr);
+    computeMotionFlow(nullptr, nullptr, 1u << 15, 1u << 15, nullptr);
+    computeMotionFlow(nullptr, nullptr, 0xffffffffu, 1u, nullptr);
 }
 
 int main()

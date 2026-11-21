@@ -37,9 +37,9 @@ export function corpusEntryLabel(entry: ImageEntry, index: number, baseUrl = def
 }
 
 export function buildCorpusIndex(entries: readonly ImageEntry[], baseUrl = defaultBaseUrl()): CorpusIndex {
-  const labels: string[] = new Array(entries.length);
-  const haystack: string[] = new Array(entries.length);
-  const allIndices: number[] = new Array(entries.length);
+  const labels = new Array<string>(entries.length);
+  const haystack = new Array<string>(entries.length);
+  const allIndices = new Array<number>(entries.length);
 
   for (const [i, entry] of entries.entries()) {
     const label = corpusEntryLabel(entry, i, baseUrl);
