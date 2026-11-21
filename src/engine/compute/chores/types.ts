@@ -138,7 +138,10 @@ export type ChoreJob = ImageAnalysisJob | CoincidenceJob | MotionFieldJob;
 export interface GpuImageAnalysisOutput {
   kind: 'gpu-texture';
   avgLuminance: number;
-  /** Owned and reused by the runtime; callers must not destroy it. */
+  /**
+   * A new texture per job, owned by the caller from here on: it destroys it
+   * once its renderers have stopped binding it (after the next mask swaps in).
+   */
   maskTexture: GPUTexture;
   histogram: Uint32Array;
 }

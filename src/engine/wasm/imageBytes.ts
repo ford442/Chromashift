@@ -11,6 +11,8 @@
  * is created once and reused across calls — resizing it to fit each source
  * rather than allocating a fresh canvas per call.
  */
+import { getReadback2DContext } from '../gpu/readbackContext';
+
 
 export type PixelSource = HTMLImageElement | ImageBitmap;
 
@@ -48,7 +50,8 @@ function getReusableCtx(width: number, height: number): Canvas2DContext | null {
     reusableCanvas = currentDocument
       ? currentDocument.createElement('canvas')
       : new OffscreenCanvas(width, height);
-    reusableCtx = reusableCanvas.getContext('2d') as Canvas2DContext | null;
+    // `getImageData` every analysis: keep the canvas CPU-side.
+    reusableCtx = getReadback2DContext(reusableCanvas, { willReadFrequently: true });
     canvasDocument = currentDocument;
   }
   if (!reusableCtx) return null;

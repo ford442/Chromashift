@@ -52,6 +52,8 @@ export interface RendererOrchestratorOptions {
    * presentation, and the debug `readback` usage (`render/debug.ts`).
    */
   canvasOptions?: WebGpuCanvasOptions;
+  /** WebGPU only: the page's display reports HDR (`webgpuSession.ts`). */
+  hdrDisplay?: boolean;
   /**
    * WebGL only: the browser restored a context this orchestrator lost. The
    * orchestrator tore itself down at `webglcontextlost`; bootstrap a new one
@@ -80,14 +82,8 @@ export interface BootstrapRendererOrchestratorOptions extends RendererOrchestrat
 export interface BootstrapRendererOrchestratorResult {
   orchestrator: RendererOrchestrator;
   primarySlot: RendererSlot;
+  /** Always the backend asked for: nothing falls back on its own. */
   backend: RendererBackend;
-  fallbackReason: string | null;
-}
-
-export interface RendererOrchestratorBootstrapResult {
-  orchestrator: RendererOrchestrator;
-  backend: RendererBackend;
-  fallbackReason: string | null;
 }
 
 /** Injectable factories for unit tests (no real WebGPU required). */
@@ -163,7 +159,6 @@ export class RendererOrchestrator {
    */
   private choreLease: GpuChoreLease | null = null;
   private backend: RendererBackend;
-  private fallbackReason: string | null = null;
   private readonly antialias: boolean;
   private readonly onRuntimeError?: (error: GpuRuntimeError) => void;
   private onContextRestored?: () => void;
@@ -179,6 +174,7 @@ export class RendererOrchestrator {
   private webglContextLost = false;
   private resizePending = false;
   private canvasOptions: WebGpuCanvasOptions = {};
+  private hdrDisplay: boolean | undefined;
   /** The pass-graph source every slot draws, or `null` for the default graph. */
   private passGraphSource: PassGraphSource | null = null;
 
@@ -194,59 +190,30 @@ export class RendererOrchestrator {
     this.deps = deps;
   }
 
+  /**
+   * Boot the shared session and the primary slot on `options.primaryCanvas`
+   * (or `primaryTarget`). The backend is the one asked for — WebGL2 is a
+   * named diagnostic / XR / screenshot backend, never an automatic fallback:
+   * a WebGPU boot that fails throws (see docs/webgl-fallback.md).
+   */
   static async bootstrap(
     options: BootstrapRendererOrchestratorOptions,
-    deps?: RendererOrchestratorDeps,
-  ): Promise<BootstrapRendererOrchestratorResult>;
-  static async bootstrap(
-    primaryCanvas: HTMLCanvasElement,
-    options?: RendererOrchestratorOptions,
-    deps?: RendererOrchestratorDeps,
-  ): Promise<RendererOrchestratorBootstrapResult>;
-  static async bootstrap(
-    primaryCanvasOrOptions: HTMLCanvasElement | BootstrapRendererOrchestratorOptions,
-    optionsOrDeps: RendererOrchestratorOptions | RendererOrchestratorDeps = {},
     deps: RendererOrchestratorDeps = defaultRendererOrchestratorDeps,
-  ): Promise<BootstrapRendererOrchestratorResult | RendererOrchestratorBootstrapResult> {
-    const objectStyle = isBootstrapRendererOrchestratorOptions(primaryCanvasOrOptions);
-    const primaryCanvas = objectStyle ? primaryCanvasOrOptions.primaryCanvas ?? null : primaryCanvasOrOptions;
-    const primaryTarget = objectStyle ? primaryCanvasOrOptions.primaryTarget ?? null : null;
+  ): Promise<BootstrapRendererOrchestratorResult> {
+    const primaryCanvas = options.primaryCanvas ?? null;
+    const primaryTarget = options.primaryTarget ?? null;
     if ((primaryCanvas === null) === (primaryTarget === null)) {
       throw new Error('RendererOrchestrator.bootstrap needs exactly one of primaryCanvas and primaryTarget.');
     }
-    const baseOptions = objectStyle
-      ? primaryCanvasOrOptions
-      : isRendererOrchestratorDeps(optionsOrDeps)
-        ? {}
-        : optionsOrDeps;
-    const resolvedDeps = objectStyle
-      ? (isRendererOrchestratorDeps(optionsOrDeps) ? optionsOrDeps : deps)
-      : isRendererOrchestratorDeps(optionsOrDeps)
-        ? optionsOrDeps
-        : deps;
 
-    const preferredBackend = baseOptions.backend ?? baseOptions.backendPreference ?? resolvedDeps.getRendererPreference();
-    const orchestrator = new RendererOrchestrator(
-      preferredBackend,
-      baseOptions.antialias ?? false,
-      baseOptions.onRuntimeError,
-      resolvedDeps,
-    );
-    orchestrator.onContextRestored = baseOptions.onContextRestored;
-    orchestrator.canvasOptions = { ...baseOptions.canvasOptions };
+    const backend = options.backend ?? options.backendPreference ?? deps.getRendererPreference();
+    const orchestrator = new RendererOrchestrator(backend, options.antialias ?? false, options.onRuntimeError, deps);
+    orchestrator.onContextRestored = options.onContextRestored;
+    orchestrator.canvasOptions = { ...options.canvasOptions };
+    orchestrator.hdrDisplay = options.hdrDisplay;
+    const primarySlotId = options.primarySlotId ?? PRIMARY_SLOT_ID;
 
-    const primarySlotId = objectStyle && primaryCanvasOrOptions.primarySlotId
-      ? primaryCanvasOrOptions.primarySlotId
-      : PRIMARY_SLOT_ID;
-    // Never populated by automatic recovery — WebGL is opt-in only.
-    const fallbackReason: string | null = null;
-    const actualBackend = preferredBackend;
-
-    // WebGL2 is a named diagnostic / XR / screenshot backend. A failed
-    // WebGPU boot must not slide here: that hid Chrome-vs-Edge device bugs
-    // as visual-parity bugs. The WebGL branch is reachable only when
-    // preference or `backend: 'webgl'` is explicit. See docs/webgl-fallback.md.
-    if (preferredBackend === 'webgl') {
+    if (backend === 'webgl') {
       if (!primaryCanvas || isOffscreenCanvas(primaryCanvas)) {
         throw new Error('The WebGL backend presents to a canvas; an offscreen target is WebGPU-only.');
       }
@@ -261,10 +228,7 @@ export class RendererOrchestrator {
     } else {
       try {
         await orchestrator.bootstrapWebGpuSession(
-          primaryCanvas ? { canvas: primaryCanvas } : {
-            target: primaryTarget!,
-            format: objectStyle ? primaryCanvasOrOptions.primaryFormat : undefined,
-          },
+          primaryCanvas ? { canvas: primaryCanvas } : { target: primaryTarget!, format: options.primaryFormat },
         );
         await orchestrator.createPrimaryWebGpuSlot(primarySlotId, primaryCanvas);
       } catch (primaryError) {
@@ -277,34 +241,15 @@ export class RendererOrchestrator {
       }
     }
 
-    orchestrator.fallbackReason = fallbackReason;
     const primarySlot = orchestrator.getSlot(primarySlotId);
     if (!primarySlot) {
       throw new Error(`Primary slot "${primarySlotId}" was not created.`);
     }
-
-    if (objectStyle) {
-      return {
-        orchestrator,
-        primarySlot,
-        backend: actualBackend,
-        fallbackReason,
-      };
-    }
-
-    return {
-      orchestrator,
-      backend: actualBackend,
-      fallbackReason,
-    };
+    return { orchestrator, primarySlot, backend };
   }
 
   getBackend(): RendererBackend {
     return this.backend;
-  }
-
-  getFallbackReason(): string | null {
-    return this.fallbackReason;
   }
 
   sessionRef(): WebGpuSession | null {
@@ -511,6 +456,7 @@ export class RendererOrchestrator {
       ...primary,
       antialias: this.antialias,
       canvasOptions: this.canvasOptions,
+      hdrDisplay: this.hdrDisplay,
       onRuntimeError: (error) => {
         // A destroyed orchestrator has been replaced (Retry GPU, a React
         // re-run); its successor reports for the device now.
@@ -686,14 +632,4 @@ export class RendererOrchestrator {
     this.applyPassGraph(slot);
     return slot;
   }
-}
-
-function isBootstrapRendererOrchestratorOptions(
-  value: RenderCanvas | BootstrapRendererOrchestratorOptions,
-): value is BootstrapRendererOrchestratorOptions {
-  return typeof value === 'object' && value !== null && ('primaryCanvas' in value || 'primaryTarget' in value);
-}
-
-function isRendererOrchestratorDeps(value: unknown): value is RendererOrchestratorDeps {
-  return typeof value === 'object' && value !== null && 'bootstrapWebGpu' in value;
 }

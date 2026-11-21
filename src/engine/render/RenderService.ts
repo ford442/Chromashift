@@ -24,6 +24,8 @@ import type { FrameClock, FrameTick } from '../frame/FrameClock';
 import { getGpuFatalError, simulateDeviceLoss, toBootstrapRuntimeError, type GpuRuntimeError } from '../gpu/gpuErrors';
 import { isOffscreenCanvas, type RenderCanvas } from '../gpu/renderCanvas';
 import { activatePassGraph, presetGraphSource } from '../graph';
+import { getColorProfileLut } from '../color/colorProfile';
+import { LIVE_LUMINANCE_INTERVAL_MS, measureLiveFrameLuminance } from '../live/liveLuminance';
 import { LIVE_SOURCE_CACHE_KEY, type LiveFrameSource } from '../live/liveSourceTexture';
 import { advanceAngles } from '../math/rotation';
 import { adoptPageSearch } from '../pageSearch';
@@ -75,8 +77,6 @@ const TIMELINE_SIZE = 256;
 
 /** How often the loop sends angles and timings to the page (ms). */
 const TELEMETRY_INTERVAL_MS = 200;
-
-type MaskOwner = 'gpu-analysis' | 'wasm-upload';
 
 /** Injectable for unit tests: no WebGPU, no workers. */
 export interface RenderServiceDeps {
@@ -160,8 +160,21 @@ export class RenderService {
   private source: ChromashiftTextureHandle | null = null;
   /** What `source` was loaded from — the GPU analysis lane reads it only for that URL. */
   private sourceUrl: string | null = null;
+  /**
+   * The classification mask every slot binds. Ours, whichever lane made it:
+   * the GPU lane hands over a new texture per analysis, the CPU lanes' bytes
+   * are uploaded here.
+   */
   private mask: GPUTexture | null = null;
-  private maskOwner: MaskOwner | null = null;
+  /** Bumped by every analysis; only the latest one may bind its mask. */
+  private analysisTicket = 0;
+  /**
+   * The live source's luminance, measured here once a second — off the page's
+   * thread on the worker transport, and never through the page's reducer.
+   * `null` without a live source.
+   */
+  private liveLuminance: number | null = null;
+  private liveLuminanceAt = -Infinity;
   private analysis: { runtime: ChoresRuntime; device: GPUDevice | null } | null = null;
   private cpuHost: CpuChoreHost | null = null;
   private cpuHostWasm = false;
@@ -231,10 +244,17 @@ export class RenderService {
         if (!textures) throw new Error('The renderer is not running.');
         this.setSource(textures.uploadPixels(key, pixels, width, height));
       },
-      'set-video-frame': ({ frame }) => this.setVideoFrame(frame),
-      'release-video': () => { this.orchestrator?.textureManagerRef()?.releaseVideoTexture(LIVE_SOURCE_CACHE_KEY); },
+      'set-video-frame': ({ frame, useWasm }) => this.setVideoFrame(frame, useWasm === true),
+      'release-video': () => {
+        this.orchestrator?.textureManagerRef()?.releaseVideoTexture(LIVE_SOURCE_CACHE_KEY);
+        this.clearLiveLuminance();
+      },
       'analyze-source': (req) => this.analyzeSource(req.url, req.useWasm),
-      'clear-mask': () => this.clearMask(),
+      'clear-mask': () => {
+        // A pending analysis must not bind a mask over the page's clear.
+        this.analysisTicket += 1;
+        this.clearMask();
+      },
       'set-motion-field': ({ motion }) => { this.primary()?.setMotionField?.(motion); },
 
       'stationary-previews': async ({ state, options }, ctx) => {
@@ -299,7 +319,13 @@ export class RenderService {
     if (req.backend === 'webgl') {
       // Explicit diagnostic / XR / screenshot session: never request a WebGPU
       // adapter or device, so gpu-chores cannot adopt a leftover GPUDevice.
-      if (isOffscreenCanvas(canvas)) throw new Error('The WebGL backend draws a page canvas, on the main transport.');
+      if (isOffscreenCanvas(canvas)) {
+        // A transport mismatch, not a GPU failure — but the page's overlay
+        // shows it like one rather than an unhandled rejection.
+        const message = 'The WebGL backend draws a page canvas, on the main transport.';
+        publishRendererBootFailure(message);
+        return { ok: false, error: { kind: 'bootstrap', message, recoverable: false } };
+      }
       try {
         ({ orchestrator } = await this.deps.bootstrap({
           primaryCanvas: canvas,
@@ -340,6 +366,7 @@ export class RenderService {
           backend: 'webgpu',
           onRuntimeError,
           canvasOptions: { readback: req.debug },
+          hdrDisplay: req.hdrDisplay,
         }));
       } catch (error) {
         if (cancelled()) return CANCELLED;
@@ -361,7 +388,9 @@ export class RenderService {
 
     this.orchestrator = orchestrator;
     const backend = orchestrator.getBackend();
-    const fallbackReason = orchestrator.getFallbackReason();
+    // Nothing falls back on its own (WebGL is named, never slid to), so
+    // there is never a reason; the breadcrumb and the result keep the key.
+    const fallbackReason = null;
     publishRendererBreadcrumbs(backend, fallbackReason);
     // Pass-graph gate: the page chose the shape (`?graph=`, the stored
     // preference); compile it for this backend, publish the breadcrumbs, and
@@ -386,11 +415,11 @@ export class RenderService {
     this.endExport();
     this.stopLoop();
     this.rejectPresentedReads('the renderer was torn down');
-    if (this.maskOwner === 'wasm-upload') this.mask?.destroy();
+    this.mask?.destroy();
     this.mask = null;
-    this.maskOwner = null;
     this.source = null;
     this.sourceUrl = null;
+    this.clearLiveLuminance();
     this.analysis = null;
     this.orchestrator?.destroy();
     this.orchestrator = null;
@@ -545,10 +574,17 @@ export class RenderService {
     Object.assign(frame, loop.main);
     frame.layers = layers;
     writeLayerAngles(frame, this.angles);
+    const live = this.liveLuminance;
     if (mod) {
       frame.tracerAboveIntensity = mod.tracerAboveIntensity;
       frame.tracerBelowIntensity = mod.tracerBelowIntensity;
-      frame.avgLuminance = mod.avgLuminance;
+      // Reactive input modulates around the base: the live source's, when there is one.
+      frame.avgLuminance = live === null ? mod.avgLuminance : live + mod.avgLuminance - loop.main.avgLuminance;
+    } else if (live !== null) {
+      frame.avgLuminance = live;
+    }
+    if (live !== null && loop.colorProfile) {
+      frame.colorProfileLut = getColorProfileLut(loop.colorProfile, live, this.angles.length);
     }
     if (twoSlotActive || quadActive) {
       frame.layerScale = effectiveLayerScaleForMultiView(loop.main.layerScale ?? 1, layout).scale;
@@ -577,6 +613,7 @@ export class RenderService {
       Object.assign(frameB, b.state);
       frameB.layers = layersB;
       writeLayerAngles(frameB, anglesB);
+      if (live !== null) frameB.avgLuminance = live;
       compareB.renderer.render(frameB);
       this.afterRender(COMPARE_B_SLOT);
     }
@@ -695,28 +732,56 @@ export class RenderService {
     }
   }
 
-  private setVideoFrame(frame: LiveFrameSource): void {
+  private setVideoFrame(frame: LiveFrameSource, useWasm: boolean): void {
     try {
       const handle = this.orchestrator?.textureManagerRef()?.updateVideoTexture(LIVE_SOURCE_CACHE_KEY, frame);
-      if (handle) this.setSource(handle, LIVE_SOURCE_CACHE_KEY);
+      if (handle) {
+        this.setSource(handle, LIVE_SOURCE_CACHE_KEY);
+        this.measureLiveLuminance(frame, useWasm);
+      }
     } finally {
       // A frame posted to the worker is the service's to close; the page's own element is not.
       if ('close' in frame) frame.close();
     }
   }
 
-  private clearMask(): void {
-    for (const slot of this.orchestrator?.listSlots() ?? []) slot.renderer.setClassificationMaskTexture(null);
-    if (this.maskOwner === 'wasm-upload') this.mask?.destroy();
-    this.mask = null;
-    this.maskOwner = null;
+  /** Once a second: the frame's luminance drives the frame from here on, and the page is told. */
+  private measureLiveLuminance(frame: LiveFrameSource, useWasm: boolean): void {
+    const now = performance.now();
+    if (now - this.liveLuminanceAt < LIVE_LUMINANCE_INTERVAL_MS) return;
+    this.liveLuminanceAt = now;
+    let measured: number;
+    try {
+      // The C++ engine only where it is loaded in this realm.
+      measured = Math.round(measureLiveFrameLuminance(frame, useWasm && isWasmReady()));
+    } catch (error) {
+      console.warn('Could not measure the live source:', error);
+      return;
+    }
+    if (measured === this.liveLuminance) return;
+    this.liveLuminance = measured;
+    this.emit('telemetry', { liveLuminance: measured });
   }
 
-  private bindMask(texture: GPUTexture, owner: MaskOwner): void {
-    if (this.maskOwner === 'wasm-upload' && this.mask && this.mask !== texture) this.mask.destroy();
+  private clearLiveLuminance(): void {
+    this.liveLuminanceAt = -Infinity;
+    if (this.liveLuminance === null) return;
+    this.liveLuminance = null;
+    this.emit('telemetry', { liveLuminance: null });
+  }
+
+  private clearMask(): void {
+    for (const slot of this.orchestrator?.listSlots() ?? []) slot.renderer.setClassificationMaskTexture(null);
+    this.mask?.destroy();
+    this.mask = null;
+  }
+
+  /** Swap `texture` into every slot, then destroy the mask it replaced — never before. */
+  private bindMask(texture: GPUTexture): void {
+    const previous = this.mask;
     this.mask = texture;
-    this.maskOwner = owner;
     for (const slot of this.orchestrator?.listSlots() ?? []) slot.renderer.setClassificationMaskTexture(texture);
+    if (previous && previous !== texture) previous.destroy();
   }
 
   private getCpuHost(useWasm: boolean): CpuChoreHost {
@@ -765,7 +830,7 @@ export class RenderService {
       { bytesPerRow: output.width, rowsPerImage: output.height },
       [output.width, output.height, 1],
     );
-    this.bindMask(texture, 'wasm-upload');
+    this.bindMask(texture);
   }
 
   /**
@@ -773,15 +838,25 @@ export class RenderService {
    * walks webgpu → wasm → ts, recording why each lane declined; with no lane
    * left (or no WebGPU device) the mask is cleared and only the luminance is
    * computed. The CPU lanes read a bitmap decoded here, off the page.
+   *
+   * Every await here (the WASM load, the decode, the job) can be overtaken:
+   * the page switches images, a newer analysis starts, or the renderer is
+   * torn down. The mask then belongs to an image nobody shows, or to a lost
+   * device, so a stale analysis binds nothing, clears nothing, and destroys
+   * the texture it was handed. Its luminance is still returned — the page
+   * drops a stale one itself.
    */
   private async analyzeSource(url: string, useWasm: boolean): Promise<{ avgLuminance: number }> {
+    const generation = this.generation;
+    const ticket = ++this.analysisTicket;
+    const current = () => generation === this.generation && ticket === this.analysisTicket && this.sourceUrl === url;
     // The CPU lanes run WASM in this realm only if it is loaded here too.
     if (useWasm && !isWasmReady()) await loadWasmEngine();
     return this.withDecodedSource(url, async (image) => {
       const orchestrator = this.orchestrator;
       const device = orchestrator?.getBackend() === 'webgpu' ? orchestrator.sharedDevice() : null;
       if (!device) {
-        this.clearMask();
+        if (current()) this.clearMask();
         return { avgLuminance: await this.averageLuminanceOnly(image, useWasm) };
       }
       try {
@@ -796,16 +871,22 @@ export class RenderService {
           prefer: 'auto',
         });
         if (result.ok) {
-          if (result.value.kind === 'gpu-texture') this.bindMask(result.value.maskTexture, 'gpu-analysis');
-          else this.uploadCpuMask(device, result.value);
-          return { avgLuminance: result.value.avgLuminance };
+          const output = result.value;
+          if (!current() || device !== this.orchestrator?.sharedDevice()) {
+            if (output.kind === 'gpu-texture') output.maskTexture.destroy();
+          } else if (output.kind === 'gpu-texture') {
+            this.bindMask(output.maskTexture);
+          } else {
+            this.uploadCpuMask(device, output);
+          }
+          return { avgLuminance: output.avgLuminance };
         }
         console.warn('Classification mask unavailable:', result.reason);
-        this.clearMask();
+        if (current()) this.clearMask();
         return { avgLuminance: await this.averageLuminanceOnly(image, useWasm) };
       } catch (error) {
         console.warn('Could not generate classification mask:', error);
-        this.clearMask();
+        if (current()) this.clearMask();
         return { avgLuminance: computeImageAverageLuminanceWith(image, useWasm) };
       }
     });

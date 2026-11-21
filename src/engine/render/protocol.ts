@@ -19,6 +19,7 @@
 
 import type { ChromashiftDiagnostics } from '../diagnostics';
 import type { CompareLayoutMode } from '../compareViews';
+import type { ColorProfile } from '../color/colorProfile';
 import type { DisplayColorSpace } from '../gpu/gpuOptions';
 import type { GpuRuntimeError } from '../gpu/gpuErrors';
 import type { MotionFieldUse } from '../graph/exec/plan';
@@ -72,6 +73,11 @@ export interface RenderBootRequest {
   retry: boolean;
   /** `__renderDebug` is armed: canvases also get `COPY_SRC`, for the presented-frame readback. */
   debug: boolean;
+  /**
+   * The page's `matchMedia('(dynamic-range: high)')`: a worker has no
+   * `matchMedia`, so without this its HDR breadcrumb always said "standard".
+   */
+  hdrDisplay: boolean;
 }
 
 export type RenderBootResult =
@@ -103,6 +109,12 @@ export interface RenderLoopInput {
   reactive: boolean;
   /** The main canvas's frame, angles aside — `buildRendererState` of the store. */
   main: RendererState;
+  /**
+   * The profile `main.colorProfileLut` was baked from (`null` for Classic,
+   * which has no LUT), so the service can re-bake it for a live source's
+   * measured luminance.
+   */
+  colorProfile: ColorProfile | null;
   layout: CompareLayoutMode;
   compareB: RenderLoopCompare | null;
   hud: { enabled: boolean; autoDegrade: boolean };
@@ -122,6 +134,8 @@ export interface RenderTelemetry {
   gpu?: GpuRenderTiming;
   frameHistory?: number[];
   overBudget?: boolean;
+  /** The live source's luminance, measured once a second in the service; `null` once it stops. */
+  liveLuminance?: number | null;
 }
 
 /** One frame read out of a canvas's presentation texture (`__renderDebug.readPresentedFrame`). */
@@ -205,7 +219,7 @@ export type RenderProtocol = {
    * element itself in-process; a transferred `VideoFrame` / `ImageBitmap` to
    * the worker, which the service closes.
    */
-  'set-video-frame': (req: { frame: LiveFrameSource }) => void;
+  'set-video-frame': (req: { frame: LiveFrameSource; useWasm?: boolean }) => void;
   /** notify: the live source stopped. */
   'release-video': (req: Record<string, never>) => void;
   /** Classification mask + average luminance for the current source. */

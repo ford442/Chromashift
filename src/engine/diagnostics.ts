@@ -58,6 +58,14 @@ export interface ChromashiftDiagnostics {
   renderTransportReason: string;
   /** `GPUDevice`s the page's device gate acquired so far, in whichever realm holds it (`adapter.ts`). */
   gpuDevicesAcquired: number;
+  /**
+   * Uncaptured GPU errors (validation errors no scope caught) on the
+   * session's device so far — each a dropped command buffer
+   * (`gpu/gpuErrors.ts`). Absent until the first.
+   */
+  gpuUncapturedErrors: number;
+  /** The message of the latest of them. */
+  gpuLastUncapturedError: string;
   /** The WebGPU pre-flight: secure context → `navigator.gpu` → adapter. Stops before `requestDevice`. */
   webgpuProbe: WebGpuProbeResult;
   /** WebGL internal render-target scale (`webgl/WebGLRenderer.ts`). */
@@ -214,6 +222,8 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   renderTransport: true,
   renderTransportReason: true,
   gpuDevicesAcquired: true,
+  gpuUncapturedErrors: true,
+  gpuLastUncapturedError: true,
   webgpuProbe: true,
   webglInternalScale: true,
   webglInternalFormat: true,

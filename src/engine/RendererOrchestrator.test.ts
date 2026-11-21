@@ -85,6 +85,11 @@ function mockSession(primaryContext: GPUCanvasContext): WebGpuSession {
       grantedOptionalFeatures: [],
       missingRequestedFeatures: [],
       timestampQueryAvailable: false,
+      deviceLimits: {
+        maxTextureDimension2D: 8192,
+        maxStorageBuffersInFragmentStage: 8,
+        maxStorageTexturesInFragmentStage: 4,
+      },
     },
     timestampQueryAvailable: false,
     reconfigure: vi.fn(),
@@ -137,7 +142,7 @@ describe('RendererOrchestrator', () => {
     const deps = createMockDeps();
     const onRuntimeError = vi.fn();
 
-    const { orchestrator, primarySlot, backend, fallbackReason } = await RendererOrchestrator.bootstrap({
+    const { orchestrator, primarySlot, backend } = await RendererOrchestrator.bootstrap({
       primaryCanvas: canvas,
       antialias: true,
       backend: 'webgpu',
@@ -145,7 +150,6 @@ describe('RendererOrchestrator', () => {
     }, deps);
 
     expect(backend).toBe('webgpu');
-    expect(fallbackReason).toBeNull();
     expect(primarySlot.id).toBe(PRIMARY_SLOT_ID);
     expect(primarySlot.canvas).toBe(canvas);
     expect(orchestrator.slotIds()).toEqual([PRIMARY_SLOT_ID]);

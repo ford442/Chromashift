@@ -35,6 +35,7 @@ import {
   type WorkerRpc,
 } from '../workers/rpc';
 import { installRenderDebug, renderDebugArmed } from './debug';
+import { displayReportsHdr } from '../webgpu/canvasConfig';
 import { RenderService, type RenderServiceDeps } from './RenderService';
 import { selectRenderTransport, type RenderTransportChoice } from './transport';
 import type {
@@ -122,7 +123,7 @@ export interface RenderHostOptions {
 }
 
 /** Everything a boot needs that the host does not work out itself. */
-export type RenderHostBootRequest = Omit<RenderBootRequest, 'surface' | 'pageSearch' | 'debug'>;
+export type RenderHostBootRequest = Omit<RenderBootRequest, 'surface' | 'pageSearch' | 'debug' | 'hdrDisplay'>;
 
 export class RenderHost {
   private readonly clock: FrameClock;
@@ -364,7 +365,13 @@ export class RenderHost {
     if (this.crashed) return { ok: false, error: this.crashed };
     const { surface, transfer } = this.surface(canvas);
     const search = this.search();
-    return channel.call('boot', { ...req, surface, pageSearch: search, debug: renderDebugArmed(search) }, transfer);
+    return channel.call('boot', {
+      ...req,
+      surface,
+      pageSearch: search,
+      debug: renderDebugArmed(search),
+      hdrDisplay: displayReportsHdr(),
+    }, transfer);
   }
 
   /** Tear the renderer down (a React cleanup); a boot in flight is cancelled. */
@@ -461,22 +468,27 @@ export class RenderHost {
    * transferred (an `ImageBitmap` where there is no `VideoFrame`), which the
    * renderer closes. Returns whether a decoded frame was there to send.
    */
-  uploadVideo(video: HTMLVideoElement): boolean {
+  /**
+   * Hand the live source's current frame to the renderer. It also measures
+   * the frame's luminance once a second (`useWasm`: through the C++ engine
+   * where it is loaded), reported as `telemetry.liveLuminance`.
+   */
+  uploadVideo(video: HTMLVideoElement, useWasm = false): boolean {
     if (!this.channel) return false;
     if (video.videoWidth === 0 || video.videoHeight === 0 || video.readyState < 2 /* HAVE_CURRENT_DATA */) {
       return false;
     }
     if (this.kind !== 'worker') {
-      this.notify('set-video-frame', { frame: video });
+      this.notify('set-video-frame', { frame: video, useWasm });
       return true;
     }
     if (typeof VideoFrame === 'function') {
       const frame = new VideoFrame(video);
-      this.notify('set-video-frame', { frame }, [frame]);
+      this.notify('set-video-frame', { frame, useWasm }, [frame]);
       return true;
     }
     void createImageBitmap(video).then((bitmap) => {
-      this.notify('set-video-frame', { frame: bitmap }, [bitmap]);
+      this.notify('set-video-frame', { frame: bitmap, useWasm }, [bitmap]);
     }, () => {});
     return true;
   }

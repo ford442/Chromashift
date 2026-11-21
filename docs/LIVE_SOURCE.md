@@ -40,10 +40,14 @@ or clicking Stop, releases the stream/file and returns to the normal image pipel
   1. Uploads the current frame every tick and routes the resulting texture handle through
      `applySourceTexture` — the same path used for still images, so it reaches the primary
      renderer and any active compare/quad slots.
-  2. Resamples average luminance (via `computeVideoAverageLuminance`, a video-element variant
-     of the existing `computeImageAverageLuminanceWith`) once per second rather than every
-     frame — recomputing CR0P band thresholds at 30–60fps would be wasted work for a value
-     that only needs to track slow lighting changes.
+  2. Leaves the average luminance to the renderer: the render service measures the frames
+     it receives once per second (`measureLiveFrameLuminance`, `src/engine/live/liveLuminance.ts`
+     — in the render worker on the worker transport, off the page's thread), draws with it
+     (re-baking a profile's LUT for it) and reports it as `telemetry.liveLuminance`. The page
+     keeps it in the telemetry store (`useLiveLuminance`), so only the Avg Lum readout
+     re-renders — it used to be dispatched into the reducer, re-rendering the whole tree every
+     second. Once per second rather than every frame: recomputing CR0P band thresholds at
+     30–60fps would be wasted work for a value that only needs to track slow lighting changes.
   3. Publishes `window.liveSourceActive` / `window.liveSourceKind` / `window.liveSourceFps`
      breadcrumbs for automation and diagnostics (`src/engine/live/liveSourceBreadcrumbs.ts`).
 - **`media.liveSource`** (`src/state/types.ts`) is runtime-only reducer state — `active`,

@@ -6,9 +6,40 @@ import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { MAIN_VIEW_MODES } from '../engine/viewModes';
 import { openWebGlDiagnosticSession, readRequestedBackend } from '../engine/rendererMode';
 import { isFatalGpuDeviceRequestError } from '../engine/gpu/gpuErrors';
-import { useCollisionStats, useRenderCpuTiming } from '../engine/telemetryStore';
+import { useCollisionStats, useLiveLuminance, useRenderCpuTiming } from '../engine/telemetryStore';
 import { useRenderCount } from '../debug/renderCounts';
 import type { ChromeShellProps } from './AppUI.types';
+
+/**
+ * The luminance readout and its slider. While a live source runs, the
+ * renderer measures its frames once a second and that value — from the
+ * telemetry store, so only this control re-renders — is what the frame uses.
+ */
+function AvgLuminanceControl({
+  avgLuminance,
+  setAvgLuminance,
+}: {
+  avgLuminance: number;
+  setAvgLuminance: (value: number) => void;
+}) {
+  const live = useLiveLuminance();
+  const shown = live ?? avgLuminance;
+  return (
+    <>
+      <span className="text-xs text-amber-400 font-mono">
+        Avg Lum{live !== null ? ' (live)' : ''}: <span className="tabular-nums text-amber-200">{shown}</span>
+      </span>
+      <input
+        type="range"
+        {...sliderProps('engine.avgLuminance')}
+        value={shown}
+        disabled={live !== null}
+        onChange={(e) => setAvgLuminance(Number(e.target.value))}
+        className="w-28 h-1 accent-amber-400"
+      />
+    </>
+  );
+}
 
 /**
  * Subscribes directly to the render-loop telemetry store so the 5x/sec CPU
@@ -155,16 +186,7 @@ export const ChromeShell = memo(function ChromeShell({
 
       {showChrome && (
         <div className="absolute top-3 right-3 z-40 bg-black/40 backdrop-blur-md rounded p-2 flex flex-col items-end gap-1 border border-amber-500/30">
-          <span className="text-xs text-amber-400 font-mono">
-            Avg Lum: <span className="tabular-nums text-amber-200">{avgLuminance}</span>
-          </span>
-          <input
-            type="range"
-            {...sliderProps('engine.avgLuminance')}
-            value={avgLuminance}
-            onChange={(e) => setAvgLuminance(Number(e.target.value))}
-            className="w-28 h-1 accent-amber-400"
-          />
+          <AvgLuminanceControl avgLuminance={avgLuminance} setAvgLuminance={setAvgLuminance} />
           <span className={`text-[10px] font-mono mt-0.5 ${
             engineMode === 'wasm' && wasmAvailable
               ? 'text-cyan-400'

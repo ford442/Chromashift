@@ -1,3 +1,4 @@
+import { webGpuContextOf } from '../gpu/renderCanvas';
 /// <reference lib="webworker" />
 /**
  * The render worker (#253): `RenderService` behind the shared worker channel,
@@ -39,7 +40,7 @@ async function probe(): Promise<RenderWorkerScopeReport> {
   let offscreenContext = false;
   if (gpu && typeof OffscreenCanvas === 'function') {
     try {
-      offscreenContext = new OffscreenCanvas(1, 1).getContext('webgpu') !== null;
+      offscreenContext = webGpuContextOf(new OffscreenCanvas(1, 1)) !== null;
     } catch {
       offscreenContext = false;
     }

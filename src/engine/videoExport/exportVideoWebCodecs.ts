@@ -1,3 +1,4 @@
+import { getReadback2DContext } from '../gpu/readbackContext';
 import type { ExportRenderer } from '../types/RendererContracts';
 import type { ChromashiftState } from '../../state/types';
 import { exportVideoFrameLoop } from './exportVideoFrameLoop';
@@ -57,7 +58,8 @@ export async function exportVideoWebCodecs(
   const exportCanvas = document.createElement('canvas');
   exportCanvas.width = dims.width;
   exportCanvas.height = dims.height;
-  const exportCtx = exportCanvas.getContext('2d', { willReadFrequently: true });
+  // Drawn and encoded, never read back: no willReadFrequently.
+  const exportCtx = getReadback2DContext(exportCanvas);
   if (!exportCtx) {
     throw new Error('Could not create 2D context for video export.');
   }

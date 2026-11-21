@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { isQuadCompareLayout } from '../engine/compareViews';
+import { getReadback2DContext } from '../engine/gpu/readbackContext';
 import {
   STATIONARY_PREVIEW_SIZE,
   buildStationaryRendererState,
@@ -15,10 +16,10 @@ function blitPreviewPixels(
   scratch: HTMLCanvasElement,
   size: number,
 ): void {
-  const sctx = scratch.getContext('2d');
+  const sctx = getReadback2DContext(scratch);
   if (!sctx) return;
   sctx.putImageData(new ImageData(data, size, size), 0, 0);
-  const dctx = target.getContext('2d');
+  const dctx = getReadback2DContext(target);
   dctx?.drawImage(scratch, 0, 0, target.width, target.height);
 }
 

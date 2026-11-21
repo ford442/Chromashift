@@ -8,8 +8,6 @@
  * down whatever was running first.
  */
 
-import { computeAverageLuminanceStridedWith } from '../WasmEngine';
-
 export type LiveSourceKind = 'camera' | 'screen' | 'video-file';
 
 export interface LiveSourceStartResult {
@@ -122,30 +120,4 @@ export class LiveSourceManager {
     this.element.srcObject = null;
     this.element.load();
   }
-}
-
-/**
- * Average ITU-R BT.709 luminance of the current video frame, downsampled to
- * ≤256px on the longest edge via an offscreen 2D canvas. Mirrors
- * `computeImageAverageLuminanceWith` in `WasmEngine.ts` but for a video
- * element (which has `videoWidth`/`videoHeight` instead of `naturalWidth`/
- * `naturalHeight` and can't be measured with `createImageBitmap` cheaply on
- * every frame).
- */
-export function computeVideoAverageLuminance(video: HTMLVideoElement, useWasm: boolean): number {
-  const width = video.videoWidth;
-  const height = video.videoHeight;
-  if (!width || !height) return 128;
-
-  const canvas = document.createElement('canvas');
-  const maxDim = 256;
-  const scale = Math.min(1, maxDim / Math.max(width, height));
-  canvas.width = Math.max(1, Math.floor(width * scale));
-  canvas.height = Math.max(1, Math.floor(height * scale));
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return 128;
-
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  return computeAverageLuminanceStridedWith(data, canvas.width, canvas.height, 1, useWasm);
 }

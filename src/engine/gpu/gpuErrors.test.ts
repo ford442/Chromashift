@@ -6,7 +6,10 @@ import {
   toBootstrapRuntimeError,
   deviceLostRuntimeError,
   simulateDeviceLoss,
+  recordUncapturedGpuError,
+  resetGpuFatalForTests,
 } from './gpuErrors';
+import { readDiagnostic } from '../diagnostics';
 
 /** A device that is never lost unless the test resolves `lose`. */
 function liveDevice(features: string[] = []): GPUDevice & { lose: (info: GPUDeviceLostInfo) => void } {
@@ -61,6 +64,55 @@ describe('attachDeviceDiagnostics', () => {
 
     expect(stale).not.toHaveBeenCalled();
     expect(live).toHaveBeenCalledOnce();
+  });
+});
+
+describe('attachDeviceDiagnostics uncaptured errors', () => {
+  /** A device whose `uncapturederror` is a real event target. */
+  function eventDevice() {
+    const target = new EventTarget();
+    const device = Object.assign(liveDevice(), {
+      onuncapturederror: null,
+      addEventListener: target.addEventListener.bind(target),
+      removeEventListener: target.removeEventListener.bind(target),
+    });
+    const fire = (message: string) => {
+      const event = new Event('uncapturederror');
+      Object.assign(event, { error: { message } });
+      target.dispatchEvent(event);
+    };
+    return { device, fire };
+  }
+
+  it('keeps every live handler when detaches happen out of order', () => {
+    const { device, fire } = eventDevice();
+    const first = vi.fn();
+    const second = vi.fn();
+    const third = vi.fn();
+    const detachFirst = attachDeviceDiagnostics(device, { onUncapturedError: first });
+    attachDeviceDiagnostics(device, { onUncapturedError: second });
+    const detachThird = attachDeviceDiagnostics(device, { onUncapturedError: third });
+    // Not LIFO: the old chain restored `previous` here and dropped `second`.
+    detachFirst();
+    detachThird();
+
+    fire('invalid bind group');
+
+    expect(first).not.toHaveBeenCalled();
+    expect(third).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledWith({ message: 'invalid bind group' });
+    expect(device.onuncapturederror).toBeNull();
+  });
+
+  it('counts uncaptured errors in the breadcrumbs', () => {
+    vi.stubGlobal('window', {});
+    resetGpuFatalForTests();
+    recordUncapturedGpuError({ message: 'a' } as GPUError);
+    recordUncapturedGpuError({ message: 'b' } as GPUError);
+    expect(readDiagnostic('gpuUncapturedErrors')).toBe(2);
+    expect(readDiagnostic('gpuLastUncapturedError')).toBe('b');
+    resetGpuFatalForTests();
+    vi.unstubAllGlobals();
   });
 });
 

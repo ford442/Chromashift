@@ -28,7 +28,6 @@ function fakeOrchestrator(renderer: ChromashiftRenderer): RendererOrchestrator {
   const slot = { id: 'main', canvas: null, renderer } as RendererSlot;
   return {
     getBackend: () => 'webgl',
-    getFallbackReason: () => null,
     setPassGraph: vi.fn(),
     setCanvasColorSpace: vi.fn(),
     setCanvasPresentation: vi.fn(),

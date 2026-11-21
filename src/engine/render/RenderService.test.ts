@@ -37,7 +37,6 @@ function fakeOrchestrator(renderer = fakeRenderer()) {
   const slot = { id: 'main', canvas: null, renderer: renderer as unknown as ChromashiftRenderer } as RendererSlot;
   const orchestrator = {
     getBackend: () => 'webgpu',
-    getFallbackReason: () => null,
     setPassGraph: vi.fn(),
     setCanvasColorSpace: vi.fn(),
     setCanvasPresentation: vi.fn(),
@@ -66,6 +65,7 @@ function bootRequest(canvasId = 1, overrides: Partial<RenderBootRequest> = {}): 
     retry: false,
     pageSearch: '',
     debug: false,
+    hdrDisplay: false,
     surface: { canvasId, canvas: { width: 300, height: 150 } as unknown as HTMLCanvasElement, width: 300, height: 150 },
     ...overrides,
   };
@@ -135,6 +135,22 @@ describe('RenderService', () => {
     const { handlers } = service();
     await expect(handlers.boot(bootRequest(9, { surface: { canvasId: 9, width: 1, height: 1 } }), CTX))
       .rejects.toThrow(/Canvas 9 was never handed to the renderer/);
+  });
+
+  it('a WebGL boot on an OffscreenCanvas returns an error instead of throwing', async () => {
+    class FakeOffscreenCanvas { width = 300; height = 150; }
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+    try {
+      const { handlers, bootstrap } = service();
+      const surface = { canvasId: 4, canvas: new FakeOffscreenCanvas() as unknown as OffscreenCanvas, width: 300, height: 150 };
+      await expect(handlers.boot(bootRequest(4, { backend: 'webgl', surface }), CTX)).resolves.toMatchObject({
+        ok: false,
+        error: { kind: 'bootstrap', recoverable: false, message: expect.stringMatching(/main transport/) },
+      });
+      expect(bootstrap).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('a failed WebGPU probe is a hard, non-recoverable bootstrap error', async () => {
@@ -209,6 +225,140 @@ describe('RenderService', () => {
     // Nothing held between loads: the next analysis decodes afresh.
     await handlers['analyze-source']({ url: '/a.png', useWasm: false }, CTX);
     expect(decodeBitmap).toHaveBeenCalledTimes(2);
+  });
+
+  it('measures a live source’s luminance itself and reports it as telemetry, not through the page', async () => {
+    const { handlers, events, orchestrator } = service();
+    const textures = { updateVideoTexture: vi.fn(() => ({ backend: 'webgpu', texture: { width: 4, height: 4 } })), releaseVideoTexture: vi.fn() };
+    Object.assign(orchestrator, { textureManagerRef: () => textures });
+    await handlers.boot(bootRequest(), CTX);
+
+    // A transferred frame, as the worker receives it (no 2D canvas under Node: the neutral 128).
+    const frame = () => ({ width: 640, height: 360, close: vi.fn() }) as unknown as ImageBitmap;
+    await handlers['set-video-frame']({ frame: frame() }, CTX);
+    await handlers['set-video-frame']({ frame: frame() }, CTX);
+    const live = () => events.filter((e) => e.event === 'telemetry' && 'liveLuminance' in (e.payload as object));
+    // Once a second, not per frame.
+    expect(live()).toEqual([{ event: 'telemetry', payload: { liveLuminance: 128 } }]);
+
+    await handlers['release-video']({}, CTX);
+    expect(live().at(-1)).toEqual({ event: 'telemetry', payload: { liveLuminance: null } });
+  });
+
+  describe('the classification mask across an image switch', () => {
+    /** A WebGPU session whose GPU lane answers each analysis when the test says so. */
+    function gpuSession() {
+      const device = { id: 'device' } as unknown as GPUDevice;
+      const pending = new Map<string, () => void>();
+      const masks: Array<{ url: string; destroy: ReturnType<typeof vi.fn> }> = [];
+      const textureFor = (url: string) => ({ url, width: 8, height: 8, format: 'rgba8unorm' }) as unknown as GPUTexture;
+      const gpuLane = {
+        backend: 'webgpu' as const,
+        canRun: (job: { source?: unknown }) => Boolean(job.source),
+        declineReason: () => 'No GPU-resident source texture',
+        run: (job: { source: { url: string } }) => new Promise((resolve) => {
+          pending.set(job.source.url, () => {
+            const mask = { url: job.source.url, destroy: vi.fn() };
+            masks.push(mask);
+            resolve({ kind: 'gpu-texture', avgLuminance: 100, maskTexture: mask, histogram: new Uint32Array(256) });
+          });
+        }),
+      };
+      const textures = {
+        loadTexture: vi.fn(async (url: string) => ({ backend: 'webgpu', texture: textureFor(url) })),
+        evictExcept: vi.fn(),
+      };
+      const fake = fakeOrchestrator();
+      Object.assign(fake.orchestrator, {
+        sharedDevice: () => device,
+        textureManagerRef: () => textures,
+        gpuImageAnalysisRef: () => ({ backend: gpuLane }),
+      });
+      const svc = new RenderService({
+        clock: new FrameClock({ scheduler: IDLE_SCHEDULER }),
+        ownsClock: false,
+        transport: 'main',
+        emit: () => {},
+        deps: {
+          probeWebGPU: async () => PROBE_OK,
+          bootstrap: async () => ({ orchestrator: fake.asOrchestrator }),
+          decodeBitmap: async () => ({ width: 8, height: 8, close: vi.fn() }) as unknown as ImageBitmap,
+          createCpuHost: () => ({ isWasmReady: () => false, computeAverageLuminance: vi.fn(), analyzeImage: vi.fn() }) as never,
+        },
+      });
+      const running = (url: string) => vi.waitFor(() => expect(pending.has(url)).toBe(true));
+      const answer = async (url: string) => {
+        await running(url);
+        pending.get(url)!();
+        pending.delete(url);
+      };
+      return { svc, handlers: svc.handlers(), renderer: fake.renderer, masks, answer, running };
+    }
+
+    /** The mask the slot was last told to bind. */
+    function boundMask(renderer: ReturnType<typeof fakeRenderer>) {
+      return renderer.setClassificationMaskTexture.mock.calls.at(-1)?.[0] as { url: string } | null | undefined;
+    }
+
+    it('binds the new image’s mask and destroys the stale one when the old analysis finishes last', async () => {
+      const { handlers, renderer, masks, answer } = gpuSession();
+      await handlers.boot(bootRequest(), CTX);
+
+      await handlers['load-source']({ url: '/a.png', keep: ['/a.png'] }, CTX);
+      const first = handlers['analyze-source']({ url: '/a.png', useWasm: false }, CTX);
+      // The page switches images while /a.png is still being analysed.
+      await handlers['load-source']({ url: '/b.png', keep: ['/b.png'] }, CTX);
+      await handlers['clear-mask']({}, CTX);
+      const second = handlers['analyze-source']({ url: '/b.png', useWasm: false }, CTX);
+
+      await answer('/b.png');
+      await second;
+      await answer('/a.png');
+      await first;
+
+      expect(boundMask(renderer)?.url).toBe('/b.png');
+      const [b, a] = masks;
+      expect(a!.url).toBe('/a.png');
+      expect(a!.destroy).toHaveBeenCalledOnce();
+      expect(b!.destroy).not.toHaveBeenCalled();
+      // The stale mask was never bound at all.
+      expect(renderer.setClassificationMaskTexture.mock.calls.map(([m]) => (m as { url?: string } | null)?.url ?? null))
+        .not.toContain('/a.png');
+    });
+
+    it('destroys the mask it replaces only after the swap', async () => {
+      const { handlers, renderer, masks, answer } = gpuSession();
+      await handlers.boot(bootRequest(), CTX);
+      await handlers['load-source']({ url: '/a.png', keep: ['/a.png'] }, CTX);
+
+      const first = handlers['analyze-source']({ url: '/a.png', useWasm: false }, CTX);
+      await answer('/a.png');
+      await first;
+      const second = handlers['analyze-source']({ url: '/a.png', useWasm: false }, CTX);
+      await answer('/a.png');
+      await second;
+
+      const [old, current] = masks;
+      expect(boundMask(renderer)).toBe(current);
+      expect(old!.destroy).toHaveBeenCalledOnce();
+      const swapOrder = renderer.setClassificationMaskTexture.mock.invocationCallOrder.at(-1)!;
+      expect(old!.destroy.mock.invocationCallOrder[0]).toBeGreaterThan(swapOrder);
+    });
+
+    it('a teardown mid-analysis drops the result instead of binding it to the next renderer', async () => {
+      const { handlers, renderer, masks, answer, running } = gpuSession();
+      await handlers.boot(bootRequest(), CTX);
+      await handlers['load-source']({ url: '/a.png', keep: ['/a.png'] }, CTX);
+      const pending = handlers['analyze-source']({ url: '/a.png', useWasm: false }, CTX);
+      await running('/a.png');
+      await handlers.shutdown({}, CTX);
+      renderer.setClassificationMaskTexture.mockClear();
+
+      await answer('/a.png');
+      await pending;
+      expect(renderer.setClassificationMaskTexture).not.toHaveBeenCalled();
+      expect(masks[0]!.destroy).toHaveBeenCalledOnce();
+    });
   });
 
   describe('a video export on the clock it owns (the worker)', () => {

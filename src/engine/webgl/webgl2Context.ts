@@ -1,3 +1,4 @@
+import { webgl2ContextOf } from '../gpu/renderCanvas';
 import {
   WEBGL2_POWER_PREFERENCE_ATTEMPTS,
   getWebGL2ContextAttributes,
@@ -44,7 +45,7 @@ export function createWebGL2Context(
   }
 
   for (const [index, powerPreference] of WEBGL2_POWER_PREFERENCE_ATTEMPTS.entries()) {
-    const gl = canvas.getContext('webgl2', getWebGL2ContextAttributes(options, powerPreference));
+    const gl = webgl2ContextOf(canvas, getWebGL2ContextAttributes(options, powerPreference));
     if (!gl) continue;
     console.info('[Chromashift:GPU] WebGL2 context ready', {
       attempt: index + 1,

@@ -7,6 +7,7 @@ import {
   probeCanvasHdr,
   resetCanvasToneMappingSupportForTests,
 } from './canvasConfig';
+import { RENDERER_CANVAS_OPTIONS_MATRIX, webGpuCanvasUsage } from '../gpu/gpuOptions';
 
 describe('buildWebGpuCanvasConfiguration', () => {
   const device = {} as GPUDevice;
@@ -67,6 +68,13 @@ describe('buildWebGpuCanvasConfiguration', () => {
     for (const presentation of ['sdr', 'hdr-extended'] as const) {
       expect(buildWebGpuCanvasConfiguration(device, 'bgra8unorm', { presentation }).usage).toBe(0x10);
     }
+  });
+
+  it('takes alpha mode and usage from the options matrix, COPY_SRC only for the debug readback', () => {
+    const { alphaMode } = RENDERER_CANVAS_OPTIONS_MATRIX.webgpu;
+    expect(buildWebGpuCanvasConfiguration(device, 'bgra8unorm').alphaMode).toBe(alphaMode);
+    expect(buildWebGpuCanvasConfiguration(device, 'bgra8unorm', { readback: true }).usage).toBe(0x10 | 0x01);
+    expect(webGpuCanvasUsage(false)).toBe(0x10);
   });
 });
 
@@ -194,6 +202,27 @@ describe('configureWebGpuCanvas hdr-extended', () => {
     expect(configureWebGpuCanvas(context, device, 'bgra8unorm', { presentation: 'hdr-extended' }))
       .toBe('sdr');
     expect(context.configure.mock.calls.at(-1)?.[0].format).toBe('bgra8unorm');
+  });
+
+  it('probeCanvasHdr reports the display the page says it has, where there is no matchMedia (a worker)', () => {
+    const context = fakeContext({
+      getConfiguration: () => ({
+        device, format: 'rgba16float', toneMapping: { mode: 'extended' },
+      }) as GPUCanvasConfiguration,
+    } as Partial<GPUCanvasContext>);
+    vi.stubGlobal('matchMedia', undefined);
+    expect(probeCanvasHdr(context, device, 'bgra8unorm').reason).toMatch(/standard dynamic range/);
+    expect(probeCanvasHdr(context, device, 'bgra8unorm', true).reason).toMatch(/display reports high dynamic range/);
+  });
+
+  it('probeCanvasHdr reads matchMedia on the page when no answer is passed', () => {
+    const context = fakeContext({
+      getConfiguration: () => ({
+        device, format: 'rgba16float', toneMapping: { mode: 'extended' },
+      }) as GPUCanvasConfiguration,
+    } as Partial<GPUCanvasContext>);
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(dynamic-range: high)' }));
+    expect(probeCanvasHdr(context, device, 'bgra8unorm').reason).toMatch(/display reports high dynamic range/);
   });
 
   it('probeCanvasHdr reports unavailability without throwing', () => {

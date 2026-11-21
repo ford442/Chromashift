@@ -15,6 +15,7 @@ import {
   toBootstrapRuntimeError,
 } from '../gpu/gpuErrors';
 import { publishDiagnostic } from '../diagnostics';
+import { requestAdapterDevice } from '../gpu/renderCanvas';
 
 /** WebGPU's feature levels (`requestAdapter({ featureLevel })`). */
 export type GpuFeatureLevel = 'core' | 'compatibility';
@@ -42,6 +43,18 @@ export interface WebGpuCapabilityReport {
   grantedOptionalFeatures: GPUFeatureName[];
   missingRequestedFeatures: GPUFeatureName[];
   timestampQueryAvailable: boolean;
+  /**
+   * What the *device* was granted — not the adapter's limits
+   * ({@link GpuAdapterReport.limits}), which a device only has if it asks.
+   */
+  deviceLimits: GpuDeviceLimitsReport;
+}
+
+/** The device limits the frame and `graph/capabilities.ts` depend on. */
+export interface GpuDeviceLimitsReport {
+  maxTextureDimension2D: number;
+  maxStorageBuffersInFragmentStage: number | null;
+  maxStorageTexturesInFragmentStage: number | null;
 }
 
 /**
@@ -108,6 +121,21 @@ const deviceFeatureLevels = new WeakMap<GPUDevice, GpuFeatureLevel>();
 const CORE_MAX_TEXTURE_DIMENSION_2D = 8192;
 
 /**
+ * Core's defaults for the storage limits `fragment-storage`
+ * (`graph/capabilities.ts`) reads. Compatibility mode defaults the two
+ * fragment-stage limits to 0, so a device that does not ask for them never
+ * has them — even where the adapter offers them (Dawn over Vulkan). The
+ * per-stage limits are asked for too, so the fragment-stage ones never exceed
+ * them (compatibility's default `maxStorageBuffersPerShaderStage` is 4).
+ */
+const CORE_STORAGE_LIMITS = {
+  maxStorageBuffersPerShaderStage: 8,
+  maxStorageTexturesPerShaderStage: 4,
+  maxStorageBuffersInFragmentStage: 8,
+  maxStorageTexturesInFragmentStage: 4,
+} as const;
+
+/**
  * Drop a lost/abandoned device so Retry GPU can acquire a new one. Does not
  * reset the fatal breaker.
  *
@@ -138,7 +166,8 @@ export async function requestWebGpuAdapter(
 
   gpuDeviceGate.adapterPromise = (async () => {
     // Adapter attempts, documented beside the list in gpuOptions.ts. Distinct
-    // from the three requestDevice strategies below (MAX_DEVICE_REQUEST_STRATEGIES).
+    // from the (at most two) requestDevice strategies below
+    // (MAX_DEVICE_REQUEST_STRATEGIES).
     const attempts: GPUPowerPreference[] = WEBGPU_POWER_PREFERENCE_ATTEMPTS.includes(
       powerPreference as (typeof WEBGPU_POWER_PREFERENCE_ATTEMPTS)[number],
     )
@@ -194,26 +223,43 @@ export function deviceFeatureLevel(device: GPUDevice): GpuFeatureLevel {
  * for more could only make a request fail that would otherwise succeed. On a
  * compatibility-mode adapter it is core's texture size, which the frame needs
  * (the audit in docs/gpu-bootstrap.md § Compatibility mode found every other
- * limit within compatibility's defaults), capped at what the adapter has.
+ * limit within compatibility's defaults), and core's fragment-stage storage
+ * limits where the adapter has any ({@link CORE_STORAGE_LIMITS}) — each
+ * capped at what the adapter has.
  */
-function deriveRequiredLimits(adapter: GPUAdapter): GPUDeviceDescriptor['requiredLimits'] {
+function deriveRequiredLimits(adapter: GPUAdapter): Record<string, number> | undefined {
   if (adapterFeatureLevel(adapter) === 'core') return undefined;
-  return {
+  const limits: Record<string, number> = {
     maxTextureDimension2D: Math.min(adapter.limits.maxTextureDimension2D, CORE_MAX_TEXTURE_DIMENSION_2D),
   };
+  // A browser that predates the fragment-stage limits does not list them;
+  // asking for a limit the adapter does not name rejects the request.
+  const adapterLimits = adapter.limits as unknown as Partial<Record<keyof typeof CORE_STORAGE_LIMITS, number>>;
+  const buffers = adapterLimits.maxStorageBuffersInFragmentStage ?? 0;
+  const textures = adapterLimits.maxStorageTexturesInFragmentStage ?? 0;
+  if (buffers > 0 && textures > 0) {
+    for (const key of Object.keys(CORE_STORAGE_LIMITS) as (keyof typeof CORE_STORAGE_LIMITS)[]) {
+      const offered = adapterLimits[key];
+      if (offered !== undefined) limits[key] = Math.min(offered, CORE_STORAGE_LIMITS[key]);
+    }
+  }
+  return limits;
 }
 
 interface DeviceRequestStrategy {
   name: GpuDeviceRequestStrategy;
-  requiredLimits: GPUDeviceDescriptor['requiredLimits'];
+  requiredLimits: Record<string, number> | undefined;
   features: GPUFeatureName[];
 }
 
 /**
- * The frame's limits with the optional features, then default limits without
+ * The frame's limits with the optional features, then the same limits without
  * them. The frame's limits are the defaults, except on a compatibility-mode
- * adapter ({@link deriveRequiredLimits}). A compatibility adapter that can do
- * core asks for `core-features-and-limits` in both, which makes the device core.
+ * adapter ({@link deriveRequiredLimits}); the fallback keeps them, because
+ * they are capped at the adapter's and so cannot be why a request failed — a
+ * device without them would only fail later, at the first 4K frame. A
+ * compatibility adapter that can do core asks for `core-features-and-limits`
+ * in both, which makes the device core.
  */
 function buildDeviceRequestStrategies(
   adapter: GPUAdapter,
@@ -227,8 +273,8 @@ function buildDeviceRequestStrategies(
   const strategies: DeviceRequestStrategy[] = [
     { name: 'default-limits', requiredLimits, features: [...levelFeatures, ...requestedFeatures] },
   ];
-  if (requestedFeatures.length > 0 || requiredLimits) {
-    strategies.push({ name: 'no-optional-features', requiredLimits: undefined, features: levelFeatures });
+  if (requestedFeatures.length > 0) {
+    strategies.push({ name: 'no-optional-features', requiredLimits, features: levelFeatures });
   }
   return strategies.slice(0, MAX_DEVICE_REQUEST_STRATEGIES);
 }
@@ -236,7 +282,7 @@ function buildDeviceRequestStrategies(
 function logDeviceRequest(
   attempt: number,
   strategy: GpuDeviceRequestStrategy,
-  requiredLimits: GPUDeviceDescriptor['requiredLimits'],
+  requiredLimits: Record<string, number> | undefined,
   features: readonly GPUFeatureName[],
 ): void {
   const payload = {
@@ -271,7 +317,7 @@ async function acquireWebGpuDevice(
     };
 
     try {
-      const device = await adapter.requestDevice(descriptor);
+      const device = await requestAdapterDevice(adapter, descriptor);
       devicesAcquired += 1;
       publishDiagnostic('gpuDevicesAcquired', devicesAcquired);
       deviceFeatureLevels.set(
@@ -352,6 +398,16 @@ export function buildWebGpuCapabilityReport(
     grantedOptionalFeatures,
     missingRequestedFeatures,
     timestampQueryAvailable: grantedOptionalFeatures.includes('timestamp-query'),
+    deviceLimits: deviceLimitsReport(device),
+  };
+}
+
+function deviceLimitsReport(device: GPUDevice): GpuDeviceLimitsReport {
+  const limits = device.limits as Partial<GPUSupportedLimits> | undefined;
+  return {
+    maxTextureDimension2D: limits?.maxTextureDimension2D ?? 0,
+    maxStorageBuffersInFragmentStage: limits?.maxStorageBuffersInFragmentStage ?? null,
+    maxStorageTexturesInFragmentStage: limits?.maxStorageTexturesInFragmentStage ?? null,
   };
 }
 
