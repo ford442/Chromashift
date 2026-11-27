@@ -395,6 +395,100 @@ describe('WebGpuGraphExecutor', () => {
     expect(pooled.every((t) => t.destroyed)).toBe(true);
     expect(gpu.textures.find((t) => t.label === sourceLabel)!.destroyed).toBe(false);
   });
+  describe('history loop (the recurse starter)', () => {
+    const recurse = () => compile(buildGraphPreset('recurse'));
+    /** Texture label pass `index` wrote, without the load op. */
+    const written = (index: number) => gpu.passes[index]!.attachments[0]!.split('@')[0]!;
+    const boundBy = (index: number) => gpu.bindGroups.find((group) => group.label === gpu.passes[index]!.bindGroup)!;
+    const WARP = 0;
+    const LOOP = 7;
+
+    it('warps the previous slot first and writes the loop last, with no taps pass', () => {
+      executor.setGraph(recurse());
+      gpu.reset();
+      encode(executor);
+
+      expect(executor.encodedPasses()).toEqual([
+        'recurse-warp', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite',
+        'layer0', 'recurse-loop',
+      ]);
+      // One pass per step: the loop write is the history node's only pass.
+      expect(gpu.passes).toHaveLength(8);
+      expect(gpu.fragments.filter((code) => code.includes('HistoryLoopUniforms'))).toHaveLength(1);
+      expect(gpu.fragments.some((code) => code.includes('HistoryUniforms'))).toBe(false);
+      expect(executor.ringTextureCount()).toBe(2);
+    });
+
+    it('binds the slot written last frame and writes the other, alternating', () => {
+      executor.setGraph(recurse());
+      const frames: { read: string; write: string }[] = [];
+      for (let frame = 0; frame < 4; frame += 1) {
+        gpu.reset();
+        encode(executor);
+        frames.push({
+          read: boundBy(WARP).textures[0]!,
+          write: written(LOOP),
+        });
+      }
+      for (const [i, frame] of frames.entries()) {
+        // Never the target being drawn this frame.
+        expect(frame.read).not.toBe(frame.write);
+        if (i > 0) expect(frame.read).toBe(frames[i - 1]!.write);
+      }
+      expect(new Set(frames.map((frame) => frame.write)).size).toBe(2);
+    });
+
+    it('mixes the live layer with the warp it just drew', () => {
+      executor.setGraph(recurse());
+      gpu.reset();
+      encode(executor);
+      const layer0 = written(6);
+      const warp = written(WARP);
+      expect(boundBy(LOOP).textures).toEqual([layer0, warp]);
+    });
+
+    it('starts from the empty ring rather than a copy of the live layer', () => {
+      executor.setGraph(recurse());
+      gpu.reset();
+      encode(executor);
+      // Frame 0's warp reads a ring slot no pass has written: the loop is
+      // empty until it catches.
+      const read = boundBy(WARP).textures[0]!;
+      expect(gpu.passes.slice(0, WARP + 1).flatMap((pass) => pass.attachments)
+        .some((attachment) => attachment.startsWith(`${read}@`))).toBe(false);
+      expect(gpu.textures.some((t) => t.label === read)).toBe(true);
+    });
+
+    it('holds the loop still while paused', () => {
+      executor.setGraph(recurse());
+      encode(executor);
+      gpu.reset();
+      encode(executor, { paused: true });
+      // No loop write and no accumulators: warp, three layers, composite.
+      expect(gpu.passes).toHaveLength(5);
+    });
+
+    it('clears the loop ring with the tracers on reset', () => {
+      executor.setGraph(recurse());
+      encode(executor);
+      gpu.reset();
+      executor.clearAccumulators();
+      // Eight tracer clears plus the two ring slots.
+      expect(gpu.passes).toHaveLength(10);
+    });
+
+    it('does not rebuild a pipeline when gain or delay changes', () => {
+      executor.setGraph(recurse());
+      encode(executor);
+      const built = executor.pipelineBuildCount;
+      const tweaked = buildGraphPreset('recurse');
+      Object.assign(tweaked.nodes.find((n) => n.id === 'recurse-loop')!.params, { gain: 0.5, delay: 1 });
+      executor.setGraph(compileGraph(tweaked, 'webgpu'));
+      encode(executor);
+      expect(executor.pipelineBuildCount).toBe(built);
+    });
+  });
+
   describe('history and displace (the body-smear starter)', () => {
     const smear = () => compile(buildGraphPreset('smear'));
     const label = (texture: GPUTexture) => (texture as unknown as { label: string }).label;

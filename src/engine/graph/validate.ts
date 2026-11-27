@@ -6,16 +6,21 @@ import {
   PARTICLE_CAPACITY_MAX,
   PARTICLE_CAPACITY_MIN,
   inputEdgeType,
+  isHistoryLoop,
   isKnownNodeKind,
+  nodeArity,
   nodeKindSpec,
 } from './nodeKinds';
 import type { GraphNode, PassGraph } from './types';
 
-/** An edge that closes a cycle — legal only when its producer ping-pongs. */
+/**
+ * An edge that reads a previous frame's value: a back edge into a ping-pong
+ * node, or any read of a `loop` history (its previous ring slot).
+ */
 export interface FeedbackEdge {
   /** Node that consumes the previous frame's value. */
   consumer: string;
-  /** Node whose previous-frame output is read. Must be a ping-pong kind. */
+  /** Node whose previous-frame output is read: a ping-pong kind or a `loop` history. */
   producer: string;
 }
 
@@ -41,7 +46,8 @@ export interface ValidateOptions {
  * Validate a graph: unique ids, resolvable edges, arity, edge types, and
  * fixed-point detection. Cycles are legal, but only when the edge that closes
  * them reads a ping-pong node's output — the ping-pong pair is what makes that
- * read return the previous frame instead of a half-written target.
+ * read return the previous frame instead of a half-written target — or a
+ * `loop` history's, whose every read is the ring slot a previous frame wrote.
  */
 export function validateGraph(graph: PassGraph, options: ValidateOptions = {}): ValidationResult {
   const byId = new Map<string, GraphNode>();
@@ -73,11 +79,21 @@ export function validateGraph(graph: PassGraph, options: ValidateOptions = {}): 
 
   for (const node of graph.nodes) {
     const spec = nodeKindSpec(node.kind);
-    if (node.inputs.length < spec.minInputs || node.inputs.length > spec.maxInputs) {
-      const max = spec.maxInputs === Number.POSITIVE_INFINITY ? '∞' : String(spec.maxInputs);
+    // Checked before arity, which it decides. Structural: a trail and a loop
+    // are different graphs, with different hashes, never a uniform flip.
+    if (node.kind === 'history' && node.params.loop !== undefined && typeof node.params.loop !== 'boolean') {
+      throw new PassGraphError(
+        'invalid-param',
+        `Node '${node.id}' (history) has loop ${JSON.stringify(node.params.loop)}; expected true or false.`,
+        node.id,
+      );
+    }
+    const arity = nodeArity(node);
+    if (node.inputs.length < arity.min || node.inputs.length > arity.max) {
+      const max = arity.max === Number.POSITIVE_INFINITY ? '∞' : String(arity.max);
       throw new PassGraphError(
         'input-arity',
-        `Node '${node.id}' (${node.kind}) takes ${spec.minInputs}–${max} inputs, got ${node.inputs.length}.`,
+        `Node '${node.id}' (${node.kind}${isHistoryLoop(node) ? ', loop' : ''}) takes ${arity.min}–${max} inputs, got ${node.inputs.length}.`,
         node.id,
       );
     }
@@ -90,7 +106,9 @@ export function validateGraph(graph: PassGraph, options: ValidateOptions = {}): 
           node.id,
         );
       }
-      if (inputId === node.id && !spec.pingPong) {
+      // A loop history may read itself: that read is its previous slot, like
+      // every other read of it.
+      if (inputId === node.id && !spec.pingPong && !isHistoryLoop(node)) {
         throw new PassGraphError(
           'self-reference',
           `Node '${node.id}' (${node.kind}) reads itself, but '${node.kind}' has no ping-pong history.`,
@@ -256,12 +274,25 @@ function walk(graph: PassGraph, byId: Map<string, GraphNode>): {
   const reachable = new Set<string>();
   const feedbackEdges: FeedbackEdge[] = [];
 
+  // `loop` histories reached only through their previous-slot edges. Each is
+  // walked as a root of its own once the current walk is done: its inputs are
+  // this frame's, so they must not be on the stack of the node reading it, or
+  // the edge that feeds the loop would look like a second back edge.
+  const loopRoots: string[] = [];
+
   // Iterative DFS over input edges, so a deep graph cannot blow the stack.
   const stack: { id: string; next: number }[] = [{ id: graph.output, next: 0 }];
   colour.set(graph.output, 'grey');
   reachable.add(graph.output);
 
-  while (stack.length > 0) {
+  while (stack.length > 0 || loopRoots.length > 0) {
+    if (stack.length === 0) {
+      const root = loopRoots.shift()!;
+      if (colour.has(root)) continue;
+      colour.set(root, 'grey');
+      stack.push({ id: root, next: 0 });
+      continue;
+    }
     const frame = stack[stack.length - 1]!;
     const node = byId.get(frame.id)!;
     if (frame.next >= node.inputs.length) {
@@ -271,16 +302,27 @@ function walk(graph: PassGraph, byId: Map<string, GraphNode>): {
     }
     const inputId = node.inputs[frame.next]!;
     frame.next += 1;
+    const producer = byId.get(inputId)!;
+    if (isHistoryLoop(producer)) {
+      // A previous-slot edge, wherever the walk meets it: the ring slot a
+      // previous frame wrote, never the one this frame's write fills. It
+      // imposes no order this frame, so it is feedback whether or not it
+      // closes a cycle — which is what lets `warp → history(loop) → warp`
+      // be written in either direction.
+      feedbackEdges.push({ consumer: node.id, producer: inputId });
+      reachable.add(inputId);
+      if (!colour.has(inputId)) loopRoots.push(inputId);
+      continue;
+    }
     const state = colour.get(inputId);
     if (state === 'grey') {
       // Back edge: `inputId` transitively depends on `node`, so this read has
       // to come from the previous frame. Only a ping-pong producer can serve
       // one — it keeps last frame's texture while this frame writes the other.
-      const producer = byId.get(inputId)!;
       if (!nodeKindSpec(producer.kind).pingPong) {
         throw new PassGraphError(
           'illegal-cycle',
-          `Cycle '${node.id}' → '${inputId}' (${producer.kind}) has no ping-pong node to break it.`,
+          `Cycle '${node.id}' → '${inputId}' (${producer.kind}) has no ping-pong node or loop history to break it.`,
           node.id,
         );
       }

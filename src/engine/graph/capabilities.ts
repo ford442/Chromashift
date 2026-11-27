@@ -58,6 +58,26 @@ export function backendSupports(backend: GraphBackend, kind: NodeKind): boolean 
   return SUPPORTED[backend].has(kind);
 }
 
+/**
+ * A refusal for one node whose *kind* the backend supports but whose params
+ * it cannot run, or `null`. Today that is one shape: a `loop` history on
+ * WebGL. Its executor runs a trail's ring and taps, but has no previous-slot
+ * binding for a loop's readers or the mixing write. Refused by name so the
+ * session keeps the default graph — the hand-written persistence pass is not
+ * a loop and must not stand in for one.
+ */
+export function backendNodeRefusal(backend: GraphBackend, node: GraphNode): PassGraphError | null {
+  if (backend === 'webgl' && node.kind === 'history' && node.params.loop === true) {
+    return new PassGraphError(
+      'unsupported-node',
+      `The webgl backend cannot close a feedback loop: node '${node.id}' is a 'history' with loop. `
+      + 'Previous-slot reads run on WebGPU only.',
+      node.id,
+    );
+  }
+  return null;
+}
+
 export function supportedNodeKinds(backend: GraphBackend): NodeKind[] {
   return [...SUPPORTED[backend]];
 }

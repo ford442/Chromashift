@@ -1,0 +1,55 @@
+{
+  "name": "Recursive feedback",
+  "description": "A closed video-feedback loop: layer 0 enters a 2-frame history in loop mode, and a warp (small turn, slight zoom) reads that ring's previous slot and feeds it back in. The warped loop replaces layer 0 in coincidence and the compositor, so the tracers trail the tunnel. Frame 0 is the empty ring; the loop catches as it fills.",
+  "graph": {
+    "output": "swapchain",
+    "nodes": [
+      { "id": "source", "kind": "source", "inputs": [], "params": {} },
+      {
+        "id": "layer0",
+        "kind": "band-layer",
+        "inputs": ["source"],
+        "params": { "layerIndex": 0, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "layer1",
+        "kind": "band-layer",
+        "inputs": ["source"],
+        "params": { "layerIndex": 1, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "layer2",
+        "kind": "band-layer",
+        "inputs": ["source"],
+        "params": { "layerIndex": 2, "layerCount": 3, "angleDeg": 0, "flipX": false, "flipY": false }
+      },
+      {
+        "id": "recurse-loop",
+        "kind": "history",
+        "inputs": ["layer0", "recurse-warp"],
+        "params": { "frames": 2, "loop": true, "delay": 1, "gain": 0.94 }
+      },
+      {
+        "id": "recurse-warp",
+        "kind": "warp",
+        "inputs": ["recurse-loop"],
+        "params": { "mode": "affine", "angleDeg": 2, "scale": 1.03 }
+      },
+      {
+        "id": "coincidence",
+        "kind": "coincidence",
+        "inputs": ["recurse-warp", "layer1", "layer2"],
+        "params": { "minOverlap": 2, "emitDiagnostic": true, "colorThresh": 0.05, "stampBoost": 1.8 }
+      },
+      { "id": "tracer-below", "kind": "decay", "inputs": ["coincidence"], "params": { "durationMs": 0 } },
+      { "id": "tracer-above", "kind": "decay", "inputs": ["coincidence"], "params": { "durationMs": 1000 } },
+      {
+        "id": "composite",
+        "kind": "blend",
+        "inputs": ["recurse-warp", "layer1", "layer2", "tracer-below", "tracer-above"],
+        "params": { "layerInputs": 3, "tracerInputs": 2 }
+      },
+      { "id": "swapchain", "kind": "output", "inputs": ["composite"], "params": {} }
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-import { isBufferStage, nodeKindSpec, nodeResolution } from './nodeKinds';
+import { isBufferStage, isHistoryLoop, nodeKindSpec, nodeResolution } from './nodeKinds';
 import type { ValidationResult } from './validate';
 import type {
   BufferElements,
@@ -34,6 +34,11 @@ export interface Schedule {
   bufferLifetimes: BufferLifetime[];
   /** Ring length per scheduled `history` node — what the allocator sizes rings by. */
   historyFrames: Record<string, number>;
+  /**
+   * Scheduled `history` nodes in `loop` mode, in schedule order. Their readers
+   * bind the previous ring slot, so the allocator gives them no pool slot.
+   */
+  loopHistories: string[];
   /** Per scheduled buffer-producing node, its resolved output (see {@link ScheduledBuffer}). */
   buffers: Record<string, ScheduledBuffer>;
 }
@@ -62,8 +67,22 @@ export function scheduleGraph(graph: PassGraph, validation: ValidationResult): S
   // `next` indices make this iterative, matching validate.ts.
   const stack: { id: string; next: number }[] = [{ id: graph.output, next: 0 }];
   const onStack = new Set<string>([graph.output]);
+  // A `loop` history is read only through previous-slot edges, so no forward
+  // walk from the output reaches it. Each is a root of its own, walked once the
+  // output's walk is done: post-order still puts its write after every input,
+  // and so after every consumer of the slot it reads.
+  const loopRoots = feedbackEdges
+    .map((edge) => edge.producer)
+    .filter((id) => isHistoryLoop(byId.get(id)!));
 
-  while (stack.length > 0) {
+  while (stack.length > 0 || loopRoots.length > 0) {
+    if (stack.length === 0) {
+      const root = loopRoots.shift()!;
+      if (visited.has(root)) continue;
+      onStack.add(root);
+      stack.push({ id: root, next: 0 });
+      continue;
+    }
     const frame = stack[stack.length - 1]!;
     const node = byId.get(frame.id)!;
     if (frame.next >= node.inputs.length) {
@@ -81,6 +100,15 @@ export function scheduleGraph(graph: PassGraph, validation: ValidationResult): S
     if (visited.has(inputId) || onStack.has(inputId)) continue;
     onStack.add(inputId);
     stack.push({ id: inputId, next: 0 });
+  }
+
+  // A loop root is walked after the output's walk has emitted the output
+  // node. `output` encodes nothing, but every breadcrumb reads it as the
+  // frame's last step, so it moves back to the end — only when a loop root
+  // was walked, so every other graph's order is the DFS's, untouched.
+  if (order.length > 0 && order.at(-1) !== graph.output) {
+    order.splice(order.indexOf(graph.output), 1);
+    order.push(graph.output);
   }
 
   const ordered = hoistBufferChains(order, byId, feedback);
@@ -102,7 +130,8 @@ export function scheduleGraph(graph: PassGraph, validation: ValidationResult): S
       lastUse.set(inputId, Math.max(lastUse.get(inputId) ?? -1, pass.order));
     }
     // A feedback producer stays live for the entire frame — its history texture
-    // must survive until the next frame reads it.
+    // must survive until the next frame reads it. (A `loop` history's reads are
+    // of its ring, which outlives every frame anyway; it has no pooled output.)
     for (const inputId of pass.feedbackInputs) {
       lastUse.set(inputId, passes.length - 1);
     }
@@ -152,7 +181,11 @@ export function scheduleGraph(graph: PassGraph, validation: ValidationResult): S
       : { owns: false, input: node.inputs[0]! };
   }
 
-  return { passes, lifetimes, bufferLifetimes, historyFrames, buffers };
+  const loopHistories = passes
+    .filter((pass) => isHistoryLoop(byId.get(pass.nodeId)!))
+    .map((pass) => pass.nodeId);
+
+  return { passes, lifetimes, bufferLifetimes, historyFrames, loopHistories, buffers };
 }
 
 /**

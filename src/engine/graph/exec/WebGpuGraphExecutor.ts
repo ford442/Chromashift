@@ -4,6 +4,7 @@ import {
   BAND_LAYER_UNIFORMS,
   BLUR_UNIFORMS,
   DISPLACE_UNIFORMS,
+  HISTORY_LOOP_UNIFORMS,
   HISTORY_UNIFORMS,
   LUT_UNIFORMS,
   WARP_UNIFORMS,
@@ -12,7 +13,7 @@ import {
 } from '../templates/wgsl';
 import { packUniforms, type UniformLayout, type UniformValues } from '../templates/uniformLayout';
 import { ADVECT_UNIFORMS, EMIT_UNIFORMS, SPLAT_UNIFORMS } from '../templates/particles';
-import { APPEND_DISPATCH_ARGS_OFFSET, APPEND_DRAW_ARGS_OFFSET, EMIT_WORKGROUP } from '../nodeKinds';
+import { APPEND_DISPATCH_ARGS_OFFSET, APPEND_DRAW_ARGS_OFFSET, EMIT_WORKGROUP, isHistoryLoop } from '../nodeKinds';
 import {
   EXTRA_TRACER_DURATION_MS,
   EXTRA_TRACER_INTENSITY,
@@ -26,6 +27,8 @@ import {
   buildEncodePlan,
   encodedPassOrder,
   historyWeights,
+  loopReadAge,
+  ringSlotOfAge,
   type EncodePlan,
   type EncodeStep,
 } from './plan';
@@ -926,6 +929,10 @@ export class WebGpuGraphExecutor {
     inputs: GraphExternalInputs,
     params: GraphEncodeParams,
   ): void {
+    if (step.fed !== null) {
+      this.encodeHistoryLoop(enc, step, step.fed, inputs, params);
+      return;
+    }
     const node = this.nodePipeline(step.nodeId);
     const write = node.ringWrite!;
     const ring = this.pool.ring(step.nodeId);
@@ -965,6 +972,49 @@ export class WebGpuGraphExecutor {
     const pass = enc.beginRenderPass({
       colorAttachments: [clearAttachment(this.pool.transient(step.nodeId).createView())],
     });
+    pass.setPipeline(node.pipeline);
+    pass.setBindGroup(0, node.bindGroup);
+    pass.draw(6);
+    pass.end();
+  }
+
+  /**
+   * `history` in `loop` mode: one pass, the mixing write of `live` and `fed`
+   * into the ring head. There is no taps pass — every reader of the node binds
+   * a previous slot ({@link textureFor}) — and `fed` is normally one of them,
+   * already drawn this frame from that slot. A paused frame skips the write and
+   * the pool does not flip, so the loop holds still with the tracers.
+   *
+   * The first frames read slots nothing has written yet: zeroed textures, so
+   * the loop starts empty and catches as the ring fills, the way a decay warms
+   * up. No frame is special-cased into a copy of the live picture.
+   */
+  private encodeHistoryLoop(
+    enc: GPUCommandEncoder,
+    step: Extract<EncodeStep, { kind: 'history' }>,
+    fedId: string,
+    inputs: GraphExternalInputs,
+    params: GraphEncodeParams,
+  ): void {
+    if (params.state.paused === true) return;
+    const node = this.nodePipeline(step.nodeId);
+    const ring = this.pool.ring(step.nodeId);
+    const target = ring.textures[ring.head]!;
+    const bound = [this.textureFor(step.input, inputs), this.textureFor(fedId, inputs)];
+    if (bound.includes(target)) {
+      // Unreachable while `loopReadAge` keeps reads off the head; a guard
+      // rather than a feedback loop inside one render pass.
+      throw new Error(`Graph node '${step.nodeId}' would sample the ring slot it writes.`);
+    }
+    this.writeUniforms(node, HISTORY_LOOP_UNIFORMS, {
+      gain: numberParam(this.graphNode(step.nodeId).params.gain, 0.96),
+    });
+    this.bindIfChanged(node, bound, () => [
+      { binding: 0, resource: this.passSampler },
+      ...bound.map((texture, i) => ({ binding: i + 1, resource: texture.createView() })),
+      { binding: bound.length + 1, resource: { buffer: node.uniformBuffer! } },
+    ]);
+    const pass = enc.beginRenderPass({ colorAttachments: [clearAttachment(target.createView())] });
     pass.setPipeline(node.pipeline);
     pass.setBindGroup(0, node.bindGroup);
     pass.draw(6);
@@ -1050,6 +1100,14 @@ export class WebGpuGraphExecutor {
     // accumulation. Reading the write side here would drop that frame of
     // latency and stop matching the frames pinned in e2e/__golden__.
     if (node.kind === 'decay') return this.pool.pingPong(nodeId).read;
+    // Every read of a loop history is a previous-slot edge: the ring slot
+    // written `delay` frames ago (one, by default), never the head this
+    // frame's write fills.
+    if (isHistoryLoop(node)) {
+      const ring = this.pool.ring(nodeId);
+      const frames = ring.textures.length;
+      return ring.textures[ringSlotOfAge(frames, ring.head, loopReadAge(frames, node.params.delay))]!;
+    }
     return this.pool.transient(nodeId);
   }
 

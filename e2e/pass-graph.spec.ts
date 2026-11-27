@@ -288,6 +288,29 @@ test.describe('pass graph', () => {
     await expect.poll(() => canvasDistinctColours(page), { timeout: 15_000 }).toBeGreaterThan(8);
   });
 
+  test('refuses ?graph=recurse by name and draws the default graph, not black', async ({ page }) => {
+    // The WebGL executor has no previous-slot binding for a loop history: the
+    // loop is refused at compile time, naming the node, and the hand-written
+    // persistence pass does not stand in for it.
+    await openWebglScene(page, '&graph=recurse');
+    await page.waitForFunction(() => window.passGraphExecuting === 'default');
+
+    const crumbs = await page.evaluate(() => ({
+      name: window.passGraphName,
+      error: window.passGraphError,
+      slots: window.passGraphSlotsExecuting,
+      executed: window.passGraphExecutedPasses,
+    }));
+    expect(crumbs.name).toBe('recurse');
+    expect(crumbs.error).toMatch(
+      /^unsupported-node: The webgl backend cannot close a feedback loop: node 'recurse-loop' is a 'history' with loop\./,
+    );
+    expect(crumbs.slots).toEqual({ main: 'default' });
+    expect(crumbs.executed).toEqual(['layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite']);
+
+    await expect.poll(() => canvasDistinctColours(page), { timeout: 15_000 }).toBeGreaterThan(8);
+  });
+
   test('a different shape draws different pixels: ?graph=feedback is not the default graph', async ({ page }) => {
     await openWebglScene(page, '&graph=feedback');
     await page.waitForFunction(() => window.passGraphExecuting === 'feedback');

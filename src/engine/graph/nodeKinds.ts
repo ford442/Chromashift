@@ -153,18 +153,23 @@ const SPECS: Record<NodeKind, NodeKindSpec> = {
   },
   history: {
     kind: 'history',
+    // One input; a `loop` history takes two, `[live, fed]` (see `nodeArity`).
     minInputs: 1,
-    maxInputs: 1,
+    maxInputs: 2,
     inputType: 'texture',
     outputType: 'texture',
     // The default; `params.resolution` may say 'tracer' (see `nodeResolution`).
     resolution: 'layer',
-    // Not ping-pong: the ring is read *after* this frame's write, so its output
-    // is not a previous-frame value a cycle could close on.
+    // Not ping-pong: the ring is N textures, not a pair, and a trail's taps are
+    // read *after* this frame's write. A `loop` history is the other way
+    // round: every read of it is the slot written on a previous frame, so it
+    // can close a cycle (`isHistoryLoop`; validate.ts records those edges).
     pingPong: false,
     // `frames` sizes the ring and unrolls the tap loop; `resolution` sizes the
-    // ring's textures. `mode`, `delay` and `falloff` are tap weights — uniforms.
-    structuralParams: ['frames', 'resolution'],
+    // ring's textures; `loop` swaps the taps pass for the previous-slot read and
+    // the mixing write. `mode`, `delay`, `falloff` and `gain` are uniforms or
+    // bindings.
+    structuralParams: ['frames', 'resolution', 'loop'],
     stage: 'render',
   },
   displace: {
@@ -285,6 +290,28 @@ export function isKnownNodeKind(kind: string): kind is NodeKind {
 /** Ring-length bounds for `history` — the cap is what keeps its VRAM bounded. */
 export const HISTORY_MIN_FRAMES = 2;
 export const HISTORY_MAX_FRAMES = 8;
+
+/**
+ * A `history` node in feedback mode (`params.loop: true`). Every edge out of
+ * it reads a slot written on a previous frame — never the one this frame's
+ * write fills — so it is the one non-ping-pong producer a cycle may close on.
+ */
+export function isHistoryLoop(node: Pick<GraphNode, 'kind' | 'params'>): boolean {
+  return node.kind === 'history' && node.params.loop === true;
+}
+
+/**
+ * Inputs a node takes. Every kind's come from its spec except `history`: a
+ * trail reads one texture, a loop exactly two — `[live, fed]`, the picture
+ * entering the loop and the one coming back round it.
+ */
+export function nodeArity(node: Pick<GraphNode, 'kind' | 'params'>): { min: number; max: number } {
+  if (node.kind !== 'history') {
+    const spec = SPECS[node.kind];
+    return { min: spec.minInputs, max: spec.maxInputs };
+  }
+  return isHistoryLoop(node) ? { min: 2, max: 2 } : { min: 1, max: 1 };
+}
 
 /**
  * Resolution class of one node's render target.

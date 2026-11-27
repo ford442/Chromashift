@@ -1,5 +1,6 @@
 import { PassGraphError } from '../errors';
 import type { CompiledGraph, GraphNode, ScheduledPass } from '../types';
+import { isHistoryLoop } from '../nodeKinds';
 
 /** One encodable step, with every input already resolved to a producer node id. */
 export type EncodeStep =
@@ -84,6 +85,12 @@ export type EncodeStep =
     input: string;
     /** Ring length — structural, so never a stale value param. */
     frames: number;
+    /**
+     * `loop` mode: what comes back round the loop (`inputs[1]`), mixed over
+     * `input` by the write; `null` for a trail. Every read of a loop history
+     * binds a previous ring slot ({@link loopReadAge}).
+     */
+    fed: string | null;
   }
   | {
     /** `displace` inputs are `[source, field]`. */
@@ -355,6 +362,7 @@ export function buildEncodePlan(compiled: CompiledGraph): EncodePlan {
           nodeId: pass.nodeId,
           input: nodeInputs[0]!,
           frames: intParam(node, 'frames', 2),
+          fed: isHistoryLoop(node) ? nodeInputs[1]! : null,
         });
         break;
 
@@ -453,6 +461,22 @@ export function historyWeights(
     total += weight;
   }
   return weights.map((weight) => weight / total);
+}
+
+/**
+ * How many frames old the slot a `loop` history's readers bind is: its `delay`
+ * param, held to 1…`frames - 1`. Never 0 — that is the slot this frame's write
+ * fills — so a reader never samples the target being drawn, and the head the
+ * write lands on is never the slot anything this frame reads.
+ */
+export function loopReadAge(frames: number, delay: unknown): number {
+  const age = typeof delay === 'number' && Number.isFinite(delay) ? Math.round(delay) : 1;
+  return Math.min(Math.max(age, 1), Math.max(1, frames - 1));
+}
+
+/** Ring slot `age` frames before `head`. */
+export function ringSlotOfAge(frames: number, head: number, age: number): number {
+  return (((head - age) % frames) + frames) % frames;
 }
 
 /** Node ids the plan actually encodes, in order — the executor's breadcrumb. */
