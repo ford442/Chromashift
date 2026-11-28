@@ -132,6 +132,27 @@ if (!bundles.some((text) => text.includes(upscalerBase))) {
   fail(`no chunk contains VITE_UPSCALER_BASE (${upscalerBase}) — the upscaler would throw at runtime`);
 }
 
+// The waifu2x worker must resolve its ORT runtime to the bundled package's own
+// release (src/engine/upscale/ortRuntime.ts): a runtime from any other version
+// fails inside ORT with a cryptic "_Ort... is not a function" (#269).
+{
+  const ortVersion = JSON.parse(await readFile('node_modules/onnxruntime-web/package.json', 'utf8')).version;
+  const nunifChunks = allFiles.filter((f) => /[/\\]nunif\.worker-[^/\\]+\.js$/.test(f));
+  if (nunifChunks.length === 0) fail('no dist/assets/nunif.worker-*.js chunk found');
+  const override = process.env.VITE_NUNIF_ORT_WASM_BASE?.trim();
+  const nunifText = await readFile(nunifChunks[0], 'utf8');
+  // Minified, the URL is a template (`...onnxruntime-web@${t}/dist`) fed the
+  // version literal, so the two are asserted separately.
+  const needles = override
+    ? [override.replace(/\/+$/, '')]
+    : ['npm/onnxruntime-web@', `"${ortVersion}"`];
+  for (const needle of needles) {
+    if (!nunifText.includes(needle)) {
+      fail(`${nunifChunks[0]} does not contain ${needle} — the waifu2x worker would load a mismatched ORT runtime`);
+    }
+  }
+}
+
 // Dev/E2E-only files that sit in public/ (vite.config.ts drops them from dist/),
 // and the files a deployment depends on: the build stamp and the Apache config.
 for (const name of ['e2e-fixture.png', 'wasm-benchmark.html', 'wasm-benchmark-core.mjs', 'icons.svg']) {

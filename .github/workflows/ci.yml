@@ -151,6 +151,47 @@ jobs:
           CI: true
           PW_SERVER: preview
 
+  # The release smoke suite (#269) against the production build under `vite preview`:
+  # every core flow, in WebGPU (SwiftShader) and WebGL, behind a gate that fails on any
+  # console error, page error, failed request, HTTP >= 400 or redirect. The remote
+  # corpus images are answered locally (--stub-corpus) so a PR does not depend on a
+  # third-party host; the deploy workflow runs the same suite against the real site.
+  # See docs/RELEASE_SMOKE.md.
+  release-smoke:
+    name: Release smoke (production build, vite preview)
+    runs-on: ubuntu-24.04
+    needs: [web]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Release smoke
+        run: npm run release:smoke -- --stub-corpus --report
+        env:
+          CI: true
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: release-smoke-results
+          path: |
+            release-results/results.json
+            release-results/gate/
+            release-results/screenshots/
+            release-results/report/
+            release-results/html/
+          retention-days: 14
+
   e2e-webgpu:
     name: Playwright E2E (WebGPU)
     runs-on: ubuntu-24.04
@@ -215,7 +256,7 @@ jobs:
     name: Playwright E2E (WebGPU, ${{ matrix.browser }})
     runs-on: ${{ matrix.os }}
     needs: [web]
-    timeout-minutes: 20
+    timeout-minutes: 30
     # Non-blocking until green twice (#228): a red run here does not fail CI.
     continue-on-error: true
     strategy:
@@ -238,7 +279,12 @@ jobs:
       - run: npm ci
       - name: Install Playwright ${{ matrix.browser }}
         run: npx playwright install --with-deps ${{ matrix.browser }}
+      # No retries and a failure cap (#269): the job used to be cancelled at its 20
+      # minute limit with no result, because every failing test on a software
+      # adapter was retried twice at its full timeout. It is informational, so it
+      # should report the first failures promptly instead of the clock cancelling it.
+      # `--max-failures` stops the run once the browser is evidently not usable.
       - name: Run the WebGPU smoke and executor specs
-        run: npx playwright test --project=${{ matrix.browser }}
+        run: npx playwright test --project=${{ matrix.browser }} --retries=0 --max-failures=5 --reporter=list
         env:
           CI: true

@@ -310,6 +310,7 @@ export interface AppUIControlProps {
   upscaleBusy: boolean;
   upscaleProgress: number;
   upscaleInfo: string;
+  upscaleError: string;
   engineMode: EngineMode;
   setEngineMode: (mode: EngineMode) => void;
   wasmAvailable: boolean;

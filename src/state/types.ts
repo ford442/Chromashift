@@ -192,6 +192,8 @@ export interface UiSlice {
   upscaleBusy: boolean;
   upscaleProgress: number;
   upscaleInfo: string;
+  /** Why the last upscale failed; empty when it did not. Shown in the panel after the busy bar is gone. */
+  upscaleError: string;
   /** Friendly message when a ?preset= URL parameter could not be applied. */
   presetLoadError: string | null;
   /**

@@ -234,6 +234,7 @@ export function useUpscalerHandlers(
     upscalerRef.current ??= new Upscaler();
     actions.setUpscaleBusy(true);
     actions.setUpscaleProgress(0);
+    actions.setUpscaleError('');
     actions.setUpscaleInfo('Preparing…');
 
     try {
@@ -267,7 +268,8 @@ export function useUpscalerHandlers(
       actions.setUpscaleInfo(`Done — ${result.width}×${result.height}`);
     } catch (e) {
       console.error('Upscale failed:', e);
-      actions.setUpscaleInfo(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      actions.setUpscaleInfo('');
+      actions.setUpscaleError(e instanceof Error ? e.message : String(e));
     } finally {
       actions.setUpscaleBusy(false);
     }
@@ -292,6 +294,7 @@ export function useUpscalerHandlers(
     upscalerRef.current ??= new Upscaler();
     actions.setUpscaleBusy(true);
     actions.setUpscaleProgress(0);
+    actions.setUpscaleError('');
     actions.setUpscaleInfo('Capturing canvas…');
 
     try {
@@ -330,7 +333,8 @@ export function useUpscalerHandlers(
       actions.setUpscaleInfo(`Saved — ${result.width}×${result.height}`);
     } catch (e) {
       console.error('Upscale output failed:', e);
-      actions.setUpscaleInfo(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      actions.setUpscaleInfo('');
+      actions.setUpscaleError(e instanceof Error ? e.message : String(e));
     } finally {
       actions.setUpscaleBusy(false);
     }

@@ -124,9 +124,16 @@ test.describe('render transport', () => {
 
       await page.waitForTimeout(BASELINE_MS);
       const settled = await page.evaluate(() => performance.timeOrigin + performance.now());
-      await page.waitForTimeout(BASELINE_MS);
+      // Wait for the clock to have ticked enough, not for a fixed window to pass: on a
+      // loaded software-rendering machine a frame can take over a second, so a fixed
+      // 3 s window held 4 ticks and the test failed for the machine, not the renderer.
+      await expect
+        .poll(async () => (await timeline()).filter((t) => t >= settled).length, {
+          message: 'the render clock should be ticking',
+          timeout: 60_000,
+        })
+        .toBeGreaterThanOrEqual(5);
       const baseline = (await timeline()).filter((t) => t >= settled);
-      expect(baseline.length, 'the render clock should be ticking').toBeGreaterThanOrEqual(5);
       const baselineWorst = Math.max(...deltas(baseline));
       const { stallMs, budgetMs } = stallPlan(baselineWorst);
 

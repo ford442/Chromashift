@@ -161,6 +161,7 @@ export function buildControlProps(
     upscaleBusy: ui.upscaleBusy,
     upscaleProgress: ui.upscaleProgress,
     upscaleInfo: ui.upscaleInfo,
+    upscaleError: ui.upscaleError,
     engineMode: engine.engineMode,
     setEngineMode: actions.setEngineMode,
     wasmAvailable: engine.wasmAvailable,

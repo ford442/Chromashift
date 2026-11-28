@@ -37,6 +37,10 @@ async function openBrowser(page: import('@playwright/test').Page): Promise<void>
 }
 
 test.describe('corpus browser', () => {
+  // A 3137-entry corpus, a WebGL boot and an IndexedDB round trip: more than the 30 s
+  // default on a loaded runner, with nothing about the assertions slow.
+  test.describe.configure({ timeout: 90_000 });
+
   test.beforeEach(async ({ page }) => {
     await setE2eViewport(page);
   });

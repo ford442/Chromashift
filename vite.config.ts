@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -39,6 +39,17 @@ function resolveBuildInfo(env: NodeJS.ProcessEnv = process.env): BuildInfo {
 }
 
 const buildInfo = resolveBuildInfo()
+
+/**
+ * The `onnxruntime-web` release the bundle contains. The waifu2x worker loads the
+ * matching runtime files from the npm CDN at that exact version
+ * (`src/engine/upscale/ortRuntime.ts`); a runtime from any other release fails.
+ */
+const ortWebVersion = (
+  JSON.parse(readFileSync(new URL('./node_modules/onnxruntime-web/package.json', import.meta.url), 'utf8')) as {
+    version: string
+  }
+).version
 
 /** Writes `dist/version.json` (served beside `index.html`, so `./version.json` from the page). */
 function versionJson(info: BuildInfo): Plugin {
@@ -89,7 +100,7 @@ const PRODUCTION_HEADERS = {
 export default defineConfig({
   base: "./",
   plugins: [react(), tailwindcss(), versionJson(buildInfo), dropDevOnlyPublicFiles()],
-  define: { __BUILD_INFO__: JSON.stringify(buildInfo) },
+  define: { __BUILD_INFO__: JSON.stringify(buildInfo), __ORT_WEB_VERSION__: JSON.stringify(ortWebVersion) },
   preview: { headers: PRODUCTION_HEADERS },
   // Every `new Worker(...)` in the app is `{ type: 'module' }`, but Vite's
   // default worker output format is `iife` - so the built workers were classic

@@ -92,3 +92,38 @@ jobs:
             production) url="https://test.1ink.us/chromashift/" ;;
           esac
           node scripts/verify-deploy.mjs "$url" --sha "$GITHUB_SHA"
+
+      # The release smoke suite (#269) against the site just deployed: every core
+      # flow in WebGPU (SwiftShader) and WebGL behind the console/network gate, the
+      # live version.json checked against this commit, then the State of the App
+      # report. Staging also runs every upscaler the panel offers (real models,
+      # minutes each), which is why that project is staging-only.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Release smoke against the deployed site
+        run: |
+          case "$TARGET" in
+            staging) url="https://test.1ink.us/chromashift-staging/"; extra="--project release-upscale" ;;
+            production) url="https://test.1ink.us/chromashift/"; extra="" ;;
+          esac
+          npm run release:smoke -- "$url" --sha "$GITHUB_SHA" --project release-webgpu --project release-webgl $extra --report
+        env:
+          CI: true
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: release-smoke-${{ inputs.target }}
+          path: |
+            release-results/results.json
+            release-results/gate/
+            release-results/screenshots/
+            release-results/report/
+            release-results/html/
+          retention-days: 30

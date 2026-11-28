@@ -180,6 +180,7 @@ export function buildOverlayProps(
     upscaleBusy: p.upscaleBusy,
     upscaleProgress: p.upscaleProgress,
     upscaleInfo: p.upscaleInfo,
+    upscaleError: p.upscaleError,
     onUpscaleSource: p.handleUpscaleSource,
     onUpscaleOutput: p.handleUpscaleOutput,
     engineMode: p.engineMode,
