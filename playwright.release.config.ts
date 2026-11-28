@@ -58,7 +58,8 @@ export default defineConfig<{ renderer: Renderer }>({
   projects: [
     {
       name: 'release-webgpu',
-      testIgnore: /upscale\.spec\.ts/,
+      // *.webgl.spec.ts: scenarios that only exist on the WebGL backend.
+      testIgnore: /upscale\.spec\.ts|\.webgl\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         viewport,
@@ -69,7 +70,8 @@ export default defineConfig<{ renderer: Renderer }>({
     },
     {
       name: 'release-webgl',
-      testIgnore: /upscale\.spec\.ts/,
+      // *.webgpu.spec.ts: scenarios that only exist on the WebGPU backend.
+      testIgnore: /upscale\.spec\.ts|\.webgpu\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
         viewport,

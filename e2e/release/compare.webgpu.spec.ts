@@ -2,13 +2,12 @@ import { domClick } from '../helpers/domClick';
 import { expect, test } from './gate';
 import { expectDrawing, openApp, shoot } from './helpers';
 
-/** Compare layouts: dual, swipe and quad. The WebGL backend is single-view only (docs/COMPARE_VIEWS.md). */
+/**
+ * Compare layouts: dual, swipe and quad. WebGPU only (`*.webgpu.spec.ts` is not run
+ * by the WebGL project): the WebGL diagnostic backend is single-view, docs/COMPARE_VIEWS.md.
+ */
 
 test.describe('compare layouts', () => {
-  test.beforeEach(({ renderer }) => {
-    test.skip(renderer !== 'webgpu', 'Compare layouts are WebGPU-only; the WebGL diagnostic backend is single-view');
-  });
-
   test('dual: two canvases, both drawing, labelled', async ({ page, renderer }) => {
     await openApp(page, renderer, { sections: { viewport: true, presets: true } });
     await domClick(page.getByRole('button', { name: '▢▢ Dual', exact: true }));

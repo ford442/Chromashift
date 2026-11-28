@@ -74,6 +74,9 @@ test.describe('shareable preset URL', () => {
     const shared = await page.evaluate(() => navigator.clipboard.readText());
     expect(new URL(shared).searchParams.get('preset'), 'the share URL carries a preset').toBeTruthy();
 
+    // Two WebGPU pages open together starve each other on a software adapter, so the
+    // sender's page closes first. A fresh tab, the way a recipient opens it.
+    await page.close();
     // A fresh tab, the way a recipient opens it. The copied URL keeps this
     // session's `renderer=`, so the recipient lands in the same backend.
     const other = await context.newPage();
@@ -84,7 +87,6 @@ test.describe('shareable preset URL', () => {
     await expect(other.getByText('Layers:').first()).toContainText('6');
     await expect(other.getByText(/^Layer 5 — /)).toBeVisible();
     await expect(layerSlider(other)).toHaveValue('6');
-    await other.close();
   });
 
   test('an unreadable ?preset= is reported, not swallowed', async ({ page, renderer, gate }) => {

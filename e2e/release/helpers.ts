@@ -30,20 +30,21 @@ export function appUrl(renderer: Renderer, extra: Record<string, string> = {}): 
   return `?${params.toString()}`;
 }
 
-/** A structured test image, different per `seed`, so switching images visibly changes the frame. */
+/**
+ * A test image that lights up the renderer, different per `seed`. The renderer
+ * isolates luminance bands relative to the image's own average, so a flat or
+ * narrow-range image composites to black *correctly*; this one sweeps the whole
+ * luminance range in both axes (so every band has pixels at any average) and the
+ * seed shifts the blue channel, so switching images visibly changes the frame.
+ */
 export function makePng(seed: number, width = 320, height = 240): Buffer {
   const png = new PNG({ width, height });
-  const hue = (seed * 67) % 360;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const i = (y * width + x) * 4;
-      const band = Math.floor((x + y * 0.5) / 24) % 4;
-      const disc = Math.hypot(x - width / 2, y - height / 2) < height / 3;
-      const base = disc ? 230 : 40 + band * 40;
-      const tint = ((hue + band * 50 + (disc ? 120 : 0)) % 360) / 360;
-      png.data[i] = Math.round(base * (0.4 + 0.6 * Math.abs(Math.sin(tint * Math.PI))));
-      png.data[i + 1] = Math.round(base * (0.4 + 0.6 * Math.abs(Math.sin((tint + 0.33) * Math.PI))));
-      png.data[i + 2] = Math.round(base * (0.4 + 0.6 * Math.abs(Math.sin((tint + 0.66) * Math.PI))));
+      png.data[i] = Math.round((x * 255) / (width - 1));
+      png.data[i + 1] = Math.round((y * 255) / (height - 1));
+      png.data[i + 2] = (Math.round(((x + y) * 255) / (width + height - 2)) + seed * 37) & 0xff;
       png.data[i + 3] = 255;
     }
   }

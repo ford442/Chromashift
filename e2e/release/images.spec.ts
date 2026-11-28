@@ -68,7 +68,7 @@ test.describe('corpus browser', () => {
     await expect(page.getByText(/No images match/)).toBeVisible();
     await page.getByTestId('corpus-search').fill('wiltshire');
 
-    await domClick(page.getByTestId('corpus-card').first());
+    await domClick(page.getByTestId('corpus-card').first().getByRole('button').first());
     await expect.poll(async () => (await readPosition(page)).index).toBeGreaterThan(1);
     await expectDrawing(page, renderer);
     await shoot(page, `corpus-browser-${renderer}`, renderer, 'Corpus browser filtered to "wiltshire"');
@@ -98,7 +98,7 @@ test.describe('local file and URL load', () => {
     await expect(page.getByTestId('corpus-count')).toContainText('(1 local)');
     await page.getByTestId('corpus-search').fill('release-local');
     await expect(page.getByTestId('corpus-card')).toHaveCount(1);
-    await domClick(page.getByTestId('corpus-card').first());
+    await domClick(page.getByTestId('corpus-card').first().getByRole('button').first());
     await expect.poll(async () => (await readPosition(page)).index).toBe(before.total + 1);
     await expectDrawing(page, renderer);
   });
@@ -114,7 +114,7 @@ test.describe('local file and URL load', () => {
     await domClick(page.getByTestId('corpus-browser-toggle'));
     await page.getByTestId('corpus-search').fill('Query Image');
     await expect(page.getByTestId('corpus-card')).toHaveCount(1);
-    await domClick(page.getByTestId('corpus-card').first());
+    await domClick(page.getByTestId('corpus-card').first().getByRole('button').first());
     await expect.poll(async () => (await readPosition(page)).index).toBe((await readPosition(page)).total);
     await expectDrawing(page, renderer);
   });
