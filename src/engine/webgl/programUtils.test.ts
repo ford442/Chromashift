@@ -73,8 +73,8 @@ describe('programUtils uniforms', () => {
 });
 
 describe('the WebGL passes', () => {
-  // Compiles every preset at every layer count: seconds under coverage and a loaded suite.
-  it('set only uniforms some WebGL shader declares', { timeout: 30_000 }, () => {
+  // Compiles every preset at every layer count: ~2 s alone, ~8 s on a core shared 4 ways.
+  it('set only uniforms some WebGL shader declares', { timeout: 120_000 }, () => {
     // Every GLSL source the backend can link: its own shaders and every pass
     // the pass graph emits for it, at every preset and layer count.
     const declared = new Set([

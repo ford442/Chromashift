@@ -14,8 +14,12 @@ import { rawSettingsSchema } from './settingsSchema';
  */
 
 const RUNS = 10_000;
-/** 10k documents of ~4 kB each take several seconds; well past vitest's 5 s default on a busy runner. */
-const PROPERTY_TIMEOUT_MS = 120_000;
+/**
+ * 10k documents of ~4 kB take ~15 s on an idle core and ~55 s when the core is
+ * shared 4 ways (measured, #268); vitest's default is 5 s. The budget is a ceiling
+ * for a starved runner, not a target: the run counts below are not reduced.
+ */
+const PROPERTY_TIMEOUT_MS = 300_000;
 
 const anyJson = fc.jsonValue({ maxDepth: 2 });
 
@@ -99,5 +103,5 @@ describe('deserializeSettings properties', () => {
       fc.property(fc.oneof(fc.json(), fc.string()), (text) => assertFixedPoint(text)),
       { numRuns: 2_000 },
     );
-  });
+  }, PROPERTY_TIMEOUT_MS);
 });

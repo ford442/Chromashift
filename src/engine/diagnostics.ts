@@ -27,6 +27,7 @@
  * `DIAGNOSTIC_KEYS` — the build fails until you do.
  */
 
+import type { BuildInfo } from '../buildInfo';
 import type { RenderCountsApi } from '../debug/renderCounts';
 import type { RenderDebugApi, RenderTransportKind } from './render/protocol';
 import type { CompareLayoutMode } from './compareViews';
@@ -201,6 +202,12 @@ export interface ChromashiftDiagnostics {
   passGraphSlotsExecuting: Record<string, GraphPresetName | null>;
 
   // ── Debug APIs ──────────────────────────────────────────────────────────────
+  /**
+   * Which commit this page was built from: `{ sha, dirty, builtAt }`, the same
+   * object as `version.json` beside `index.html` (#268). Published once at boot
+   * (`src/main.tsx`), so a deployed page's commit is `window.chromashiftBuild.sha`.
+   */
+  chromashiftBuild: Readonly<BuildInfo>;
   /** Render tallies, armed by `?debugRenders=1` (`src/debug/renderCounts.ts`). */
   __renderCounts: RenderCountsApi;
   /**
@@ -280,6 +287,7 @@ const DIAGNOSTIC_KEY_SET: Record<DiagnosticKey, true> = {
   passGraphDrawnVariant: true,
   passGraphExecutedPasses: true,
   passGraphSlotsExecuting: true,
+  chromashiftBuild: true,
   __renderCounts: true,
   __renderDebug: true,
 };

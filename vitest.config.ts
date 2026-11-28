@@ -26,6 +26,11 @@ export default defineConfig({
     ],
   },
   test: {
+    // vitest's 5 s default is a hang detector that a loaded CI runner or a
+    // coverage run trips on tests that are merely slow (#268). Anything known to
+    // be slow sets its own, larger, timeout; this is the floor for the rest.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     projects: [
       // Engine and state tests stay on plain Node: no DOM to lean on by accident.
       {

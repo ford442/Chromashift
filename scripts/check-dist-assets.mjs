@@ -116,7 +116,36 @@ for (const file of allFiles.filter((f) => /\.m?js$/.test(f))) {
   }
 }
 
+// The upscaler model host must be baked in: unset, the default upscaler can only
+// throw (#268). The expected value is the exported variable, else .env.production.
+async function expectedUpscalerBase() {
+  if (process.env.VITE_UPSCALER_BASE) return process.env.VITE_UPSCALER_BASE.replace(/\/$/, '');
+  const env = await readFile('.env.production', 'utf8').catch(() => '');
+  const match = /^VITE_UPSCALER_BASE=(\S+)$/m.exec(env);
+  return match?.[1]?.replace(/\/$/, '') ?? null;
+}
+const upscalerBase = await expectedUpscalerBase();
+if (!upscalerBase) fail('VITE_UPSCALER_BASE is neither exported nor set in .env.production');
+const jsFiles = allFiles.filter((f) => /\.m?js$/.test(f));
+const bundles = await Promise.all(jsFiles.map((f) => readFile(f, 'utf8')));
+if (!bundles.some((text) => text.includes(upscalerBase))) {
+  fail(`no chunk contains VITE_UPSCALER_BASE (${upscalerBase}) — the upscaler would throw at runtime`);
+}
+
+// Dev/E2E-only files that sit in public/ (vite.config.ts drops them from dist/),
+// and the files a deployment depends on: the build stamp and the Apache config.
+for (const name of ['e2e-fixture.png', 'wasm-benchmark.html', 'wasm-benchmark-core.mjs', 'icons.svg']) {
+  if (allFiles.includes(join(DIST, name))) fail(`${DIST}/${name} is dev-only and must not ship (vite.config.ts DEV_ONLY_PUBLIC_FILES)`);
+}
+for (const name of ['index.html', '.htaccess', 'version.json']) {
+  if (!allFiles.includes(join(DIST, name))) fail(`${DIST}/${name} is missing`);
+}
+const stamp = JSON.parse(await readFile(join(DIST, 'version.json'), 'utf8'));
+if (!(typeof stamp.sha === 'string' && typeof stamp.dirty === 'boolean' && !Number.isNaN(Date.parse(stamp.builtAt)))) {
+  fail(`${DIST}/version.json is not { sha, dirty, builtAt }: ${JSON.stringify(stamp)}`);
+}
+
 console.log(
   'check:dist — OK (no ort-wasm*.wasm in dist; main chunk clean; '
-  + 'analysis and motion workers are their own chunks; no headless code)',
+  + 'analysis and motion workers are their own chunks; no headless code; no dev-only files; version.json + .htaccess present)',
 );

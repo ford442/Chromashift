@@ -162,8 +162,8 @@ function layoutMismatches(pipeline: RecordedPipeline): string[] {
   return problems;
 }
 
-/** Parsing ~200 modules with a full WGSL parser takes seconds under a loaded suite. */
-const PARSE_TIMEOUT = { timeout: 60_000 };
+/** Parsing ~200 modules with a full WGSL parser: ~1 s alone, ~10 s on a core shared 4 ways (#268). */
+const PARSE_TIMEOUT = { timeout: 180_000 };
 
 const corpus = buildShaderCorpus();
 const allModules = new Map<string, string>(); // code → a unique name: the first context that built it
