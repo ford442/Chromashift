@@ -187,7 +187,7 @@ export function createNodeProgram(ctx: NodeProgramContext, emitted: EmittedPass)
     pipeline,
     computePipelines: [],
     bindGroupLayout,
-    ringWrite: emitted.kind === 'history' ? createRingWriteProgram(ctx) : null,
+    ringWrite: emitted.kind === 'history' && !emitted.historyLoop ? createRingWriteProgram(ctx) : null,
   };
 }
 

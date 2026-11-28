@@ -24,6 +24,7 @@ import {
 import {
   emitBlurWgsl,
   emitDisplaceWgsl,
+  emitHistoryLoopWgsl,
   emitHistoryTapsWgsl,
   emitHistoryWriteWgsl,
   emitWarpWgsl,
@@ -430,6 +431,7 @@ describe('emitted sampling passes stay in uniform control flow', () => {
     ['blur', emitBlurWgsl(3)],
     ['history write', emitHistoryWriteWgsl()],
     ['history taps', emitHistoryTapsWgsl(8)],
+    ['history loop write', emitHistoryLoopWgsl()],
     ['displace (motion)', emitDisplaceWgsl('motion')],
     ['displace (color)', emitDisplaceWgsl('color')],
   ];

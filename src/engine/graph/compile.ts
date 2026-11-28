@@ -1,5 +1,5 @@
 import { allocateTextures } from './allocate';
-import { backendSupports } from './capabilities';
+import { backendNodeRefusal, backendSupports } from './capabilities';
 import { PassGraphError, unsupportedNodeError } from './errors';
 import { structuralHash } from './hash';
 import { buildLayerSpecs } from './layerSpecs';
@@ -19,6 +19,7 @@ import {
   BLUR_UNIFORMS,
   DISPLACE_UNIFORMS,
   SHIPPED_TRACER_COUNT,
+  HISTORY_LOOP_UNIFORMS,
   HISTORY_UNIFORMS,
   LUT_UNIFORMS,
   WARP_UNIFORMS,
@@ -29,6 +30,7 @@ import {
   emitColorHelpersWgsl,
   emitCompositorWgsl,
   emitDisplaceWgsl,
+  emitHistoryLoopWgsl,
   emitHistoryTapsWgsl,
   emitLutWgsl,
   emitWarpWgsl,
@@ -48,7 +50,7 @@ import {
   emitTrailDecayWgsl,
 } from './templates/particles';
 import type { UniformLayout } from './templates/uniformLayout';
-import { nodeKindSpec } from './nodeKinds';
+import { isHistoryLoop, nodeKindSpec } from './nodeKinds';
 import type { CanvasPresentation } from '../gpu/gpuOptions';
 import { WGSL_BLEND_HELPERS } from '../shaders/common';
 import type {
@@ -294,6 +296,18 @@ function emitPass(
     }
 
     case 'history': {
+      if (isHistoryLoop(node)) {
+        // The loop's only pass: the mixing write into the ring head. Its
+        // readers bind the previous slot themselves (WebGPU only: the WebGL
+        // backend refuses a loop by name before this runs).
+        return {
+          ...base,
+          fragment: emitHistoryLoopWgsl(),
+          textureBindings: ['live', 'fed'],
+          uniformLayout: block(HISTORY_LOOP_UNIFORMS),
+          historyLoop: true,
+        };
+      }
       // The taps half. The write half is a fixed blit the executor owns
       // (`emitHistoryWriteWgsl`; the WebGL executor's blit program), so it is
       // not a second emitted pass.
@@ -403,6 +417,8 @@ function validateForBackend(graph: PassGraph, backend: GraphBackend): Validation
     if (!backendSupports(backend, node.kind)) {
       throw unsupportedNodeError(backend, node.kind, node.id);
     }
+    const refusal = backendNodeRefusal(backend, node);
+    if (refusal) throw refusal;
   }
   return validation;
 }

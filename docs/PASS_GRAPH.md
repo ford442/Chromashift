@@ -10,9 +10,9 @@ pipeline they hard-code.
 > `e2e/__golden__/`, and the default graph still draws them (see
 > [Pixel parity](#pixel-parity-on-a-device)). `?graph=blur` and `?graph=warp`
 > are different *shapes* that draw without a renderer edit, and the starter
-> graphs `?graph=smear` / `?graph=feedback` / `?graph=trails3` add what the
-> hand encoder had no equivalent for (`history`, `displace`, a third tracer
-> timescale). The WebGL diagnostic / XR backend executes the same graphs:
+> graphs `?graph=smear` / `?graph=feedback` / `?graph=recurse` /
+> `?graph=trails3` add what the hand encoder had no equivalent for (`history`,
+> `displace`, a closed feedback loop, a third tracer timescale). The WebGL diagnostic / XR backend executes the same graphs:
 > `WebGLGraphExecutor` walks the same encode plan over an FBO pool, every
 > shape draws on it, and its default-graph frame is the hand-written WebGL
 > passes' frame, pinned in `e2e/__golden__/webgl-default-composite.png` (see
@@ -89,7 +89,7 @@ size), and for a buffer producer the buffer it writes.
 | `blend` | layers + ≥ 2 tracers | output | `layerInputs`, `tracerInputs`, `overlayInputs` | opacities, modes; an extra tracer's `intensity` | ✓ (no `overlayInputs`) |
 | `warp` | 1 | layer | `mode` (`affine` \| `feedback`) | `angleDeg`, `scale`, `displace` | ✓ |
 | `blur` | 1 | layer | `radius` | `axis` | ✓ |
-| `history` | 1 | layer, or tracer | `frames` (2–8), `resolution` | `mode` (`trail` \| `tap`), `delay`, `falloff` | ✓ |
+| `history` | 1; 2 with `loop`: `[live, fed]` | layer, or tracer | `frames` (2–8), `resolution`, `loop` | `mode` (`trail` \| `tap`), `delay`, `falloff`; with `loop`, `delay` (1…`frames − 1`) and `gain` | ✓ (no `loop`) |
 | `displace` | 2: `[source, field]` | layer | `field` (`motion` \| `color`) | `gain`, `mode` (`inverse` \| `forward`) | ✓ |
 | `emit` *(compute)* | 1: a `coincidence` (fused) or any mask texture | layer | `capacity` (64–262 144) | `cells`, `spawnRate`, `lifetimeSec`, `boost`, `speed` | ✗ |
 | `advect` *(compute)* | 2: `[particles, field]` | layer | — | `flowGain`, `curl`, `noiseScale`, `inertia` | ✗ |
@@ -124,7 +124,10 @@ guarantee in `bandTable.test.ts` is untouched.
    and fixed-point detection. Cycles are legal, but only when the edge closing
    them reads a **ping-pong** node's output: the read/write texture pair is what
    makes that read return the previous frame rather than a half-written target.
-   A cycle without one is an `illegal-cycle` error naming the node.
+   The one other producer a cycle may close on is a `history` with `loop: true`,
+   whose every read is a ring slot a previous frame wrote (see
+   [Closing the loop](#closing-the-loop-history-with-loop)).
+   A cycle without either is an `illegal-cycle` error naming the node.
 2. **Schedule** (`schedule.ts`) — topological sort into pass order plus texture
    (and buffer) lifetimes, compute and render nodes in one pass. Feedback
    edges are dropped from the ordering (they impose no intra-frame dependency)
@@ -443,7 +446,8 @@ the executor is not a second hand-written encoder:
 | `blur` | each band layer through a separable gaussian (H then V) **before** coincidence; the compositor keeps the sharp layers |
 | `warp` | an affine `warp` on layer 0 before coincidence |
 | `smear` | **body smear** starter: source → `history(4)` → `displace` by the motion field → the three band layers (see below) |
-| `feedback` | **self-feedback warp** starter: layer 0 through `warp` in `feedback` mode before coincidence |
+| `feedback` | **self-feedback warp** starter: layer 0 through `warp` in `feedback` mode before coincidence — a *same-frame* colour displace, open-loop |
+| `recurse` | **recursive feedback** starter: a `warp` reading a `loop` history's previous slot, mixed back into it — the closed loop (WebGPU only) |
 | `trails3` | a **third tracer timescale**: a third `decay` over the same stamp, a slow faint echo the compositor blends under the shipped pair (see [Tracer timescales](#tracer-timescales)) |
 | `particles` | the **particle chain**: `emit` → `advect` → `splat` → a trail `decay`, screened over the frame (WebGPU only; see [The particle chain](#the-particle-chain)) |
 | `0` | retired: was the hand encoder; now the default graph |
@@ -468,9 +472,14 @@ The graphs the installation work builds on, selected with `?graph=`:
    colour, the flow steers it, and the trail turns a rotated still into a moving painting.
 4. **Self-feedback warp** (`?graph=feedback`): `starters/feedback-warp.json`. This is the
    `warp` node's `feedback` mode, drawn. Note what "feedback" means here: the warp
-   displaces by its *input's* `.rg - 0.5`, not by a previous frame. True
-   previous-frame feedback would need a `history` that can close a cycle. It is a
-   follow-up, not part of this graph.
+   displaces by its *input's* `.rg - 0.5`, not by a previous frame: a same-frame
+   colour displace of layer 0. Nothing re-enters itself. For that, see `recurse`.
+5. **Recursive feedback** (`?graph=recurse`): `starters/recurse.json`. The closed loop:
+   layer 0 enters a two-frame `history` with `loop: true`, a `warp` (2°, ×1.03) reads
+   that ring's *previous* slot, and the history writes `max(layer 0, warp × gain)` back.
+   The warp replaces layer 0 in coincidence and the compositor, so the tracers trail the
+   tunnel. Frame 0 reads an empty ring, and the loop catches as it fills. WebGPU only:
+   WebGL refuses the loop by name and draws the default graph.
 
 The JSON starters are authored for the canonical three bands. Asking for one at another
 layer count is a `PassGraphError` rather than a guess. `parsePassGraphJson` checks only
@@ -515,8 +524,42 @@ The ring follows the tracers:
 - "Reset trails" clears it along with the accumulators.
 - Switching graphs releases it with the rest of the pool.
 
-`history` is not ping-pong. Its output is read *after* this frame's write, so it is not
-a previous-frame value a cycle can close on.
+`history` is not ping-pong. A trail's output is read *after* this frame's write, so it
+is not a previous-frame value a cycle can close on. A `loop` history is, and is drawn
+differently (below).
+
+### Closing the loop: `history` with `loop`
+
+`params.loop: true` is structural. A trail and a loop are different graphs, with
+different hashes. A loop history takes two inputs, `[live, fed]`: the picture entering
+the loop this frame, and the one coming back round it.
+
+- **IR.** Every edge out of a loop history is a **previous-slot edge**. The consumer
+  binds the ring slot written `delay` frames ago (1 by default, held to
+  1…`frames − 1`), never the head this frame's write fills. `validate.ts` records each
+  one in `feedbackEdges` wherever the walk meets it, so `warp → history(loop) → warp`
+  is one feedback edge (`warp ← history`) from either direction. The loop history may
+  read itself, which is its own previous slot. A back edge into `warp`, `blur`,
+  `band-layer`, `displace`, `blend`, or a `history` without `loop`, is still
+  `illegal-cycle`, and a trail reading itself is still `self-reference`.
+- **Schedule.** Nothing reads a loop history forward, so the scheduler walks it as a
+  root of its own once the output's walk is done. Post-order puts its write after every
+  input, and so after every reader of the slot it does not touch. The `output` node
+  stays last.
+- **Allocate.** A loop has no taps pass, so it has no pooled output
+  (`assignment[id] = ring:<id>`). Its VRAM is the ring and nothing else:
+  `frames × layer-size` textures, `frames` ≤ `HISTORY_MAX_FRAMES` (8).
+- **Execute** (`WebGpuGraphExecutor.encodeHistoryLoop`). One pass per frame: the
+  mixing write `max(live, fed × gain)` into `ring[head]`. Its readers bind the
+  previous slot through `textureFor`, so the ring keeps one bind group per slot. The
+  first frames read slots nothing has written yet. These are zeroed textures, so the
+  loop starts empty and catches as it fills, the way a decay warms up. No frame is
+  special-cased into a copy of the live layer. Pause freezes it, and "Reset trails"
+  clears it, as with a trail.
+- **WebGL.** `capabilities.ts` (`backendNodeRefusal`) refuses a loop history by name.
+  The WebGL executor runs trails but has no previous-slot binding. The session keeps
+  the default graph, and the hand-written persistence pass does not approximate the
+  loop.
 
 Bands cut from a `history` (or `displace`) output sample a layer-scale texture in the
 internal format, not the source itself. With `rg11b10ufloat` that texture has no
@@ -1013,9 +1056,10 @@ The CLI, the rasterizer choice and the encoder decision are in
 
 ### Not done yet
 
-- **`history` feedback cycles.** A ring whose oldest slot could close a cycle
-  would make true previous-frame feedback (a warp steered by its own last
-  output) expressible.
+- **`history` loops on WebGL.** A loop history draws on WebGPU only (see
+  [Closing the loop](#closing-the-loop-history-with-loop)). The WebGL executor needs
+  the previous-slot binding and the mixing write before `capabilities.ts` can let it
+  through.
 - **The coincidence kernel in the chores facade**, once no sibling app uses it
   (see [The compute-fed stamp](#the-compute-fed-stamp-decided)).
 - **The node editor.** `@xyflow/react` in a Graph panel (#177). The IR is useful
@@ -1042,10 +1086,10 @@ src/engine/graph/
 ├── compile.ts        # validate → schedule → allocate → emit → cache
 ├── defaultGraph.ts   # today's pipeline as a graph, for any layer count
 ├── layerSpecs.ts     # the band table the band-layer templates read
-├── gate.ts           # ?graph=blur|warp|smear|feedback|trails3|particles + window.passGraph* breadcrumbs
+├── gate.ts           # ?graph=blur|warp|smear|feedback|recurse|trails3|particles + window.passGraph* breadcrumbs
 ├── variants.ts       # GraphVariant, PassGraphSource, withMotionTerm (the temporal term)
 ├── altGraphs.ts      # the named graph shapes the gate can select (particles included), JSON starter parsing
-├── starters/         # body-smear.json, feedback-warp.json
+├── starters/         # body-smear.json, feedback-warp.json, recurse.json
 ├── shaderText.ts     # shader normalisation used by the parity test
 ├── exec/
 │   ├── plan.ts                  # CompiledGraph → encodable steps (no WebGPU)

@@ -286,7 +286,7 @@ describe('encode plan — body smear', () => {
       'layer0', 'layer1', 'layer2', 'tracer-below', 'tracer-above', 'composite',
     ]);
     expect(plan.steps[0]).toEqual({
-      kind: 'history', nodeId: 'smear-history', input: 'source', frames: 4,
+      kind: 'history', nodeId: 'smear-history', input: 'source', frames: 4, fed: null,
     });
     expect(plan.steps[1]).toEqual({
       kind: 'displace', nodeId: 'smear-displace', inputs: ['smear-history', 'motion'],

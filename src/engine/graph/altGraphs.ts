@@ -4,6 +4,7 @@ import { CANONICAL_LAYER_COUNT } from './layerSpecs';
 import { isKnownNodeKind, PARTICLE_CAPACITY_DEFAULT } from './nodeKinds';
 import bodySmearStarter from './starters/body-smear.json';
 import feedbackWarpStarter from './starters/feedback-warp.json';
+import recurseStarter from './starters/recurse.json';
 import type { GraphNode, ParamValue, PassGraph } from './types';
 
 /**
@@ -14,7 +15,7 @@ import type { GraphNode, ParamValue, PassGraph } from './types';
  * different pool — and every one of them draws without a line changing in the
  * renderer or the executor.
  */
-export const GRAPH_PRESETS = ['default', 'blur', 'warp', 'smear', 'feedback', 'trails3', 'particles'] as const;
+export const GRAPH_PRESETS = ['default', 'blur', 'warp', 'smear', 'feedback', 'recurse', 'trails3', 'particles'] as const;
 export type GraphPresetName = (typeof GRAPH_PRESETS)[number];
 
 export function isGraphPresetName(value: string): value is GraphPresetName {
@@ -244,7 +245,10 @@ export function buildParticlesGraph(
  */
 const STARTER_GRAPHS = {
   smear: bodySmearStarter,
+  // Same-frame colour displace of layer 0: open-loop, nothing re-enters.
   feedback: feedbackWarpStarter,
+  // The closed loop: a `warp` reading a `loop` history's previous slot.
+  recurse: recurseStarter,
 } as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -321,6 +325,7 @@ export function buildGraphPreset(
       return buildWarpGraph(layerCount);
     case 'smear':
     case 'feedback':
+    case 'recurse':
       return buildStarterGraph(name, layerCount);
     case 'trails3':
       return buildTrails3Graph(layerCount);

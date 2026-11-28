@@ -86,6 +86,7 @@ describe('named graph shapes', () => {
     ['?graph=warp', 'warp'],
     ['?graph=smear', 'smear'],
     ['?graph=feedback', 'feedback'],
+    ['?graph=recurse', 'recurse'],
     ['?graph=trails3', 'trails3'],
     // An unrecognised name is the default graph, not a refusal: the gate's job
     // is to pick a shape, and "on with something unknown" means "on".
@@ -117,6 +118,26 @@ describe('named graph shapes', () => {
     expect(win.passGraphError).toBeNull();
     expect(win.passGraphName).toBe(name);
     expect(win.passGraphPasses).toContain(nodeId);
+  });
+
+  it('compiles ?graph=recurse on WebGPU and reports its two-frame loop ring', () => {
+    const win = installBrowserGlobals('?graph=recurse');
+    const compiled = activatePassGraph('webgpu');
+    expect(win.passGraphError).toBeNull();
+    expect(win.passGraphName).toBe('recurse');
+    expect(win.passGraphPasses).toEqual(expect.arrayContaining(['recurse-warp', 'recurse-loop']));
+    expect(win.passGraphRingFrames).toEqual({ source: 0, layer: 2, tracer: 0, output: 0 });
+    expect(compiled!.allocation.rings).toHaveLength(1);
+  });
+
+  it('refuses ?graph=recurse on WebGL by name, still naming the selection', () => {
+    const win = installBrowserGlobals('?graph=recurse');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(activatePassGraph('webgl')).toBeNull();
+    expect(win.passGraphName).toBe('recurse');
+    expect(win.passGraphError).toMatch(/^unsupported-node: The webgl backend cannot close a feedback loop: node 'recurse-loop'/);
+    expect(win.passGraphPasses).toEqual([]);
+    warn.mockRestore();
   });
 
   it('publishes the smear ring on WebGL too', () => {

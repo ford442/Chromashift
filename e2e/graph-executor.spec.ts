@@ -320,6 +320,18 @@ test.describe('pass-graph executor', () => {
         rings: 4,
         differs: false,
       },
+      // The closed loop: a warp of the ring's previous slot, mixed back into
+      // the ring. Frame 0 is the empty ring; by the time the reader sees the
+      // canvas the loop has caught. It turns every frame, so the frame never
+      // holds byte-still — one settled frame is read, as for trails3.
+      {
+        name: 'recurse',
+        marker: 'recurse-loop',
+        scheduled: ['recurse-warp', 'recurse-loop'],
+        rings: 2,
+        differs: true,
+        settles: false,
+      },
       // The particle chain: compute passes in the frame's encoder. Particles
       // keep spawning and drifting along the curl noise, so the frame never
       // holds still; one settled frame is read, as for trails3.

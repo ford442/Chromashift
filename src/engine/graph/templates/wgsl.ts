@@ -1255,6 +1255,40 @@ fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
 `;
 }
 
+export const HISTORY_LOOP_UNIFORMS = defineUniformLayout('HistoryLoopUniforms', [
+  { name: 'gain', kind: 'f32', doc: 'How much of the picture coming back round the loop survives a trip.' },
+  { name: '_pad0', kind: 'f32' },
+  { name: '_pad1', kind: 'f32' },
+  { name: '_pad2', kind: 'f32' },
+], { column: 6 });
+
+/**
+ * `history` in `loop` mode → the write half, mixing instead of copying.
+ *
+ * `live` is the picture entering the loop this frame; `fed` is what came back
+ * round it — the previous ring slot, after whatever the graph did to it (a
+ * `warp`, say). The brighter of the two lands in the ring slot at the head, the
+ * fed side scaled by `gain` so the loop fades instead of saturating. A loop has
+ * no taps pass: every reader binds a previous slot directly.
+ */
+export function emitHistoryLoopWgsl(): string {
+  return /* wgsl */ `
+@group(0) @binding(0) var texSampler : sampler;
+@group(0) @binding(1) var live       : texture_2d<f32>;
+@group(0) @binding(2) var fed        : texture_2d<f32>;
+
+${emitUniformStructWgsl(HISTORY_LOOP_UNIFORMS)}
+@group(0) @binding(3) var<uniform> lu : HistoryLoopUniforms;
+
+@fragment
+fn main(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let now = textureSample(live, texSampler, uv);
+  let back = textureSample(fed, texSampler, uv) * lu.gain;
+  return max(now, back);
+}
+`;
+}
+
 /** The most ring slots a `history` node can have — `validate.ts` holds `frames` to 2–8. */
 export const HISTORY_MAX_FRAMES = 8;
 

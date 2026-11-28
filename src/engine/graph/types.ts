@@ -272,6 +272,11 @@ export interface EmittedPass {
    * also picks its target format. Absent for every pass that writes the pool.
    */
   presentation?: CanvasPresentation;
+  /**
+   * `history` in `loop` mode: `fragment` is the mixing write into the ring
+   * head, and there is no taps pass or ring-write blit. Absent otherwise.
+   */
+  historyLoop?: true;
 }
 
 /**

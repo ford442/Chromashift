@@ -30,7 +30,8 @@ const RESOLUTION_CLASSES: ResolutionClass[] = ['source', 'layer', 'tracer', 'out
  *
  * A `history` node is both: its tap-mix *output* is an ordinary transient that
  * goes through the pool, while its ring of `frames` textures outlives the frame
- * and is listed separately in `rings`, never pooled.
+ * and is listed separately in `rings`, never pooled. A `loop` history has only
+ * the ring: its readers bind the previous slot and its write fills the head.
  */
 export function allocateTextures(schedule: Schedule): AllocationPlan {
   const lifetimeOf = new Map<string, TextureLifetime>();
@@ -104,6 +105,12 @@ export function allocateTextures(schedule: Schedule): AllocationPlan {
         // Every scheduled history node has one: validation refuses it without `frames`.
         frames: schedule.historyFrames[pass.nodeId]!,
       });
+      // A loop's reads all bind a ring slot, and its write lands in one: no
+      // taps pass, so no pooled output. The ring is its whole VRAM.
+      if (schedule.loopHistories.includes(pass.nodeId)) {
+        assignment[pass.nodeId] = `ring:${pass.nodeId}`;
+        continue;
+      }
     }
 
     if (writesSwapchain(pass.nodeId)) {

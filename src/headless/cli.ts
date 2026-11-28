@@ -35,7 +35,7 @@ Usage:
 
 Options:
   -i, --image <path>   Source image, or a folder of images (rendered in name order)
-  -g, --graph <name>   Graph shape: default, blur, warp, smear, feedback, trails3, particles
+  -g, --graph <name>   Graph shape: default, blur, warp, smear, feedback, recurse, trails3, particles
   -n, --frames <n>     render: frames per image (default 90)
                        still: frames rendered, the last one written (default 30)
       --fps <n>        Frames per second (default: the settings' export fps)

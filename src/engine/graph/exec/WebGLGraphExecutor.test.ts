@@ -147,12 +147,19 @@ describe('WebGLGraphExecutor', () => {
     expect(executor.encodedPasses()).toContain(TRAILS3_ECHO_ID);
   });
 
-  // Every preset but the compute chain, which the WebGL backend refuses by name.
-  const WEBGL_PRESETS = GRAPH_PRESETS.filter((name) => name !== 'particles');
+  // Every preset but the compute chain and the closed loop, which the WebGL
+  // backend refuses by name.
+  const WEBGL_PRESETS = GRAPH_PRESETS.filter((name) => name !== 'particles' && name !== 'recurse');
 
   it('refuses ?graph=particles at compile time, naming the compute node', () => {
     expect(() => compileGraph(buildGraphPreset('particles'), 'webgl'))
       .toThrow(/no compute stage: node kind 'emit' \(node 'particles-emit'\)/);
+  });
+
+  it('refuses ?graph=recurse at compile time, naming the loop history', () => {
+    expect(() => compileGraph(buildGraphPreset('recurse'), 'webgl')).toThrow(
+      expect.objectContaining({ code: 'unsupported-node', nodeId: 'recurse-loop' }),
+    );
   });
 
   it.each(WEBGL_PRESETS)('draws ?graph=%s with every pass its plan encodes', (name) => {

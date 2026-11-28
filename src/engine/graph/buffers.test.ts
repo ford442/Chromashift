@@ -241,6 +241,7 @@ describe('allocating buffers', () => {
         { nodeId: 'd', def: 3, lastUse: 3 },
       ],
       historyFrames: {},
+      loopHistories: [],
       buffers: { a: shape, b: shape, c: shape, d: { ...shape, stride: 8 } },
     };
     const assignment: Record<string, string> = {};
