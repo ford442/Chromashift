@@ -36,7 +36,7 @@ A WebGPU-based visual engine that performs real-time RGB colour separation and i
 
 - A browser with WebGPU support: **Chrome 113+**, **Edge 113+**, or Chrome Canary.
 - For diagnostic / XR / screenshot sessions: any browser with WebGL2 (`?renderer=webgl`).
-- Node.js **18+** (`engines.node` in `package.json`; CI uses Node 22)
+- Node.js **^20.19 or >=22.12** (`engines.node`; Vite 7's floor). `.nvmrc` pins 22, which CI uses (`nvm use`)
 
 ### Recommended GPU / browser setup
 
@@ -73,43 +73,78 @@ npm run build
 npm run preview
 ```
 
+## Build-time variables
+
+`npm run build` reads `.env.production` (committed; nothing in it is secret). An exported
+`VITE_*` variable or a gitignored `.env.local` overrides it. Every `VITE_*` variable the
+code reads is listed here; adding one means adding it here and to `.env.production`.
+
+| Variable | Shipped value | Used by | If unset |
+|---|---|---|---|
+| `VITE_UPSCALER_BASE` | `https://js.1ink.us` | TF.js Real-ESRGAN / Real-CUGAN model trees (`realesrgan/`, `realcugan/`), fetched by `upscaler.worker.ts` | Those upscalers throw `VITE_UPSCALER_BASE is not set` (the default model, `realesrgan:general_plus`, is one of them) |
+| `VITE_NUNIF_BASE` | `https://test.1ink.us/nunif` | waifu2x swin_unet ONNX models (`models/swin_unet/`, `models/utils/`) | Same URL, from `NUNIF_DEFAULT_BASE` in `Upscaler.ts` |
+| `VITE_NUNIF_ORT_WASM_BASE` | `https://test.1ink.us/nunif/ort` | onnxruntime-web runtime (`ort-wasm-simd-threaded.{mjs,wasm}`), kept out of `dist/` | Same URL, from `ORT_WASM_DEFAULT_BASE` in `nunif.worker.ts` |
+
+The page is cross-origin isolated (COEP `require-corp`), so each host must answer with
+`Access-Control-Allow-Origin` and `Cross-Origin-Resource-Policy: cross-origin`; the three
+above do. `npm run build` fails (`check:dist`) if the upscaler base did not reach the bundle.
+
+Every build is stamped: `dist/version.json` is `{ "sha", "dirty", "builtAt" }`, and the page
+publishes the same object as `window.chromashiftBuild`. `BUILD_SHA` / `BUILD_DIRTY` override
+git for builds made without a checkout; a build with neither is `sha: "unknown"`, `dirty: true`.
+
+`npm run preview` sends the production host's isolation headers (COOP `same-origin`, COEP
+`require-corp`, CORP `cross-origin`), so the production build is tested the way it is served.
+`public/.htaccess` ships in `dist/` and carries the same headers, `DirectoryIndex index.html`,
+`Options -Indexes` and the `.wasm`/`.js` MIME types for the Apache host.
+
+`public/` also holds `e2e-fixture.png`, `wasm-benchmark.html` and `wasm-benchmark-core.mjs`.
+They are served by `npm run dev` (E2E specs, `bench:wasm`) and deliberately left out of
+`dist/`; `check:dist` fails if one ships.
+
 ## Deploy
 
-Production deploys upload `dist/` to the test server via SFTP (`deploy.py`).
+`dist/` is uploaded to the test server via SFTP (`deploy.py`) to one of two targets:
+
+| Target | Remote directory | URL |
+|---|---|---|
+| `staging` (default) | `test.1ink.us/chromashift-staging` | https://test.1ink.us/chromashift-staging/ |
+| `production` | `test.1ink.us/chromashift` | https://test.1ink.us/chromashift/ |
 
 ```bash
 npm run build
 pip install -r requirements-deploy.txt
 
-# SSH key (preferred) — agent or explicit key path
+# Credentials come only from the environment; none are stored in this repo.
 export DEPLOY_USER=your-sftp-user
-export DEPLOY_KEY=~/.ssh/id_ed25519
-python deploy.py
-
-# Password fallback
-export DEPLOY_PASS=your-password
-python deploy.py
+export DEPLOY_KEY=~/.ssh/id_ed25519      # or an ssh-agent, or DEPLOY_PASS as a fallback
+python deploy.py                         # staging
+python deploy.py --target production
 ```
 
 Flags:
 
 | Flag | Effect |
 |------|--------|
+| `--target staging\|production` | Which site to upload to (default `staging`) |
 | `--dry-run` | Connect and list remote deletions + local uploads; no server changes |
 | `--no-clean` | Upload without wiping the remote target directory first |
 
-By default the script **deletes existing remote files** in the target path before upload.
-Use `--dry-run` to preview changes, or `--no-clean` for incremental uploads.
+By default the script **deletes existing remote files** in the target path before upload
+(downtime and no previous copy until #272 makes it atomic). Use `--dry-run` to preview.
 
 Optional env overrides: `DEPLOY_HOST` (default `1ink.us`), `DEPLOY_PORT` (default `22`),
-`DEPLOY_REMOTE_DIR` (default `test.1ink.us/chromashift`).
+`DEPLOY_REMOTE_DIR` (replaces the target's directory).
 
-**GitHub Actions:** run the [Deploy workflow](.github/workflows/deploy.yml) manually
-(`workflow_dispatch`). Repository secrets: `DEPLOY_USER`, `DEPLOY_KEY` (private key PEM).
-Never commit credentials or log key/password values.
+**GitHub Actions:** run the [Deploy workflow](.github/workflows/deploy.yml) from the Actions
+tab (`workflow_dispatch`) and pick the `target`. It builds the chosen commit, refuses to
+upload unless `dist/version.json` is that commit with `dirty: false`, deploys, then checks
+the live root URL serves the app, `version.json` matches, and `.wasm` is `application/wasm`.
+It needs two repository secrets (Settings > Secrets and variables > Actions), which only a
+repository owner can add: `DEPLOY_USER` (SFTP username) and `DEPLOY_KEY` (private key, PEM or
+OpenSSH). Never commit credentials or log key/password values.
 
-`npm run build` runs `check:dist`, which fails if `ort-wasm*.wasm` is emitted into
-`dist/` (ORT runtime loads from `VITE_NUNIF_ORT_WASM_BASE` at upscale time instead).
+`npm run build` runs `check:dist`, which fails if `ort-wasm*.wasm` is emitted into `dist/`.
 The deploy script prints total upload size before transferring.
 
 ## Testing

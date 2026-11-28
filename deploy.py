@@ -2,19 +2,26 @@
 """
 Chromashift deploy script.
 
-Uploads ./dist to the production test server using Paramiko + SFTP.
+Uploads ./dist to the test server using Paramiko + SFTP.
 
 Usage:
     npm run build
     pip install -r requirements-deploy.txt
-    python deploy.py                  # clean remote + upload (default)
-    python deploy.py --dry-run        # list changes without mutating remote
-    python deploy.py --no-clean       # upload without deleting remote files first
+    python deploy.py                       # staging (default): clean remote + upload
+    python deploy.py --target production   # the live path (release stage 5, #272)
+    python deploy.py --dry-run             # list changes without mutating remote
+    python deploy.py --no-clean            # upload without deleting remote files first
 
-Authentication (in order of preference):
+Targets (DEPLOY_REMOTE_DIR overrides either one):
+    staging     test.1ink.us/chromashift-staging   https://test.1ink.us/chromashift-staging/
+    production  test.1ink.us/chromashift           https://test.1ink.us/chromashift/
+
+Authentication comes only from the environment (or CI secrets); no credential,
+placeholder or otherwise, is stored in this file. DEPLOY_USER is required, then
+any of, in order of preference:
     1. SSH private key — DEPLOY_KEY env var (path to key file)
     2. SSH agent — SSH_AUTH_SOCK (e.g. ssh-add loaded keys)
-    3. Password — DEPLOY_PASS env var (fallback)
+    3. Password — DEPLOY_PASS / DEPLOY_TOKEN env var (fallback)
 
 Requirements:
     pip install -r requirements-deploy.txt
@@ -52,7 +59,14 @@ def env_or_default(name: str, default: str) -> str:
 
 HOST = env_or_default("DEPLOY_HOST", "1ink.us")
 PORT = int(env_or_default("DEPLOY_PORT", "22"))
-REMOTE_DIR = env_or_default("DEPLOY_REMOTE_DIR", "test.1ink.us/chromashift")
+
+# Remote directories by target. Staging is the default so a bare `python deploy.py`
+# can never replace the live site.
+TARGETS = {
+    "staging": "test.1ink.us/chromashift-staging",
+    "production": "test.1ink.us/chromashift",
+}
+DEFAULT_TARGET = "staging"
 
 # Default: delete existing remote files before upload (disable with --no-clean).
 CLEAN_BEFORE_UPLOAD = True
@@ -100,14 +114,14 @@ def resolve_credentials() -> tuple[str, list[paramiko.PKey], str | None]:
     Returns (username, private_keys, optional_password).
     Refuses placeholder values; password is optional when keys are available.
     """
-    username = os.environ.get("DEPLOY_USER", "CHANGEME")
+    username = (os.environ.get("DEPLOY_USER") or "").strip()
     password = os.environ.get("DEPLOY_TOKEN") or os.environ.get("DEPLOY_PASS")
-    key_path = os.environ.get("DEPLOY_KEY")
+    key_path = os.path.expanduser(os.environ.get("DEPLOY_KEY") or "") or None
 
     if username in ("", "CHANGEME"):
         raise DeployError(
-            "DEPLOY_USER is not set (or is still CHANGEME). "
-            "Export a real SFTP username before deploying."
+            "DEPLOY_USER is not set. Export the SFTP username "
+            "(in CI: the DEPLOY_USER repository secret) before deploying."
         )
 
     keys: list[paramiko.PKey] = []
@@ -321,6 +335,13 @@ def upload_recursive(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Deploy Chromashift dist/ via SFTP.")
     parser.add_argument(
+        "--target",
+        choices=sorted(TARGETS),
+        default=DEFAULT_TARGET,
+        help=f"Which site to upload to (default: {DEFAULT_TARGET}). "
+        "DEPLOY_REMOTE_DIR overrides the directory.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="List remote deletions and local uploads without mutating the server.",
@@ -333,8 +354,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_remote_dir(target: str) -> str:
+    return env_or_default("DEPLOY_REMOTE_DIR", TARGETS[target]).strip("/")
+
+
 def main() -> None:
     args = parse_args()
+    remote_dir = resolve_remote_dir(args.target)
     clean_before_upload = CLEAN_BEFORE_UPLOAD and not args.no_clean
 
     try:
@@ -373,7 +399,7 @@ def main() -> None:
         auth_methods.append("password")
 
     mode = "DRY RUN" if args.dry_run else "DEPLOY"
-    print(f"{mode}: {LOCAL_DIR}/  ->  {username}@{HOST}:{REMOTE_DIR}")
+    print(f"{mode}: {LOCAL_DIR}/  ->  {username}@{HOST}:{remote_dir}  (target: {args.target})")
     print(f"Host: {HOST}:{PORT}")
     print(f"Auth: {', '.join(auth_methods)}")
     print(f"Upload: {len(local_files)} files ({format_bytes(total_bytes)})")
@@ -397,18 +423,18 @@ def main() -> None:
     try:
         if clean_before_upload:
             print("Cleaning remote target...")
-            mkdir_p(sftp, REMOTE_DIR, dry_run=args.dry_run)
+            mkdir_p(sftp, remote_dir, dry_run=args.dry_run)
             if args.dry_run:
-                for path in list_remote_files(sftp, REMOTE_DIR):
+                for path in list_remote_files(sftp, remote_dir):
                     if path.endswith("/"):
                         print(f"  - would remove dir:  {path.rstrip('/')}")
                     else:
                         print(f"  - would remove file: {path}")
             else:
-                clean_dir(sftp, REMOTE_DIR, dry_run=False)
+                clean_dir(sftp, remote_dir, dry_run=False)
 
         print("Uploading files...")
-        upload_recursive(sftp, local, REMOTE_DIR, dry_run=args.dry_run)
+        upload_recursive(sftp, local, remote_dir, dry_run=args.dry_run)
 
         if args.dry_run:
             print("Dry run complete — no remote changes were made.")

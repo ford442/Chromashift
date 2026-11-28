@@ -381,7 +381,9 @@ describe('RenderService', () => {
       expect(renderer.exportFrame).toHaveBeenCalledTimes(2);
       // One step of 1000 / fps per frame, through every phase.
       expect(ticks).toHaveLength(2);
-      expect(ticks[1]! - ticks[0]!).toBe(40);
+      // A difference of two accumulated float timestamps: 40 only to rounding
+      // (CI saw 40.000000000000114), so compare to a microsecond, not bit-for-bit.
+      expect(ticks[1]! - ticks[0]!).toBeCloseTo(40, 6);
 
       await handlers['export-end']({ width: 300, height: 150 }, CTX);
       expect(renderer.restoreRenderSize).toHaveBeenCalledWith(300, 150);

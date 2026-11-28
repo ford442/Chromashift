@@ -379,8 +379,8 @@ requests camera/screen access. See [LIVE_SOURCE.md](docs/LIVE_SOURCE.md).
 
 `Upscaler` (`src/engine/upscale/Upscaler.ts`) wraps two Web Workers, both created lazily via `new Worker(new URL('./*.worker.ts', import.meta.url), { type: 'module' })` inside the "Upscale Source" / "Upscale Output" click handlers (`src/hooks/useMediaHandlers.ts`). Vite emits each worker as its own chunk, so neither TF.js nor onnxruntime-web is fetched on initial page load — only after the user actually invokes an upscale. `npm run build` runs `check:dist`, which asserts `dist/` contains no `ort-wasm*.wasm` and that `dist/assets/index-*.js` has no `tfjs`/`ort-wasm` references.
 
-- **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not** bundled or CDN-hosted by default; set `VITE_UPSCALER_BASE` to a URL you self-host (containing `realesrgan/` and `realcugan/` model trees) or upscaling throws.
-- **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Model ONNX files default to `NUNIF_DEFAULT_BASE` in `Upscaler.ts`; override with `VITE_NUNIF_BASE` to self-host `models/swin_unet/` and `models/utils/`. The ORT wasm runtime is **not** bundled in `dist/` — Vite resolves `onnxruntime-web-use-extern-wasm` (see `vite.config.ts`) and the worker loads `ort-wasm-simd-threaded.{mjs,wasm}` at runtime from `VITE_NUNIF_ORT_WASM_BASE` (default `https://test.1ink.us/nunif/ort`). Mirror those two files from `node_modules/onnxruntime-web/dist/` on the server once per ORT version upgrade; for local dev without the mirror, point `VITE_NUNIF_ORT_WASM_BASE` at jsDelivr in `.env.local`.
+- **`upscaler.worker.ts`** — TF.js Real-ESRGAN / Real-CUGAN. Model weights are **not** bundled. `VITE_UPSCALER_BASE` (`https://js.1ink.us`, committed in `.env.production`; `check:dist` fails the build if it did not reach the bundle) points at the `realesrgan/` and `realcugan/` model trees; unset, upscaling throws.
+- **`nunif.worker.ts`** — onnxruntime-web swin_unet (waifu2x). Model ONNX files default to `NUNIF_DEFAULT_BASE` in `Upscaler.ts`; override with `VITE_NUNIF_BASE` to self-host `models/swin_unet/` and `models/utils/`. The ORT wasm runtime is **not** bundled in `dist/` — Vite resolves `onnxruntime-web-use-extern-wasm` (see `vite.config.ts`) and the worker loads `ort-wasm-simd-threaded.{mjs,wasm}` at runtime from `VITE_NUNIF_ORT_WASM_BASE` (`https://test.1ink.us/nunif/ort`, also pinned in `.env.production`). Mirror those two files from `node_modules/onnxruntime-web/dist/` on the server once per ORT version upgrade; for local dev without the mirror, point `VITE_NUNIF_ORT_WASM_BASE` at jsDelivr in `.env.local`.
 
 Both workers speak `UpscaleWorkerProtocol` (`src/engine/workers/upscaleProtocol.ts`) over the shared worker channel (see *Worker RPC* below), so a job always settles: a worker that crashes mid-job (an OOM on a large tile, a chunk that failed to load) rejects the job and clears `isBusy()`, and the next click spawns a fresh worker. `upscaler.worker.ts` picks its TF.js backend once per worker and keeps one model resident, disposing it when the model changes. Both workers cache downloaded models (`upscaler.worker.ts` in IndexedDB, browser HTTP cache for `nunif.worker.ts`) and post a `"Downloading model…"` progress message only on an actual first-time fetch, not on cache hits.
 
@@ -626,7 +626,7 @@ Chromashift has three test tiers. CI runs them on every push/PR: `.github/workfl
 | Job | What it runs |
 |-----|----------------|
 | `guard` | Blocks `dist/` and accidental secrets in PR diffs |
-| `web` | `npm run lint`, `npm run knip`, `npx tsc -b`, `npm run build` |
+| `web` | `npm run lint`, `npm run knip`, `npx tsc -b`, `npm run build`. Every job runs on `ubuntu-24.04` (not `ubuntu-latest`: the image moving to 26.04 broke Playwright's browser install, #268) with Node from `.nvmrc` |
 | `unit` | `npm run test:coverage` (Vitest + v8 coverage): the totals go to the job summary (`scripts/coverage-summary.mjs`) and the HTML report is the `coverage-html` artifact. Reported, not gated — no threshold yet |
 | `shaders` | `node scripts/validate-shaders.mjs --require-glslang`: dumps every WGSL/GLSL variant (`shaderBindings.test.ts`), then `naga` + `glslangValidator` (naga-cli pinned and cached) |
 | `e2e` | `npx playwright test --project=chromium` (WebGL smoke, preset URL, kiosk) |
@@ -663,19 +663,28 @@ A Python script (`deploy.py` at repo root) handles deployment:
 npm run build
 pip install -r requirements-deploy.txt
 export DEPLOY_USER=… DEPLOY_KEY=~/.ssh/id_ed25519   # or DEPLOY_PASS for password fallback
-python deploy.py              # clean remote + upload (default)
-python deploy.py --dry-run    # preview deletions/uploads only
-python deploy.py --no-clean   # skip remote wipe
+python deploy.py                       # staging (default): clean remote + upload
+python deploy.py --target production   # the live path (release stage 5, #272)
+python deploy.py --dry-run             # preview deletions/uploads only
+python deploy.py --no-clean            # skip remote wipe
 ```
 
 - It uses **Paramiko/SFTP** to recursively upload the `dist/` directory.
 - Target server: `1ink.us` (port 22) — override with `DEPLOY_HOST` / `DEPLOY_PORT`.
-- Remote path: `test.1ink.us/chromashift` — override with `DEPLOY_REMOTE_DIR`.
-- **Auth**: SSH key via `DEPLOY_KEY` or `SSH_AUTH_SOCK` (preferred); `DEPLOY_PASS` password fallback.
-- **Safety**: refuses `CHANGEME` / missing credentials; `--dry-run` lists changes without mutating remote;
-  default cleans remote before upload (`--no-clean` to skip).
-- **CI**: manual [Deploy workflow](.github/workflows/deploy.yml) (`workflow_dispatch`) with
-  `DEPLOY_USER` + `DEPLOY_KEY` GitHub secrets.
+- Targets: `staging` → `test.1ink.us/chromashift-staging` (<https://test.1ink.us/chromashift-staging/>, the release gate),
+  `production` → `test.1ink.us/chromashift`. `DEPLOY_REMOTE_DIR` replaces the directory.
+- **Auth**: only from the environment / CI secrets, never a tracked file. `DEPLOY_USER` is required; then SSH key via
+  `DEPLOY_KEY` or `SSH_AUTH_SOCK` (preferred), `DEPLOY_PASS` password fallback.
+- **Safety**: missing credentials are refused; `--dry-run` lists changes without mutating remote;
+  default cleans remote before upload (`--no-clean` to skip). The wipe has downtime and keeps no previous copy (#272).
+- **Build stamp**: `dist/version.json` (`{ sha, dirty, builtAt }`, `vite.config.ts`) and `window.chromashiftBuild` say which commit a page is.
+- **`public/.htaccess`** ships in `dist/` (the deploy wipes the directory): `DirectoryIndex index.html`, `Options -Indexes`,
+  the `.wasm`/`.js` MIME types and the COOP/COEP/CORP headers `vite preview` also sends.
+- **CI**: manual [Deploy workflow](.github/workflows/deploy.yml) (`workflow_dispatch`, `target` input, default `staging`) with
+  `DEPLOY_USER` + `DEPLOY_KEY` repository secrets. It refuses to upload unless `dist/version.json` is the run's commit with
+  `dirty: false`, and afterwards checks the live root URL, the live `version.json` and the `.wasm` MIME type.
+- **Not in `dist/`**: `e2e-fixture.png`, `wasm-benchmark.html`, `wasm-benchmark-core.mjs` live in `public/` for the dev server,
+  E2E specs and `bench:wasm`; `vite.config.ts` drops them from the build and `check:dist` enforces it.
 
 ## Browser Requirements
 

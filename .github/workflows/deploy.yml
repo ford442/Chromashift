@@ -2,9 +2,17 @@ name: Deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to deploy. Staging is the release gate; production is release stage 5 (#272)."
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
 
 concurrency:
-  group: deploy-${{ github.workflow }}
+  group: deploy-${{ inputs.target }}
   cancel-in-progress: false
 
 permissions:
@@ -12,21 +20,35 @@ permissions:
 
 jobs:
   deploy:
-    name: Build and deploy to test server
-    runs-on: ubuntu-latest
+    name: Build and deploy (${{ inputs.target }})
+    # Pinned, not `ubuntu-latest`: the image moving to 26.04 broke Playwright (#268).
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      TARGET: ${{ inputs.target }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Build production bundle
         run: |
           npm ci
           npm run build
+
+      # What goes up must be this commit, built from a clean tree. `dirty` is
+      # computed from `git status` at build time (vite.config.ts).
+      - name: Check the build stamp
+        run: |
+          cat dist/version.json
+          node -e '
+            const v = JSON.parse(require("fs").readFileSync("dist/version.json", "utf8"));
+            if (v.sha !== process.env.GITHUB_SHA) { console.error(`stamp sha ${v.sha} != ${process.env.GITHUB_SHA}`); process.exit(1); }
+            if (v.dirty !== false) { console.error("build is dirty"); process.exit(1); }
+          '
 
       - uses: actions/setup-python@v5
         with:
@@ -35,16 +57,38 @@ jobs:
       - name: Install deploy dependencies
         run: pip install -r requirements-deploy.txt
 
+      # Credentials come only from repository secrets (Settings > Secrets and
+      # variables > Actions): DEPLOY_USER and DEPLOY_KEY (private key, PEM/OpenSSH).
       - name: Write deploy SSH key
         env:
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
         run: |
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/chromashift_deploy
-          chmod 600 ~/.ssh/chromashift_deploy
+          if [ -z "$DEPLOY_USER" ] || [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::Repository secrets DEPLOY_USER and DEPLOY_KEY must both be set (see README, Deploying)."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/chromashift_deploy"
+          (umask 077; printf '%s\n' "$DEPLOY_KEY" > "$key")
+          echo "DEPLOY_KEY_FILE=$key" >> "$GITHUB_ENV"
 
       - name: Deploy dist/ via SFTP
         env:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-          DEPLOY_KEY: ~/.ssh/chromashift_deploy
-        run: python deploy.py
+          DEPLOY_KEY: ${{ env.DEPLOY_KEY_FILE }}
+        run: python deploy.py --target "$TARGET"
+
+      - name: Remove deploy SSH key
+        if: ${{ always() }}
+        run: rm -f "$RUNNER_TEMP/chromashift_deploy"
+
+      # The deploy is only done when the live URL serves this commit: the root URL
+      # (not a listing), every file of this build with the right MIME type, the
+      # isolation headers, and a live version.json equal to this commit.
+      - name: Verify the live site
+        run: |
+          case "$TARGET" in
+            staging) url="https://test.1ink.us/chromashift-staging/" ;;
+            production) url="https://test.1ink.us/chromashift/" ;;
+          esac
+          node scripts/verify-deploy.mjs "$url" --sha "$GITHUB_SHA"
