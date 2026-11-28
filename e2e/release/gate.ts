@@ -49,7 +49,7 @@ export type Renderer = 'webgpu' | 'webgl';
 export const RESULTS_DIR = process.env.RELEASE_OUT ?? 'release-results';
 
 /** Slug for file names: the project and the full test title. */
-export function slug(...parts: string[]): string {
+function slug(...parts: string[]): string {
   return parts.join('--').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 120);
 }
 

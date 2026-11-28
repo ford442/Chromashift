@@ -37,7 +37,8 @@ const viewport = { width: 1440, height: 900 };
 export default defineConfig<{ renderer: Renderer }>({
   testDir: './e2e/release',
   outputDir: `${OUT}/pw`,
-  timeout: 120_000,
+  // Software rendering: a scenario with several frame readbacks takes minutes.
+  timeout: 180_000,
   expect: { timeout: 15_000 },
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

@@ -19,10 +19,9 @@ import { expect, RESULTS_DIR, type Renderer } from './gate';
  * answered locally, so the run does not depend on a third-party host. Against a
  * deployed URL it is off and the real corpus host is exercised.
  */
-export const STUB_CORPUS = process.env.RELEASE_STUB_CORPUS === '1';
+const STUB_CORPUS = process.env.RELEASE_STUB_CORPUS === '1';
 
 /** The viewport of the report's screenshots (#268 asks for at least 1440x900). */
-export const VIEWPORT = { width: 1440, height: 900 } as const;
 
 /** A relative URL, so it resolves under the base URL's path (`/chromashift-staging/`). */
 export function appUrl(renderer: Renderer, extra: Record<string, string> = {}): string {
@@ -101,7 +100,7 @@ export async function openApp(page: Page, renderer: Renderer, options: OpenOptio
 }
 
 /** Pause playback (the slideshow and the rotation) with a DOM click: the fixed panel can intercept a pointer. */
-export async function pause(page: Page): Promise<void> {
+async function pause(page: Page): Promise<void> {
   const button = page.getByRole('button', { name: '⏸ Pause' });
   await button.evaluate((el: HTMLElement) => el.click());
   await expect(page.getByRole('button', { name: '▶ Resume' })).toBeVisible();
@@ -164,7 +163,7 @@ export async function expectDrawing(page: Page, renderer: Renderer, slot = 'main
 }
 
 /** What the screenshot caption says about the GPU: the WebGPU adapter, or the WebGL renderer string. */
-export async function describeGpu(page: Page, renderer: Renderer): Promise<string> {
+async function describeGpu(page: Page, renderer: Renderer): Promise<string> {
   return page.evaluate((r) => {
     if (r === 'webgpu') {
       const a = window.webgpuProbe?.adapter;

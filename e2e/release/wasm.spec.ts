@@ -29,7 +29,7 @@ test.describe('C++ WASM engine', () => {
     const wasmButton = page.getByRole('button', { name: 'C++ WASM', exact: true });
     await expect(wasmButton).toBeEnabled();
     await domClick(wasmButton);
-    await expect(page.getByText('⚡ C++ WASM')).toBeVisible();
+    await expect(page.getByText('⚡ C++ WASM', { exact: true })).toBeVisible();
   });
 
   test('the engine file is served as WebAssembly', async ({ request }) => {

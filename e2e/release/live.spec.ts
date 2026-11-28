@@ -29,7 +29,11 @@ test.describe('live source', () => {
     await domClick(page.getByTitle('Drive the composite from a live webcam feed'));
     await page.waitForFunction(() => window.liveSourceActive === true, undefined, { timeout: 30_000 });
     expect(await page.evaluate(() => window.liveSourceKind)).toBe('camera');
-    await expectDrawing(page, renderer);
+    // Frames are flowing from the camera into the renderer. Not `expectDrawing`: Chromium's
+    // fake camera is a flat green pattern, and the renderer isolates luminance bands
+    // relative to the source's own average, so that source correctly composites to near-black.
+    await page.waitForFunction(() => (window.liveSourceFps ?? 0) > 0, undefined, { timeout: 30_000 });
+    await expect(page.getByRole('button', { name: /Stop/i }).first()).toBeVisible();
     await shoot(page, `live-camera-${renderer}`, renderer, 'Chromium fake camera as the live source');
     await domClick(page.getByRole('button', { name: /Stop/i }).first());
     await page.waitForFunction(() => window.liveSourceActive !== true, undefined, { timeout: 15_000 });

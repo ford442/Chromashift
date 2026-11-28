@@ -39,7 +39,7 @@ test.describe('corpus images', () => {
     // Random: a different index, with a drawn frame (retry the 1-in-N draw of the same one).
     let landed = first.index;
     for (let attempt = 0; attempt < 4 && landed === first.index; attempt += 1) {
-      await domClick(page.getByRole('button', { name: 'Random image' }));
+      await domClick(page.getByTitle('Random image'));
       await page.waitForTimeout(300);
       landed = (await readPosition(page)).index;
     }

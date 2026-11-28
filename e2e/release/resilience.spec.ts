@@ -36,6 +36,9 @@ test.describe('reload with a warm cache', () => {
     await page.goto(appUrl(renderer));
     if (renderer === 'webgl') await waitForDiagnostic(page, 'usingWebGL', true, 60_000);
     else await waitForDiagnostic(page, 'usingWebGPU', true, 60_000);
+    // Let the engine's own fetch finish: a reload that cancels it mid-flight logs a
+    // console error from the page being left, which is the test's doing, not the app's.
+    await waitForDiagnostic(page, 'wasmEngineState', 'ready', 60_000);
     await page.reload();
     if (renderer === 'webgl') await waitForDiagnostic(page, 'usingWebGL', true, 60_000);
     else await waitForDiagnostic(page, 'usingWebGPU', true, 60_000);

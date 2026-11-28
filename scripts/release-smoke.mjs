@@ -70,7 +70,7 @@ const env = {
 const selected = (projects.length > 0 ? projects : ['release-webgpu', 'release-webgl']).flatMap((p) => ['--project', p]);
 
 console.log(`release:smoke — ${url ?? 'vite preview over dist/'}${sha ? ` expecting ${sha}` : ''}`);
-const run = spawnSync('npx', ['playwright', 'test', '-c', 'playwright.release.config.ts', ...passthrough, ...selected], {
+const run = spawnSync('npx', ['playwright', 'test', '--config=playwright.release.config.ts', ...passthrough, ...selected], {
   stdio: 'inherit',
   env,
 });
