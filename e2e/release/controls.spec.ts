@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { domClick } from '../helpers/domClick';
 import { expect, test } from './gate';
-import { canvasStats, expectDrawing, openApp, shoot } from './helpers';
+import { canvasStats, expectDrawing, openApp, shoot, stubRemoteCorpus } from './helpers';
 
 /** Playback, layer count, a preset, and the shareable preset URL round trip. */
 
@@ -80,6 +80,7 @@ test.describe('shareable preset URL', () => {
     // A fresh tab, the way a recipient opens it. The copied URL keeps this
     // session's `renderer=`, so the recipient lands in the same backend.
     const other = await context.newPage();
+    await stubRemoteCorpus(other);
     await other.addInitScript(() => localStorage.setItem('chromashift.overlay.sections', JSON.stringify({ layers: true })));
     await other.goto(shared);
     if (renderer === 'webgl') await other.waitForFunction(() => window.usingWebGL === true, undefined, { timeout: 60_000 });
