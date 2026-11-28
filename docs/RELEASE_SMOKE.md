@@ -36,6 +36,9 @@ Every scenario runs behind `e2e/release/gate.ts`. It fails the test on:
 - any failed request (`net::ERR_ABORTED` is the app cancelling its own request and is
   only counted);
 - any HTTP status >= 400;
+- any file requested by extension (`.js`, `.css`, `.wasm`, `.json`, …) that comes back with a
+  different Content-Type — the HTML fallback page a static server answers a *missing* chunk
+  with (`vite preview` does);
 - any redirect (3xx other than a 304 revalidation) — the live server answers a missing
   file with a **302** to an off-site 404 page, so a status check alone misses a missing asset.
 

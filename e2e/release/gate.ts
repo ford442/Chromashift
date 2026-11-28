@@ -13,6 +13,12 @@
  * 302 to an off-site 404 page (#269), so "status >= 400" alone never sees a
  * missing asset.
  *
+ * A file the app asked for by extension (.js, .css, .wasm, …) that comes back as HTML
+ * is a `bad-mime` violation: a static server that falls back to `index.html` (`vite
+ * preview` does) answers a *missing* chunk with a 200, and the app then quietly
+ * degrades — a missing render worker used to leave the renderer on the main thread with
+ * a clean console and a passing suite.
+ *
  * `net::ERR_ABORTED` is not a failed request: it is the browser reporting that
  * the app cancelled a request itself (an image load superseded by the next one,
  * a media element re-seeking). It is counted in the summary, not failed on.
@@ -28,7 +34,7 @@ import {
   type Worker,
 } from '@playwright/test';
 
-export type ViolationKind = 'console-error' | 'page-error' | 'request-failed' | 'http-error' | 'redirect';
+export type ViolationKind = 'console-error' | 'page-error' | 'request-failed' | 'http-error' | 'redirect' | 'bad-mime';
 
 export interface Allowance {
   kind: ViolationKind;
@@ -45,6 +51,26 @@ export interface Violation {
 }
 
 export type Renderer = 'webgpu' | 'webgl';
+
+/** What a file's extension promises about its Content-Type. */
+const MIME_BY_EXTENSION: Record<string, RegExp> = {
+  js: /javascript/i,
+  mjs: /javascript/i,
+  css: /^text\/css/i,
+  wasm: /^application\/wasm/i,
+  json: /json/i,
+  svg: /^image\/svg/i,
+  png: /^image\/png/i,
+  webm: /^video\/webm/i,
+};
+
+function mimeProblem(url: string, contentType: string | undefined): string | null {
+  const extension = /\.([a-z0-9]+)$/i.exec(new URL(url).pathname)?.[1]?.toLowerCase();
+  const expected = extension ? MIME_BY_EXTENSION[extension] : undefined;
+  if (!expected || !contentType) return null;
+  // A file that is served as HTML where something else was promised is the fallback page.
+  return expected.test(contentType) ? null : `${url} is ${contentType}, not what .${extension} promises`;
+}
 
 export const RESULTS_DIR = process.env.RELEASE_OUT ?? 'release-results';
 
@@ -121,6 +147,10 @@ export const test = base.extend<{ renderer: Renderer; gate: GateApi }>({
           const status = response.status();
           const url = response.url();
           if (url.startsWith('data:') || url.startsWith('blob:')) return;
+          if (status < 300) {
+            const problem = mimeProblem(url, response.headers()['content-type']);
+            if (problem) note('bad-mime', problem);
+          }
           if (status >= 400) note('http-error', `${status} ${url}`);
           else if (status >= 300 && status !== 304) {
             note('redirect', `${status} ${url} → ${response.headers().location ?? '(no location)'}`);

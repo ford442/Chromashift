@@ -48,6 +48,8 @@ const git = (...args) => {
 // ── The deployed URL and its live version.json ──────────────────────────────
 const url = (value('--url') ?? process.env.RELEASE_URL ?? '').trim() || null;
 const base = url ? (url.endsWith('/') ? url : `${url}/`) : null;
+// A localhost URL is a local run, not a deployment: it can never make the verdict "ready".
+const deployed = base !== null && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(base).hostname);
 const expectedSha = value('--sha') ?? process.env.RELEASE_SHA ?? git('rev-parse', 'HEAD');
 
 async function fetchLiveStamp() {
@@ -161,7 +163,7 @@ for (const s of suites) if (s.failed !== 0) failures.push(`${s.name}: ${s.failed
 if (suites.length === 0) failures.push('no test results found');
 if (gateViolations > 0) failures.push(`${gateViolations} unallowlisted console/network problem(s)`);
 if (build && build.exitCode !== 0) failures.push('the production build failed');
-if (!base) failures.push('this run was not against a deployed URL');
+if (!deployed) failures.push('this run was not against a deployed URL (localhost does not count)');
 if (shots.length === 0) failures.push('no screenshots');
 
 // ── Render ──────────────────────────────────────────────────────────────────
@@ -200,7 +202,7 @@ L.push('| Suite | Command | Passed | Failed | Skipped | Run link or log |');
 L.push('|---|---|---:|---:|---:|---|');
 for (const s of suites) L.push(`| ${s.name} | \`${s.command}\` | ${s.passed} | ${s.failed} | ${s.skipped}${s.flaky ? ` (${s.flaky} flaky, passed on retry)` : ''} | ${s.link || '—'} |`);
 L.push('');
-L.push(`### Console and network (against ${base ? 'the deployed URL' : 'a local `vite preview` — **not** the deployed URL'})`);
+L.push(`### Console and network (against ${deployed ? 'the deployed URL' : 'a local `vite preview` — **not** the deployed URL'})`);
 L.push('| Scenario | Console errors | Warnings | Page errors | Failed requests | HTTP >= 400 / unexpected redirects |');
 L.push('|---|---:|---:|---:|---:|---:|');
 for (const g of gates) {

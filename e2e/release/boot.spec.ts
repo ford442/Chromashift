@@ -42,6 +42,11 @@ test.describe('boot', () => {
     expect(crumbs.usingWebGL).toBe(renderer === 'webgl');
 
     await expect(page.getByText('NUNIF Controls')).toBeVisible();
+    if (renderer === 'webgpu') {
+      // The renderer runs in the render worker. If its chunk is missing or unloadable the
+      // app degrades to the main thread without a console error, so this is the check.
+      expect(await page.evaluate(() => window.renderTransport), await page.evaluate(() => window.renderTransportReason)).toBe('worker');
+    }
     if (renderer === 'webgl') await expect(page.getByTestId('webgl2-banner')).toContainText('WEBGL2 active');
     else await expect(page.getByTestId('webgl2-banner')).toHaveCount(0);
 
