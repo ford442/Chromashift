@@ -21,18 +21,18 @@
 
 import * as ort from 'onnxruntime-web/wasm';
 import { exposeWorkerRpc } from '../workers/rpc';
+import { bundledOrtVersion, resolveOrtWasmBase } from './ortRuntime';
 import type { UpscaleProgress, UpscaleWorkerProtocol } from '../workers/upscaleProtocol';
 
 declare const self: DedicatedWorkerGlobalScope;
 
-// ORT wasm runtime is fetched at runtime (not bundled). Default mirrors on test.1ink.us;
-// override with VITE_NUNIF_ORT_WASM_BASE for air-gapped or local dev (e.g. jsDelivr).
-const ORT_WASM_DEFAULT_BASE = 'https://test.1ink.us/nunif/ort';
-
-const ortWasmBase = (
-  (import.meta.env.VITE_NUNIF_ORT_WASM_BASE as string | undefined)
-  ?? ORT_WASM_DEFAULT_BASE
-).replace(/\/$/, '');
+// ORT wasm runtime is fetched at runtime (not bundled) and must match the bundled
+// onnxruntime-web release exactly — see ortRuntime.ts. Override with
+// VITE_NUNIF_ORT_WASM_BASE for a self-hosted mirror.
+const ortWasmBase = resolveOrtWasmBase(
+  import.meta.env.VITE_NUNIF_ORT_WASM_BASE as string | undefined,
+  bundledOrtVersion(),
+);
 
 ort.env.wasm.wasmPaths = `${ortWasmBase}/`;
 ort.env.wasm.numThreads = 1; // avoids requiring cross-origin isolation (COOP/COEP)

@@ -258,6 +258,7 @@ export function createInitialState(): ChromashiftState {
       upscaleBusy: false,
       upscaleProgress: 0,
       upscaleInfo: '',
+      upscaleError: '',
       presetLoadError: null,
       activePresetId: null,
       kioskEnabled: false,

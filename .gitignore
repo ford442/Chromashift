@@ -68,3 +68,6 @@ coverage/
 
 # The headless CI job's CLI smoke output (.github/workflows/ci.yml).
 headless-out/
+
+# Release smoke output (scripts/release-smoke.mjs)
+release-results/

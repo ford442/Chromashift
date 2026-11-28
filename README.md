@@ -83,11 +83,11 @@ code reads is listed here; adding one means adding it here and to `.env.producti
 |---|---|---|---|
 | `VITE_UPSCALER_BASE` | `https://js.1ink.us` | TF.js Real-ESRGAN / Real-CUGAN model trees (`realesrgan/`, `realcugan/`), fetched by `upscaler.worker.ts` | Those upscalers throw `VITE_UPSCALER_BASE is not set` (the default model, `realesrgan:general_plus`, is one of them) |
 | `VITE_NUNIF_BASE` | `https://test.1ink.us/nunif` | waifu2x swin_unet ONNX models (`models/swin_unet/`, `models/utils/`) | Same URL, from `NUNIF_DEFAULT_BASE` in `Upscaler.ts` |
-| `VITE_NUNIF_ORT_WASM_BASE` | `https://test.1ink.us/nunif/ort` | onnxruntime-web runtime (`ort-wasm-simd-threaded.{mjs,wasm}`), kept out of `dist/` | Same URL, from `ORT_WASM_DEFAULT_BASE` in `nunif.worker.ts` |
+| `VITE_NUNIF_ORT_WASM_BASE` | *(unset)* | onnxruntime-web runtime (`ort-wasm-simd-threaded.{mjs,wasm}`), kept out of `dist/` | `https://cdn.jsdelivr.net/npm/onnxruntime-web@<installed version>/dist`, derived at build time (`ortRuntime.ts`). The runtime must be the bundled package's exact release; set this only for a mirror you keep in step |
 
 The page is cross-origin isolated (COEP `require-corp`), so each host must answer with
 `Access-Control-Allow-Origin` and `Cross-Origin-Resource-Policy: cross-origin`; the three
-above do. `npm run build` fails (`check:dist`) if the upscaler base did not reach the bundle.
+above do (jsDelivr does too). `npm run build` fails (`check:dist`) if the upscaler base did not reach the bundle.
 
 Every build is stamped: `dist/version.json` is `{ "sha", "dirty", "builtAt" }`, and the page
 publishes the same object as `window.chromashiftBuild`. `BUILD_SHA` / `BUILD_DIRTY` override

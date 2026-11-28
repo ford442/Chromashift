@@ -12,6 +12,7 @@ export const UpscalePanel = memo(function UpscalePanel({
   upscaleBusy,
   upscaleProgress,
   upscaleInfo,
+  upscaleError,
   onUpscaleModelChange,
   onUpscaleSource,
   onUpscaleOutput,
@@ -103,7 +104,7 @@ export const UpscalePanel = memo(function UpscalePanel({
       </div>
 
       {upscaleBusy && (
-        <div className="space-y-1">
+        <div className="space-y-1" data-testid="upscale-progress">
           <div className="h-1.5 bg-zinc-800 rounded overflow-hidden">
             <div
               className="h-full bg-amber-400 transition-[width] duration-150"
@@ -111,6 +112,23 @@ export const UpscalePanel = memo(function UpscalePanel({
             />
           </div>
           <div className="text-[10px] text-amber-300/80 font-mono tabular-nums">{upscaleInfo}</div>
+        </div>
+      )}
+
+      {/* The outcome stays up after the busy bar goes: a failed job used to
+          clear the bar and leave nothing on screen (#269). */}
+      {!upscaleBusy && upscaleError && (
+        <div
+          role="alert"
+          data-testid="upscale-error"
+          className="text-[11px] leading-snug px-2 py-1 rounded border border-red-500/50 bg-red-950/60 text-red-200 break-words"
+        >
+          Upscale failed: {upscaleError}
+        </div>
+      )}
+      {!upscaleBusy && !upscaleError && upscaleInfo && (
+        <div role="status" data-testid="upscale-status" className="text-[10px] text-emerald-300/90 font-mono tabular-nums">
+          {upscaleInfo}
         </div>
       )}
     </div>

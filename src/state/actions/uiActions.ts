@@ -34,6 +34,8 @@ export function createUiActions(dispatch: ChromashiftDispatch) {
       dispatch({ type: 'ui/patch', patch: { upscaleProgress } }),
     setUpscaleInfo: (upscaleInfo: string) =>
       dispatch({ type: 'ui/patch', patch: { upscaleInfo } }),
+    setUpscaleError: (upscaleError: string) =>
+      dispatch({ type: 'ui/patch', patch: { upscaleError } }),
     applyPerformanceDegrade: () => dispatch({ type: 'ui/applyPerformanceDegrade' }),
     setKioskUiHidden: (kioskUiHidden: boolean) =>
       dispatch({ type: 'ui/patch', patch: { kioskUiHidden } }),

@@ -55,7 +55,7 @@ const DEV_PROJECTS = [
     // (Playwright screenshots, kiosk, presets). Distinct from chromium-webgpu.
     name: 'chromium',
     use: { ...devices['Desktop Chrome'] },
-    testIgnore: /webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts|render-transport\.spec\.ts|video-export-transport\.spec\.ts|webgpu-image-switch\.spec\.ts/,
+    testIgnore: /[\\/]release[\\/]|webgpu-smoke\.spec\.ts|webgpu-bgra-export\.spec\.ts|webgpu-device-loss\.spec\.ts|compare-.*\.spec\.ts|preset-compare\.spec\.ts|graph-executor\.spec\.ts|motion-flow-parity\.spec\.ts|render-transport\.spec\.ts|video-export-transport\.spec\.ts|webgpu-image-switch\.spec\.ts/,
   },
   {
     name: 'chromium-webgpu',
@@ -98,7 +98,7 @@ const PREVIEW_PROJECTS = [
     name: 'chromium-preview',
     use: { ...devices['Desktop Chrome'] },
     testMatch: /smoke\.spec\.ts|wasm-engine\.spec\.ts/,
-    testIgnore: /webgpu-smoke\.spec\.ts/,
+    testIgnore: /[\\/]release[\\/]|webgpu-smoke\.spec\.ts/,
   },
 ];
 

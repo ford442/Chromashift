@@ -180,6 +180,7 @@ const UPSCALE_KEYS = keysOf<UpscalePanelProps>({
   upscaleBusy: true,
   upscaleProgress: true,
   upscaleInfo: true,
+  upscaleError: true,
   onUpscaleModelChange: true,
   onUpscaleSource: true,
   onUpscaleOutput: true,

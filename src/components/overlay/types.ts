@@ -174,6 +174,7 @@ export interface UpscalePanelProps {
   upscaleBusy: boolean;
   upscaleProgress: number;
   upscaleInfo: string;
+  upscaleError: string;
   onUpscaleModelChange: (value: string) => void;
   onUpscaleSource: () => Promise<void>;
   onUpscaleOutput: () => Promise<void>;
